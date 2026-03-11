@@ -1,0 +1,603 @@
+'use client';
+import { useEffect, useRef, useState, useCallback } from 'react';
+import * as THREE from 'three';
+import GameShell from '@/components/GameShell';
+import GameHUD from '@/components/GameHUD';
+import GameStartScreen from '@/components/GameStartScreen';
+import Countdown from '@/components/Countdown';
+import EndScreen from '@/components/EndScreen';
+import { initAudio, sfx, haptic, startMusic, increaseMusicTempo } from '@/lib/audio';
+import { useBrandTheme } from '@/lib/useBrandTheme';
+import { postWebhook } from '@/lib/webhook';
+import { createTiltController } from '@/lib/tilt';
+
+type GameState = 'start' | 'countdown' | 'playing' | 'done';
+type ObstacleType = 'ring' | 'cross' | 'blade' | 'asteroid';
+
+interface ObstacleInfo {
+  type: ObstacleType;
+  group: THREE.Group;
+}
+
+interface BehaviorData { collisions: number; avgTiltMagnitude: number; distance: number; }
+
+function getProfile(b: BehaviorData) {
+  if (b.collisions === 0 && b.avgTiltMagnitude < 0.3) return 'Precise 🎯';
+  if (b.avgTiltMagnitude > 0.7) return 'Aggressive 🔥';
+  return 'Conservative 🧊';
+}
+
+// ─── Gap fraction based on elapsed time ───────────────────────────────────────
+function getGapFraction(timeLeft: number): number {
+  const elapsed = 60 - timeLeft;
+  if (elapsed < 20) return 0.55;
+  if (elapsed < 35) return 0.50;
+  if (elapsed < 50) return 0.45;
+  return 0.40;
+}
+
+// ─── Obstacle type selection by phase ─────────────────────────────────────────
+function pickObstacleType(timeLeft: number): ObstacleType {
+  const elapsed = 60 - timeLeft;
+  if (elapsed < 20) return 'ring';
+  if (elapsed < 35) return Math.random() < 0.55 ? 'ring' : 'cross';
+  const r = Math.random();
+  if (elapsed < 50) {
+    if (r < 0.35) return 'ring';
+    if (r < 0.60) return 'cross';
+    if (r < 0.82) return 'blade';
+    return 'asteroid';
+  }
+  // 50-60s: max chaos
+  if (r < 0.25) return 'ring';
+  if (r < 0.50) return 'cross';
+  if (r < 0.75) return 'blade';
+  return 'asteroid';
+}
+
+// ─── Obstacle factory ─────────────────────────────────────────────────────────
+function createObstacle(scene: THREE.Scene, z: number, type: ObstacleType, gapFraction: number): THREE.Group {
+  const group = new THREE.Group();
+
+  if (type === 'ring') {
+    const gapAngle = Math.PI * 2 * gapFraction;
+    const startAngle = Math.random() * Math.PI * 2;
+    const segments = 12;
+    for (let i = 0; i < segments; i++) {
+      const angle = (i / segments) * Math.PI * 2;
+      const normAngle = ((angle - startAngle) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2);
+      if (normAngle < gapAngle) continue;
+      const arcLen = (Math.PI * 2 / segments) * 0.90;
+      const geo = new THREE.TorusGeometry(3, 0.12, 6, 12, arcLen);
+      const mat = new THREE.MeshBasicMaterial({
+        color: i % 2 === 0 ? 0x00ffff : 0xa855f7,
+        transparent: true, opacity: 0.95,
+      });
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.rotation.z = angle + arcLen / 2;
+      group.add(mesh);
+    }
+    group.userData.gapStart = startAngle;
+    group.userData.gapEnd = startAngle + gapAngle;
+
+  } else if (type === 'cross') {
+    // Two bars forming + shape, leaving corner gaps
+    const hGeo = new THREE.BoxGeometry(5.2, 0.55, 0.2);
+    const hMat = new THREE.MeshBasicMaterial({ color: 0xff4400 });
+    group.add(new THREE.Mesh(hGeo, hMat));
+    const vGeo = new THREE.BoxGeometry(0.55, 5.2, 0.2);
+    const vMat = new THREE.MeshBasicMaterial({ color: 0xff6600 });
+    group.add(new THREE.Mesh(vGeo, vMat));
+    // Glow edges
+    const edgeGeo = new THREE.EdgesGeometry(hGeo);
+    const edgeMat = new THREE.LineBasicMaterial({ color: 0xff8844 });
+    group.add(new THREE.LineSegments(edgeGeo, edgeMat));
+
+  } else if (type === 'blade') {
+    // Spinning blade — flat rectangle
+    const bladeGeo = new THREE.BoxGeometry(5.2, 0.35, 0.15);
+    const bladeMat = new THREE.MeshBasicMaterial({ color: 0xff1100 });
+    const blade = new THREE.Mesh(bladeGeo, bladeMat);
+    group.add(blade);
+    // Glow edge
+    const edgeGeo = new THREE.EdgesGeometry(bladeGeo);
+    group.add(new THREE.LineSegments(edgeGeo, new THREE.LineBasicMaterial({ color: 0xff6600 })));
+    group.userData.rotAngle = Math.random() * Math.PI * 2;
+
+  } else if (type === 'asteroid') {
+    const count = 5 + Math.floor(Math.random() * 4);
+    const asteroids: { vx: number; vy: number; r: number }[] = [];
+    for (let i = 0; i < count; i++) {
+      const r = 0.18 + Math.random() * 0.22;
+      const geo = new THREE.SphereGeometry(r, 6, 5);
+      const mat = new THREE.MeshBasicMaterial({ color: 0x997755 });
+      const mesh = new THREE.Mesh(geo, mat);
+      const angle = Math.random() * Math.PI * 2;
+      const dist = 0.5 + Math.random() * 1.9;
+      mesh.position.x = Math.cos(angle) * dist;
+      mesh.position.y = Math.sin(angle) * dist;
+      group.add(mesh);
+      asteroids.push({ vx: (Math.random() - 0.5) * 0.014, vy: (Math.random() - 0.5) * 0.014, r });
+    }
+    group.userData.asteroids = asteroids;
+  }
+
+  group.userData.type = type;
+  group.position.z = z;
+  scene.add(group);
+  return group;
+}
+
+// ─── Per-frame obstacle update (blades spin, asteroids drift) ─────────────────
+function updateObstacle(obstacle: ObstacleInfo, speed: number): void {
+  const g = obstacle.group;
+  if (obstacle.type === 'blade') {
+    g.userData.rotAngle = (g.userData.rotAngle || 0) + 0.04 * (speed / 0.08);
+    g.rotation.z = g.userData.rotAngle;
+  } else if (obstacle.type === 'asteroid') {
+    const asteroids = g.userData.asteroids as { vx: number; vy: number; r: number }[];
+    g.children.forEach((child, i) => {
+      const a = asteroids[i]; if (!a) return;
+      child.position.x += a.vx;
+      child.position.y += a.vy;
+      const d = Math.sqrt(child.position.x ** 2 + child.position.y ** 2);
+      if (d > 2.6) {
+        const nx = child.position.x / d, ny = child.position.y / d;
+        const dot = a.vx * nx + a.vy * ny;
+        a.vx -= 2 * dot * nx;
+        a.vy -= 2 * dot * ny;
+      }
+    });
+  }
+}
+
+// ─── Collision detection per type ─────────────────────────────────────────────
+function checkObstacleCollision(
+  px: number, py: number, pz: number,
+  obstacle: ObstacleInfo
+): boolean {
+  const g = obstacle.group;
+  const dz = Math.abs(pz - g.position.z);
+
+  if (obstacle.type === 'ring') {
+    if (dz > 0.7) return false;
+    const dist = Math.sqrt(px ** 2 + py ** 2);
+    if (dist > 2.65) {
+      const norm = (a: number) => ((a % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+      const camAngle = Math.atan2(py, px);
+      const gs = norm(g.userData.gapStart);
+      const ge = norm(g.userData.gapEnd);
+      const ca = norm(camAngle);
+      const inGap = gs < ge ? (ca >= gs && ca <= ge) : (ca >= gs || ca <= ge);
+      if (!inGap) return true;
+    }
+  } else if (obstacle.type === 'cross') {
+    if (dz > 0.5) return false;
+    const H_LEN = 2.6, H_THICK = 0.28;
+    const V_LEN = 2.6, V_THICK = 0.28;
+    const inH = Math.abs(py) < H_THICK && Math.abs(px) < H_LEN;
+    const inV = Math.abs(px) < V_THICK && Math.abs(py) < V_LEN;
+    if (inH || inV) return true;
+  } else if (obstacle.type === 'blade') {
+    if (dz > 0.4) return false;
+    const angle = g.userData.rotAngle || 0;
+    const cos = Math.cos(-angle), sin = Math.sin(-angle);
+    const lx = cos * px - sin * py;
+    const ly = sin * px + cos * py;
+    if (Math.abs(lx) < 2.6 && Math.abs(ly) < 0.22) return true;
+  } else if (obstacle.type === 'asteroid') {
+    if (dz > 1.0) return false;
+    const asteroids = g.userData.asteroids as { r: number }[];
+    g.children.forEach((child, i) => {
+      const a = asteroids[i]; if (!a) return;
+      const dx = px - child.position.x, dy = py - child.position.y;
+      if (Math.sqrt(dx * dx + dy * dy) < a.r + 0.18) {
+        // Mark collision via group userData
+        g.userData._collision = true;
+      }
+    });
+    if (g.userData._collision) {
+      g.userData._collision = false;
+      return true;
+    }
+  }
+  return false;
+}
+
+// ─── Near-miss check ──────────────────────────────────────────────────────────
+function checkNearMiss(px: number, py: number, pz: number, obstacle: ObstacleInfo): boolean {
+  const g = obstacle.group;
+  const dz = Math.abs(pz - g.position.z);
+  if (obstacle.type === 'ring' && dz < 0.7) {
+    const dist = Math.sqrt(px ** 2 + py ** 2);
+    return dist > 2.0 && dist < 2.65;
+  }
+  return false;
+}
+
+export default function TunnelGame() {
+  const theme = useBrandTheme();
+  const mountRef = useRef<HTMLDivElement>(null);
+  const stopMusicRef = useRef<(() => void) | null>(null);
+  const tiltControllerRef = useRef<ReturnType<typeof createTiltController> | null>(null);
+  const stateRef = useRef({
+    renderer: null as THREE.WebGLRenderer | null,
+    scene: null as THREE.Scene | null,
+    camera: null as THREE.PerspectiveCamera | null,
+    animId: 0, running: false,
+    speed: 0.08, distance: 0,
+    collisions: 0, tiltMagnitudes: [] as number[],
+    timeLeft: 60, intervalId: null as ReturnType<typeof setInterval> | null,
+    obstacles: [] as ObstacleInfo[],
+    invincibleFrames: 0,
+    joystickX: 0, joystickY: 0,
+    nearMissLastTime: 0,
+    // Player trail
+    trailPositions: [] as { x: number; y: number; z: number }[],
+    trailMeshes: [] as THREE.Mesh[],
+    survivedTime: 0,
+  });
+  const [gameState, setGameState] = useState<GameState>('start');
+  const [timeLeft, setTimeLeft] = useState(60);
+  const [behavior, setBehavior] = useState<BehaviorData | null>(null);
+  const [joystickEnabled, setJoystickEnabled] = useState(false);
+  const [joystickThumb, setJoystickThumb] = useState({ x: 0, y: 0 });
+  const [survivedDisplay, setSurvivedDisplay] = useState(0);
+
+  const endGame = useCallback((capturedTheme: typeof theme) => {
+    const s = stateRef.current;
+    s.running = false;
+    cancelAnimationFrame(s.animId);
+    if (s.intervalId) clearInterval(s.intervalId);
+    tiltControllerRef.current?.stop();
+    if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
+    if (s.renderer) { s.renderer.dispose(); s.renderer = null; }
+    const avgTilt = s.tiltMagnitudes.length > 0 ? s.tiltMagnitudes.reduce((a, b) => a + b, 0) / s.tiltMagnitudes.length : 0;
+    const bData: BehaviorData = { collisions: s.collisions, avgTiltMagnitude: Math.round(avgTilt * 100) / 100, distance: Math.round(s.distance) };
+    setBehavior(bData);
+    setGameState('done');
+    postWebhook(capturedTheme, 'tunnel', { score: `${Math.round(s.distance)}m`, personality: getProfile(bData), signals: bData });
+  }, []);
+
+  const startLoop = useCallback(() => {
+    const s = stateRef.current;
+    s.collisions = 0; s.tiltMagnitudes = []; s.distance = 0; s.speed = 0.08;
+    s.timeLeft = 60; s.obstacles = []; s.running = true;
+    s.invincibleFrames = 0; s.joystickX = 0; s.joystickY = 0;
+    s.trailPositions = []; s.survivedTime = 0;
+    setTimeLeft(60); setGameState('playing'); setSurvivedDisplay(0);
+    stopMusicRef.current = startMusic('drive');
+    const capturedTheme = theme;
+
+    const W = window.innerWidth, H = window.innerHeight;
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(W, H);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setClearColor(0x0d1520);
+    if (mountRef.current) { mountRef.current.innerHTML = ''; mountRef.current.appendChild(renderer.domElement); }
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0d1520);
+    scene.fog = new THREE.FogExp2(0x0d1520, 0.018);
+
+    const camera = new THREE.PerspectiveCamera(75, W / H, 0.1, 100);
+    camera.position.set(0, 0, 0);
+
+    // ── Tunnel tube ────────────────────────────────────────────────────────────
+    const tubePoints = Array.from({ length: 40 }, (_, i) => new THREE.Vector3(0, 0, -i * 5));
+    const curve = new THREE.CatmullRomCurve3(tubePoints);
+    const tubeGeo = new THREE.TubeGeometry(curve, 200, 3.5, 8, false);
+    const tubeMat = new THREE.MeshBasicMaterial({ color: 0x0d1520, side: THREE.BackSide });
+    scene.add(new THREE.Mesh(tubeGeo, tubeMat));
+
+    // ── Neon grid: longitudinal strips ────────────────────────────────────────
+    const STRIP_COUNT = 10;
+    for (let i = 0; i < STRIP_COUNT; i++) {
+      const angle = (i / STRIP_COUNT) * Math.PI * 2;
+      const pts = Array.from({ length: 40 }, (_, j) =>
+        new THREE.Vector3(Math.cos(angle) * 3.42, Math.sin(angle) * 3.42, -j * 5)
+      );
+      const geo = new THREE.BufferGeometry().setFromPoints(pts);
+      const col = i % 2 === 0 ? 0x003366 : 0x110033;
+      const mat = new THREE.LineBasicMaterial({ color: col, transparent: true, opacity: 0.45 });
+      scene.add(new THREE.Line(geo, mat));
+    }
+
+    // ── Neon grid: circular cross-section rings ────────────────────────────────
+    const GRID_RING_SPACING = 15;
+    const GRID_RING_COUNT = 14;
+    for (let k = 0; k < GRID_RING_COUNT; k++) {
+      const pts: THREE.Vector3[] = [];
+      for (let i = 0; i <= 24; i++) {
+        const a = (i / 24) * Math.PI * 2;
+        pts.push(new THREE.Vector3(Math.cos(a) * 3.42, Math.sin(a) * 3.42, -k * GRID_RING_SPACING));
+      }
+      const geo = new THREE.BufferGeometry().setFromPoints(pts);
+      const mat = new THREE.LineBasicMaterial({ color: 0x002244, transparent: true, opacity: 0.35 });
+      scene.add(new THREE.Line(geo, mat));
+    }
+
+    // ── Static speed lines ─────────────────────────────────────────────────────
+    for (let i = 0; i < 20; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const r = 2.8 + Math.random() * 0.5;
+      const x = Math.cos(angle) * r, y = Math.sin(angle) * r;
+      const zStart = -5 - Math.random() * 190;
+      const geo = new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(x, y, zStart),
+        new THREE.Vector3(x, y, zStart - 2.5),
+      ]);
+      const mat = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.08 + Math.random() * 0.12 });
+      scene.add(new THREE.Line(geo, mat));
+    }
+
+    // ── Player trail meshes (5 small spheres) ─────────────────────────────────
+    s.trailMeshes = [];
+    for (let i = 0; i < 5; i++) {
+      const r = 0.07 - i * 0.012;
+      const tGeo = new THREE.SphereGeometry(Math.max(0.02, r), 5, 4);
+      const tMat = new THREE.MeshBasicMaterial({
+        color: 0xffffff, transparent: true, opacity: (5 - i) / 5 * 0.6,
+      });
+      const mesh = new THREE.Mesh(tGeo, tMat);
+      mesh.visible = false;
+      scene.add(mesh);
+      s.trailMeshes.push(mesh);
+    }
+
+    // ── Initial obstacles ──────────────────────────────────────────────────────
+    for (let i = 0; i < 12; i++) {
+      const z = -10 - i * 8;
+      const type = pickObstacleType(60); // all rings at start
+      const gap = getGapFraction(60);
+      s.obstacles.push({ type, group: createObstacle(scene, z, type, gap) });
+    }
+
+    s.renderer = renderer;
+    s.scene = scene;
+    s.camera = camera;
+
+    s.intervalId = setInterval(() => {
+      if (!s.running) return;
+      s.timeLeft--;
+      s.survivedTime = 60 - s.timeLeft;
+      setSurvivedDisplay(60 - s.timeLeft);
+      setTimeLeft(s.timeLeft);
+      s.speed = Math.min(0.26, s.speed + 0.003);
+      if (s.timeLeft === 30) increaseMusicTempo(162);
+      if (s.timeLeft <= 0) endGame(capturedTheme);
+    }, 1000);
+
+    const loop = () => {
+      if (!s.running) return;
+
+      // ── Tilt input ───────────────────────────────────────────────────────────
+      const tilt = tiltControllerRef.current?.getValues() ?? { x: 0, y: 0 };
+      const inputX = tilt.x + s.joystickX;
+      const inputY = tilt.y + s.joystickY;
+
+      // Very snappy direct position mapping
+      const targetX = inputX * 2.5;
+      const targetY = inputY * 2.5;
+      camera.position.x += (targetX - camera.position.x) * 0.22;
+      camera.position.y += (targetY - camera.position.y) * 0.22;
+
+      const mag = Math.sqrt(inputX * inputX + inputY * inputY);
+      s.tiltMagnitudes.push(mag);
+
+      camera.position.z -= s.speed;
+      s.distance += s.speed;
+
+      // ── Player trail ─────────────────────────────────────────────────────────
+      s.trailPositions.push({ x: camera.position.x, y: camera.position.y, z: camera.position.z });
+      if (s.trailPositions.length > 5) s.trailPositions.shift();
+      s.trailMeshes.forEach((mesh, i) => {
+        const idx = s.trailPositions.length - 1 - i;
+        if (idx >= 0) {
+          const p = s.trailPositions[idx];
+          mesh.position.set(p.x, p.y, p.z + 0.3); // slightly ahead of position
+          mesh.visible = true;
+        } else {
+          mesh.visible = false;
+        }
+      });
+
+      // ── Obstacle update & collision ───────────────────────────────────────────
+      s.obstacles.forEach((obs) => {
+        const g = obs.group;
+
+        // Speed blur: stretch ring/cross in Z as speed increases
+        if (obs.type === 'ring' || obs.type === 'cross') {
+          g.scale.z = 1 + (s.speed - 0.08) * 4;
+        }
+
+        // Update blade/asteroid dynamics
+        updateObstacle(obs, s.speed);
+
+        // Recycle obstacle when it passes the camera
+        if (g.position.z > camera.position.z + 6) {
+          // Remove old geometry from scene, create fresh obstacle
+          scene.remove(g);
+          g.children.forEach(child => {
+            if ((child as THREE.Mesh).geometry) (child as THREE.Mesh).geometry.dispose();
+            if ((child as THREE.Mesh).material) {
+              const mat = (child as THREE.Mesh).material;
+              if (Array.isArray(mat)) mat.forEach(m => m.dispose()); else mat.dispose();
+            }
+          });
+          const newZ = camera.position.z - 88 - Math.random() * 10;
+          const newType = pickObstacleType(s.timeLeft);
+          const newGap = getGapFraction(s.timeLeft);
+          const newGroup = createObstacle(scene, newZ, newType, newGap);
+          obs.type = newType;
+          obs.group = newGroup;
+          return;
+        }
+
+        // Collision check (skip if invincible)
+        if (s.invincibleFrames > 0) { s.invincibleFrames--; return; }
+
+        if (checkObstacleCollision(camera.position.x, camera.position.y, camera.position.z, obs)) {
+          s.collisions++;
+          s.invincibleFrames = 60;
+          sfx.collision(); haptic([200]);
+          // Flash scene red
+          if (scene) {
+            scene.background = new THREE.Color(0xff0000);
+            setTimeout(() => { if (scene) scene.background = new THREE.Color(0x0d1520); }, 100);
+          }
+        } else if (checkNearMiss(camera.position.x, camera.position.y, camera.position.z, obs)) {
+          const now = Date.now();
+          if (now - s.nearMissLastTime > 800) { sfx.nearMiss(); s.nearMissLastTime = now; }
+        }
+      });
+
+      renderer.render(scene, camera);
+      s.animId = requestAnimationFrame(loop);
+    };
+    s.animId = requestAnimationFrame(loop);
+  }, [endGame, theme]);
+
+  const handleStart = useCallback(async () => {
+    initAudio(); sfx.click();
+    // Max sensitivity: very twitchy and responsive
+    const controller = createTiltController(() => {}, { sensitivity: 1.6, smoothing: 0.3, deadzone: 1, clamp: 15 });
+    tiltControllerRef.current = controller;
+    const success = await controller.start();
+    if (!success) {
+      setJoystickEnabled(true);
+    } else {
+      let got = false;
+      const check = () => { got = true; };
+      window.addEventListener('deviceorientation', check, { once: true });
+      setTimeout(() => {
+        window.removeEventListener('deviceorientation', check);
+        if (!got) setJoystickEnabled(true);
+      }, 1500);
+    }
+    setGameState('countdown');
+  }, []);
+
+  const handlePlayAgain = useCallback(() => {
+    if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
+    if (mountRef.current) mountRef.current.innerHTML = '';
+    tiltControllerRef.current?.stop();
+    tiltControllerRef.current = null;
+    setJoystickEnabled(false);
+    setJoystickThumb({ x: 0, y: 0 });
+    setGameState('start');
+  }, []);
+
+  const handleJoystickTouch = useCallback((e: React.TouchEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    const touch = e.touches[0];
+    if (!touch) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+    const dx = touch.clientX - cx;
+    const dy = touch.clientY - cy;
+    const MAX_RADIUS = 60;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    const nx = dist > 0 ? (dx / dist) * Math.min(1, dist / MAX_RADIUS) : 0;
+    const ny = dist > 0 ? (dy / dist) * Math.min(1, dist / MAX_RADIUS) : 0;
+    stateRef.current.joystickX = nx;
+    stateRef.current.joystickY = ny;
+    const clampedDist = Math.min(dist, MAX_RADIUS);
+    setJoystickThumb({ x: dist > 0 ? (dx / dist) * clampedDist : 0, y: dist > 0 ? (dy / dist) * clampedDist : 0 });
+  }, []);
+
+  const handleJoystickEnd = useCallback(() => {
+    stateRef.current.joystickX = 0;
+    stateRef.current.joystickY = 0;
+    setJoystickThumb({ x: 0, y: 0 });
+  }, []);
+
+  useEffect(() => {
+    const s = stateRef.current;
+    return () => {
+      s.running = false; cancelAnimationFrame(s.animId);
+      if (s.intervalId) clearInterval(s.intervalId);
+      tiltControllerRef.current?.stop();
+      if (s.renderer) { s.renderer.dispose(); s.renderer = null; }
+      if (stopMusicRef.current) stopMusicRef.current();
+    };
+  }, []);
+
+  const accent = theme.colors.accent;
+
+  return (
+    <GameShell title="Infinite Tunnel" emoji="🚀" accentColor="#00ffff" theme={theme}>
+      <div ref={mountRef} style={{ width: '100%', height: '100%', display: gameState === 'playing' ? 'block' : 'none', position: 'relative', zIndex: 1 }} />
+
+      {gameState === 'playing' && (
+        <GameHUD
+          items={[
+            { label: 'SURVIVED', value: `${survivedDisplay}s` },
+            { label: 'TIME', value: `${timeLeft}s`, danger: timeLeft <= 10 },
+          ]}
+          accentColor="#00ffff"
+        />
+      )}
+
+      {/* Joystick overlay */}
+      {joystickEnabled && gameState === 'playing' && (
+        <div
+          style={{
+            position: 'fixed', bottom: 40, left: '50%', transform: 'translateX(-50%)',
+            width: 140, height: 140, borderRadius: '50%',
+            border: '3px solid rgba(0,255,255,0.3)',
+            backgroundColor: 'rgba(0,255,255,0.06)',
+            zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center',
+            touchAction: 'none',
+          }}
+          onTouchStart={handleJoystickTouch}
+          onTouchMove={handleJoystickTouch}
+          onTouchEnd={handleJoystickEnd}
+        >
+          <div style={{
+            width: 80, height: 80, borderRadius: '50%',
+            backgroundColor: 'rgba(0,255,255,0.15)',
+            border: '2px solid rgba(0,255,255,0.5)',
+            transform: `translate(${joystickThumb.x}px, ${joystickThumb.y}px)`,
+            transition: joystickThumb.x === 0 && joystickThumb.y === 0 ? 'transform 0.15s ease' : 'none',
+            pointerEvents: 'none',
+          }} />
+        </div>
+      )}
+
+      {gameState === 'countdown' && <Countdown onComplete={startLoop} accentColor="#00ffff" />}
+
+      {gameState === 'start' && (
+        <GameStartScreen
+          emoji="🚀"
+          title="Infinite Tunnel"
+          description="Tilt to steer. Dodge rings, crosses, blades and asteroid fields. Survive 60 seconds."
+          sensorNote="Uses motion sensors"
+          ctaLabel="Enable Motion & Launch →"
+          accentColor="#00ffff"
+          ctaTextColor="#000"
+          onStart={handleStart}
+        />
+      )}
+
+      {gameState === 'done' && behavior && (
+        <EndScreen
+          gameId="tunnel"
+          title={getProfile(behavior)}
+          emoji="🚀"
+          score={`${behavior.distance}m`}
+          personality={getProfile(behavior)}
+          insights={[
+            { label: 'Distance', value: `${behavior.distance}m`, color: '#00ffff' },
+            { label: 'Collisions', value: String(behavior.collisions), color: behavior.collisions > 5 ? '#ef4444' : '#00ff88' },
+            { label: 'Avg tilt', value: String(behavior.avgTiltMagnitude), color: accent },
+          ]}
+          accentColor="#00ffff"
+          onPlayAgain={handlePlayAgain}
+          didWin={behavior.collisions === 0}
+        />
+      )}
+    </GameShell>
+  );
+}

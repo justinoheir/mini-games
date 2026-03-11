@@ -1,0 +1,432 @@
+'use client';
+import { useEffect, useRef, useState, useCallback } from 'react';
+import * as THREE from 'three';
+import GameShell from '@/components/GameShell';
+import GameHUD from '@/components/GameHUD';
+import GameStartScreen from '@/components/GameStartScreen';
+import Countdown from '@/components/Countdown';
+import EndScreen from '@/components/EndScreen';
+import { initAudio, sfx, haptic, startMusic } from '@/lib/audio';
+import { useBrandTheme } from '@/lib/useBrandTheme';
+import { postWebhook } from '@/lib/webhook';
+import { createTiltController } from '@/lib/tilt';
+
+type GameState = 'start' | 'permissions' | 'countdown' | 'playing' | 'done';
+
+interface BehaviorData {
+  avgVolume: number;
+  avgTilt: number;
+  touchCount: number;
+}
+
+function getPersonality(v: number, m: number, t: number) {
+  if (v >= m && v >= t && v > 55) return 'Verbal 🎙️';
+  if (m >= v && m >= t && m > 55) return 'Kinetic 🏃';
+  if (t >= v && t >= m && t > 55) return 'Tactile 👆';
+  return 'Balanced ⚖️';
+}
+
+// ─── CSS Radar Chart ─────────────────────────────────────────────────────────
+function RadarChart({ voice, movement, touch }: { voice: number; movement: number; touch: number }) {
+  const cx = 100, cy = 100, R = 72;
+  const angles = [-Math.PI / 2, -Math.PI / 2 + (2 * Math.PI) / 3, -Math.PI / 2 + (4 * Math.PI) / 3];
+  const labels = ['🎙️ Voice', '🏃 Move', '👆 Touch'];
+  const scores = [voice / 100, movement / 100, touch / 100];
+  const guide = angles.map(a => ({ x: cx + R * Math.cos(a), y: cy + R * Math.sin(a) }));
+  const data  = scores.map((s, i) => ({ x: cx + s * R * Math.cos(angles[i]), y: cy + s * R * Math.sin(angles[i]) }));
+  const toStr = (pts: { x: number; y: number }[]) => pts.map(p => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ');
+  return (
+    <svg viewBox="0 0 200 200" width={200} height={200} style={{ overflow: 'visible' }}>
+      {guide.map((p, i) => <line key={i} x1={cx} y1={cy} x2={p.x} y2={p.y} stroke="#333" strokeWidth={1} />)}
+      <polygon points={toStr(guide)} fill="none" stroke="#333" strokeWidth={1} />
+      <polygon points={toStr(data)} fill="rgba(168,85,247,0.22)" stroke="#a855f7" strokeWidth={2} />
+      {data.map((p, i) => <circle key={i} cx={p.x} cy={p.y} r={4} fill="#a855f7" />)}
+      {guide.map((p, i) => {
+        const anchor = p.x < cx - 5 ? 'end' : p.x > cx + 5 ? 'start' : 'middle';
+        const dy = p.y < cy - 5 ? -10 : 16;
+        const dx = p.x < cx - 5 ? -8 : p.x > cx + 5 ? 8 : 0;
+        return <text key={i} x={p.x + dx} y={p.y + dy} fontSize={10} fill="#888" textAnchor={anchor}>{labels[i]}</text>;
+      })}
+    </svg>
+  );
+}
+
+export default function PulseSphere() {
+  const theme = useBrandTheme();
+  const mountRef = useRef<HTMLDivElement>(null);
+  const stopMusicRef = useRef<(() => void) | null>(null);
+  const tiltControllerRef = useRef<ReturnType<typeof createTiltController> | null>(null);
+  const stateRef = useRef({
+    renderer: null as THREE.WebGLRenderer | null,
+    scene: null as THREE.Scene | null,
+    camera: null as THREE.PerspectiveCamera | null,
+    sphere: null as THREE.Mesh | null,
+    particles: null as THREE.Points | null,
+    particleBasePos: null as Float32Array | null,
+    animId: 0, running: false,
+    stream: null as MediaStream | null,
+    analyser: null as AnalyserNode | null,
+    audioCtx: null as AudioContext | null,
+    timeLeft: 60, intervalId: null as ReturnType<typeof setInterval> | null,
+    // Tracking
+    volumeSamples: [] as number[],
+    tiltMagnitudes: [] as number[],
+    touchCount: 0,
+    hue: 280,
+    // Joystick
+    joystickX: 0, joystickY: 0,
+    lastShimmerTime: 0,
+    lastWhooshTime: 0,
+  });
+  const [gameState, setGameState] = useState<GameState>('start');
+  const [timeLeft, setTimeLeft] = useState(60);
+  const [behavior, setBehavior] = useState<BehaviorData | null>(null);
+  const [joystickEnabled, setJoystickEnabled] = useState(false);
+  const [joystickThumb, setJoystickThumb] = useState({ x: 0, y: 0 });
+
+  // Verified: uses getByteFrequencyData, RMS formula correct, smoothingTimeConstant=0.3 ✓
+  const getVolume = useCallback((): number => {
+    const s = stateRef.current;
+    if (!s.analyser) return 0;
+    const data = new Uint8Array(s.analyser.frequencyBinCount);
+    s.analyser.getByteFrequencyData(data);
+    const sumSq = data.reduce((acc, v) => acc + v * v, 0);
+    return Math.min(100, (Math.sqrt(sumSq / data.length) / 128) * 100);
+  }, []);
+
+  const endGame = useCallback((capturedTheme: typeof theme) => {
+    const s = stateRef.current;
+    s.running = false;
+    cancelAnimationFrame(s.animId);
+    if (s.intervalId) clearInterval(s.intervalId);
+    if (s.stream) s.stream.getTracks().forEach(t => t.stop());
+    if (s.audioCtx) s.audioCtx.close().catch(()=>{/* ignore */});
+    if (s.renderer) { s.renderer.dispose(); s.renderer = null; }
+    if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
+    tiltControllerRef.current?.stop();
+    const avgVol = s.volumeSamples.length > 0 ? s.volumeSamples.reduce((a,b)=>a+b,0)/s.volumeSamples.length : 0;
+    const avgTilt = s.tiltMagnitudes.length > 0 ? s.tiltMagnitudes.reduce((a,b)=>a+b,0)/s.tiltMagnitudes.length : 0;
+    const voiceScore = Math.min(100, Math.round(avgVol));
+    const moveScore = Math.min(100, Math.round(avgTilt * 100));
+    const touchScore = Math.min(100, Math.round((s.touchCount / 30) * 100));
+    const bData: BehaviorData = { avgVolume: voiceScore, avgTilt: moveScore, touchCount: touchScore };
+    setBehavior(bData);
+    setGameState('done');
+    postWebhook(capturedTheme, 'pulse-sphere', { score: getPersonality(voiceScore, moveScore, touchScore), personality: getPersonality(voiceScore, moveScore, touchScore), signals: bData });
+  }, []);
+
+  const startLoop = useCallback(() => {
+    const s = stateRef.current;
+    s.volumeSamples = []; s.tiltMagnitudes = []; s.touchCount = 0;
+    s.timeLeft = 60; s.running = true; s.hue = 280;
+    s.joystickX = 0; s.joystickY = 0;
+    setTimeLeft(60); setGameState('playing');
+    stopMusicRef.current = startMusic('ambient');
+    const capturedTheme = theme;
+
+    const W = window.innerWidth, H = window.innerHeight;
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+    renderer.setSize(W, H);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setClearColor(0x0a0818);
+    if (mountRef.current) { mountRef.current.innerHTML = ''; mountRef.current.appendChild(renderer.domElement); }
+
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(60, W / H, 0.1, 200);
+    camera.position.set(0, 0, 6);
+
+    // Star field
+    const starCount = 1200;
+    const starPos = new Float32Array(starCount * 3);
+    for (let i = 0; i < starCount; i++) {
+      starPos[i*3]   = (Math.random()-0.5)*120;
+      starPos[i*3+1] = (Math.random()-0.5)*120;
+      starPos[i*3+2] = (Math.random()-0.5)*120;
+    }
+    const starGeo = new THREE.BufferGeometry();
+    starGeo.setAttribute('position', new THREE.BufferAttribute(starPos, 3));
+    scene.add(new THREE.Points(starGeo, new THREE.PointsMaterial({ color: 0xffffff, size: 0.08 })));
+
+    // Ambient + point lights
+    scene.add(new THREE.AmbientLight(0x221133, 2));
+    const pointLight = new THREE.PointLight(0xa855f7, 3, 20);
+    pointLight.position.set(0, 0, 4);
+    scene.add(pointLight);
+
+    // Sphere
+    const sphereGeo = new THREE.SphereGeometry(1, 32, 32);
+    const sphereMat = new THREE.MeshPhongMaterial({ color: 0xa855f7, emissive: 0x3b0070, shininess: 80 });
+    const sphere = new THREE.Mesh(sphereGeo, sphereMat);
+    scene.add(sphere);
+    s.sphere = sphere;
+
+    // 200 orbiting particles
+    const PARTICLE_COUNT = 200;
+    const pPos = new Float32Array(PARTICLE_COUNT * 3);
+    const basePos = new Float32Array(PARTICLE_COUNT * 3);
+    for (let i = 0; i < PARTICLE_COUNT; i++) {
+      const theta = Math.random() * Math.PI * 2;
+      const phi = Math.acos(2 * Math.random() - 1);
+      const r = 1.8 + Math.random() * 0.6;
+      basePos[i*3]   = r * Math.sin(phi) * Math.cos(theta);
+      basePos[i*3+1] = r * Math.sin(phi) * Math.sin(theta);
+      basePos[i*3+2] = r * Math.cos(phi);
+      pPos[i*3] = basePos[i*3]; pPos[i*3+1] = basePos[i*3+1]; pPos[i*3+2] = basePos[i*3+2];
+    }
+    const pGeo = new THREE.BufferGeometry();
+    pGeo.setAttribute('position', new THREE.BufferAttribute(pPos, 3));
+    const particles = new THREE.Points(pGeo, new THREE.PointsMaterial({ color: 0xa855f7, size: 0.06, transparent: true, opacity: 0.85 }));
+    scene.add(particles);
+    s.particles = particles;
+    s.particleBasePos = basePos;
+
+    s.renderer = renderer; s.scene = scene; s.camera = camera;
+
+    s.intervalId = setInterval(() => {
+      if (!s.running) return;
+      s.timeLeft--;
+      setTimeLeft(s.timeLeft);
+      if (s.timeLeft <= 0) endGame(capturedTheme);
+    }, 1000);
+
+    const loop = () => {
+      if (!s.running) return;
+      const vol = getVolume();
+      s.volumeSamples.push(vol);
+
+      // Tilt input: combine deviceorientation + joystick
+      const tilt = tiltControllerRef.current?.getValues() ?? { x: 0, y: 0 };
+      const inputX = tilt.x + s.joystickX;
+      const inputY = tilt.y + s.joystickY;
+
+      // Track tilt magnitude
+      const tiltMag = Math.sqrt(inputX * inputX + inputY * inputY);
+      s.tiltMagnitudes.push(tiltMag);
+
+      // Whoosh on strong tilt
+      if (tiltMag > 0.6) {
+        const now = Date.now();
+        if (now - s.lastWhooshTime > 600) { sfx.whoosh(); s.lastWhooshTime = now; }
+      }
+
+      // Sphere scale from mic (0.8 → 2.5x)
+      const targetScale = 0.8 + (vol / 100) * 1.7;
+      if (sphere) {
+        sphere.scale.setScalar(sphere.scale.x * 0.85 + targetScale * 0.15);
+        // Rotation from tilt — 0.05 per frame per unit of tilt
+        sphere.rotation.x += inputY * 0.05 + 0.005;
+        sphere.rotation.y += inputX * 0.05 + 0.008;
+        // Color from hue
+        const color = new THREE.Color();
+        color.setHSL(s.hue / 360, 0.75, 0.5);
+        (sphere.material as THREE.MeshPhongMaterial).color = color;
+        (sphere.material as THREE.MeshPhongMaterial).emissive.copy(color).multiplyScalar(0.3);
+        pointLight.color = color;
+      }
+
+      // Particles expand with volume
+      if (particles && s.particleBasePos) {
+        const expansion = 1 + (vol / 100) * 0.9;
+        const pAttr = pGeo.attributes.position as THREE.BufferAttribute;
+        const posArr = pAttr.array as Float32Array;
+        for (let i = 0; i < PARTICLE_COUNT; i++) {
+          posArr[i*3]   = s.particleBasePos[i*3]   * expansion;
+          posArr[i*3+1] = s.particleBasePos[i*3+1] * expansion;
+          posArr[i*3+2] = s.particleBasePos[i*3+2] * expansion;
+        }
+        pAttr.needsUpdate = true;
+        particles.rotation.y += 0.004;
+        const pColor = new THREE.Color();
+        pColor.setHSL(s.hue / 360, 0.8, 0.65);
+        (particles.material as THREE.PointsMaterial).color = pColor;
+      }
+
+      renderer.render(scene, camera);
+      s.animId = requestAnimationFrame(loop);
+    };
+    s.animId = requestAnimationFrame(loop);
+  }, [getVolume, endGame, theme]);
+
+  const handleStart = useCallback(async () => {
+    initAudio(); sfx.click();
+    setGameState('permissions');
+    try {
+      // Start tilt controller (handles iOS permission internally, must be from button click)
+      const controller = createTiltController(() => {}, { sensitivity: 0.8, smoothing: 0.5, deadzone: 2, clamp: 28 });
+      tiltControllerRef.current = controller;
+      const tiltOk = await controller.start();
+      if (!tiltOk) {
+        setJoystickEnabled(true);
+      } else {
+        let got = false;
+        const check = () => { got = true; };
+        window.addEventListener('deviceorientation', check, { once: true });
+        setTimeout(() => {
+          window.removeEventListener('deviceorientation', check);
+          if (!got) setJoystickEnabled(true);
+        }, 1500);
+      }
+
+      // Mic permission
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const audioCtx = new AudioContext();
+      const source = audioCtx.createMediaStreamSource(stream);
+      const analyser = audioCtx.createAnalyser();
+      // Verified: getByteFrequencyData, smoothingTimeConstant=0.3
+      analyser.fftSize = 256; analyser.smoothingTimeConstant = 0.3;
+      source.connect(analyser);
+      const s = stateRef.current;
+      s.stream = stream; s.analyser = analyser; s.audioCtx = audioCtx;
+      setGameState('countdown');
+    } catch {
+      alert('Microphone access needed. Please allow and try again.');
+      tiltControllerRef.current?.stop();
+      tiltControllerRef.current = null;
+      setGameState('start');
+    }
+  }, []);
+
+  const handlePlayAgain = useCallback(() => {
+    if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
+    if (mountRef.current) mountRef.current.innerHTML = '';
+    tiltControllerRef.current?.stop();
+    tiltControllerRef.current = null;
+    setJoystickEnabled(false);
+    setJoystickThumb({ x: 0, y: 0 });
+    setGameState('start');
+  }, []);
+
+  // Joystick touch handlers
+  const handleJoystickTouch = useCallback((e: React.TouchEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    const touch = e.touches[0];
+    if (!touch) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+    const dx = touch.clientX - cx;
+    const dy = touch.clientY - cy;
+    const MAX_RADIUS = 60;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    const nx = dist > 0 ? (dx / dist) * Math.min(1, dist / MAX_RADIUS) : 0;
+    const ny = dist > 0 ? (dy / dist) * Math.min(1, dist / MAX_RADIUS) : 0;
+    stateRef.current.joystickX = nx;
+    stateRef.current.joystickY = ny;
+    const clampedDist = Math.min(dist, MAX_RADIUS);
+    setJoystickThumb({ x: dist > 0 ? (dx / dist) * clampedDist : 0, y: dist > 0 ? (dy / dist) * clampedDist : 0 });
+  }, []);
+
+  const handleJoystickEnd = useCallback(() => {
+    stateRef.current.joystickX = 0;
+    stateRef.current.joystickY = 0;
+    setJoystickThumb({ x: 0, y: 0 });
+  }, []);
+
+  // Touch: hue shift + count (separate from joystick — handled on mount div)
+  useEffect(() => {
+    const mount = mountRef.current; if (!mount) return;
+    const onTouch = () => {
+      const s = stateRef.current;
+      if (!s.running) return;
+      s.hue = (s.hue + 15) % 360;
+      s.touchCount++;
+      sfx.shimmer(); haptic([20]);
+      const now = Date.now();
+      if (now - s.lastShimmerTime > 300) s.lastShimmerTime = now;
+    };
+    mount.addEventListener('touchstart', onTouch);
+    return () => mount.removeEventListener('touchstart', onTouch);
+  }, []);
+
+  useEffect(() => () => {
+    const s = stateRef.current;
+    s.running = false; cancelAnimationFrame(s.animId);
+    if (s.intervalId) clearInterval(s.intervalId);
+    if (s.stream) s.stream.getTracks().forEach(t => t.stop());
+    if (s.audioCtx) s.audioCtx.close().catch(()=>{/* ignore */});
+    if (s.renderer) { s.renderer.dispose(); s.renderer = null; }
+    if (stopMusicRef.current) stopMusicRef.current();
+    tiltControllerRef.current?.stop();
+  }, []);
+
+  const accent = theme.colors.accent;
+
+  return (
+    <GameShell title="Pulse Sphere" emoji="🔮" accentColor={accent} theme={theme}>
+      <div ref={mountRef} style={{ width:'100%', height:'100%', display: gameState==='playing' ? 'block' : 'none', position:'relative', zIndex:1 }} />
+
+      {gameState==='playing' && (
+        <GameHUD
+          items={[{ label: 'TIME', value: `${timeLeft}s`, danger: timeLeft <= 10 }]}
+          accentColor="#a855f7"
+        />
+      )}
+      {/* Joystick overlay */}
+      {joystickEnabled && gameState === 'playing' && (
+        <div
+          style={{
+            position: 'fixed', bottom: 40, left: '50%', transform: 'translateX(-50%)',
+            width: 140, height: 140, borderRadius: '50%',
+            border: '3px solid rgba(168,85,247,0.3)',
+            backgroundColor: 'rgba(168,85,247,0.06)',
+            zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center',
+            touchAction: 'none',
+          }}
+          onTouchStart={handleJoystickTouch}
+          onTouchMove={handleJoystickTouch}
+          onTouchEnd={handleJoystickEnd}
+        >
+          <div style={{
+            width: 80, height: 80, borderRadius: '50%',
+            backgroundColor: 'rgba(168,85,247,0.2)',
+            border: '2px solid rgba(168,85,247,0.5)',
+            transform: `translate(${joystickThumb.x}px, ${joystickThumb.y}px)`,
+            transition: joystickThumb.x === 0 && joystickThumb.y === 0 ? 'transform 0.15s ease' : 'none',
+            pointerEvents: 'none',
+          }} />
+        </div>
+      )}
+      {gameState==='countdown' && <Countdown onComplete={startLoop} accentColor="#a855f7" />}
+
+      {gameState==='start' && (
+        <GameStartScreen
+          emoji="🔮"
+          title="Pulse Sphere"
+          description="Touch, move, and breathe to awaken the sphere. Your inputs shape it in real time."
+          sensorNote="Uses mic, motion & touch"
+          ctaLabel="Allow Access & Begin →"
+          accentColor="#a855f7"
+          ctaTextColor="#fff"
+          onStart={handleStart}
+        />
+      )}
+
+      {gameState==='permissions' && (
+        <div style={{ display:'flex', alignItems:'center', justifyContent:'center', height:'100%', color:'var(--color-text-secondary)' }}>Requesting access…</div>
+      )}
+
+      {gameState==='done' && behavior && (() => {
+        const voiceScore = behavior.avgVolume;
+        const moveScore = behavior.avgTilt;
+        const touchScore = behavior.touchCount;
+        const personality = getPersonality(voiceScore, moveScore, touchScore);
+        return (
+          <EndScreen
+            gameId="pulse-sphere"
+            title={personality}
+            emoji="🔮"
+            score={`${voiceScore}% voice`}
+            personality={personality}
+            insights={[
+              { label: '🎙️ Voice engagement', value: `${voiceScore}%`, color: '#3b82f6' },
+              { label: '🏃 Movement engagement', value: `${moveScore}%`, color: '#00ff88' },
+              { label: '👆 Touch engagement', value: `${touchScore}%`, color: '#a855f7' },
+            ]}
+            accentColor="#a855f7"
+            onPlayAgain={handlePlayAgain}
+          />
+        );
+      })()}
+    </GameShell>
+  );
+}

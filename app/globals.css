@@ -1,0 +1,33 @@
+:root {
+  --color-bg:             #1a2028;
+  --color-surface:        #111820;
+  --color-surface-raised: #1e2733;
+  --color-border:         rgba(255, 255, 255, 0.08);
+  --color-text:           #ffffff;
+  --color-text-secondary: #8a9bb0;
+  --color-accent:         #00ff88;
+  --color-primary:        #00ff88;
+  --font-display:         'Inter', system-ui, sans-serif;
+  --font-family:          'Inter', system-ui, sans-serif;
+  --radius-pill:          12px;
+  --radius-card:          16px;
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-display);
+  -webkit-font-smoothing: antialiased;
+}
+
+canvas {
+  display: block;
+  touch-action: none;
+}
