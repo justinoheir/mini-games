@@ -31,10 +31,10 @@ export const DEFAULT_THEME: BrandTheme = {
   colors: {
     primary:       '#00ff88',
     accent:        '#00ff88',
-    background:    '#0a0a0a',
-    card:          '#111111',
-    text:          '#ffffff',
-    textSecondary: '#666666',
+    background:    '#08090f',
+    card:          '#0e1018',
+    text:          '#f0f4ff',
+    textSecondary: '#6b7a99',
   },
 };
 

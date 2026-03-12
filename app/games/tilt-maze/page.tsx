@@ -10,14 +10,51 @@ import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
 import { createTiltController } from '@/lib/tilt';
 
-const MAZE_WALLS: { top: number; right: number; bottom: number; left: number }[][] = [
+type MazeCell = { top: number; right: number; bottom: number; left: number };
+const GRID = 5;
+
+function generateMaze(grid: number): MazeCell[][] {
+  const cells: MazeCell[][] = Array.from({ length: grid }, () =>
+    Array.from({ length: grid }, () => ({ top: 1, right: 1, bottom: 1, left: 1 }))
+  );
+  const visited = Array.from({ length: grid }, () => new Array<boolean>(grid).fill(false));
+
+  function carve(r: number, c: number) {
+    visited[r][c] = true;
+    const dirs: [number, number, keyof MazeCell, keyof MazeCell][] = [
+      [0, 1, 'right', 'left'],
+      [-1, 0, 'top', 'bottom'],
+      [0, -1, 'left', 'right'],
+      [1, 0, 'bottom', 'top'],
+    ].sort(() => Math.random() - 0.5) as [number, number, keyof MazeCell, keyof MazeCell][];
+    for (const [dr, dc, wall, opposite] of dirs) {
+      const nr = r + dr, nc = c + dc;
+      if (nr >= 0 && nr < grid && nc >= 0 && nc < grid && !visited[nr][nc]) {
+        cells[r][c][wall] = 0;
+        cells[nr][nc][opposite] = 0;
+        carve(nr, nc);
+      }
+    }
+  }
+  carve(0, 0);
+  // Always enforce border walls on outermost edges
+  for (let i = 0; i < grid; i++) {
+    cells[0][i].top = 1;
+    cells[grid - 1][i].bottom = 1;
+    cells[i][0].left = 1;
+    cells[i][grid - 1].right = 1;
+  }
+  return cells;
+}
+
+// Fallback static maze (used on initial render before game starts)
+const STATIC_MAZE: MazeCell[][] = [
   [{top:1,right:0,bottom:0,left:1},{top:1,right:0,bottom:1,left:0},{top:1,right:1,bottom:0,left:0},{top:1,right:0,bottom:1,left:1},{top:1,right:1,bottom:1,left:0}],
   [{top:0,right:1,bottom:0,left:1},{top:1,right:0,bottom:0,left:1},{top:0,right:0,bottom:1,left:0},{top:1,right:1,bottom:0,left:0},{top:1,right:1,bottom:0,left:1}],
   [{top:0,right:0,bottom:1,left:1},{top:0,right:1,bottom:0,left:0},{top:1,right:0,bottom:0,left:1},{top:0,right:0,bottom:1,left:0},{top:0,right:1,bottom:1,left:0}],
   [{top:1,right:0,bottom:0,left:1},{top:0,right:1,bottom:1,left:0},{top:0,right:0,bottom:0,left:1},{top:1,right:0,bottom:0,left:0},{top:1,right:1,bottom:0,left:0}],
   [{top:0,right:0,bottom:1,left:1},{top:1,right:0,bottom:1,left:0},{top:0,right:0,bottom:1,left:0},{top:0,right:1,bottom:1,left:0},{top:0,right:1,bottom:1,left:1}],
 ];
-const GRID = 5;
 
 interface BehaviorData {
   collisions: number; correctionTimes: number[];
@@ -48,6 +85,7 @@ export default function TiltMaze() {
     ballTrail: [] as { x: number; y: number }[],
     running: false,
     accentColor: '#a855f7',
+    maze: STATIC_MAZE as MazeCell[][],
   });
   const [gameState, setGameState] = useState<GameState>('start');
   const [timeLeft, setTimeLeft] = useState(60);
@@ -60,10 +98,11 @@ export default function TiltMaze() {
   const drawMaze = useCallback((ctx2d: CanvasRenderingContext2D, cs: number, ox: number, oy: number, accent: string) => {
     ctx2d.strokeStyle = accent;
     ctx2d.lineWidth = 2;
+    const maze = stateRef.current.maze;
     for (let r = 0; r < GRID; r++) {
       for (let c = 0; c < GRID; c++) {
         const x = ox + c * cs, y = oy + r * cs;
-        const w = MAZE_WALLS[r][c];
+        const w = maze[r][c];
         if (w.top)    { ctx2d.beginPath(); ctx2d.moveTo(x,y);    ctx2d.lineTo(x+cs,y);    ctx2d.stroke(); }
         if (w.right)  { ctx2d.beginPath(); ctx2d.moveTo(x+cs,y); ctx2d.lineTo(x+cs,y+cs); ctx2d.stroke(); }
         if (w.bottom) { ctx2d.beginPath(); ctx2d.moveTo(x,y+cs); ctx2d.lineTo(x+cs,y+cs); ctx2d.stroke(); }
@@ -80,7 +119,7 @@ export default function TiltMaze() {
     const col = Math.floor((bx - ox) / cs), row = Math.floor((by - oy) / cs);
     let nvx = vx, nvy = vy, hit = false;
     if (row >= 0 && row < GRID && col >= 0 && col < GRID) {
-      const w = MAZE_WALLS[row][col];
+      const w = stateRef.current.maze[row][col];
       const cx2 = ox + col * cs, cy2 = oy + row * cs;
       if (w.top    && by - radius < cy2)      { nvy =  Math.abs(nvy); hit = true; }
       if (w.bottom && by + radius > cy2 + cs) { nvy = -Math.abs(nvy); hit = true; }
@@ -123,6 +162,7 @@ export default function TiltMaze() {
     s.behavior = { collisions: 0, correctionTimes: [], completionTime: null, timedOut: false };
     s.timeLeft = 60; s.velX = 0; s.velY = 0; s.running = true;
     s.ballTrail = []; s.wallFlashUntil = 0; s.joystickX = 0; s.joystickY = 0;
+    s.maze = generateMaze(GRID);
     setGameState('playing'); setTimeLeft(60);
     stopMusicRef.current = startMusic('tense');
     const capturedTheme = theme;

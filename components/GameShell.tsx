@@ -1,5 +1,5 @@
 'use client';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { ThemeContext } from '@/lib/ThemeContext';
 import { BrandTheme, DEFAULT_THEME } from '@/lib/brands';
@@ -17,6 +17,7 @@ interface GameShellProps {
 export default function GameShell({ title, emoji, accentColor, children, theme }: GameShellProps) {
   const router = useRouter();
   const resolvedTheme = theme ?? DEFAULT_THEME;
+  const [backHovered, setBackHovered] = useState(false);
 
   useEffect(() => {
     applyTheme(resolvedTheme);
@@ -36,31 +37,37 @@ export default function GameShell({ title, emoji, accentColor, children, theme }
           fontFamily: 'var(--font-display)',
         }}
       >
-        {/* Top bar — flat dark, 56px */}
+        {/* Top bar — glass morphism */}
         <div
           style={{
             position: 'absolute',
-            top: 0, left: 0, right: 0,
+            top: 0,
+            left: 0,
+            right: 0,
             height: 56,
             zIndex: 300,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
             padding: '0 8px',
-            background: 'var(--color-surface)',
-            borderBottom: '1px solid var(--color-border)',
+            background: 'rgba(8, 9, 15, 0.8)',
+            backdropFilter: 'blur(12px)',
+            WebkitBackdropFilter: 'blur(12px)',
+            borderBottom: '1px solid rgba(255, 255, 255, 0.06)',
           }}
         >
           {/* Back arrow — 44px tap target */}
           <button
             onClick={() => router.push('/')}
+            onMouseEnter={() => setBackHovered(true)}
+            onMouseLeave={() => setBackHovered(false)}
             aria-label="Back"
             style={{
               width: 44,
               height: 44,
               borderRadius: 10,
               border: 'none',
-              background: 'transparent',
+              background: backHovered ? 'rgba(255, 255, 255, 0.06)' : 'transparent',
               color: '#fff',
               fontSize: 20,
               fontWeight: 700,
@@ -69,6 +76,7 @@ export default function GameShell({ title, emoji, accentColor, children, theme }
               alignItems: 'center',
               justifyContent: 'center',
               flexShrink: 0,
+              transition: 'background 0.15s',
             }}
           >
             ←

@@ -2,6 +2,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import CrossGameProfile from '@/components/CrossGameProfile';
 
 const SKILL_GAMES = [
   {
@@ -110,40 +111,72 @@ const SPORTS_GAMES = [
 
 const ALL_GAMES = [...SKILL_GAMES, ...SPORTS_GAMES];
 
-function GameCard({ game, played, score }: { game: typeof ALL_GAMES[0]; played: boolean; score?: string }) {
+function GameCard({
+  game,
+  played,
+  personality,
+}: {
+  game: typeof ALL_GAMES[0];
+  played: boolean;
+  personality?: string;
+}) {
+  const [hovered, setHovered] = useState(false);
+
   return (
-    <Link href={game.href} style={{ textDecoration: 'none' }}>
+    <Link href={game.href} style={{ textDecoration: 'none' }} data-testid="game-card">
       <div
         style={{
-          backgroundColor: 'var(--color-surface)',
+          backgroundColor: hovered ? 'var(--color-surface-raised)' : 'var(--color-surface)',
           border: played
-            ? `1px solid var(--color-border)`
+            ? `1px solid ${game.accentColor}44`
             : '1px solid var(--color-border)',
-          borderLeft: played ? `3px solid ${game.accentColor}` : '1px solid var(--color-border)',
+          borderLeft: played
+            ? `3px solid ${game.accentColor}`
+            : hovered
+            ? '1px solid var(--color-border-strong)'
+            : '1px solid var(--color-border)',
           borderRadius: 'var(--radius-card)',
-          height: 88,
-          padding: '0 16px',
+          height: 96,
+          padding: '0 16px 0 12px',
           display: 'flex',
           alignItems: 'center',
-          gap: 16,
+          gap: 14,
           cursor: 'pointer',
-          boxShadow: played ? `0 0 16px ${game.accentColor}14` : 'none',
-          transition: 'background 0.15s',
+          boxShadow: played ? `0 0 20px ${game.accentColor}12` : 'none',
+          transition: 'background 0.15s, transform 0.15s, box-shadow 0.15s',
+          transform: hovered ? 'translateY(-1px)' : 'translateY(0)',
+          position: 'relative',
+          overflow: 'hidden',
         }}
-        onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'var(--color-surface-raised)')}
-        onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'var(--color-surface)')}
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
       >
+        {/* Shimmer overlay for played cards */}
+        {played && (
+          <div
+            style={{
+              position: 'absolute',
+              inset: 0,
+              background: `linear-gradient(90deg, transparent 0%, ${game.accentColor}08 50%, transparent 100%)`,
+              backgroundSize: '200% 100%',
+              animation: 'shimmer 3s linear infinite',
+              pointerEvents: 'none',
+            }}
+          />
+        )}
+
         {/* Emoji circle */}
         <div
           style={{
-            width: 52,
-            height: 52,
+            width: 56,
+            height: 56,
             borderRadius: '50%',
-            backgroundColor: `${game.accentColor}22`,
+            background: `radial-gradient(circle at 40% 40%, ${game.accentColor}33 0%, transparent 70%)`,
+            boxShadow: `0 0 12px ${game.accentColor}22`,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            fontSize: 26,
+            fontSize: 28,
             flexShrink: 0,
           }}
         >
@@ -152,52 +185,127 @@ function GameCard({ game, played, score }: { game: typeof ALL_GAMES[0]; played: 
 
         {/* Text */}
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ color: 'var(--color-text)', fontWeight: 700, fontSize: 16, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{game.title}</div>
-          <div style={{ color: 'var(--color-text-secondary)', fontSize: 13, marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{game.tagline}</div>
+          <div
+            style={{
+              color: 'var(--color-text)',
+              fontWeight: 700,
+              fontSize: 17,
+              whiteSpace: 'nowrap',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              letterSpacing: '-0.2px',
+            }}
+          >
+            {game.title}
+          </div>
+          <div
+            style={{
+              color: 'var(--color-text-secondary)',
+              fontSize: 13,
+              marginTop: 3,
+              whiteSpace: 'nowrap',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+            }}
+          >
+            {game.tagline}
+          </div>
         </div>
 
-        {/* Right */}
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4, flexShrink: 0 }}>
-          {played && score ? (
-            <div style={{
-              backgroundColor: `${game.accentColor}22`,
-              color: game.accentColor,
-              fontSize: 11,
-              fontWeight: 700,
-              padding: '4px 10px',
-              borderRadius: 8,
-              whiteSpace: 'nowrap',
-            }}>
-              {score}
+        {/* Right badge + arrow */}
+        <div
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'flex-end',
+            gap: 5,
+            flexShrink: 0,
+          }}
+        >
+          {played && personality ? (
+            <div
+              style={{
+                backgroundColor: `${game.accentColor}22`,
+                color: game.accentColor,
+                fontSize: 11,
+                fontWeight: 700,
+                padding: '4px 10px',
+                borderRadius: 8,
+                whiteSpace: 'nowrap',
+                border: `1px solid ${game.accentColor}44`,
+                boxShadow: `0 0 8px ${game.accentColor}22`,
+              }}
+            >
+              {personality}
             </div>
-          ) : (
-            <div style={{
-              backgroundColor: 'var(--color-surface-raised)',
-              color: 'var(--color-text-secondary)',
-              fontSize: 11,
-              fontWeight: 600,
-              padding: '4px 10px',
-              borderRadius: 8,
-            }}>
+          ) : !played ? (
+            <div
+              style={{
+                backgroundColor: 'transparent',
+                color: 'var(--color-text-secondary)',
+                fontSize: 11,
+                fontWeight: 600,
+                padding: '4px 10px',
+                borderRadius: 8,
+                border: '1px solid var(--color-border)',
+              }}
+            >
               {game.duration}
             </div>
-          )}
-          {played ? (
-            <span style={{ color: game.accentColor, fontSize: 16, lineHeight: 1 }}>✓</span>
-          ) : (
-            <span style={{ color: 'var(--color-text-secondary)', fontSize: 16, lineHeight: 1 }}>›</span>
-          )}
+          ) : null}
+          <span
+            style={{
+              color: played ? game.accentColor : 'var(--color-text-secondary)',
+              fontSize: 16,
+              lineHeight: 1,
+            }}
+          >
+            {played ? '✓' : '›'}
+          </span>
         </div>
       </div>
     </Link>
   );
 }
 
+function SectionHeader({ icon, label }: { icon: string; label: string }) {
+  return (
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 10,
+        marginBottom: 12,
+      }}
+    >
+      <span style={{ fontSize: 14 }}>{icon}</span>
+      <span
+        style={{
+          color: 'var(--color-text)',
+          fontSize: 12,
+          fontWeight: 700,
+          textTransform: 'uppercase',
+          letterSpacing: '0.12em',
+        }}
+      >
+        {label}
+      </span>
+      <div
+        style={{
+          flex: 1,
+          height: 1,
+          background: 'var(--color-border-strong)',
+          marginLeft: 4,
+        }}
+      />
+    </div>
+  );
+}
+
 export default function Home() {
   const router = useRouter();
-  const [userName, setUserName] = useState<string | null>(null);
   const [playedCount, setPlayedCount] = useState(0);
-  const [scores, setScores] = useState<Record<string, { score: string }>>({});
+  const [scores, setScores] = useState<Record<string, { score: string; personality?: string }>>({});
   const [visible, setVisible] = useState(false);
 
   useEffect(() => {
@@ -207,8 +315,6 @@ export default function Home() {
         router.replace('/onboarding');
         return;
       }
-      const user = JSON.parse(userRaw);
-      setUserName(user.name || 'Friend');
       const played: string[] = JSON.parse(localStorage.getItem('mg_played') || '[]');
       setPlayedCount(played.length);
       const sc = JSON.parse(localStorage.getItem('mg_scores') || '{}');
@@ -224,39 +330,90 @@ export default function Home() {
       style={{
         background: 'var(--color-bg)',
         minHeight: '100vh',
-        padding: '48px 16px 40px',
+        padding: '48px 16px 56px',
         transition: 'opacity 0.3s',
         opacity: visible ? 1 : 0,
+        position: 'relative',
       }}
     >
-      <div style={{ maxWidth: 480, margin: '0 auto' }}>
+      {/* Atmospheric radial gradient */}
+      <div
+        style={{
+          position: 'fixed',
+          top: 0,
+          left: '50%',
+          transform: 'translateX(-50%)',
+          width: 600,
+          height: 600,
+          borderRadius: '50%',
+          background: 'radial-gradient(circle, rgba(0,255,136,0.05) 0%, transparent 70%)',
+          pointerEvents: 'none',
+          zIndex: 0,
+        }}
+      />
+
+      <div style={{ maxWidth: 480, margin: '0 auto', position: 'relative', zIndex: 1 }}>
         {/* Wordmark */}
-        <div style={{ marginBottom: 24 }}>
-          <span style={{ color: 'var(--color-text-secondary)', fontSize: 13, fontWeight: 600, letterSpacing: '0.04em' }}>
-            ⚡ Ether
+        <div style={{ marginBottom: 20 }}>
+          <span
+            style={{
+              color: 'var(--color-accent)',
+              fontSize: 12,
+              fontWeight: 700,
+              letterSpacing: '0.15em',
+              textTransform: 'uppercase',
+            }}
+          >
+            ⚡ ETHER
           </span>
         </div>
 
-        {/* Header */}
-        <div style={{ marginBottom: 28 }}>
-          <h1 style={{ color: 'var(--color-text)', fontSize: 32, fontWeight: 800, margin: '0 0 8px', letterSpacing: '-0.5px', lineHeight: 1.15 }}>
-            What kind of player{'\u00a0'}are you?
+        {/* Hero */}
+        <div style={{ marginBottom: 32 }}>
+          <h1
+            style={{
+              color: 'var(--color-text)',
+              fontSize: 36,
+              fontWeight: 700,
+              margin: '0 0 8px',
+              letterSpacing: '-0.5px',
+              lineHeight: 1.1,
+            }}
+          >
+            Play. Reveal yourself.
           </h1>
-          <p style={{ color: 'var(--color-text-secondary)', fontSize: 16, margin: '0 0 20px', lineHeight: 1.5 }}>
-            11 micro-games. 60 seconds each. Real behavioral insights.
+          <p
+            style={{
+              color: 'var(--color-text-secondary)',
+              fontSize: 15,
+              margin: '0 0 20px',
+              lineHeight: 1.5,
+            }}
+          >
+            11 games. 60 seconds each. Real signals.
           </p>
 
           {/* Progress pill */}
-          <div style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 6,
-            backgroundColor: 'var(--color-surface)',
-            border: '1px solid var(--color-border)',
-            borderRadius: 'var(--radius-pill)',
-            padding: '6px 14px',
-          }}>
-            <div style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: 'var(--color-accent)' }} />
+          <div
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 8,
+              backgroundColor: 'var(--color-surface)',
+              border: '1px solid var(--color-border)',
+              borderRadius: 'var(--radius-pill)',
+              padding: '6px 14px',
+            }}
+          >
+            <div
+              style={{
+                width: 8,
+                height: 8,
+                borderRadius: '50%',
+                backgroundColor: 'var(--color-accent)',
+                animation: 'dot-pulse 1.8s ease-in-out infinite',
+              }}
+            />
             <span style={{ color: 'var(--color-text)', fontSize: 13, fontWeight: 700 }}>
               {playedCount} of {ALL_GAMES.length} played
             </span>
@@ -265,50 +422,62 @@ export default function Home() {
 
         {/* Skill Games section */}
         <div style={{ marginBottom: 8 }}>
-          <div style={{ color: 'var(--color-text-secondary)', fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 10 }}>
-            🎮 Skill Games
-          </div>
+          <SectionHeader icon="🎮" label="Skill Games" />
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {SKILL_GAMES.map((game) => (
               <GameCard
                 key={game.id}
                 game={game}
                 played={!!scores[game.id]}
-                score={scores[game.id]?.score}
+                personality={scores[game.id]?.personality}
               />
             ))}
           </div>
         </div>
 
         {/* Sports Games section */}
-        <div style={{ marginTop: 24, marginBottom: 8 }}>
-          <div style={{ color: 'var(--color-text-secondary)', fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 10 }}>
-            ⚽ Sports Games
-          </div>
+        <div style={{ marginTop: 28, marginBottom: 8 }}>
+          <SectionHeader icon="⚽" label="Sports Games" />
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {SPORTS_GAMES.map((game) => (
               <GameCard
                 key={game.id}
                 game={game}
                 played={!!scores[game.id]}
-                score={scores[game.id]?.score}
+                personality={scores[game.id]?.personality}
               />
             ))}
           </div>
         </div>
 
-        {/* Footer */}
-        <p style={{ color: 'var(--color-text-secondary)', fontSize: 11, textAlign: 'center', marginTop: 32, opacity: 0.5 }}>
-          All games use mic, motion sensors, or camera for deeper insights.
-        </p>
-      </div>
+        {/* Cross-game behavioral profile — shown after 3+ games */}
+        {playedCount >= 3 && (
+          <div style={{ marginTop: 28 }}>
+            <CrossGameProfile scores={scores} />
+          </div>
+        )}
 
-      <style>{`
-        @keyframes cardIn {
-          0%   { transform: translateY(20px); opacity: 0; }
-          100% { transform: translateY(0);    opacity: 1; }
-        }
-      `}</style>
+        {/* Footer */}
+        <div
+          style={{
+            marginTop: 40,
+            paddingTop: 20,
+            borderTop: '1px solid var(--color-border)',
+            textAlign: 'center',
+          }}
+        >
+          <span
+            style={{
+              color: 'var(--color-text-secondary)',
+              fontSize: 12,
+              fontWeight: 500,
+              opacity: 0.6,
+            }}
+          >
+            ⚡ Powered by Ether
+          </span>
+        </div>
+      </div>
     </main>
   );
 }
