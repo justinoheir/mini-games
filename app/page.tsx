@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import CrossGameProfile from '@/components/CrossGameProfile';
+import { getOverallTopPlayers, LeaderboardEntry } from '@/lib/leaderboard';
 
 const SKILL_GAMES = [
   {
@@ -302,6 +303,113 @@ function SectionHeader({ icon, label }: { icon: string; label: string }) {
   );
 }
 
+const PODIUM_MEDALS = ['🥇', '🥈', '🥉'];
+
+function ChampionsTeaser() {
+  const [topPlayers, setTopPlayers] = useState<LeaderboardEntry[]>([]);
+
+  useEffect(() => {
+    setTopPlayers(getOverallTopPlayers());
+  }, []);
+
+  if (topPlayers.length === 0) return null;
+
+  return (
+    <div
+      style={{
+        marginTop: 28,
+        backgroundColor: 'var(--color-surface)',
+        border: '1px solid rgba(0,255,136,0.18)',
+        borderRadius: 16,
+        padding: '16px 16px 14px',
+        position: 'relative',
+        overflow: 'hidden',
+      }}
+    >
+      {/* Subtle glow */}
+      <div
+        style={{
+          position: 'absolute',
+          top: 0, left: 0, right: 0,
+          height: 2,
+          background: 'linear-gradient(90deg, transparent, rgba(0,255,136,0.5), transparent)',
+        }}
+      />
+
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          marginBottom: 12,
+        }}
+      >
+        <span style={{ fontSize: 14 }}>🏆</span>
+        <span
+          style={{
+            color: 'var(--color-text)',
+            fontSize: 12,
+            fontWeight: 700,
+            textTransform: 'uppercase',
+            letterSpacing: '0.12em',
+          }}
+        >
+          This Week&apos;s Champions
+        </span>
+        <span
+          style={{
+            color: 'var(--color-text-secondary)',
+            fontSize: 11,
+            marginLeft: 'auto',
+          }}
+        >
+          All games
+        </span>
+      </div>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {topPlayers.map((player, i) => (
+          <div
+            key={player.playerId}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 10,
+            }}
+          >
+            <span style={{ fontSize: 18, width: 24, textAlign: 'center' }}>
+              {PODIUM_MEDALS[i]}
+            </span>
+            <span style={{ fontSize: 20, width: 28, textAlign: 'center' }}>
+              {player.avatar}
+            </span>
+            <span
+              style={{
+                color: 'var(--color-text)',
+                fontSize: 14,
+                fontWeight: 600,
+                flex: 1,
+              }}
+            >
+              {player.name}
+            </span>
+            <span
+              style={{
+                color: i === 0 ? '#ffd700' : i === 1 ? '#c0c0c0' : '#cd7f32',
+                fontSize: 14,
+                fontWeight: 700,
+                fontVariantNumeric: 'tabular-nums',
+              }}
+            >
+              {player.score.toLocaleString()} pts
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function Home() {
   const router = useRouter();
   const [playedCount, setPlayedCount] = useState(0);
@@ -449,6 +557,9 @@ export default function Home() {
             ))}
           </div>
         </div>
+
+        {/* Champions teaser leaderboard */}
+        <ChampionsTeaser />
 
         {/* Cross-game behavioral profile — shown after 3+ games */}
         {playedCount >= 3 && (

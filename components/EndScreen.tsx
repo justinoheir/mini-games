@@ -2,6 +2,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { motion } from 'framer-motion';
+import Leaderboard from '@/components/Leaderboard';
+import { getMockLeaderboard, LeaderboardEntry } from '@/lib/leaderboard';
 
 interface Insight {
   label: string;
@@ -19,9 +21,10 @@ interface EndScreenProps {
   accentColor: string;
   onPlayAgain: () => void;
   didWin?: boolean;
+  brandId?: string;
 }
 
-/** Parse a numeric value from score strings like "42 pts", "3.2s", "7" */
+/** Parse a numeric value from score strings like "42 pts", "3.2s", "7", "87%" */
 function parseScoreNum(s: string): number {
   const m = s.match(/[\d.]+/);
   return m ? parseFloat(m[0]) : 0;
@@ -37,12 +40,15 @@ export default function EndScreen({
   accentColor,
   onPlayAgain,
   didWin,
+  brandId = 'ether',
 }: EndScreenProps) {
   const router = useRouter();
   const confettiDone = useRef(false);
   const [displayScore, setDisplayScore] = useState('0');
   const [isNewBest, setIsNewBest] = useState(false);
   const [copyConfirm, setCopyConfirm] = useState(false);
+  const [leaderboardVisible, setLeaderboardVisible] = useState(false);
+  const [leaderboardEntries, setLeaderboardEntries] = useState<LeaderboardEntry[]>([]);
 
   // Personal best check + localStorage save
   useEffect(() => {
@@ -51,11 +57,9 @@ export default function EndScreen({
       const prevEntry = stored[gameId];
       const newNum = parseScoreNum(score);
       const prevNum = prevEntry ? parseScoreNum(prevEntry.score) : -Infinity;
-      // Check if this is a new best (higher is better for most games)
       if (newNum > prevNum || !prevEntry) {
         setIsNewBest(true);
       }
-      // Save after comparison
       stored[gameId] = { score, personality, timestamp: Date.now() };
       localStorage.setItem('mg_scores', JSON.stringify(stored));
 
@@ -81,7 +85,6 @@ export default function EndScreen({
     const raf = (now: number) => {
       const elapsed = now - start;
       const progress = Math.min(elapsed / duration, 1);
-      // ease-out cubic
       const eased = 1 - Math.pow(1 - progress, 3);
       const current = eased * target;
       setDisplayScore((isFloat ? current.toFixed(1) : Math.round(current).toString()) + suffix);
@@ -90,7 +93,7 @@ export default function EndScreen({
     requestAnimationFrame(raf);
   }, [score]);
 
-  // Confetti — always fires, more on win
+  // Confetti
   useEffect(() => {
     if (confettiDone.current) return;
     confettiDone.current = true;
@@ -115,6 +118,42 @@ export default function EndScreen({
       }
     } catch { /* user cancelled */ }
   };
+
+  const handleShowLeaderboard = () => {
+    try {
+      const userRaw = localStorage.getItem('mg_user');
+      const user = userRaw ? JSON.parse(userRaw) : null;
+      const numericScore = parseScoreNum(score);
+      const entries = getMockLeaderboard(
+        gameId,
+        user ? { name: user.name, lastName: user.lastName ?? '', avatar: user.avatar ?? '⚡' } : null,
+        numericScore,
+        personality,
+        brandId,
+      );
+      setLeaderboardEntries(entries);
+    } catch {
+      setLeaderboardEntries(getMockLeaderboard(gameId, null, parseScoreNum(score), personality, brandId));
+    }
+    setLeaderboardVisible(true);
+  };
+
+  // Show leaderboard overlay
+  if (leaderboardVisible) {
+    return (
+      <Leaderboard
+        entries={leaderboardEntries}
+        gameTitle={title}
+        accentColor={accentColor}
+        brandName="Ether"
+        onClose={() => setLeaderboardVisible(false)}
+        onPlayAgain={() => {
+          setLeaderboardVisible(false);
+          onPlayAgain();
+        }}
+      />
+    );
+  }
 
   const useGrid = insights.length === 4;
 
@@ -264,6 +303,25 @@ export default function EndScreen({
           }}
         >
           {copyConfirm ? '✓ Copied!' : '↗ Share Result'}
+        </button>
+
+        {/* Leaderboard button */}
+        <button
+          onClick={handleShowLeaderboard}
+          style={{
+            backgroundColor: `${accentColor}18`,
+            color: accentColor,
+            border: `1px solid ${accentColor}44`,
+            borderRadius: 12,
+            height: 52,
+            fontSize: 15,
+            fontWeight: 700,
+            cursor: 'pointer',
+            width: '100%',
+            letterSpacing: '-0.2px',
+          }}
+        >
+          🏆 See Leaderboard →
         </button>
 
         <button
