@@ -8,6 +8,8 @@ import EndScreen from '@/components/EndScreen';
 import { initAudio, sfx, haptic, startMusic, increaseMusicTempo } from '@/lib/audio';
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
+import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
+import PlayerNameInput from '@/components/PlayerNameInput';
 
 const ACCENT = '#84cc16';
 const GAME_ID = 'reflex-rally';
@@ -44,6 +46,9 @@ export default function ReflexRally() {
   const [lives, setLives] = useState(MAX_LIVES);
   const [scoreDisplay, setScoreDisplay] = useState(0);
   const [finalSig, setFinalSig] = useState<Signals | null>(null);
+  const [playerName, setPlayerName]   = useState('');
+  const [playerAvatar, setPlayerAvatar] = useState('🎮');
+  const playerSessionRef              = useRef<PlayerSession | null>(null);
 
   const stateRef = useRef({
     running: false, timeLeft: DURATION, lives: MAX_LIVES,
@@ -83,7 +88,7 @@ export default function ReflexRally() {
       score: `${finalSigSnap.score} pts`,
       personality: getPersonality(finalSigSnap),
       signals: { returns: finalSigSnap.returns, misses: finalSigSnap.misses, streakMax: finalSigSnap.streakMax },
-    });
+    }, playerSessionRef.current);
   }, [theme]);
 
   const spawnBall = useCallback(() => {
@@ -326,9 +331,10 @@ export default function ReflexRally() {
   }, [endGame]);
 
   const handleStart = useCallback(async () => {
+    playerSessionRef.current = savePlayerSession(GAME_ID, playerName, playerAvatar);
     await initAudio(); sfx.click();
     setPhase('countdown');
-  }, []);
+  }, [playerName, playerAvatar]);
 
   const handlePlayAgain = useCallback(() => {
     if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
@@ -370,7 +376,12 @@ export default function ReflexRally() {
           ctaLabel="Start Game →"
           accentColor={ACCENT}
           onStart={handleStart}
-        />
+        >
+          <PlayerNameInput
+            accentColor={theme.colors.accent ?? ACCENT}
+            onReady={(name, avatar) => { setPlayerName(name); setPlayerAvatar(avatar); }}
+          />
+        </GameStartScreen>
       )}
       {phase === 'done' && sig && (
         <EndScreen

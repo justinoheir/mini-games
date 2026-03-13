@@ -9,6 +9,8 @@ import { initAudio, sfx, haptic, startMusic } from '@/lib/audio';
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
 import { createTiltController } from '@/lib/tilt';
+import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
+import PlayerNameInput from '@/components/PlayerNameInput';
 
 const ACCENT = '#86efac';
 const GAME_ID = 'precision-putt';
@@ -57,6 +59,9 @@ export default function PrecisionPutt() {
   const [timeLeft, setTimeLeft] = useState(60);
   const [holeDisplay, setHoleDisplay] = useState(1);
   const [finalSig, setFinalSig] = useState<Signals | null>(null);
+  const [playerName, setPlayerName]   = useState('');
+  const [playerAvatar, setPlayerAvatar] = useState('🎮');
+  const playerSessionRef              = useRef<PlayerSession | null>(null);
 
   const stateRef = useRef({
     running: false, timeLeft: 60,
@@ -103,7 +108,7 @@ export default function PrecisionPutt() {
       score: `${finalSigSnap.totalStrokes} strokes`,
       personality: getPersonality(finalSigSnap),
       signals: { holes: finalSigSnap.holes, holesInOne: finalSigSnap.holesInOne, sweetSpotHits: finalSigSnap.sweetSpotHits },
-    });
+    }, playerSessionRef.current);
   }, [theme]);
 
   const setupHole = useCallback(() => {
@@ -357,6 +362,7 @@ export default function PrecisionPutt() {
   }, [endGame]);
 
   const handleStart = useCallback(async () => {
+    playerSessionRef.current = savePlayerSession(GAME_ID, playerName, playerAvatar);
     await initAudio(); sfx.click();
     const ctrl = createTiltController((x) => {
       stateRef.current.aimAngle += x * 0.05;
@@ -364,7 +370,7 @@ export default function PrecisionPutt() {
     tiltRef.current = ctrl;
     await ctrl.start();
     setPhase('countdown');
-  }, []);
+  }, [playerName, playerAvatar]);
 
   const handlePlayAgain = useCallback(() => {
     if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
@@ -405,7 +411,12 @@ export default function PrecisionPutt() {
           ctaLabel="Start Putting →"
           accentColor={ACCENT}
           onStart={handleStart}
-        />
+        >
+          <PlayerNameInput
+            accentColor={theme.colors.accent ?? ACCENT}
+            onReady={(name, avatar) => { setPlayerName(name); setPlayerAvatar(avatar); }}
+          />
+        </GameStartScreen>
       )}
       {phase === 'done' && sig && (
         <EndScreen

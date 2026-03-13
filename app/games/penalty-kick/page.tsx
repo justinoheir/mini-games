@@ -9,6 +9,8 @@ import { initAudio, sfx, haptic, startMusic } from '@/lib/audio';
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
 import { createTiltController } from '@/lib/tilt';
+import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
+import PlayerNameInput from '@/components/PlayerNameInput';
 
 const ACCENT = '#22c55e';
 const GAME_ID = 'penalty-kick';
@@ -44,6 +46,9 @@ export default function PenaltyKick() {
   const [shotsState, setShotsState] = useState(0);
   const [goalsDisplay, setGoalsDisplay] = useState(0);
   const [finalSig, setFinalSig] = useState<Signals | null>(null);
+  const [playerName, setPlayerName]   = useState('');
+  const [playerAvatar, setPlayerAvatar] = useState('🎮');
+  const playerSessionRef              = useRef<PlayerSession | null>(null);
 
   const stateRef = useRef({
     running: false,
@@ -89,7 +94,7 @@ export default function PenaltyKick() {
       score: `${finalSigSnap.goals}/${MAX_SHOTS}`,
       personality: getPersonality(finalSigSnap),
       signals: { goals: finalSigSnap.goals, shots: finalSigSnap.shots, cornerShots: finalSigSnap.cornerShots },
-    });
+    }, playerSessionRef.current);
   }, [theme]);
 
   const resetRound = useCallback(() => {
@@ -390,12 +395,13 @@ export default function PenaltyKick() {
   }, [endGame]);
 
   const handleStart = useCallback(async () => {
+    playerSessionRef.current = savePlayerSession(GAME_ID, playerName, playerAvatar);
     await initAudio(); sfx.click();
     const ctrl = createTiltController(() => {}, { sensitivity: 1.0, smoothing: 0.3, deadzone: 3 });
     tiltRef.current = ctrl;
     await ctrl.start();
     setPhase('countdown');
-  }, []);
+  }, [playerName, playerAvatar]);
 
   const handlePlayAgain = useCallback(() => {
     if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
@@ -436,7 +442,12 @@ export default function PenaltyKick() {
           ctaLabel="Start Kicking →"
           accentColor={ACCENT}
           onStart={handleStart}
-        />
+        >
+          <PlayerNameInput
+            accentColor={theme.colors.accent ?? ACCENT}
+            onReady={(name, avatar) => { setPlayerName(name); setPlayerAvatar(avatar); }}
+          />
+        </GameStartScreen>
       )}
       {phase === 'done' && sig && (
         <EndScreen

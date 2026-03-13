@@ -9,9 +9,12 @@ import { initAudio, sfx, haptic, startMusic } from '@/lib/audio';
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
 import { createTiltController } from '@/lib/tilt';
+import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
+import PlayerNameInput from '@/components/PlayerNameInput';
 
 type MazeCell = { top: number; right: number; bottom: number; left: number };
 const GRID = 5;
+const GAME_ID = 'tilt-maze';
 
 function generateMaze(grid: number): MazeCell[][] {
   const cells: MazeCell[][] = Array.from({ length: grid }, () =>
@@ -92,6 +95,9 @@ export default function TiltMaze() {
   const [behavior, setBehavior] = useState<BehaviorData | null>(null);
   const [joystickEnabled, setJoystickEnabled] = useState(false);
   const [joystickThumb, setJoystickThumb] = useState({ x: 0, y: 0 });
+  const [playerName, setPlayerName]   = useState('');
+  const [playerAvatar, setPlayerAvatar] = useState('🎮');
+  const playerSessionRef              = useRef<PlayerSession | null>(null);
 
   useEffect(() => { stateRef.current.accentColor = theme.colors.accent; }, [theme]);
 
@@ -154,7 +160,7 @@ export default function TiltMaze() {
       score: bData.completionTime ? `${(bData.completionTime / 1000).toFixed(1)}s` : 'DNF',
       personality: getProfile(bData),
       signals: { collisions: bData.collisions, timedOut: bData.timedOut },
-    });
+    }, playerSessionRef.current);
   }, []);
 
   const startLoop = useCallback(() => {
@@ -250,6 +256,7 @@ export default function TiltMaze() {
   }, [drawMaze, checkWalls, endGame, theme]);
 
   const handleStart = useCallback(async () => {
+    playerSessionRef.current = savePlayerSession(GAME_ID, playerName, playerAvatar);
     initAudio(); sfx.click();
     // Create fresh controller each play
     const controller = createTiltController(() => {}, { sensitivity: 1.0, smoothing: 0.45, deadzone: 2, clamp: 22 });
@@ -268,7 +275,7 @@ export default function TiltMaze() {
       }, 1500);
     }
     setGameState('countdown');
-  }, []);
+  }, [playerName, playerAvatar]);
 
   const handlePlayAgain = useCallback(() => {
     if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
@@ -367,7 +374,12 @@ export default function TiltMaze() {
           ctaLabel="Enable Motion & Start →"
           accentColor={accent}
           onStart={handleStart}
-        />
+        >
+          <PlayerNameInput
+            accentColor={theme.colors.accent ?? accent}
+            onReady={(name, avatar) => { setPlayerName(name); setPlayerAvatar(avatar); }}
+          />
+        </GameStartScreen>
       )}
       {gameState==='done' && b && (
         <EndScreen

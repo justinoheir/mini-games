@@ -8,6 +8,8 @@ import EndScreen from '@/components/EndScreen';
 import { initAudio, sfx, haptic, startMusic } from '@/lib/audio';
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
+import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
+import PlayerNameInput from '@/components/PlayerNameInput';
 
 const ACCENT = '#f97316';
 const GAME_ID = 'hoop-shot';
@@ -44,6 +46,9 @@ export default function HoopShot() {
   const [timeLeft, setTimeLeft] = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
   const [finalSig, setFinalSig] = useState<Signals | null>(null);
+  const [playerName, setPlayerName]   = useState('');
+  const [playerAvatar, setPlayerAvatar] = useState('🎮');
+  const playerSessionRef              = useRef<PlayerSession | null>(null);
 
   const stateRef = useRef({
     running: false,
@@ -92,7 +97,7 @@ export default function HoopShot() {
       score: `${finalScore} pts`,
       personality: getPersonality(finalSigSnap),
       signals: { makes: finalSigSnap.makes, totalShots: finalSigSnap.totalShots, streakMax: finalSigSnap.streakMax },
-    });
+    }, playerSessionRef.current);
   }, [theme]);
 
   const resetBall = useCallback(() => {
@@ -382,10 +387,11 @@ export default function HoopShot() {
   }, [endGame]);
 
   const handleStart = useCallback(async () => {
+    playerSessionRef.current = savePlayerSession(GAME_ID, playerName, playerAvatar);
     await initAudio();
     sfx.click();
     setPhase('countdown');
-  }, []);
+  }, [playerName, playerAvatar]);
 
   const handlePlayAgain = useCallback(() => {
     if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
@@ -427,7 +433,12 @@ export default function HoopShot() {
           ctaLabel="Start Game →"
           accentColor={ACCENT}
           onStart={handleStart}
-        />
+        >
+          <PlayerNameInput
+            accentColor={theme.colors.accent ?? ACCENT}
+            onReady={(name, avatar) => { setPlayerName(name); setPlayerAvatar(avatar); }}
+          />
+        </GameStartScreen>
       )}
       {phase === 'done' && sig && (
         <EndScreen

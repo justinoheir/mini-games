@@ -11,6 +11,33 @@ interface Insight {
   color: string;
 }
 
+/** Human-readable game titles keyed by gameId */
+const GAME_TITLES: Record<string, string> = {
+  'tilt-maze': 'Tilt Maze',
+  'whisper-bomb': 'Whisper Bomb',
+  'breath-rider': 'Breath Rider',
+  'steady-hand': 'Steady Hand',
+  'tunnel': 'Infinite Tunnel',
+  'pulse-sphere': 'Pulse Sphere',
+  'hoop-shot': 'Hoop Shot',
+  'penalty-kick': 'Penalty Kick',
+  'spiral-throw': 'Spiral Throw',
+  'reflex-rally': 'Reflex Rally',
+  'precision-putt': 'Precision Putt',
+  'color-cascade': 'Color Cascade',
+  'memory-grid': 'Memory Grid',
+  'reaction-chain': 'Reaction Chain',
+  'shadow-tap': 'Shadow Tap',
+  'stack-drop': 'Stack Drop',
+  'dodge-blitz': 'Dodge Blitz',
+  'orbit-control': 'Orbit Control',
+  'symbol-scan': 'Symbol Scan',
+  'path-trace': 'Path Trace',
+  'crowd-roar': 'Crowd Roar',
+  'balance-beam': 'Balance Beam',
+  'pitch-match': 'Pitch Match',
+};
+
 interface EndScreenProps {
   gameId: string;
   title: string;
@@ -143,7 +170,7 @@ export default function EndScreen({
     return (
       <Leaderboard
         entries={leaderboardEntries}
-        gameTitle={title}
+        gameTitle={GAME_TITLES[gameId] ?? title}
         accentColor={accentColor}
         brandName="Ether"
         onClose={() => setLeaderboardVisible(false)}

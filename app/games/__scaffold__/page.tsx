@@ -24,6 +24,8 @@ import EndScreen from '@/components/EndScreen';
 import { initAudio, sfx, haptic, startMusic } from '@/lib/audio';
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
+import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
+import PlayerNameInput from '@/components/PlayerNameInput';
 
 // ─── SPEC CONSTANTS ──────────────────────────────────────────────────────────
 // Replace these with values from your game spec.
@@ -118,6 +120,11 @@ export default function ScaffoldGame() {   // <<REPLACE: function name matches t
   const [timeLeft, setTimeLeft]       = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
   const [finalSig, setFinalSig]       = useState<Signals | null>(null);
+
+  // ⚠️ Per-game player session — captured on the start screen
+  const [playerName, setPlayerName]   = useState('');
+  const [playerAvatar, setPlayerAvatar] = useState('🎮');
+  const playerSessionRef              = useRef<PlayerSession | null>(null);
 
   // Sync brand theme accent into state (so rAF loop picks it up without stale closure)
   useEffect(() => { stateRef.current.accentColor = theme.colors.accent ?? ACCENT; }, [theme]);
@@ -338,8 +345,10 @@ export default function ScaffoldGame() {   // <<REPLACE: function name matches t
 
   const handleStart = useCallback(() => {
     initAudio();
+    // Save player session for this game — persists name for pre-fill next time
+    playerSessionRef.current = savePlayerSession(GAME_ID, playerName, playerAvatar);
     setPhase('countdown');
-  }, []);
+  }, [playerName, playerAvatar]);
 
   const handleCountdownDone = useCallback(() => {
     startLoop();
@@ -384,7 +393,13 @@ export default function ScaffoldGame() {   // <<REPLACE: function name matches t
           ctaLabel="Start"  // <<REPLACE: if sensor needs permission, use "Allow Motion" etc.>>
           accentColor={theme.colors.accent ?? ACCENT}
           onStart={handleStart}
-        />
+        >
+          {/* ⚠️ Per-game name capture — required in every game */}
+          <PlayerNameInput
+            accentColor={theme.colors.accent ?? ACCENT}
+            onReady={(name, avatar) => { setPlayerName(name); setPlayerAvatar(avatar); }}
+          />
+        </GameStartScreen>
       )}
 
       {/* ── Countdown ─────────────────────────────────────────────────────── */}
@@ -431,7 +446,7 @@ export default function ScaffoldGame() {   // <<REPLACE: function name matches t
 
       {/* ⚠️ Webhook — fire after done phase renders */}
       {phase === 'done' && finalSig && (
-        <WebhookEmitter theme={theme} gameId={GAME_ID} sig={finalSig} personality={getPersonality(finalSig)} />
+        <WebhookEmitter theme={theme} gameId={GAME_ID} sig={finalSig} personality={getPersonality(finalSig)} player={playerSessionRef.current} />
       )}
     </GameShell>
   );
@@ -441,11 +456,12 @@ export default function ScaffoldGame() {   // <<REPLACE: function name matches t
 // Isolated component so postWebhook fires exactly once on mount.
 // <<REPLACE: add any additional spec-specific fields to the payload>>
 
-function WebhookEmitter({ theme, gameId, sig, personality }: {
+function WebhookEmitter({ theme, gameId, sig, personality, player }: {
   theme: ReturnType<typeof useBrandTheme>;
   gameId: string;
   sig: Signals;
   personality: string;
+  player: PlayerSession | null;
 }) {
   const fired = useRef(false);
   useEffect(() => {
@@ -464,7 +480,7 @@ function WebhookEmitter({ theme, gameId, sig, personality }: {
       avgReactionMs:  avgReaction,
       maxStreak:      sig.maxStreak,
       // <<REPLACE: add your spec.signals here as flat key-value pairs>>
-    });
+    }, player);
   }, [theme, gameId, sig, personality]);
   return null;
 }

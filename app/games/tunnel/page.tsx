@@ -10,6 +10,10 @@ import { initAudio, sfx, haptic, startMusic, increaseMusicTempo } from '@/lib/au
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
 import { createTiltController } from '@/lib/tilt';
+import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
+import PlayerNameInput from '@/components/PlayerNameInput';
+
+const GAME_ID = 'tunnel';
 
 type GameState = 'start' | 'countdown' | 'playing' | 'done';
 type ObstacleType = 'ring' | 'cross' | 'blade' | 'asteroid';
@@ -243,6 +247,9 @@ export default function TunnelGame() {
   const [joystickEnabled, setJoystickEnabled] = useState(false);
   const [joystickThumb, setJoystickThumb] = useState({ x: 0, y: 0 });
   const [survivedDisplay, setSurvivedDisplay] = useState(0);
+  const [playerName, setPlayerName]   = useState('');
+  const [playerAvatar, setPlayerAvatar] = useState('🎮');
+  const playerSessionRef              = useRef<PlayerSession | null>(null);
 
   const endGame = useCallback((capturedTheme: typeof theme) => {
     const s = stateRef.current;
@@ -256,7 +263,7 @@ export default function TunnelGame() {
     const bData: BehaviorData = { collisions: s.collisions, avgTiltMagnitude: Math.round(avgTilt * 100) / 100, distance: Math.round(s.distance) };
     setBehavior(bData);
     setGameState('done');
-    postWebhook(capturedTheme, 'tunnel', { score: `${Math.round(s.distance)}m`, personality: getProfile(bData), signals: bData });
+    postWebhook(capturedTheme, 'tunnel', { score: `${Math.round(s.distance)}m`, personality: getProfile(bData), signals: bData }, playerSessionRef.current);
   }, []);
 
   const startLoop = useCallback(() => {
@@ -459,6 +466,7 @@ export default function TunnelGame() {
   }, [endGame, theme]);
 
   const handleStart = useCallback(async () => {
+    playerSessionRef.current = savePlayerSession(GAME_ID, playerName, playerAvatar);
     initAudio(); sfx.click();
     // Max sensitivity: very twitchy and responsive
     const controller = createTiltController(() => {}, { sensitivity: 1.6, smoothing: 0.3, deadzone: 1, clamp: 15 });
@@ -476,7 +484,7 @@ export default function TunnelGame() {
       }, 1500);
     }
     setGameState('countdown');
-  }, []);
+  }, [playerName, playerAvatar]);
 
   const handlePlayAgain = useCallback(() => {
     if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
@@ -578,7 +586,12 @@ export default function TunnelGame() {
           accentColor="#00ffff"
           ctaTextColor="#000"
           onStart={handleStart}
-        />
+        >
+          <PlayerNameInput
+            accentColor={theme.colors.accent ?? '#00ffff'}
+            onReady={(name, avatar) => { setPlayerName(name); setPlayerAvatar(avatar); }}
+          />
+        </GameStartScreen>
       )}
 
       {gameState === 'done' && behavior && (
@@ -591,7 +604,7 @@ export default function TunnelGame() {
           insights={[
             { label: 'Distance', value: `${behavior.distance}m`, color: '#00ffff' },
             { label: 'Collisions', value: String(behavior.collisions), color: behavior.collisions > 5 ? '#ef4444' : '#00ff88' },
-            { label: 'Avg tilt', value: String(behavior.avgTiltMagnitude), color: accent },
+            { label: 'Avg tilt', value: behavior.avgTiltMagnitude > 0 ? `${behavior.avgTiltMagnitude.toFixed(2)}` : '—', color: accent },
           ]}
           accentColor="#00ffff"
           onPlayAgain={handlePlayAgain}

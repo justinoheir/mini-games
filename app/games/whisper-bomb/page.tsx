@@ -7,6 +7,10 @@ import EndScreen from '@/components/EndScreen';
 import { initAudio, sfx, haptic, startMusic, increaseMusicTempo } from '@/lib/audio';
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
+import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
+import PlayerNameInput from '@/components/PlayerNameInput';
+
+const GAME_ID = 'whisper-bomb';
 
 type GameState = 'start' | 'requesting' | 'countdown' | 'playing' | 'done';
 interface BehaviorData { avgVolume: number; noiseSpikes: number; dangerSeconds: number; defused: boolean; }
@@ -36,6 +40,9 @@ export default function WhisperBomb() {
   const [volume, setVolume] = useState(0);
   const [behavior, setBehavior] = useState<BehaviorData | null>(null);
   const [flashColor, setFlashColor] = useState<string | null>(null);
+  const [playerName, setPlayerName]   = useState('');
+  const [playerAvatar, setPlayerAvatar] = useState('🎮');
+  const playerSessionRef              = useRef<PlayerSession | null>(null);
 
   const getVolume = useCallback((): number => {
     const s = stateRef.current;
@@ -58,7 +65,7 @@ export default function WhisperBomb() {
     const bData: BehaviorData = { avgVolume: Math.round(avgVol), noiseSpikes: s.noiseSpikes, dangerSeconds: Math.round(s.dangerFrames / 60), defused };
     setBehavior(bData);
     setGameState('done');
-    postWebhook(capturedTheme, 'whisper-bomb', { score: defused ? 'Defused' : 'Exploded', personality: getProfile(bData), signals: { noiseSpikes: bData.noiseSpikes, avgVolume: bData.avgVolume } });
+    postWebhook(capturedTheme, 'whisper-bomb', { score: defused ? 'Defused' : 'Exploded', personality: getProfile(bData), signals: { noiseSpikes: bData.noiseSpikes, avgVolume: bData.avgVolume } }, playerSessionRef.current);
   }, []);
 
   const startLoop = useCallback(() => {
@@ -119,6 +126,7 @@ export default function WhisperBomb() {
   }, [getVolume, endGame, theme]);
 
   const handleStart = useCallback(async () => {
+    playerSessionRef.current = savePlayerSession(GAME_ID, playerName, playerAvatar);
     initAudio(); sfx.click();
     setGameState('requesting');
     try {
@@ -133,7 +141,7 @@ export default function WhisperBomb() {
       s.stream = stream; s.analyser = analyser; s.audioCtx = audioCtx;
       setGameState('countdown');
     } catch { alert('Microphone access needed. Please allow and try again.'); setGameState('start'); }
-  }, []);
+  }, [playerName, playerAvatar]);
 
   const handlePlayAgain = useCallback(() => {
     if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
@@ -171,7 +179,12 @@ export default function WhisperBomb() {
           accentColor="#ef4444"
           ctaTextColor="#fff"
           onStart={handleStart}
-        />
+        >
+          <PlayerNameInput
+            accentColor={theme.colors.accent ?? '#ef4444'}
+            onReady={(name, avatar) => { setPlayerName(name); setPlayerAvatar(avatar); }}
+          />
+        </GameStartScreen>
       )}
 
       {gameState==='requesting' && (

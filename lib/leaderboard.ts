@@ -28,24 +28,36 @@ const FAKE_PLAYERS = [
 ];
 
 const PERSONALITIES_BY_GAME: Record<string, string[]> = {
-  'hoop-shot': ['🏆 Clutch', '🎯 Gunner', '🔥 Streaky', '⛹️ Steady'],
-  'tilt-maze': ['🎯 Precise', '⚡ Reactive', '🧘 Calm'],
-  'whisper-bomb': ['🤫 Ghost', '💥 Explosive', '😤 Tense'],
-  'breath-rider': ['🌬️ Zen', '🎢 Rhythmic', '⚡ Erratic'],
-  'steady-hand': ['🎯 Surgeon', '🧘 Zen', '⚡ Shaky'],
-  'tunnel': ['🚀 Pilot', '💨 Drifter', '💥 Crasher'],
-  'pulse-sphere': ['🔮 Attuned', '🌊 Flowing', '⚡ Charged'],
-  'penalty-kick': ['🥅 Sniper', '💪 Powershot', '🤞 Lucky'],
-  'spiral-throw': ['🏈 QB1', '🎯 Accurate', '💨 Gunslinger'],
-  'reflex-rally': ['⚡ Machine', '🎾 Consistent', '💪 Fighter'],
-  'precision-putt': ['🏌️ Pro', '🎯 Analyst', '🤞 Gambler'],
+  'hoop-shot': ['🏆 Clutch', '🎯 Gunner', '🔥 Streaky', '⛹️ Steady'],  // matches getPersonality output
+  'tilt-maze': ['Precise 🎯', 'Reactive ⚡', 'Calm 🧘'],
+  'whisper-bomb': ['Calm 🧘', 'Explosive 💥', 'Reactive ⚡'],
+  'breath-rider': ['Steady 🧘', 'Focused 🎯', 'Anxious 😤'],
+  'steady-hand': ['Steady as a rock 🪨', 'Slightly shaky 🤏', 'Anxious energy ⚡'],
+  'tunnel': ['Precise 🎯', 'Conservative 🧊', 'Aggressive 🔥'],
+  'pulse-sphere': ['Verbal 🎙️', 'Kinetic 🏃', 'Tactile 👆', 'Balanced ⚖️'],
+  'penalty-kick': ['🎯 Composed Finisher', '💥 Power Shooter', '🌀 Trickster', '⚽ Striker'],
+  'spiral-throw': ['🧠 Field General', '🔫 Gunslinger', '📋 Checkdown Artist', '🏈 QB'],
+  'reflex-rally': ['🤖 Machine', '⚡ Clutch Player', '🎾 Consistent'],
+  'precision-putt': ['🔬 Surgeon', '🎯 Feel Player', '🤔 Overthinks It', '🏌️ Steady Putter'],
+  'color-cascade': ['Chromatic Hawk 🦅', 'Speed Demon 🔥', 'Deliberate Eye 🔭', 'Casual Tapper 🌊'],
+  'memory-grid': ['Memory Master 🧩', 'Pattern Hunter 🔍', 'Fast Guesser ⚡', 'Steady Mind 🌊'],
+  'reaction-chain': ['Lightning Reflex ⚡', 'Chain Keeper 🔗', 'Sprinter 🏃', 'Steady Reactor 🌊'],
+  'shadow-tap': ['Gut Reader 👁️', 'Sharp Processor 🔬', 'Overthinker 🌀', 'The Hunter 🌊'],
+  'stack-drop': ['The Architect 🏛️', 'Speed Stacker ⚡', 'Perfectionist 🎯', 'Bold Builder 🌊'],
+  'dodge-blitz': ['Ghost 👻', 'Reactive 🔥', 'Controlled 🧘', 'Survivor 🌊'],
+  'orbit-control': ['Orbital Master 🌌', 'Overcorrector 🔄', 'The Drifter 🌊', 'Navigator 🧭'],
+  'symbol-scan': ['Eagle Eye 🦅', 'Rapid Scanner ⚡', 'Methodical 🔬', 'Pattern Seeker 🌊'],
+  'path-trace': ['Laser Line 🎯', 'Speed Tracer 🏎️', 'Steady Hand 🧘', 'Free Spirit 🌊'],
+  'crowd-roar': ['Crowd King 👑', 'Burst Machine 💥', 'Steady Roar 🔥', 'Building Up 🌊'],
+  'balance-beam': ['Zen Master 🧘', 'Micromanager 🔄', 'Bold Corrector 💪', 'Learning Curve 🌊'],
+  'pitch-match': ['Natural Pitch 🎼', 'Sustained Voice 🌬️', 'Close Enough 🎸', 'Finding Voice 🌊'],
 };
 
-// Score ranges per game (realistic)
+// Score ranges per game (realistic — must match parseScoreNum output of actual game scores)
 const SCORE_RANGES: Record<string, [number, number]> = {
   'hoop-shot': [8, 42],
-  'tilt-maze': [0, 1],        // completion-based
-  'whisper-bomb': [15, 30],
+  'tilt-maze': [8, 55],       // completion time in seconds (parseScoreNum("12.5s") = 12.5); lower is better but displayed as pts
+  'whisper-bomb': [0, 1],     // score is 'Defused'(0) or 'Exploded'(0) — parseScoreNum returns 0; use binary range
   'breath-rider': [200, 800],
   'steady-hand': [60, 98],    // percentage
   'tunnel': [800, 9999],
@@ -54,6 +66,18 @@ const SCORE_RANGES: Record<string, [number, number]> = {
   'spiral-throw': [40, 95],
   'reflex-rally': [12, 48],
   'precision-putt': [2, 9],
+  'color-cascade': [15, 120],
+  'memory-grid': [30, 280],
+  'reaction-chain': [5, 38],
+  'shadow-tap': [20, 150],
+  'stack-drop': [40, 220],
+  'dodge-blitz': [10, 65],
+  'orbit-control': [35, 92],
+  'symbol-scan': [25, 180],
+  'path-trace': [60, 280],
+  'crowd-roar': [100, 850],
+  'balance-beam': [150, 950],
+  'pitch-match': [50, 380],
   'all': [500, 4500],
 };
 
@@ -103,7 +127,16 @@ export function getMockLeaderboard(
   fakes.sort((a, b) => b.score - a.score);
   fakes.forEach((e, i) => { e.rank = i + 1; });
 
-  return fakes.slice(0, 15); // top 15
+  // Always include current player even if outside top 15
+  const top15 = fakes.slice(0, 15);
+  if (currentPlayer) {
+    const currentInTop = top15.some(e => e.playerId === 'current');
+    if (!currentInTop) {
+      const currentEntry = fakes.find(e => e.playerId === 'current');
+      if (currentEntry) top15.push(currentEntry);
+    }
+  }
+  return top15;
 }
 
 // For the home screen teaser — overall top 3

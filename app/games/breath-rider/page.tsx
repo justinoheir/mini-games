@@ -8,6 +8,10 @@ import EndScreen from '@/components/EndScreen';
 import { initAudio, sfx, haptic, startMusic } from '@/lib/audio';
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
+import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
+import PlayerNameInput from '@/components/PlayerNameInput';
+
+const GAME_ID = 'breath-rider';
 
 type GameState = 'start' | 'requesting' | 'countdown' | 'playing' | 'done';
 interface BehaviorData { breathVariance: number; avgAltitude: number; coinsCollected: number; spikeCollisions: number; }
@@ -43,6 +47,9 @@ export default function BreathRider() {
   const [gameState, setGameState] = useState<GameState>('start');
   const [timeLeft, setTimeLeft] = useState(45);
   const [behavior, setBehavior] = useState<BehaviorData | null>(null);
+  const [playerName, setPlayerName]   = useState('');
+  const [playerAvatar, setPlayerAvatar] = useState('🎮');
+  const playerSessionRef              = useRef<PlayerSession | null>(null);
 
   const getVolume = useCallback((): number => {
     const s = stateRef.current;
@@ -73,7 +80,7 @@ export default function BreathRider() {
     };
     setBehavior(bData);
     setGameState('done');
-    postWebhook(capturedTheme, 'breath-rider', { score: `${bData.coinsCollected}/10`, personality: getProfile(bData), signals: bData });
+    postWebhook(capturedTheme, 'breath-rider', { score: `${bData.coinsCollected}/10`, personality: getProfile(bData), signals: bData }, playerSessionRef.current);
   }, []);
 
   const startLoop = useCallback(() => {
@@ -212,6 +219,7 @@ export default function BreathRider() {
   }, [getVolume, endGame, theme]);
 
   const handleStart = useCallback(async () => {
+    playerSessionRef.current = savePlayerSession(GAME_ID, playerName, playerAvatar);
     initAudio(); sfx.click();
     setGameState('requesting');
     try {
@@ -225,7 +233,7 @@ export default function BreathRider() {
       s.stream = stream; s.analyser = analyser; s.audioCtx = audioCtx;
       setGameState('countdown');
     } catch { alert('Microphone access needed.'); setGameState('start'); }
-  }, []);
+  }, [playerName, playerAvatar]);
 
   const handlePlayAgain = useCallback(() => {
     if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
@@ -270,7 +278,12 @@ export default function BreathRider() {
           ctaLabel="Allow Mic & Fly →"
           accentColor={accent}
           onStart={handleStart}
-        />
+        >
+          <PlayerNameInput
+            accentColor={accent}
+            onReady={(name, avatar) => { setPlayerName(name); setPlayerAvatar(avatar); }}
+          />
+        </GameStartScreen>
       )}
       {gameState==='requesting' && (
         <div style={{ display:'flex', alignItems:'center', justifyContent:'center', height:'100%', color:'var(--color-text-secondary)' }}>Requesting microphone…</div>

@@ -9,6 +9,10 @@ import { initAudio, sfx, haptic, startMusic } from '@/lib/audio';
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
 import { createTiltController } from '@/lib/tilt';
+import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
+import PlayerNameInput from '@/components/PlayerNameInput';
+
+const GAME_ID = 'steady-hand';
 
 type GameState = 'start' | 'countdown' | 'playing' | 'done';
 interface BehaviorData { pctOnTarget: number; avgDeviation: number; tremorScore: number; }
@@ -49,6 +53,9 @@ export default function SteadyHand() {
   const [shakeOffset, setShakeOffset] = useState({ x: 0, y: 0 });
   const [joystickEnabled, setJoystickEnabled] = useState(false);
   const [joystickThumb, setJoystickThumb] = useState({ x: 0, y: 0 });
+  const [playerName, setPlayerName]   = useState('');
+  const [playerAvatar, setPlayerAvatar] = useState('🎮');
+  const playerSessionRef              = useRef<PlayerSession | null>(null);
 
   useEffect(() => { stateRef.current.accentColor = theme.colors.accent; }, [theme]);
 
@@ -76,7 +83,7 @@ export default function SteadyHand() {
     const bData: BehaviorData = { pctOnTarget: Math.round(pct), avgDeviation: Math.round(avgDev), tremorScore };
     setBehavior(bData);
     setGameState('done');
-    postWebhook(capturedTheme, 'steady-hand', { score:`${Math.round(pct)}%`, personality: getProfile(bData), signals: bData });
+    postWebhook(capturedTheme, 'steady-hand', { score:`${Math.round(pct)}%`, personality: getProfile(bData), signals: bData }, playerSessionRef.current);
   }, []);
 
   const startLoop = useCallback(() => {
@@ -194,6 +201,7 @@ export default function SteadyHand() {
   }, [endGame, theme]);
 
   const handleStart = useCallback(async () => {
+    playerSessionRef.current = savePlayerSession(GAME_ID, playerName, playerAvatar);
     initAudio(); sfx.click();
     const controller = createTiltController(() => {}, { sensitivity: 0.8, smoothing: 0.55, deadzone: 3, clamp: 18 });
     tiltControllerRef.current = controller;
@@ -210,7 +218,7 @@ export default function SteadyHand() {
       }, 1500);
     }
     setGameState('countdown');
-  }, []);
+  }, [playerName, playerAvatar]);
 
   const handlePlayAgain = useCallback(() => {
     if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
@@ -313,7 +321,12 @@ export default function SteadyHand() {
           ctaLabel="Enable Motion & Start →"
           accentColor={accent}
           onStart={handleStart}
-        />
+        >
+          <PlayerNameInput
+            accentColor={accent}
+            onReady={(name, avatar) => { setPlayerName(name); setPlayerAvatar(avatar); }}
+          />
+        </GameStartScreen>
       )}
       {gameState==='done' && behavior && (
         <EndScreen

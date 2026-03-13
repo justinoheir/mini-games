@@ -1,17 +1,23 @@
 import { BrandTheme } from './brands';
+import { PlayerSession } from './playerSession';
 
 export async function postWebhook(
   theme: BrandTheme,
   gameId: string,
   result: Record<string, unknown>,
+  player?: PlayerSession | null,
 ): Promise<void> {
   if (!theme.webhookURL) return;
   try {
-    let player: unknown = null;
+    // Use passed-in player first; fall back to legacy mg_user for compat
+    let resolvedPlayer: unknown = player ?? null;
     let sessionGames: string[] = [];
     let sessionCount = 0;
+
     try {
-      player = JSON.parse(localStorage.getItem('mg_user') || 'null');
+      if (!resolvedPlayer) {
+        resolvedPlayer = JSON.parse(localStorage.getItem('mg_user') || 'null');
+      }
       const played: string[] = JSON.parse(localStorage.getItem('mg_played') || '[]');
       sessionGames = played;
       sessionCount = played.length;
@@ -23,7 +29,7 @@ export async function postWebhook(
       body: JSON.stringify({
         brand: theme.id,
         game: gameId,
-        player,
+        player: resolvedPlayer,
         session: {
           gamesPlayedTotal: sessionCount,
           gamesPlayed: sessionGames,
@@ -40,7 +46,7 @@ export async function postWebhook(
           retryCount: (() => {
             try {
               const stored = JSON.parse(localStorage.getItem('mg_scores') || '{}');
-              return stored[gameId] ? 1 : 0; // 0 = first attempt, 1+ = retry
+              return stored[gameId] ? 1 : 0;
             } catch { return 0; }
           })(),
         },

@@ -1,0 +1,641 @@
+/**
+ * ══════════════════════════════════════════════════════════════════
+ *  SHADOW TAP
+ *  Tap the silhouette before it vanishes.
+ *  Sensor: touch | Duration: 45s | Category: skill
+ * ══════════════════════════════════════════════════════════════════
+ */
+
+'use client';
+import { useEffect, useRef, useState, useCallback } from 'react';
+import GameShell from '@/components/GameShell';
+import GameHUD from '@/components/GameHUD';
+import GameStartScreen from '@/components/GameStartScreen';
+import Countdown from '@/components/Countdown';
+import EndScreen from '@/components/EndScreen';
+import { initAudio, sfx, haptic } from '@/lib/audio';
+import { useBrandTheme } from '@/lib/useBrandTheme';
+import { postWebhook } from '@/lib/webhook';
+import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
+import PlayerNameInput from '@/components/PlayerNameInput';
+
+// ─── SPEC CONSTANTS ───────────────────────────────────────────────────────────
+const GAME_ID      = 'shadow-tap';
+const ACCENT       = '#64748b';
+const DURATION     = 45;
+const GAME_EMOJI   = '👁️';
+const GAME_TITLE   = 'Shadow Tap';
+const GAME_TAGLINE = 'Tap what you see. Before it\'s gone.';
+
+// Shape color — dark silhouette against near-black background
+const SHAPE_COLOR  = '#1e293b';
+const BG_COLOR     = '#08090f';
+const SHAPE_MARGIN = 80; // px from edge
+
+// ─── SHAPE TYPES ──────────────────────────────────────────────────────────────
+type ShapeType = 'circle' | 'triangle' | 'diamond';
+const SHAPE_TYPES: ShapeType[] = ['circle', 'triangle', 'diamond'];
+
+// ─── BEHAVIORAL SIGNALS ──────────────────────────────────────────────────────
+interface Signals {
+  hitsOnFirst:        number;   // hits under 350ms (intuitive/gut response)
+  misses:             number;   // shapes that disappeared before tapped
+  flashReactionTimes: number[]; // ms from flash appear to tap
+  wrongAreaTaps:      number;   // taps outside any shape
+  hits:               number;   // total successful taps
+  streak:             number;   // current consecutive hits
+  maxStreak:          number;
+  score:              number;
+}
+
+// ─── PERSONALITY CLASSIFICATION ──────────────────────────────────────────────
+function getPersonality(sig: Signals): string {
+  const totalVisible = sig.hits + sig.misses;
+  const accuracyBySpeed = totalVisible > 0 ? sig.hits / totalVisible : 0;
+  const avgReaction = sig.flashReactionTimes.length > 0
+    ? sig.flashReactionTimes.reduce((a, b) => a + b, 0) / sig.flashReactionTimes.length
+    : 9999;
+
+  // Gut Reader: primarily intuitive, trusts first instinct
+  if (sig.hitsOnFirst > 20 && avgReaction < 400) return 'Gut Reader 👁️';
+  // Sharp Processor: high accuracy, processes fast
+  if (accuracyBySpeed > 0.80 && sig.misses < 5) return 'Sharp Processor 🔬';
+  // Overthinker: hesitates too long, shadow disappears
+  if (avgReaction > 600 && sig.misses > 8) return 'Overthinker 🌀';
+  // Fallback — balanced instinct and processing
+  return 'The Hunter 🌊';
+}
+
+// ─── GAME STATE ───────────────────────────────────────────────────────────────
+type ShapePhase = 'visible' | 'dark';
+
+interface GameState {
+  running:          boolean;
+  timeLeft:         number;
+  sig:              Signals;
+  // Shape state
+  shapeType:        ShapeType;
+  shapeX:           number;
+  shapeY:           number;
+  shapeSize:        number;      // radius (circle) or half-span (triangle/diamond)
+  shapePhase:       ShapePhase;  // 'visible' | 'dark'
+  shapeSpawnTime:   number;      // Date.now() when shape appeared
+  shapeWindowMs:    number;      // how long it stays visible
+  darkStartTime:    number;      // when darkness began
+  darkDurationMs:   number;      // how long to stay dark
+  // Hit flash effect
+  hitFlashX:        number;
+  hitFlashY:        number;
+  hitFlashTime:     number;      // timestamp of last hit (0 = none)
+  hitFlashSize:     number;
+  accentColor:      string;
+}
+
+type Phase = 'start' | 'countdown' | 'playing' | 'done';
+
+// ─── HELPERS ──────────────────────────────────────────────────────────────────
+
+function randomShapeType(): ShapeType {
+  return SHAPE_TYPES[Math.floor(Math.random() * SHAPE_TYPES.length)];
+}
+
+function randomDarkDuration(): number {
+  return 400 + Math.random() * 400; // 400–800ms
+}
+
+function getShapeWindowMs(elapsedMs: number): number {
+  // Linearly interpolate: 600ms at 0s → 300ms at 25s, then clamp
+  return Math.max(300, 600 - (elapsedMs / 25000) * 300);
+}
+
+// Draw a shape on the canvas
+function drawShape(
+  ctx: CanvasRenderingContext2D,
+  type: ShapeType,
+  x: number,
+  y: number,
+  size: number,
+  color: string,
+  glowColor?: string,
+  glowAlpha?: number,
+): void {
+  ctx.save();
+  if (glowColor && glowAlpha && glowAlpha > 0) {
+    ctx.shadowBlur = 32;
+    ctx.shadowColor = glowColor;
+    ctx.globalAlpha = glowAlpha;
+  }
+  ctx.fillStyle = color;
+  ctx.beginPath();
+
+  switch (type) {
+    case 'circle':
+      ctx.arc(x, y, size, 0, Math.PI * 2);
+      break;
+    case 'triangle': {
+      const h = size * 1.5;
+      ctx.moveTo(x, y - h);
+      ctx.lineTo(x + size * 1.1, y + h * 0.6);
+      ctx.lineTo(x - size * 1.1, y + h * 0.6);
+      ctx.closePath();
+      break;
+    }
+    case 'diamond': {
+      const d = size * 1.3;
+      ctx.moveTo(x, y - d);
+      ctx.lineTo(x + d * 0.75, y);
+      ctx.lineTo(x, y + d);
+      ctx.lineTo(x - d * 0.75, y);
+      ctx.closePath();
+      break;
+    }
+  }
+
+  ctx.fill();
+  ctx.restore();
+}
+
+// Check if a point is inside a shape
+function isInsideShape(
+  px: number,
+  py: number,
+  type: ShapeType,
+  sx: number,
+  sy: number,
+  size: number,
+): boolean {
+  switch (type) {
+    case 'circle': {
+      const dx = px - sx;
+      const dy = py - sy;
+      return dx * dx + dy * dy <= (size + 16) * (size + 16);
+    }
+    case 'triangle': {
+      // Bounding-box approximation for hit detection
+      const h = size * 1.5;
+      const halfW = size * 1.1 + 16;
+      return (
+        py >= sy - h - 16 &&
+        py <= sy + h * 0.6 + 16 &&
+        px >= sx - halfW &&
+        px <= sx + halfW
+      );
+    }
+    case 'diamond': {
+      // Diamond hit = Manhattan distance check
+      const d = size * 1.3 + 16;
+      return Math.abs(px - sx) / (d * 0.75) + Math.abs(py - sy) / d <= 1;
+    }
+  }
+}
+
+// ─── COMPONENT ────────────────────────────────────────────────────────────────
+
+export default function ShadowTapGame() {
+  const theme        = useBrandTheme();
+  const canvasRef    = useRef<HTMLCanvasElement>(null);
+  const animRef      = useRef(0);
+  const timerRef     = useRef<ReturnType<typeof setInterval> | null>(null);
+  const stopMusicRef = useRef<(() => void) | null>(null);
+
+  const stateRef = useRef<GameState>({
+    running:         false,
+    timeLeft:        DURATION,
+    sig: {
+      hitsOnFirst: 0, misses: 0, flashReactionTimes: [], wrongAreaTaps: 0,
+      hits: 0, streak: 0, maxStreak: 0, score: 0,
+    },
+    shapeType:       'circle',
+    shapeX:          0,
+    shapeY:          0,
+    shapeSize:       36,
+    shapePhase:      'dark',
+    shapeSpawnTime:  0,
+    shapeWindowMs:   600,
+    darkStartTime:   0,
+    darkDurationMs:  600,
+    hitFlashX:       0,
+    hitFlashY:       0,
+    hitFlashTime:    0,
+    hitFlashSize:    0,
+    accentColor:     ACCENT,
+  });
+
+  const [phase, setPhase]               = useState<Phase>('start');
+  const [timeLeft, setTimeLeft]         = useState(DURATION);
+  const [scoreDisplay, setScoreDisplay] = useState(0);
+  const [finalSig, setFinalSig]         = useState<Signals | null>(null);
+  const [playerName, setPlayerName]     = useState('');
+  const [playerAvatar, setPlayerAvatar] = useState('🎮');
+  const playerSessionRef                = useRef<PlayerSession | null>(null);
+
+  // Sync brand theme accent into mutable state ref
+  useEffect(() => {
+    stateRef.current.accentColor = theme.colors.accent ?? ACCENT;
+  }, [theme]);
+
+  // ─── SPAWN SHAPE ────────────────────────────────────────────────────────────
+  const spawnShape = useCallback(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const s = stateRef.current;
+    const elapsed = (DURATION - s.timeLeft) * 1000;
+    s.shapeType       = randomShapeType();
+    s.shapeX          = SHAPE_MARGIN + Math.random() * (canvas.width  - SHAPE_MARGIN * 2);
+    s.shapeY          = SHAPE_MARGIN + Math.random() * (canvas.height - SHAPE_MARGIN * 2);
+    s.shapeSize       = 28 + Math.random() * 16; // 28–44px
+    s.shapeWindowMs   = getShapeWindowMs(elapsed);
+    s.shapeSpawnTime  = Date.now();
+    s.shapePhase      = 'visible';
+  }, []);
+
+  // ─── END GAME ───────────────────────────────────────────────────────────────
+  const endGame = useCallback(() => {
+    const s = stateRef.current;
+    s.running = false;
+    cancelAnimationFrame(animRef.current);
+    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+    if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
+    sfx.success();
+    haptic([30, 50, 30, 50, 100]);
+    setFinalSig({ ...s.sig });
+    setPhase('done');
+  }, []);
+
+  // ─── GAME LOOP ──────────────────────────────────────────────────────────────
+  const startLoop = useCallback(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    const s = stateRef.current;
+
+    // Reset state
+    s.running = true;
+    s.timeLeft = DURATION;
+    s.sig = {
+      hitsOnFirst: 0, misses: 0, flashReactionTimes: [], wrongAreaTaps: 0,
+      hits: 0, streak: 0, maxStreak: 0, score: 0,
+    };
+    s.shapePhase   = 'dark';
+    s.darkStartTime  = Date.now();
+    s.darkDurationMs = randomDarkDuration();
+    s.hitFlashTime   = 0;
+    setScoreDisplay(0);
+    setTimeLeft(DURATION);
+
+    // 1-second countdown timer only
+    timerRef.current = setInterval(() => {
+      s.timeLeft--;
+      setTimeLeft(s.timeLeft);
+      if (s.timeLeft <= 0) { endGame(); }
+    }, 1000);
+
+    // No background music — spec.audio.music = "none"
+
+    const loop = () => {
+      if (!s.running) return;
+      const now  = Date.now();
+      const W    = canvas.width;
+      const H    = canvas.height;
+
+      // ── Background ──────────────────────────────────────────────────────────
+      ctx.fillStyle = BG_COLOR;
+      ctx.fillRect(0, 0, W, H);
+
+      // ── Shape state machine ─────────────────────────────────────────────────
+      if (s.shapePhase === 'dark') {
+        if (now - s.darkStartTime >= s.darkDurationMs) {
+          spawnShape();
+        }
+      } else {
+        // shapePhase === 'visible'
+        const age = now - s.shapeSpawnTime;
+        if (age >= s.shapeWindowMs) {
+          // Shape timed out — it's a miss
+          s.sig.misses++;
+          s.sig.streak = 0;
+          sfx.collision();
+          haptic([40]);
+          s.shapePhase    = 'dark';
+          s.darkStartTime  = now;
+          s.darkDurationMs = randomDarkDuration();
+        } else {
+          // Draw silhouette — visible but subtle
+          drawShape(ctx, s.shapeType, s.shapeX, s.shapeY, s.shapeSize, SHAPE_COLOR);
+        }
+      }
+
+      // ── Hit flash effect ────────────────────────────────────────────────────
+      if (s.hitFlashTime > 0) {
+        const flashAge = now - s.hitFlashTime;
+        const flashDuration = 220;
+        if (flashAge < flashDuration) {
+          const alpha = 1 - flashAge / flashDuration;
+          const expand = flashAge / flashDuration;
+          const r = s.hitFlashSize * (1.2 + expand * 1.5);
+          ctx.save();
+          ctx.globalAlpha = alpha * 0.7;
+          ctx.shadowBlur  = 40;
+          ctx.shadowColor = s.accentColor;
+          ctx.fillStyle   = s.accentColor;
+          ctx.beginPath();
+          ctx.arc(s.hitFlashX, s.hitFlashY, r, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+        } else {
+          s.hitFlashTime = 0;
+        }
+      }
+
+      animRef.current = requestAnimationFrame(loop);
+    };
+
+    animRef.current = requestAnimationFrame(loop);
+    setPhase('playing');
+  }, [endGame, spawnShape]);
+
+  // ─── TAP / POINTER INPUT ────────────────────────────────────────────────────
+  const handleTap = useCallback((clientX: number, clientY: number) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const s = stateRef.current;
+    if (!s.running) return;
+
+    const rect = canvas.getBoundingClientRect();
+    const x = (clientX - rect.left) * (canvas.width  / rect.width);
+    const y = (clientY - rect.top)  * (canvas.height / rect.height);
+
+    if (s.shapePhase === 'visible') {
+      const hit = isInsideShape(x, y, s.shapeType, s.shapeX, s.shapeY, s.shapeSize);
+      if (hit) {
+        const reactionMs = Date.now() - s.shapeSpawnTime;
+        s.sig.hits++;
+        s.sig.flashReactionTimes.push(reactionMs);
+        if (reactionMs < 350) s.sig.hitsOnFirst++;
+        s.sig.streak++;
+        if (s.sig.streak > s.sig.maxStreak) s.sig.maxStreak = s.sig.streak;
+
+        // Score by reaction speed
+        let pts = 0;
+        if (reactionMs < 300)       pts = 10;
+        else if (reactionMs < 600)  pts = 5;
+        else                         pts = 2;
+
+        // Streak bonus: +15 on every 5th consecutive hit
+        if (s.sig.streak > 0 && s.sig.streak % 5 === 0) pts += 15;
+
+        s.sig.score += pts;
+        setScoreDisplay(s.sig.score);
+
+        // Hit flash
+        s.hitFlashX    = s.shapeX;
+        s.hitFlashY    = s.shapeY;
+        s.hitFlashSize = s.shapeSize;
+        s.hitFlashTime = Date.now();
+
+        sfx.collect();
+        haptic([30]);
+
+        // Start darkness phase immediately
+        s.shapePhase    = 'dark';
+        s.darkStartTime  = Date.now();
+        s.darkDurationMs = randomDarkDuration();
+      } else {
+        // Tapped outside shape while visible = wrong-area tap
+        s.sig.wrongAreaTaps++;
+        s.sig.streak = 0;
+        const penalty = Math.max(0, s.sig.score - 3);
+        s.sig.score = penalty;
+        setScoreDisplay(s.sig.score);
+        haptic([50]);
+      }
+    } else {
+      // Tapped during darkness = wrong-area tap
+      s.sig.wrongAreaTaps++;
+      s.sig.streak = 0;
+      const penalty = Math.max(0, s.sig.score - 3);
+      s.sig.score = penalty;
+      setScoreDisplay(s.sig.score);
+      haptic([50]);
+    }
+  }, []);
+
+  // ─── CANVAS SETUP & RESIZE ──────────────────────────────────────────────────
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const resize = () => {
+      canvas.width  = canvas.offsetWidth;
+      canvas.height = canvas.offsetHeight;
+    };
+    resize();
+    window.addEventListener('resize', resize);
+
+    const onPointerDown = (e: PointerEvent) => {
+      if (phase !== 'playing') return;
+      handleTap(e.clientX, e.clientY);
+    };
+    canvas.addEventListener('pointerdown', onPointerDown);
+
+    return () => {
+      window.removeEventListener('resize', resize);
+      canvas.removeEventListener('pointerdown', onPointerDown);
+    };
+  }, [phase, handleTap]);
+
+  // ─── CLEANUP ON UNMOUNT ──────────────────────────────────────────────────────
+  useEffect(() => {
+    return () => {
+      cancelAnimationFrame(animRef.current);
+      if (timerRef.current) clearInterval(timerRef.current);
+      if (stopMusicRef.current) stopMusicRef.current();
+    };
+  }, []);
+
+  // ─── PHASE TRANSITIONS ───────────────────────────────────────────────────────
+  const handleStart = useCallback(() => {
+    playerSessionRef.current = savePlayerSession(GAME_ID, playerName, playerAvatar);
+    initAudio();
+    setPhase('countdown');
+  }, [playerName, playerAvatar]);
+
+  const handleCountdownDone = useCallback(() => {
+    startLoop();
+  }, [startLoop]);
+
+  const handlePlayAgain = useCallback(() => {
+    setPhase('start');
+    setScoreDisplay(0);
+    setTimeLeft(DURATION);
+    setFinalSig(null);
+  }, []);
+
+  // ─── END SCREEN INSIGHTS ─────────────────────────────────────────────────────
+  const buildInsights = (sig: Signals) => {
+    const totalVisible = sig.hits + sig.misses;
+    const accuracyPct  = totalVisible > 0 ? Math.round((sig.hits / totalVisible) * 100) : 0;
+    const avgReaction  = sig.flashReactionTimes.length > 0
+      ? Math.round(sig.flashReactionTimes.reduce((a, b) => a + b, 0) / sig.flashReactionTimes.length)
+      : 0;
+
+    const reactionColor =
+      avgReaction < 350  ? '#4ade80' :
+      avgReaction <= 600 ? '#facc15' :
+                           '#ef4444';
+
+    const accuracyColor =
+      accuracyPct >= 75 ? '#4ade80' :
+      accuracyPct >= 50 ? '#facc15' :
+                          '#ef4444';
+
+    const falseTapColor =
+      sig.wrongAreaTaps <= 3 ? '#4ade80' :
+      sig.wrongAreaTaps <= 7 ? '#facc15' :
+                               '#ef4444';
+
+    return [
+      {
+        label: 'Avg Reaction',
+        value: avgReaction > 0 ? `${avgReaction}ms` : '—',
+        color: reactionColor,
+      },
+      {
+        label: 'Accuracy',
+        value: `${accuracyPct}%`,
+        color: accuracyColor,
+      },
+      {
+        label: 'Gut Reads',
+        value: `${sig.hitsOnFirst}`,
+        color: theme.colors.accent ?? ACCENT,
+      },
+      {
+        label: 'False Taps',
+        value: `${sig.wrongAreaTaps}`,
+        color: falseTapColor,
+      },
+    ];
+  };
+
+  // ─── RENDER ──────────────────────────────────────────────────────────────────
+  return (
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
+
+      {/* ── Start Screen ──────────────────────────────────────────────────── */}
+      {phase === 'start' && (
+        <GameStartScreen
+          emoji={GAME_EMOJI}
+          title={GAME_TITLE}
+          description={GAME_TAGLINE}
+          ctaLabel="Start"
+          accentColor={theme.colors.accent ?? ACCENT}
+          onStart={handleStart}
+        >
+          <PlayerNameInput
+            accentColor={theme.colors.accent ?? ACCENT}
+            onReady={(name, avatar) => { setPlayerName(name); setPlayerAvatar(avatar); }}
+          />
+        </GameStartScreen>
+      )}
+
+      {/* ── Countdown ─────────────────────────────────────────────────────── */}
+      {phase === 'countdown' && (
+        <Countdown onComplete={handleCountdownDone} accentColor={theme.colors.accent ?? ACCENT} />
+      )}
+
+      {/* ── Playing (canvas + HUD) ────────────────────────────────────────── */}
+      {(phase === 'playing' || phase === 'countdown') && (
+        <>
+          <canvas
+            ref={canvasRef}
+            style={{
+              position: 'absolute',
+              inset: 0,
+              width: '100%',
+              height: '100%',
+              touchAction: 'none',
+            }}
+          />
+          {phase === 'playing' && (
+            <GameHUD
+              accentColor={theme.colors.accent ?? ACCENT}
+              items={[
+                { label: 'TIME',  value: timeLeft,      danger: timeLeft <= 10 },
+                { label: 'SCORE', value: scoreDisplay },
+              ]}
+            />
+          )}
+        </>
+      )}
+
+      {/* ── End Screen ────────────────────────────────────────────────────── */}
+      {phase === 'done' && finalSig && (
+        <EndScreen
+          gameId={GAME_ID}
+          title={getPersonality(finalSig)}
+          emoji={GAME_EMOJI}
+          score={String(finalSig.score)}
+          personality={getPersonality(finalSig)}
+          insights={buildInsights(finalSig)}
+          accentColor={theme.colors.accent ?? ACCENT}
+          onPlayAgain={handlePlayAgain}
+          didWin={finalSig.hits >= 8}
+        />
+      )}
+
+      {/* ── Webhook (fires once on completion) ───────────────────────────── */}
+      {phase === 'done' && finalSig && (
+        <WebhookEmitter
+          theme={theme}
+          gameId={GAME_ID}
+          sig={finalSig}
+          personality={getPersonality(finalSig)}
+          player={playerSessionRef.current}
+        />
+      )}
+    </GameShell>
+  );
+}
+
+// ─── WEBHOOK EMITTER ─────────────────────────────────────────────────────────
+function WebhookEmitter({
+  theme,
+  gameId,
+  sig,
+  personality,
+  player,
+}: {
+  theme: ReturnType<typeof useBrandTheme>;
+  gameId: string;
+  sig: Signals;
+  personality: string;
+  player: PlayerSession | null;
+}) {
+  const fired = useRef(false);
+  useEffect(() => {
+    if (fired.current) return;
+    fired.current = true;
+
+    const totalVisible  = sig.hits + sig.misses;
+    const accuracyBySpeed = totalVisible > 0 ? parseFloat((sig.hits / totalVisible).toFixed(3)) : 0;
+    const avgReactionMs = sig.flashReactionTimes.length > 0
+      ? Math.round(sig.flashReactionTimes.reduce((a, b) => a + b, 0) / sig.flashReactionTimes.length)
+      : null;
+
+    postWebhook(theme, gameId, {
+      personality,
+      score:            sig.score,
+      hitsOnFirst:      sig.hitsOnFirst,
+      misses:           sig.misses,
+      flashReactionTimes: sig.flashReactionTimes,
+      accuracyBySpeed,
+      wrongAreaTaps:    sig.wrongAreaTaps,
+      avgReactionMs,
+      hits:             sig.hits,
+      maxStreak:        sig.maxStreak,
+    }, player);
+  }, [theme, gameId, sig, personality, player]);
+  return null;
+}

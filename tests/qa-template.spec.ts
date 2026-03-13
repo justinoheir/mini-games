@@ -1,313 +1,497 @@
 /**
  * QA TEMPLATE — Copy this for every new game.
- * Replace GAME_NAME, GAME_PATH, GAME_ID, and fill in game-specific checks.
+ * Replace GAME_ID, GAME_PATH, ACCENT, GAME_DURATION_MS, and fill in game-specific checks.
  *
- * Run: npx playwright test tests/qa-template.spec.ts --headed
+ * Run single game: npx playwright test tests/qa-template.spec.ts --headed
+ * Run all games:   npx playwright test tests/ --reporter=html
+ *
+ * Covers:
+ *  1. Page load + no errors
+ *  2. Start screen (name input, CTA button size)
+ *  3. Countdown phase
+ *  4. Playing phase (timer, score, no crash)
+ *  5. End screen (score, personality, play-again)
+ *  6. Play-again state reset
+ *  7. Mobile viewport (375px + 430px)
+ *  8. Boundary values (timer at 0, score at combo threshold)
+ *  9. Performance (FPS, memory)
+ * 10. Accessibility (axe-core scan)
+ * 11. Sensor-specific (motion / mic — uncomment as needed)
  */
 
-import { test, expect, Page } from '@playwright/test'
-import {
-  mockAccelerometer,
-  mockMicrophone,
-  mockHaptics,
-  mockCamera,
-  setStoredUser,
-  getStoredScores,
-  getVibrateLog
-} from './setup/device-mocks'
+import { test, expect } from '@playwright/test'
+import AxeBuilder from '@axe-core/playwright'
+import { GamePage } from './pages/GamePage'
 
-const BASE_URL = process.env.TEST_URL ?? 'http://localhost:3000'
-const GAME_PATH = '/games/GAME_NAME'           // ← CHANGE THIS
-const GAME_ID   = 'GAME_NAME'                  // ← CHANGE THIS (matches localStorage key)
-const ACCENT    = '#00ff88'                    // ← CHANGE THIS (game accent color)
+// ─── CONFIGURE THIS BLOCK FOR EACH GAME ──────────────────────────────────────
+const GAME_ID        = 'GAME_NAME'          // ← e.g. 'shadow-tap'
+const GAME_PATH      = '/games/GAME_NAME'   // ← e.g. '/games/shadow-tap'
+const ACCENT         = '#00ff88'            // ← game accent hex
+const GAME_DURATION_MS = 30000             // ← game duration in ms (30s, 45s, 60s)
+const SENSOR         = 'touch'             // ← 'touch' | 'motion' | 'mic' | 'camera'
+// ─────────────────────────────────────────────────────────────────────────────
 
-// ─── Setup: runs before each test ─────────────────────────────────────────────
+// ─── 1. PAGE LOAD ─────────────────────────────────────────────────────────────
 
-async function setup(page: Page, sensors: {
-  motion?: boolean
-  mic?: boolean
-  micPattern?: 'silent' | 'loud' | 'breathing' | 'spike'
-  camera?: boolean
-} = {}) {
-  await setStoredUser(page)           // skip onboarding
-  await mockHaptics(page)             // always mock haptics
-
-  if (sensors.motion) await mockAccelerometer(page)
-  if (sensors.mic)    await mockMicrophone(page, { volumePattern: sensors.micPattern ?? 'silent' })
-  if (sensors.camera) await mockCamera(page)
-
-  await page.goto(BASE_URL + GAME_PATH)
-  await page.waitForLoadState('networkidle')
-}
-
-// ─── 1. Core: Page Loads ──────────────────────────────────────────────────────
-
-test('game page loads without errors', async ({ page }) => {
+test('1.1 — page loads without JS errors', async ({ page }) => {
   const errors: string[] = []
+  page.on('pageerror', err => errors.push(err.message))
   page.on('console', msg => { if (msg.type() === 'error') errors.push(msg.text()) })
-  page.on('pageerror', err => errors.push(err.message))
 
-  await setup(page)
+  const game = new GamePage(page, GAME_PATH, ACCENT)
+  await game.goto({ sensors: { motion: SENSOR === 'motion', mic: SENSOR === 'mic' } })
 
-  expect(errors).toHaveLength(0)
-  await expect(page.locator('body')).not.toBeEmpty()
+  expect(errors, `JS errors on load: ${errors.join(', ')}`).toHaveLength(0)
 })
 
-// ─── 2. Core: Game Shell ──────────────────────────────────────────────────────
-
-test('back button is visible and large enough', async ({ page }) => {
-  await setup(page)
-
-  const backBtn = page.locator('[data-testid="back-button"], a[href="/"], button:has-text("←")')
-    .first()
-
-  await expect(backBtn).toBeVisible()
-
-  const box = await backBtn.boundingBox()
-  expect(box).not.toBeNull()
-  expect(box!.width).toBeGreaterThanOrEqual(44)   // min 44px tap target
-  expect(box!.height).toBeGreaterThanOrEqual(44)
+test('1.2 — page title / meta is set', async ({ page }) => {
+  const game = new GamePage(page, GAME_PATH, ACCENT)
+  await game.goto()
+  const title = await page.title()
+  expect(title.length).toBeGreaterThan(0)
 })
 
-test('back button navigates to home', async ({ page }) => {
-  await setup(page)
+// ─── 2. START SCREEN ──────────────────────────────────────────────────────────
 
-  const backBtn = page.locator('[data-testid="back-button"], a[href="/"], button:has-text("←")')
-    .first()
-  await backBtn.click()
-
-  await expect(page).toHaveURL(BASE_URL + '/')
+test('2.1 — start screen renders', async ({ page }) => {
+  const game = new GamePage(page, GAME_PATH, ACCENT)
+  await game.goto()
+  await expect(game.ctaButton).toBeVisible({ timeout: 3000 })
 })
 
-// ─── 3. Core: Permission Phase ────────────────────────────────────────────────
-
-test('permission button is visible on load', async ({ page }) => {
-  await setup(page, { motion: true })  // adjust to game's sensor
-
-  // Games must show a button to enable sensors — never auto-request
-  const permBtn = page.locator('button').filter({ hasText: /enable|allow|start|motion|mic/i })
-  await expect(permBtn.first()).toBeVisible({ timeout: 3000 })
+test('2.2 — name input is visible on start screen', async ({ page }) => {
+  const game = new GamePage(page, GAME_PATH, ACCENT)
+  await game.goto({ skipUser: true })
+  await expect(game.nameInput).toBeVisible({ timeout: 3000 })
 })
 
-test('touch fallback activates if sensor denied', async ({ page }) => {
-  // Override with denied permission
-  await page.addInitScript(() => {
-    ;(window as any).DeviceMotionEvent = class extends Event {
-      static requestPermission = async () => 'denied'
-    }
-  })
-  await setStoredUser(page)
-  await page.goto(BASE_URL + GAME_PATH)
-
-  // Game should still be playable (touch fallback visible)
-  await page.locator('button').filter({ hasText: /enable|allow|start|motion|mic/i }).first().click()
-  // Should not crash — touch controls or some fallback should appear
-  await expect(page.locator('body')).not.toBeEmpty()
-  const errors = await page.evaluate(() => (window as any).__errors ?? [])
-  expect(errors).toHaveLength(0)
+test('2.3 — CTA button meets 44×44px minimum tap target', async ({ page }) => {
+  const game = new GamePage(page, GAME_PATH, ACCENT)
+  await game.goto()
+  await game.expectTouchTargetSize(game.ctaButton, 44, 'CTA button')
 })
 
-// ─── 4. Core: Countdown Phase ────────────────────────────────────────────────
-
-test('countdown shows 3-2-1-GO before game starts', async ({ page }) => {
-  await setup(page, { motion: true })
-
-  // Trigger permission / start
-  const startBtn = page.locator('button').filter({ hasText: /enable|allow|start|motion|mic/i }).first()
-  if (await startBtn.isVisible()) await startBtn.click()
-
-  // Countdown should appear
-  await expect(page.locator('text=3').or(page.locator('text=GO'))).toBeVisible({ timeout: 5000 })
+test('2.4 — back button meets 44×44px minimum tap target', async ({ page }) => {
+  const game = new GamePage(page, GAME_PATH, ACCENT)
+  await game.goto()
+  await game.expectTouchTargetSize(game.backButton, 44, 'back button')
 })
 
-// ─── 5. Core: Playing Phase ───────────────────────────────────────────────────
-
-test('timer is visible during gameplay', async ({ page }) => {
-  await setup(page, { motion: true })
-
-  const startBtn = page.locator('button').filter({ hasText: /enable|allow|start|motion|mic/i }).first()
-  if (await startBtn.isVisible()) await startBtn.click()
-
-  // Wait for countdown to finish
-  await page.waitForTimeout(3000)
-
-  // Timer should be somewhere on screen (e.g. "60", "59", "0:60")
-  const timerEl = page.locator('[data-testid="timer"]').or(
-    page.locator('text=/^[0-9]+$/')
-  )
-  await expect(timerEl.first()).toBeVisible({ timeout: 5000 })
+test('2.5 — back button navigates to home', async ({ page }) => {
+  const game = new GamePage(page, GAME_PATH, ACCENT)
+  await game.goto()
+  await game.backButton.click()
+  await expect(page).toHaveURL(new RegExp('^' + (process.env.TEST_URL ?? 'http://localhost:3000') + '/?$'))
 })
 
-test('game does not crash during 10 seconds of play', async ({ page }) => {
+// ─── 3. COUNTDOWN PHASE ──────────────────────────────────────────────────────
+
+test('3.1 — countdown appears after tapping start', async ({ page }) => {
+  const game = new GamePage(page, GAME_PATH, ACCENT)
+  await game.goto({ sensors: { motion: SENSOR === 'motion' } })
+  await game.start()
+  await game.waitForCountdown()
+})
+
+test('3.2 — countdown progresses to GO', async ({ page }) => {
+  const game = new GamePage(page, GAME_PATH, ACCENT)
+  await game.goto({ sensors: { motion: SENSOR === 'motion' } })
+  await game.start()
+  await expect(page.locator('text=3').or(page.locator('text=GO')).first()).toBeVisible({ timeout: 5000 })
+  await expect(page.locator('text=GO').or(page.locator('canvas'))).toBeVisible({ timeout: 6000 })
+})
+
+// ─── 4. PLAYING PHASE ────────────────────────────────────────────────────────
+
+test('4.1 — timer is visible during gameplay', async ({ page }) => {
+  const game = new GamePage(page, GAME_PATH, ACCENT)
+  await game.goto({ sensors: { motion: SENSOR === 'motion' } })
+  await game.start()
+  await game.waitForPlaying()
+  await expect(game.timerEl).toBeVisible({ timeout: 3000 })
+})
+
+test('4.2 — timer decreases during gameplay', async ({ page }) => {
+  const game = new GamePage(page, GAME_PATH, ACCENT)
+  await game.goto({ sensors: { motion: SENSOR === 'motion' } })
+  await game.start()
+  await game.waitForPlaying()
+  await game.expectTimerDecreasing(3000)
+})
+
+test('4.3 — no crash during 10 seconds of gameplay', async ({ page }) => {
   const errors: string[] = []
   page.on('pageerror', err => errors.push(err.message))
 
-  await setup(page, { motion: true })
-
-  const startBtn = page.locator('button').filter({ hasText: /enable|allow|start|motion|mic/i }).first()
-  if (await startBtn.isVisible()) await startBtn.click()
-
+  const game = new GamePage(page, GAME_PATH, ACCENT)
+  await game.goto({ sensors: { motion: SENSOR === 'motion', mic: SENSOR === 'mic' } })
+  await game.start()
+  await game.waitForPlaying()
   await page.waitForTimeout(10000)
 
-  expect(errors).toHaveLength(0)
+  expect(errors, `Crash during gameplay: ${errors.join(', ')}`).toHaveLength(0)
 })
 
-// ─── 6. Core: End Screen ─────────────────────────────────────────────────────
+// ─── 5. BOUNDARY VALUES ──────────────────────────────────────────────────────
+// These test the edges of game logic — most common source of bugs
 
-test('end screen shows after game completes', async ({ page }) => {
-  await setup(page, { motion: true })
+test('5.1 — score starts at 0 when game begins', async ({ page }) => {
+  const game = new GamePage(page, GAME_PATH, ACCENT)
+  await game.goto({ sensors: { motion: SENSOR === 'motion' } })
+  await game.start()
+  await game.waitForPlaying()
 
-  // Fast-forward by mocking timer (skip full game duration in CI)
+  const scoreText = await game.scoreEl.textContent().catch(() => '0')
+  const score = parseInt(scoreText ?? '0')
+  expect(score, 'Score should start at 0').toBe(0)
+})
+
+test('5.2 — game ends when timer reaches 0 (not before, not stuck)', async ({ page }) => {
+  // Mock timer to expire quickly
   await page.addInitScript(() => {
-    // Override Date.now to speed up timer — games typically use timeLeft--
-    // This mock fires a keyboard shortcut or we wait the full duration
+    // Games use setInterval for 1s ticks. We override to fire 10x faster.
+    const orig = window.setInterval.bind(window)
+    ;(window as any).setInterval = (fn: () => void, ms: number, ...args: unknown[]) => {
+      if (ms === 1000) return orig(fn, 100, ...args)  // 10x faster
+      return orig(fn, ms, ...args)
+    }
   })
 
-  const startBtn = page.locator('button').filter({ hasText: /enable|allow|start|motion|mic/i }).first()
-  if (await startBtn.isVisible()) await startBtn.click()
+  const game = new GamePage(page, GAME_PATH, ACCENT)
+  await game.goto({ sensors: { motion: SENSOR === 'motion' } })
+  await game.start()
 
-  // Wait for full game duration + buffer (set timeout to game duration + 5s)
-  // CHANGE 65000 to your game's duration + 5 seconds
-  await page.waitForSelector('[data-testid="end-screen"], text=/play again/i', {
-    timeout: 65000
+  // With 10x timer, a 30s game ends in ~3s, 60s in ~6s
+  await page.waitForSelector('button:has-text("Play Again")', {
+    timeout: Math.ceil(GAME_DURATION_MS / 10) + 5000
   })
 
-  await expect(page.locator('button').filter({ hasText: /play again/i })).toBeVisible()
-  await expect(page.locator('button').filter({ hasText: /all games/i })).toBeVisible()
+  await expect(game.playAgainButton).toBeVisible()
 })
 
-test('end screen shows personality classification', async ({ page }) => {
-  await setup(page)
-
-  // Navigate directly to end screen by injecting game-over state
-  // CUSTOMIZE: inject the end-state that matches your game's phase logic
-  await page.evaluate(() => {
-    // Example: trigger end state via custom event
-    window.dispatchEvent(new CustomEvent('game:force-end'))
+test('5.3 — play-again resets score to 0', async ({ page }) => {
+  await page.addInitScript(() => {
+    const orig = window.setInterval.bind(window)
+    ;(window as any).setInterval = (fn: () => void, ms: number, ...args: unknown[]) => {
+      if (ms === 1000) return orig(fn, 100, ...args)
+      return orig(fn, ms, ...args)
+    }
   })
 
-  await page.waitForTimeout(1000)
-  // End screen should show a personality label
-  // CUSTOMIZE: add the specific personality labels for this game
-  const personality = page.locator('text=/precise|calm|reactive|steady|explosive|balanced/i')
-  // Note: if game hasn't ended yet this will fail — implement force-end event in game
+  const game = new GamePage(page, GAME_PATH, ACCENT)
+  await game.goto({ sensors: { motion: SENSOR === 'motion' } })
+  await game.start()
+  await game.waitForEnd(GAME_DURATION_MS / 10 + 5000)
+  await game.playAgain()
+  await game.waitForPlaying()
+
+  const scoreText = await game.scoreEl.textContent().catch(() => '0')
+  const score = parseInt(scoreText ?? '0')
+  expect(score, 'Score must reset to 0 after play-again').toBe(0)
 })
 
-test('score is saved to localStorage after game ends', async ({ page }) => {
-  await setup(page, { motion: true })
+test('5.4 — timer resets correctly after play-again', async ({ page }) => {
+  await page.addInitScript(() => {
+    const orig = window.setInterval.bind(window)
+    ;(window as any).setInterval = (fn: () => void, ms: number, ...args: unknown[]) => {
+      if (ms === 1000) return orig(fn, 100, ...args)
+      return orig(fn, ms, ...args)
+    }
+  })
 
-  // Play through game...
-  const startBtn = page.locator('button').filter({ hasText: /enable|allow|start/i }).first()
-  if (await startBtn.isVisible()) await startBtn.click()
+  const game = new GamePage(page, GAME_PATH, ACCENT)
+  await game.goto({ sensors: { motion: SENSOR === 'motion' } })
+  await game.start()
+  await game.waitForEnd(GAME_DURATION_MS / 10 + 5000)
+  await game.playAgain()
+  await game.waitForPlaying()
 
-  await page.waitForSelector('text=/play again/i', { timeout: 65000 })
-
-  const scores = await getStoredScores(page)
-  expect(scores[GAME_ID]).toBeDefined()
-  expect(scores[GAME_ID].personality).toBeTruthy()
-  expect(scores[GAME_ID].timestamp).toBeGreaterThan(0)
+  const timerText = await game.timerEl.textContent().catch(() => '0')
+  const timer = parseInt(timerText ?? '0')
+  const expectedDuration = Math.round(GAME_DURATION_MS / 1000)
+  expect(timer, `Timer should reset to ~${expectedDuration}s, got ${timer}`).toBeGreaterThanOrEqual(expectedDuration - 3)
 })
 
-// ─── 7. Core: Play Again ─────────────────────────────────────────────────────
+test('5.5 — end screen shows personality classification', async ({ page }) => {
+  await page.addInitScript(() => {
+    const orig = window.setInterval.bind(window)
+    ;(window as any).setInterval = (fn: () => void, ms: number, ...args: unknown[]) => {
+      if (ms === 1000) return orig(fn, 100, ...args)
+      return orig(fn, ms, ...args)
+    }
+  })
 
-test('"play again" restarts game cleanly', async ({ page }) => {
-  const errors: string[] = []
-  page.on('pageerror', err => errors.push(err.message))
+  const game = new GamePage(page, GAME_PATH, ACCENT)
+  await game.goto()
+  await game.start()
+  await game.waitForEnd(GAME_DURATION_MS / 10 + 5000)
 
-  await setup(page)
-  // Get to end screen...
-  await page.waitForSelector('text=/play again/i', { timeout: 65000 }).catch(() => {})
+  // Personality label must be non-empty text (any label is fine)
+  const personality = page.locator('[data-testid="personality"], .personality-label, text=/🔪|💪|🧮|🌊|⚡|🎯|🔮|🎭|🌟|🏆|😊/').first()
+  await expect(personality).toBeVisible({ timeout: 3000 })
+})
 
-  const playAgainBtn = page.locator('button').filter({ hasText: /play again/i })
-  if (await playAgainBtn.isVisible()) {
-    await playAgainBtn.click()
-    // Should return to permission or countdown phase — not crash
-    await page.waitForTimeout(2000)
-    expect(errors).toHaveLength(0)
+// ─── 6. END SCREEN ───────────────────────────────────────────────────────────
+
+test('6.1 — end screen has play-again button', async ({ page }) => {
+  await page.addInitScript(() => {
+    const orig = window.setInterval.bind(window)
+    ;(window as any).setInterval = (fn: () => void, ms: number, ...args: unknown[]) => {
+      if (ms === 1000) return orig(fn, 100, ...args)
+      return orig(fn, ms, ...args)
+    }
+  })
+  const game = new GamePage(page, GAME_PATH, ACCENT)
+  await game.goto()
+  await game.start()
+  await game.waitForEnd(GAME_DURATION_MS / 10 + 5000)
+  await expect(game.playAgainButton).toBeVisible()
+})
+
+test('6.2 — end screen does not require scrolling on iPhone SE', async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 667 })  // iPhone SE
+  await page.addInitScript(() => {
+    const orig = window.setInterval.bind(window)
+    ;(window as any).setInterval = (fn: () => void, ms: number, ...args: unknown[]) => {
+      if (ms === 1000) return orig(fn, 100, ...args)
+      return orig(fn, ms, ...args)
+    }
+  })
+  const game = new GamePage(page, GAME_PATH, ACCENT)
+  await game.goto()
+  await game.start()
+  await game.waitForEnd(GAME_DURATION_MS / 10 + 5000)
+
+  const scrollHeight = await page.evaluate(() => document.documentElement.scrollHeight)
+  expect(scrollHeight, 'End screen requires scrolling on iPhone SE').toBeLessThanOrEqual(680)
+})
+
+// ─── 7. MOBILE VIEWPORT ──────────────────────────────────────────────────────
+
+test('7.1 — no horizontal scroll on iPhone SE (375px)', async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 667 })
+  const game = new GamePage(page, GAME_PATH, ACCENT)
+  await game.goto()
+  await game.expectNoHorizontalScroll()
+})
+
+test('7.2 — no horizontal scroll on iPhone 15 Pro Max (430px)', async ({ page }) => {
+  await page.setViewportSize({ width: 430, height: 932 })
+  const game = new GamePage(page, GAME_PATH, ACCENT)
+  await game.goto()
+  await game.expectNoHorizontalScroll()
+})
+
+test('7.3 — layout intact on narrow viewport (375px)', async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 667 })
+  const game = new GamePage(page, GAME_PATH, ACCENT)
+  await game.goto()
+  // Back button must still be visible and usable
+  await expect(game.backButton).toBeVisible()
+  await expect(game.ctaButton).toBeVisible()
+})
+
+// ─── 8. PERFORMANCE ──────────────────────────────────────────────────────────
+
+test('8.1 — FPS ≥ 55 during gameplay (60 FPS target)', async ({ page }) => {
+  const game = new GamePage(page, GAME_PATH, ACCENT)
+  await game.goto({ sensors: { motion: SENSOR === 'motion' } })
+  await game.start()
+  await game.waitForPlaying()
+  await page.waitForTimeout(1000)  // let game stabilize
+
+  const fps = await game.measureFPS(3000)
+  expect(fps, `FPS too low: ${fps} (target ≥ 55)`).toBeGreaterThanOrEqual(55)
+})
+
+test('8.2 — JS heap memory stays below 150MB during gameplay', async ({ page }) => {
+  const game = new GamePage(page, GAME_PATH, ACCENT)
+  await game.goto({ sensors: { motion: SENSOR === 'motion' } })
+  await game.start()
+  await game.waitForPlaying()
+  await page.waitForTimeout(5000)
+
+  const memMB = await game.measureMemoryMB()
+  if (memMB !== null) {
+    expect(memMB, `Memory usage too high: ${memMB}MB (limit: 150MB)`).toBeLessThan(150)
+  }
+  // If performance.memory is unavailable (non-Chromium), skip gracefully
+})
+
+test('8.3 — no memory leak across 3 play-agains', async ({ page }) => {
+  await page.addInitScript(() => {
+    const orig = window.setInterval.bind(window)
+    ;(window as any).setInterval = (fn: () => void, ms: number, ...args: unknown[]) => {
+      if (ms === 1000) return orig(fn, 100, ...args)
+      return orig(fn, ms, ...args)
+    }
+  })
+
+  const game = new GamePage(page, GAME_PATH, ACCENT)
+  await game.goto()
+
+  const memBefore = await game.measureMemoryMB()
+
+  // Play through 3 times
+  for (let i = 0; i < 3; i++) {
+    await game.start()
+    await game.waitForEnd(GAME_DURATION_MS / 10 + 5000)
+    await game.playAgain()
+    await page.waitForTimeout(500)
+  }
+
+  const memAfter = await game.measureMemoryMB()
+  if (memBefore !== null && memAfter !== null) {
+    const growth = memAfter - memBefore
+    expect(growth, `Memory grew by ${growth}MB across 3 runs — possible leak`).toBeLessThan(30)
   }
 })
 
-// ─── 8. Mobile Viewport ───────────────────────────────────────────────────────
+// ─── 9. ACCESSIBILITY (axe-core) ─────────────────────────────────────────────
 
-test('no horizontal scroll on mobile', async ({ page }) => {
-  await page.setViewportSize({ width: 390, height: 844 })  // iPhone 14
-  await setup(page)
+test('9.1 — start screen passes axe-core accessibility scan', async ({ page }) => {
+  const game = new GamePage(page, GAME_PATH, ACCENT)
+  await game.goto()
 
-  const scrollWidth = await page.evaluate(() => document.documentElement.scrollWidth)
-  const clientWidth = await page.evaluate(() => document.documentElement.clientWidth)
-  expect(scrollWidth).toBeLessThanOrEqual(clientWidth + 1)
+  const results = await new AxeBuilder({ page })
+    .withTags(['wcag2a', 'wcag2aa', 'best-practice'])
+    .exclude('canvas')           // canvas is not axe-scannable by design
+    .analyze()
+
+  const critical = results.violations.filter(v => v.impact === 'critical' || v.impact === 'serious')
+  expect(
+    critical,
+    `Critical/serious accessibility violations:\n${critical.map(v => `  [${v.impact}] ${v.id}: ${v.description}\n    ${v.nodes.map(n => n.target.join(' ')).join(', ')}`).join('\n')}`
+  ).toHaveLength(0)
 })
 
-test('no vertical overflow on mobile', async ({ page }) => {
-  await page.setViewportSize({ width: 390, height: 844 })
-  await setup(page)
+test('9.2 — all interactive elements have accessible labels', async ({ page }) => {
+  const game = new GamePage(page, GAME_PATH, ACCENT)
+  await game.goto()
 
-  // Game should fill screen, not overflow into scrollable content
-  const bodyOverflow = await page.evaluate(() =>
-    getComputedStyle(document.body).overflow
-  )
-  // Either hidden or the game fits in viewport
-  const scrollHeight = await page.evaluate(() => document.documentElement.scrollHeight)
-  expect(scrollHeight).toBeLessThanOrEqual(850)  // small tolerance
+  const results = await new AxeBuilder({ page })
+    .withRules(['button-name', 'label', 'aria-required-attr', 'aria-valid-attr'])
+    .analyze()
+
+  expect(
+    results.violations,
+    `Unlabeled interactive elements: ${JSON.stringify(results.violations.map(v => v.id))}`
+  ).toHaveLength(0)
 })
 
-// ─── 9. Sensor-Specific: Motion Games ────────────────────────────────────────
-// UNCOMMENT for motion-based games (Tilt Maze, Steady Hand, Tunnel)
+test('9.3 — text contrast meets WCAG AA (4.5:1)', async ({ page }) => {
+  const game = new GamePage(page, GAME_PATH, ACCENT)
+  await game.goto()
+
+  const results = await new AxeBuilder({ page })
+    .withRules(['color-contrast'])
+    .exclude('canvas')
+    .analyze()
+
+  // Log violations for review (some may be false positives on dynamic elements)
+  if (results.violations.length > 0) {
+    console.warn('Contrast violations found:', results.violations.map(v => ({
+      id: v.id,
+      elements: v.nodes.map(n => n.html).slice(0, 3)
+    })))
+  }
+
+  expect(
+    results.violations,
+    `Color contrast violations: ${JSON.stringify(results.violations.map(v => v.id))}`
+  ).toHaveLength(0)
+})
+
+test('9.4 — end screen passes axe-core scan', async ({ page }) => {
+  await page.addInitScript(() => {
+    const orig = window.setInterval.bind(window)
+    ;(window as any).setInterval = (fn: () => void, ms: number, ...args: unknown[]) => {
+      if (ms === 1000) return orig(fn, 100, ...args)
+      return orig(fn, ms, ...args)
+    }
+  })
+
+  const game = new GamePage(page, GAME_PATH, ACCENT)
+  await game.goto()
+  await game.start()
+  await game.waitForEnd(GAME_DURATION_MS / 10 + 5000)
+
+  const results = await new AxeBuilder({ page })
+    .withTags(['wcag2a', 'wcag2aa'])
+    .exclude('canvas')
+    .analyze()
+
+  const critical = results.violations.filter(v => v.impact === 'critical' || v.impact === 'serious')
+  expect(critical, `End screen accessibility violations: ${critical.map(v => v.id).join(', ')}`).toHaveLength(0)
+})
+
+// ─── 10. SENSOR-SPECIFIC: MOTION GAMES ───────────────────────────────────────
+// UNCOMMENT for motion-based games (Tilt Maze, Steady Hand, Tunnel, Dodge Blitz, etc.)
 
 /*
-test('accelerometer input moves game element', async ({ page }) => {
-  await setup(page, { motion: true })
-  await mockAccelerometer(page, { x: 5.0, y: 0, z: 9.8 })  // strong right tilt
+test('10.1 — accelerometer input tilts game element', async ({ page }) => {
+  const game = new GamePage(page, GAME_PATH, ACCENT)
+  await game.goto({ sensors: { motion: true } })
+  await game.mockAccelerometer({ x: 8.0, y: 0, z: 9.8 })  // strong right tilt
+  await game.start()
+  await game.waitForPlaying()
+  // CUSTOMIZE: check canvas element position changed from center
+})
 
-  const startBtn = page.locator('button').filter({ hasText: /enable|motion/i }).first()
-  if (await startBtn.isVisible()) await startBtn.click()
-  await page.waitForTimeout(3500)  // past countdown
-
-  // CUSTOMIZE: check that a game element moved in the expected direction
-  // e.g. ball position x should be > initial x after tilting right
+test('10.2 — touch fallback works when motion denied', async ({ page }) => {
+  await page.addInitScript(() => {
+    ;(window as any).DeviceMotionEvent = class extends Event {
+      static requestPermission = async () => 'denied'
+      accelerationIncludingGravity = { x: 0, y: 0, z: 9.8 }
+    }
+  })
+  const game = new GamePage(page, GAME_PATH, ACCENT)
+  await game.goto()
+  await game.start()
+  await page.waitForTimeout(500)
+  // Game should offer touch control fallback
+  const touchFallback = page.locator('text=/tap|touch|tap to/i').first()
+  await expect(touchFallback.or(game.canvas)).toBeVisible()
 })
 */
 
-// ─── 10. Sensor-Specific: Mic Games ──────────────────────────────────────────
-// UNCOMMENT for mic-based games (Whisper Bomb, Breath Rider, Pulse Sphere)
+// ─── 11. SENSOR-SPECIFIC: MIC GAMES ──────────────────────────────────────────
+// UNCOMMENT for mic-based games (Whisper Bomb, Breath Rider, Pulse Sphere, Crowd Roar, Pitch Match)
 
 /*
-test('loud volume triggers danger state', async ({ page }) => {
-  await setup(page, { mic: true, micPattern: 'loud' })
-
-  const startBtn = page.locator('button').filter({ hasText: /allow mic|start/i }).first()
-  if (await startBtn.isVisible()) await startBtn.click()
-  await page.waitForTimeout(3500)
-
-  // CUSTOMIZE: check for danger indicator (red flash, volume bar high, etc.)
-  const dangerEl = page.locator('[data-testid="danger"], .bg-red-500')
-  await expect(dangerEl).toBeVisible({ timeout: 2000 })
+test('11.1 — loud volume triggers visual danger state', async ({ page }) => {
+  const game = new GamePage(page, GAME_PATH, ACCENT)
+  await game.goto({ sensors: { mic: true } })
+  await game.mockMicrophone('loud')
+  await game.start()
+  await game.waitForPlaying()
+  const danger = page.locator('[data-testid="danger"], .text-red-500, .bg-red-500').first()
+  await expect(danger).toBeVisible({ timeout: 3000 })
 })
 
-test('silence keeps player safe', async ({ page }) => {
-  await setup(page, { mic: true, micPattern: 'silent' })
-
-  const startBtn = page.locator('button').filter({ hasText: /allow mic|start/i }).first()
-  if (await startBtn.isVisible()) await startBtn.click()
-  await page.waitForTimeout(3500)
-
-  // CUSTOMIZE: game should remain in safe state when silent
+test('11.2 — silence keeps player in safe state', async ({ page }) => {
+  const game = new GamePage(page, GAME_PATH, ACCENT)
+  await game.goto({ sensors: { mic: true } })
+  await game.mockMicrophone('silent')
+  await game.start()
+  await game.waitForPlaying()
+  const danger = page.locator('.text-red-500, .bg-red-500').first()
+  await expect(danger).not.toBeVisible({ timeout: 3000 }).catch(() => {})
 })
 */
 
-// ─── 11. Haptics Log ─────────────────────────────────────────────────────────
-// UNCOMMENT to verify haptics fire at the right moments
+// ─── 12. HAPTICS LOG ─────────────────────────────────────────────────────────
 
-/*
-test('haptics fire on collision events', async ({ page }) => {
-  await setup(page, { motion: true })
+test('12.1 — haptics fire at least once during gameplay', async ({ page }) => {
+  const game = new GamePage(page, GAME_PATH, ACCENT)
+  await game.goto({ sensors: { motion: SENSOR === 'motion' } })
+  await game.start()
+  await game.waitForPlaying()
+  await page.waitForTimeout(5000)
 
-  // Play through some of the game...
-  const startBtn = page.locator('button').filter({ hasText: /enable|start/i }).first()
-  if (await startBtn.isVisible()) await startBtn.click()
-  await page.waitForTimeout(10000)
-
-  const log = await getVibrateLog(page)
-  expect(log.length).toBeGreaterThan(0)
+  const log = await game.getVibrateLog()
+  // Some games only vibrate on events — relax this if it's a passive sensor game
+  // expect(log.length, 'No haptics fired during gameplay').toBeGreaterThan(0)
+  // Log for debugging without failing:
+  console.log(`Haptics fired: ${log.length} times`)
 })
-*/

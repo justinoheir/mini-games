@@ -10,6 +10,10 @@ import { initAudio, sfx, haptic, startMusic } from '@/lib/audio';
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
 import { createTiltController } from '@/lib/tilt';
+import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
+import PlayerNameInput from '@/components/PlayerNameInput';
+
+const GAME_ID = 'pulse-sphere';
 
 type GameState = 'start' | 'permissions' | 'countdown' | 'playing' | 'done';
 
@@ -83,6 +87,9 @@ export default function PulseSphere() {
   const [behavior, setBehavior] = useState<BehaviorData | null>(null);
   const [joystickEnabled, setJoystickEnabled] = useState(false);
   const [joystickThumb, setJoystickThumb] = useState({ x: 0, y: 0 });
+  const [playerName, setPlayerName]   = useState('');
+  const [playerAvatar, setPlayerAvatar] = useState('🎮');
+  const playerSessionRef              = useRef<PlayerSession | null>(null);
 
   // Verified: uses getByteFrequencyData, RMS formula correct, smoothingTimeConstant=0.3 ✓
   const getVolume = useCallback((): number => {
@@ -112,7 +119,7 @@ export default function PulseSphere() {
     const bData: BehaviorData = { avgVolume: voiceScore, avgTilt: moveScore, touchCount: touchScore };
     setBehavior(bData);
     setGameState('done');
-    postWebhook(capturedTheme, 'pulse-sphere', { score: getPersonality(voiceScore, moveScore, touchScore), personality: getPersonality(voiceScore, moveScore, touchScore), signals: bData });
+    postWebhook(capturedTheme, 'pulse-sphere', { score: getPersonality(voiceScore, moveScore, touchScore), personality: getPersonality(voiceScore, moveScore, touchScore), signals: bData }, playerSessionRef.current);
   }, []);
 
   const startLoop = useCallback(() => {
@@ -248,6 +255,7 @@ export default function PulseSphere() {
   }, [getVolume, endGame, theme]);
 
   const handleStart = useCallback(async () => {
+    playerSessionRef.current = savePlayerSession(GAME_ID, playerName, playerAvatar);
     initAudio(); sfx.click();
     setGameState('permissions');
     try {
@@ -284,7 +292,7 @@ export default function PulseSphere() {
       tiltControllerRef.current = null;
       setGameState('start');
     }
-  }, []);
+  }, [playerName, playerAvatar]);
 
   const handlePlayAgain = useCallback(() => {
     if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
@@ -398,7 +406,12 @@ export default function PulseSphere() {
           accentColor="#a855f7"
           ctaTextColor="#fff"
           onStart={handleStart}
-        />
+        >
+          <PlayerNameInput
+            accentColor={theme.colors.accent ?? '#a855f7'}
+            onReady={(name, avatar) => { setPlayerName(name); setPlayerAvatar(avatar); }}
+          />
+        </GameStartScreen>
       )}
 
       {gameState==='permissions' && (
