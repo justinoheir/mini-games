@@ -84,9 +84,16 @@ export default function HoopShot() {
     cancelAnimationFrame(animRef.current);
     if (timerRef.current) clearInterval(timerRef.current);
     if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
-    setFinalSig({ ...s.sig });
+    const finalScore = s.sig.score;
+    const finalSigSnap = { ...s.sig };
+    setFinalSig(finalSigSnap);
     setPhase('done');
-  }, []);
+    postWebhook(theme, GAME_ID, {
+      score: `${finalScore} pts`,
+      personality: getPersonality(finalSigSnap),
+      signals: { makes: finalSigSnap.makes, totalShots: finalSigSnap.totalShots, streakMax: finalSigSnap.streakMax },
+    });
+  }, [theme]);
 
   const resetBall = useCallback(() => {
     const canvas = canvasRef.current;

@@ -98,9 +98,15 @@ export default function SpiralThrow() {
     if (timerRef.current) clearInterval(timerRef.current);
     tiltRef.current?.stop();
     if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
-    setFinalSig({ ...s.sig });
+    const finalSigSnap = { ...s.sig };
+    setFinalSig(finalSigSnap);
     setPhase('done');
-  }, []);
+    postWebhook(theme, GAME_ID, {
+      score: `${finalSigSnap.score} pts`,
+      personality: getPersonality(finalSigSnap),
+      signals: { completions: finalSigSnap.completions, attempts: finalSigSnap.attempts, streakMax: finalSigSnap.streakMax },
+    });
+  }, [theme]);
 
   const setupNewPlay = useCallback(() => {
     const canvas = canvasRef.current;
@@ -227,8 +233,7 @@ export default function SpiralThrow() {
         }
         // Incomplete
         if (s.ballY < -50 || s.ballX < -50 || s.ballX > canvas.width + 50) {
-          // Interception if throwing behind receiver
-          const recFutureY = s.recY - 20;
+          // Interception if throwing behind receiver (ball is below/behind receiver)
           const isInterception = s.ballY > s.recY + 30;
           s.sig.attempts++;
           s.sig.catchStreak = 0;
@@ -357,7 +362,6 @@ export default function SpiralThrow() {
   }, []);
 
   const sig = finalSig;
-  const total = sig?.attempts ?? 1;
   const compRate = sig ? Math.round(sig.completions / Math.max(1, sig.attempts) * 100) : 0;
 
   return (

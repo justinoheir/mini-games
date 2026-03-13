@@ -82,9 +82,15 @@ export default function PenaltyKick() {
     if (timerRef.current) clearTimeout(timerRef.current);
     tiltRef.current?.stop();
     if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
-    setFinalSig({ ...s.sig });
+    const finalSigSnap = { ...s.sig };
+    setFinalSig(finalSigSnap);
     setPhase('done');
-  }, []);
+    postWebhook(theme, GAME_ID, {
+      score: `${finalSigSnap.goals}/${MAX_SHOTS}`,
+      personality: getPersonality(finalSigSnap),
+      signals: { goals: finalSigSnap.goals, shots: finalSigSnap.shots, cornerShots: finalSigSnap.cornerShots },
+    });
+  }, [theme]);
 
   const resetRound = useCallback(() => {
     const canvas = canvasRef.current;
@@ -114,6 +120,7 @@ export default function PenaltyKick() {
     s.sig = { shots:0, goals:0, cornerShots:0, powerSum:0, curveShots:0, postSaveGoals:0, lastSavedResult:false, adaptCount:0 };
     s.floats = [];
     setGoalsDisplay(0);
+    setShotsState(0);
 
     // Goal at top
     s.goalW = W * 0.6; s.goalH = H * 0.18;
@@ -211,6 +218,7 @@ export default function PenaltyKick() {
           const saved = s.ballX > keeperLeft && s.ballX < keeperRight;
           s.phase = 'result';
           s.sig.shots++;
+          setShotsState(s.sig.shots);
           s.sig.powerSum += s.power;
           if (Math.abs(s.curveX) > 3) s.sig.curveShots++;
 
@@ -238,7 +246,7 @@ export default function PenaltyKick() {
             if (s.power > 85) sfx.boom();
           }
           s.resultTimer = 90;
-          if (s.shots >= MAX_SHOTS) {
+          if (s.sig.shots >= MAX_SHOTS) {
             setTimeout(() => endGame(), 1500);
           } else {
             setTimeout(() => resetRound(), 1500);
@@ -249,11 +257,12 @@ export default function PenaltyKick() {
           if (s.phase === 'flying') {
             s.phase = 'result';
             s.sig.shots++;
+            setShotsState(s.sig.shots);
             s.sig.powerSum += s.power;
             sfx.fail(); haptic([150]);
             s.floats.push({ x: W/2, y: H/2, text:'MISS!', color:'#f97316', alpha:1, vy:-1.5 });
             s.resultTimer = 60;
-            if (s.shots >= MAX_SHOTS) setTimeout(() => endGame(), 1500);
+            if (s.sig.shots >= MAX_SHOTS) setTimeout(() => endGame(), 1500);
             else setTimeout(() => resetRound(), 1500);
           }
         }

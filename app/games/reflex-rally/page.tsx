@@ -76,9 +76,15 @@ export default function ReflexRally() {
     cancelAnimationFrame(animRef.current);
     if (timerRef.current) clearInterval(timerRef.current);
     if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
-    setFinalSig({ ...s.sig });
+    const finalSigSnap = { ...s.sig };
+    setFinalSig(finalSigSnap);
     setPhase('done');
-  }, []);
+    postWebhook(theme, GAME_ID, {
+      score: `${finalSigSnap.score} pts`,
+      personality: getPersonality(finalSigSnap),
+      signals: { returns: finalSigSnap.returns, misses: finalSigSnap.misses, streakMax: finalSigSnap.streakMax },
+    });
+  }, [theme]);
 
   const spawnBall = useCallback(() => {
     const canvas = canvasRef.current;

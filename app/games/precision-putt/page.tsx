@@ -96,9 +96,15 @@ export default function PrecisionPutt() {
     if (s.sig.readTimes.length > 0) {
       s.sig.avgReadTime = s.sig.readTimes.reduce((a,b)=>a+b,0) / s.sig.readTimes.length;
     }
-    setFinalSig({ ...s.sig });
+    const finalSigSnap = { ...s.sig };
+    setFinalSig(finalSigSnap);
     setPhase('done');
-  }, []);
+    postWebhook(theme, GAME_ID, {
+      score: `${finalSigSnap.totalStrokes} strokes`,
+      personality: getPersonality(finalSigSnap),
+      signals: { holes: finalSigSnap.holes, holesInOne: finalSigSnap.holesInOne, sweetSpotHits: finalSigSnap.sweetSpotHits },
+    });
+  }, [theme]);
 
   const setupHole = useCallback(() => {
     const canvas = canvasRef.current;
@@ -327,7 +333,7 @@ export default function PrecisionPutt() {
     s.ballVY = Math.sin(s.aimAngle) * speed;
     s.ballMoving = true;
     s.strokesThisHole++;
-    s.sig.totalStrokes++;
+    // Note: s.sig.totalStrokes is accumulated per-hole in the hole-completion check
     s.aimReadStart = Date.now();
     sfx.click(); haptic([40]);
   }, []);
