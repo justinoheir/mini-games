@@ -5,10 +5,12 @@ import GameHUD from '@/components/GameHUD';
 import GameStartScreen from '@/components/GameStartScreen';
 import Countdown from '@/components/Countdown';
 import EndScreen from '@/components/EndScreen';
-import { initAudio, sfx, haptic, startMusic } from '@/lib/audio';
+import { initAudio, sfx, haptic, startMusic, increaseMusicTempo } from '@/lib/audio';
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
+import { Particle, spawnBurst, updateAndDrawParticles } from '@/lib/particles';
+import { ShakeState, triggerShake, applyShake } from '@/lib/screenShake';
 
 const ACCENT = '#f97316';
 const GAME_ID = 'hoop-shot';
@@ -81,6 +83,8 @@ export default function HoopShot() {
     respawnTimer: 0,
     rimFlash: 0,
     hoopScored: false,
+    particles: [] as Particle[],
+    shake: { intensity: 0, duration: 0 } as ShakeState,
   });
 
   const endGame = useCallback(() => {
@@ -128,6 +132,8 @@ export default function HoopShot() {
                lateMakes:0, lateAttempts:0, powerSum:0, score:0 };
     s.floats = [];
     s.netSwish = 0;
+    s.particles = [];
+    s.shake = { intensity: 0, duration: 0 };
     setScoreDisplay(0);
     setStreakDisplay(0);
     s.rimFlash = 0;
@@ -146,12 +152,15 @@ export default function HoopShot() {
     timerRef.current = setInterval(() => {
       s.timeLeft--;
       setTimeLeft(s.timeLeft);
+      if (s.timeLeft === 15) increaseMusicTempo(120); // ramp music for final stretch
       if (s.timeLeft <= 5 && s.timeLeft > 0) sfx.tick(); // urgency cue
       if (s.timeLeft <= 0) { sfx.success(); haptic([30, 50, 100]); endGame(); }
     }, 1000);
 
     const loop = () => {
       if (!s.running) return;
+      ctx.save();
+      applyShake(ctx, s.shake);
       // Basketball court — hardwood atmosphere
       const bg = ctx.createLinearGradient(0, 0, 0, H);
       bg.addColorStop(0, '#100c03'); bg.addColorStop(0.6, '#160e04'); bg.addColorStop(1, '#0c0800');
@@ -252,6 +261,7 @@ export default function HoopShot() {
             setStreakDisplay(s.sig.streakCurrent);
             s.floats.push({ x: s.hoopX, y: s.hoopY - 30, text: `+${pts}`, color: isThree ? '#fbbf24' : '#4ade80', alpha: 1, vy: -2 });
             haptic([60, 30, 60]);
+            spawnBurst(s.particles, s.hoopX, s.hoopY, isThree ? '#fbbf24' : '#4ade80', 20, 6);
             setTimeout(() => resetBall(), 1200);
             s.ballInFlight = false;
             s.ballVisible = false;
@@ -272,6 +282,8 @@ export default function HoopShot() {
             s.sig.streakCurrent = 0;
             setStreakDisplay(0);
             sfx.nearMiss(); // distinct from rim bounce (sfx.collision); miss = "almost"
+            triggerShake(s.shake, 5, 8);
+            spawnBurst(s.particles, s.ballX, s.ballY, '#ef4444', 10, 4);
           }
           setTimeout(() => resetBall(), 800);
           s.ballInFlight = false;
@@ -328,6 +340,9 @@ export default function HoopShot() {
         f.y += f.vy; f.alpha *= 0.96;
       });
 
+      // Particles layer (drawn outside shake transform for stability)
+      ctx.restore();
+      updateAndDrawParticles(ctx, s.particles);
       // HUD drawn by DOM overlay GameHUD component
 
       animRef.current = requestAnimationFrame(loop);

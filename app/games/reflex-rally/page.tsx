@@ -9,6 +9,8 @@ import { initAudio, sfx, haptic, startMusic, increaseMusicTempo } from '@/lib/au
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
+import { Particle, spawnBurst, updateAndDrawParticles } from '@/lib/particles';
+import { ShakeState, triggerShake, applyShake } from '@/lib/screenShake';
 
 const ACCENT = '#84cc16';
 const GAME_ID = 'reflex-rally';
@@ -75,6 +77,8 @@ export default function ReflexRally() {
     courtNarrow: false,
     // Player Y (lerped)
     playerY: 0,
+    particles: [] as Particle[],
+    shake: { intensity: 0, duration: 0 } as ShakeState,
   });
 
   const endGame = useCallback(() => {
@@ -119,6 +123,7 @@ export default function ReflexRally() {
     s.running = true; s.timeLeft = DURATION; s.lives = MAX_LIVES;
     s.sig = { returns:0, misses:0, forehands:0, backhands:0, reactionTimes:[], score:0, streakMax:0, streakCurrent:0 };
     s.floats = []; s.swooshes = [];
+    s.particles = []; s.shake = { intensity: 0, duration: 0 };
     setScoreDisplay(0); setStreakDisplay(0);
     s.speed = s.baseSpeed = 5; s.speedTier = 0;
     s.netX = W / 2;
@@ -151,6 +156,8 @@ export default function ReflexRally() {
 
     const loop = () => {
       if (!s.running) return;
+      ctx.save();
+      applyShake(ctx, s.shake);
       // Init playerY on first frame
     if (!s.playerY) s.playerY = (s.courtTop + s.courtBottom) / 2;
     // Clay court — terracotta atmosphere
@@ -230,6 +237,8 @@ export default function ReflexRally() {
           setLives(s.lives);
           setStreakDisplay(0);
           sfx.collision(); haptic([300]);
+          triggerShake(s.shake, 7, 10);
+          spawnBurst(s.particles, W*0.1, s.ballY, '#ef4444', 12, 5);
           s.floats.push({ x: W*0.15, y: (ct+cb)/2, text:'MISS!', color:'#ef4444', alpha:1, vy:-1.5 });
           s.ballActive = false;
           if (s.lives <= 0) { sfx.fail(); haptic([500]); endGame(); return; }
@@ -265,6 +274,9 @@ export default function ReflexRally() {
         ctx.restore();
       }
 
+      // Particles layer (outside shake transform)
+      ctx.restore();
+      updateAndDrawParticles(ctx, s.particles);
       // HUD drawn by DOM overlay GameHUD component
 
       animRef.current = requestAnimationFrame(loop);
@@ -311,6 +323,7 @@ export default function ReflexRally() {
     setStreakDisplay(s.sig.streakCurrent);
 
     sfx.collect(); haptic([40]);
+    spawnBurst(s.particles, s.ballX, s.ballY, ACCENT, 14, 5);
     // Fast return (<300ms) = great reflex — celebrate with success sound (not nearMiss which is semantically wrong)
     if (reactionTime < 300) setTimeout(() => sfx.success(), 80);
     // Streak milestone: sfx.go() delayed so it follows the return sound

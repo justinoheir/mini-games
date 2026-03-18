@@ -5,11 +5,13 @@ import GameHUD from '@/components/GameHUD';
 import GameStartScreen from '@/components/GameStartScreen';
 import Countdown from '@/components/Countdown';
 import EndScreen from '@/components/EndScreen';
-import { initAudio, sfx, haptic, startMusic } from '@/lib/audio';
+import { initAudio, sfx, haptic, startMusic, increaseMusicTempo } from '@/lib/audio';
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
 import { createTiltController } from '@/lib/tilt';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
+import { Particle, spawnBurst, updateAndDrawParticles } from '@/lib/particles';
+import { ShakeState, triggerShake, applyShake } from '@/lib/screenShake';
 
 const ACCENT = '#a16207';
 const GAME_ID = 'spiral-throw';
@@ -94,6 +96,8 @@ export default function SpiralThrow() {
     sig: { attempts:0, completions:0, interceptions:0, score:0,
            leadPasses:0, deepThrows:0, fastDecisions:0, catchStreak:0, streakMax:0 } as Signals,
     stars: [] as { x:number;y:number;alpha:number;vy:number }[],
+    particles: [] as Particle[],
+    shake: { intensity: 0, duration: 0 } as ShakeState,
   });
 
   const endGame = useCallback(() => {
@@ -142,6 +146,7 @@ export default function SpiralThrow() {
     s.sig = { attempts:0, completions:0, interceptions:0, score:0,
                leadPasses:0, deepThrows:0, fastDecisions:0, catchStreak:0, streakMax:0 };
     s.floats = []; s.stars = [];
+    s.particles = []; s.shake = { intensity: 0, duration: 0 };
     setupNewPlay();
     setPhase('playing'); setTimeLeft(DURATION); setScoreDisplay(0); setStreakDisplay(0);
     stopMusicRef.current = startMusic('drive');
@@ -149,12 +154,15 @@ export default function SpiralThrow() {
     timerRef.current = setInterval(() => {
       s.timeLeft--;
       setTimeLeft(s.timeLeft);
+      if (s.timeLeft === 15) increaseMusicTempo(120); // ramp for final stretch
       if (s.timeLeft <= 5 && s.timeLeft > 0) sfx.tick(); // urgency cue
       if (s.timeLeft <= 0) { sfx.success(); haptic([30, 50, 100]); endGame(); } // timer end = completed session
     }, 1000);
 
     const loop = () => {
       if (!s.running) return;
+      ctx.save();
+      applyShake(ctx, s.shake);
       // Football field — rich dark grass
       const bg = ctx.createLinearGradient(0, 0, 0, H);
       bg.addColorStop(0, '#0d1f0a'); bg.addColorStop(1, '#050f05');
@@ -231,6 +239,7 @@ export default function SpiralThrow() {
           if (s.sig.catchStreak >= 3) setTimeout(() => sfx.success(), 100);
           sfx.collect(); haptic([60,30,60]);
           s.floats.push({ x: s.recX, y: s.recY - 20, text:'+7', color:'#fbbf24', alpha:1, vy:-2 });
+          spawnBurst(s.particles, s.recX, s.recY, '#fbbf24', 22, 7);
           // Stars
           for (let i = 0; i < 8; i++) {
             s.stars.push({ x: s.recX + (Math.random()-0.5)*40, y: s.recY + (Math.random()-0.5)*40,
@@ -251,9 +260,13 @@ export default function SpiralThrow() {
             s.sig.score -= 3;
             setScoreDisplay(s.sig.score); // update HUD after score drop (fixed P2)
             sfx.fail(); haptic([300]);
+            triggerShake(s.shake, 7, 10);
+            spawnBurst(s.particles, s.ballX > 0 && s.ballX < canvas.width ? s.ballX : W/2,
+                       s.ballY > 0 && s.ballY < canvas.height ? s.ballY : H/2, '#ef4444', 14, 5);
             s.floats.push({ x: s.ballX, y: s.ballY, text:'-3', color:'#ef4444', alpha:1, vy:-1.5 });
           } else {
             sfx.collision();
+            triggerShake(s.shake, 4, 6);
           }
           s.ballInFlight = false;
           setTimeout(() => setupNewPlay(), 900);
@@ -300,6 +313,9 @@ export default function SpiralThrow() {
         ctx.textAlign = 'center'; ctx.fillText('TAP to snap, then SWIPE to throw', W/2, H*0.9);
       }
 
+      // Particles layer (outside shake transform for visual stability)
+      ctx.restore();
+      updateAndDrawParticles(ctx, s.particles);
       // HUD drawn by DOM overlay GameHUD component
 
       animRef.current = requestAnimationFrame(loop);

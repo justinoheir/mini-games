@@ -10,6 +10,8 @@ import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
 import { createTiltController } from '@/lib/tilt';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
+import { Particle, spawnBurst, updateAndDrawParticles } from '@/lib/particles';
+import { ShakeState, triggerShake, applyShake } from '@/lib/screenShake';
 
 const ACCENT = '#22c55e';
 const GAME_ID = 'penalty-kick';
@@ -77,6 +79,8 @@ export default function PenaltyKick() {
     resultText: '', resultColor: '', resultTimer: 0,
     phase: 'ready' as 'ready' | 'flying' | 'result',
     keeperFlash: '',
+    particles: [] as Particle[],
+    shake: { intensity: 0, duration: 0 } as ShakeState,
   });
 
   const endGame = useCallback(() => {
@@ -123,6 +127,7 @@ export default function PenaltyKick() {
     s.shots = 0; s.goals = 0;
     s.sig = { shots:0, goals:0, cornerShots:0, powerSum:0, curveShots:0, postSaveGoals:0, lastSavedResult:false, adaptCount:0 };
     s.floats = [];
+    s.particles = []; s.shake = { intensity: 0, duration: 0 };
     setGoalsDisplay(0);
     setShotsState(0);
 
@@ -139,6 +144,8 @@ export default function PenaltyKick() {
 
     const loop = () => {
       if (!s.running) return;
+      ctx.save();
+      applyShake(ctx, s.shake);
       // Football pitch — deep grass gradient
       const bg = ctx.createLinearGradient(0, 0, 0, H);
       bg.addColorStop(0, '#0a1f0a'); bg.addColorStop(1, '#051005');
@@ -234,6 +241,8 @@ export default function PenaltyKick() {
           if (saved) {
             s.sig.lastSavedResult = true;
             sfx.collision(); haptic([200]);
+            triggerShake(s.shake, 6, 10);
+            spawnBurst(s.particles, s.ballX, s.ballY, '#ef4444', 14, 5);
             s.resultText = 'SAVED!'; s.resultColor = '#ef4444';
             s.floats.push({ x: W/2, y: H/2, text:'SAVED!', color:'#ef4444', alpha:1, vy:-1.5 });
             // sfx.boom() already fired at kick time (handleTouchEnd) for powerful shots — no double-boom here
@@ -245,6 +254,7 @@ export default function PenaltyKick() {
             s.sig.lastSavedResult = false;
             // Delay success so it follows collect, not stacks with it
             sfx.collect(); setTimeout(() => sfx.success(), 100); haptic([60, 30, 60]);
+            spawnBurst(s.particles, s.ballX, s.goalY + s.goalH / 2, '#4ade80', 24, 8);
             s.resultText = 'GOAL!'; s.resultColor = '#4ade80';
             s.floats.push({ x: W/2, y: H/2, text:'GOAL!', color:'#4ade80', alpha:1, vy:-1.5 });
             // sfx.boom() already fired at kick time (handleTouchEnd) for powerful shots — no double-boom here
@@ -264,6 +274,8 @@ export default function PenaltyKick() {
             setShotsState(s.sig.shots);
             s.sig.powerSum += s.power;
             sfx.fail(); haptic([150]);
+            triggerShake(s.shake, 4, 6);
+            spawnBurst(s.particles, Math.max(20, Math.min(W-20, s.ballX)), Math.max(20, Math.min(H-20, s.ballY)), '#f97316', 10, 4);
             s.floats.push({ x: W/2, y: H/2, text:'MISS!', color:'#f97316', alpha:1, vy:-1.5 });
             s.resultTimer = 60;
             if (s.sig.shots >= MAX_SHOTS) setTimeout(() => endGame(), 1500);
@@ -323,6 +335,9 @@ export default function PenaltyKick() {
         f.y += f.vy; f.alpha *= 0.97;
       });
 
+      // Particles layer (outside shake transform)
+      ctx.restore();
+      updateAndDrawParticles(ctx, s.particles);
       // HUD drawn by DOM overlay GameHUD component
 
       animRef.current = requestAnimationFrame(loop);
