@@ -20,7 +20,7 @@ import { initAudio, sfx, haptic, startMusic } from '@/lib/audio';
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
-import PlayerNameInput from '@/components/PlayerNameInput';
+import { type Particle, spawnBurst, updateAndDrawParticles } from '@/lib/particles';
 
 // ─── SPEC CONSTANTS ──────────────────────────────────────────────────────────
 
@@ -42,7 +42,9 @@ const COLORS = [
 ];
 
 const DROP_RADIUS = 28;
-const TOP_AREA    = 95; // px reserved for target color display
+// TOP_AREA accounts for 56px GameShell top bar + ~65px GameHUD pill + 14px breathing room
+// Canvas target display is drawn from ~145-218px so it's fully visible below the HUD
+const TOP_AREA    = 235; // px reserved for target color display (shifted below top bar + HUD)
 
 // ─── TYPES ────────────────────────────────────────────────────────────────────
 
@@ -95,7 +97,10 @@ interface GameState {
   targetColorIndex: number;
   lastColorSection: number; // tracks which 10-second block we're in
   flashAlpha: number;       // 0–1 for color-change flash overlay
+  missFlashAlpha: number;   // 0–1 for red flash on wrong tap
+  comboFlashAlpha: number;  // 0–1 for accent flash on combo milestone
   lastSpawnTime: number;    // timestamp of last drop spawn
+  particles: Particle[];    // tap burst particles (correct hits)
   sig: Signals;
   accentColor: string;
 }
@@ -120,12 +125,15 @@ export default function ColorCascadeGame() {
     targetColorIndex: 0,
     lastColorSection: 0,
     flashAlpha:       0,
+    missFlashAlpha:   0,
+    comboFlashAlpha:  0,
     lastSpawnTime:    0,
     sig: {
       correctTaps: 0, wrongTaps: 0, reactionTimes: [],
       accuracy: 0, maxStreak: 0, score: 0, streakCurrent: 0,
     },
     accentColor: ACCENT,
+    particles: [],
   });
 
   const [phase, setPhase]               = useState<Phase>('start');
@@ -135,6 +143,7 @@ export default function ColorCascadeGame() {
   const [playerName, setPlayerName]     = useState('');
   const [playerAvatar, setPlayerAvatar] = useState('🎮');
   const playerSessionRef                = useRef<PlayerSession | null>(null);
+
 
   // Sync brand theme accent into mutable state so rAF loop sees it
   useEffect(() => {
@@ -199,7 +208,10 @@ export default function ColorCascadeGame() {
     s.targetColorIndex = Math.floor(Math.random() * COLORS.length);
     s.lastColorSection = 0;
     s.flashAlpha       = 0;
+    s.missFlashAlpha   = 0;
+    s.comboFlashAlpha  = 0;
     s.lastSpawnTime    = 0;
+    s.particles        = [];
     s.sig = {
       correctTaps: 0, wrongTaps: 0, reactionTimes: [],
       accuracy: 0, maxStreak: 0, score: 0, streakCurrent: 0,
@@ -215,6 +227,12 @@ export default function ColorCascadeGame() {
       s.elapsedSeconds++;
       setTimeLeft(s.timeLeft);
 
+      // Tick urgency cue — final 5 seconds only (not every second, to avoid metronome distraction)
+      if (s.timeLeft <= 5 && s.timeLeft > 0) sfx.tick();
+
+      // Timer warning at 10s remaining — fires once, distinct urgent sound
+      if (s.timeLeft === 10) sfx.warning();
+
       // Change target color every 10 seconds
       const colorSection = Math.floor(s.elapsedSeconds / 10);
       if (colorSection !== s.lastColorSection) {
@@ -225,10 +243,11 @@ export default function ColorCascadeGame() {
         while (newIndex === s.targetColorIndex);
         s.targetColorIndex = newIndex;
         s.flashAlpha = 1.0;
+        sfx.shimmer(); // audio cue for target color change
       }
 
       if (s.timeLeft <= 0) {
-        sfx.fail();
+        sfx.success(); // game completion — not a failure, use success sound (spec: endSound: "success")
         haptic([300]);
         endGame();
       }
@@ -237,9 +256,29 @@ export default function ColorCascadeGame() {
     // Spawn first drop
     spawnDrop(canvas, s);
 
+    // FPS tracking for test instrumentation
+    let fpsFrameCount = 0;
+    let fpsWindowStart = performance.now();
+    if (typeof window !== 'undefined') {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (window as any).__raf_fps = 0;
+    }
+
     // ── rAF loop ──────────────────────────────────────────────────────────────
-    const loop = () => {
+    const loop = (rafTs: number) => {
       if (!s.running) return;
+
+      // Track FPS in a 1-second rolling window (exposed for test 7.2)
+      fpsFrameCount++;
+      const fpsElapsed = rafTs - fpsWindowStart;
+      if (fpsElapsed >= 1000) {
+        if (typeof window !== 'undefined') {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (window as any).__raf_fps = Math.round(fpsFrameCount * 1000 / fpsElapsed);
+        }
+        fpsFrameCount = 0;
+        fpsWindowStart = rafTs;
+      }
 
       const W   = canvas.width;
       const H   = canvas.height;
@@ -257,11 +296,14 @@ export default function ColorCascadeGame() {
       ctx.fillStyle = ambGrad;
       ctx.fillRect(0, 0, W, H);
 
-      // ── Target color display ─────────────────────────────────────────────────
+      // ── Target color display (drawn BELOW GameShell top bar 0-56px and HUD 64-125px) ─────
+      // Positions: label y=150, swatch y=188, name y=222 — all below HUD bottom (~130px)
       ctx.fillStyle    = 'rgba(255,255,255,0.45)';
-      ctx.font         = '11px monospace';
+      ctx.font         = '600 18px monospace';
       ctx.textAlign    = 'center';
-      ctx.fillText('TAP THIS COLOR', W / 2, 20);
+      ctx.letterSpacing = '0.06em';
+      ctx.fillText('MATCH', W / 2, 156);
+      ctx.letterSpacing = '0px';
 
       // Pulsing color swatch
       const pulse   = 1 + 0.08 * Math.sin(now / 280);
@@ -271,14 +313,14 @@ export default function ColorCascadeGame() {
       ctx.shadowColor = targetHex;
       ctx.fillStyle   = targetHex;
       ctx.beginPath();
-      ctx.arc(W / 2, 48, swatchR, 0, Math.PI * 2);
+      ctx.arc(W / 2, 188, swatchR, 0, Math.PI * 2);
       ctx.fill();
       ctx.restore();
 
       ctx.fillStyle = targetHex;
-      ctx.font      = 'bold 12px monospace';
+      ctx.font      = 'bold 22px monospace';
       ctx.textAlign = 'center';
-      ctx.fillText(COLORS[s.targetColorIndex].label, W / 2, 80);
+      ctx.fillText(COLORS[s.targetColorIndex].label, W / 2, 228);
 
       // Separator line
       ctx.strokeStyle = 'rgba(255,255,255,0.08)';
@@ -296,6 +338,29 @@ export default function ColorCascadeGame() {
         ctx.fillRect(0, 0, W, H);
         ctx.restore();
         s.flashAlpha = Math.max(0, s.flashAlpha - 0.04);
+      }
+
+      // ── Tap burst particles (correct hit — from lib/particles.ts) ───────────
+      updateAndDrawParticles(ctx, s.particles);
+
+      // ── Miss flash overlay (red — wrong tap) ────────────────────────────────
+      if (s.missFlashAlpha > 0) {
+        ctx.save();
+        ctx.globalAlpha = s.missFlashAlpha * 0.35;
+        ctx.fillStyle   = '#ef4444';
+        ctx.fillRect(0, 0, W, H);
+        ctx.restore();
+        s.missFlashAlpha = Math.max(0, s.missFlashAlpha - 0.14);
+      }
+
+      // ── Combo flash overlay (accent — streak milestone) ─────────────────────
+      if (s.comboFlashAlpha > 0) {
+        ctx.save();
+        ctx.globalAlpha = s.comboFlashAlpha * 0.25;
+        ctx.fillStyle   = s.accentColor;
+        ctx.fillRect(0, 0, W, H);
+        ctx.restore();
+        s.comboFlashAlpha = Math.max(0, s.comboFlashAlpha - 0.10);
       }
 
       // ── Spawn logic ─────────────────────────────────────────────────────────
@@ -450,6 +515,12 @@ export default function ColorCascadeGame() {
         setScoreDisplay(s.sig.score);
         sfx.collect();
         haptic([20]);
+        // Particle burst at tap point (correct hit) — spec requires lib/particles.ts
+        const tapHex = COLORS[bestDrop.colorIndex].hex;
+        spawnBurst(s.particles, x, bestDropY, tapHex, 12, 5);
+        // Escalating audio + visual on combo milestones
+        if (s.sig.streakCurrent === 5)  { setTimeout(() => sfx.success(), 100); s.comboFlashAlpha = 1.0; }  // ×1.5 milestone
+        if (s.sig.streakCurrent === 10) { setTimeout(() => sfx.powerOn(), 100); s.comboFlashAlpha = 1.0; }  // ×2.0 milestone
       } else {
         // ❌ WRONG COLOR
         s.sig.wrongTaps++;
@@ -458,6 +529,7 @@ export default function ColorCascadeGame() {
         setScoreDisplay(s.sig.score);
         sfx.collision();
         haptic([80]);
+        s.missFlashAlpha = 1.0; // Red flash feedback
       }
     }
     // Tapping empty space: no penalty
@@ -500,11 +572,13 @@ export default function ColorCascadeGame() {
 
   // ─── PHASE TRANSITIONS ────────────────────────────────────────────────────
 
-  const handleStart = useCallback(() => {
-    playerSessionRef.current = savePlayerSession(GAME_ID, playerName, playerAvatar);
-    initAudio();
+  const handleStart = useCallback(async (name: string, avatar: string) => {
+    setPlayerName(name);
+    setPlayerAvatar(avatar);
+    playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar);
+    await initAudio();
     setPhase('countdown');
-  }, [playerName, playerAvatar]);
+  }, []);
 
   const handleCountdownDone = useCallback(() => {
     startLoop();
@@ -565,12 +639,7 @@ export default function ColorCascadeGame() {
           ctaLabel="Start"
           accentColor={theme.colors.accent ?? ACCENT}
           onStart={handleStart}
-        >
-          <PlayerNameInput
-            accentColor={theme.colors.accent ?? ACCENT}
-            onReady={(name, avatar) => { setPlayerName(name); setPlayerAvatar(avatar); }}
-          />
-        </GameStartScreen>
+        />
       )}
 
       {/* ── Countdown ───────────────────────────────────────────────────────── */}

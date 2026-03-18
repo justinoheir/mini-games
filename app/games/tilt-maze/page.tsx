@@ -10,7 +10,6 @@ import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
 import { createTiltController } from '@/lib/tilt';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
-import PlayerNameInput from '@/components/PlayerNameInput';
 
 type MazeCell = { top: number; right: number; bottom: number; left: number };
 const GRID = 5;
@@ -68,9 +67,9 @@ type GameState = 'start' | 'countdown' | 'playing' | 'done';
 function getProfile(b: BehaviorData) {
   const avg = b.correctionTimes.length > 0
     ? b.correctionTimes.reduce((a, c) => a + c, 0) / b.correctionTimes.length : 999;
-  if (b.collisions < 5 && avg < 300) return 'Precise 🎯';
-  if (b.collisions > 15) return 'Reactive ⚡';
-  return 'Calm 🧘';
+  if (b.collisions < 5 && avg < 300) return 'Precision Navigator 🎯';
+  if (b.collisions > 15) return 'Reactive Explorer ⚡';
+  return 'Methodical Solver 🧭';
 }
 
 export default function TiltMaze() {
@@ -79,6 +78,10 @@ export default function TiltMaze() {
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const stopMusicRef = useRef<(() => void) | null>(null);
   const tiltControllerRef = useRef<ReturnType<typeof createTiltController> | null>(null);
+  const hapticsEnabled = typeof window !== 'undefined'
+    ? new URLSearchParams(window.location.search).get('haptics') !== 'off'
+    : true;
+
   const stateRef = useRef({
     ballX: 0, ballY: 0, velX: 0, velY: 0,
     behavior: { collisions: 0, correctionTimes: [] as number[], completionTime: null as number | null, timedOut: false },
@@ -89,6 +92,8 @@ export default function TiltMaze() {
     running: false,
     accentColor: '#a855f7',
     maze: STATIC_MAZE as MazeCell[][],
+    celebrateUntil: 0,
+    exitX: 0, exitY: 0,
   });
   const [gameState, setGameState] = useState<GameState>('start');
   const [timeLeft, setTimeLeft] = useState(60);
@@ -102,8 +107,12 @@ export default function TiltMaze() {
   useEffect(() => { stateRef.current.accentColor = theme.colors.accent; }, [theme]);
 
   const drawMaze = useCallback((ctx2d: CanvasRenderingContext2D, cs: number, ox: number, oy: number, accent: string) => {
-    ctx2d.strokeStyle = accent;
-    ctx2d.lineWidth = 2;
+    // Outer glow pass — thick, soft glow layer
+    ctx2d.save();
+    ctx2d.shadowBlur = 12;
+    ctx2d.shadowColor = accent + '55';
+    ctx2d.strokeStyle = accent + '55';
+    ctx2d.lineWidth = 4;
     const maze = stateRef.current.maze;
     for (let r = 0; r < GRID; r++) {
       for (let c = 0; c < GRID; c++) {
@@ -115,6 +124,23 @@ export default function TiltMaze() {
         if (w.left)   { ctx2d.beginPath(); ctx2d.moveTo(x,y);    ctx2d.lineTo(x,y+cs);    ctx2d.stroke(); }
       }
     }
+    ctx2d.restore();
+    // Sharp inner wall pass
+    ctx2d.save();
+    ctx2d.strokeStyle = accent;
+    ctx2d.lineWidth = 2;
+    ctx2d.shadowBlur = 0;
+    for (let r = 0; r < GRID; r++) {
+      for (let c = 0; c < GRID; c++) {
+        const x = ox + c * cs, y = oy + r * cs;
+        const w = maze[r][c];
+        if (w.top)    { ctx2d.beginPath(); ctx2d.moveTo(x,y);    ctx2d.lineTo(x+cs,y);    ctx2d.stroke(); }
+        if (w.right)  { ctx2d.beginPath(); ctx2d.moveTo(x+cs,y); ctx2d.lineTo(x+cs,y+cs); ctx2d.stroke(); }
+        if (w.bottom) { ctx2d.beginPath(); ctx2d.moveTo(x,y+cs); ctx2d.lineTo(x+cs,y+cs); ctx2d.stroke(); }
+        if (w.left)   { ctx2d.beginPath(); ctx2d.moveTo(x,y);    ctx2d.lineTo(x,y+cs);    ctx2d.stroke(); }
+      }
+    }
+    ctx2d.restore();
   }, []);
 
   const checkWalls = useCallback((
@@ -139,7 +165,11 @@ export default function TiltMaze() {
     if (hit) {
       const now = Date.now();
       s.behavior.collisions++;
-      sfx.collision(); haptic([200]);
+      // Throttle sound+haptic to 150ms — prevents 60fps audio buzz when ball is pressed against wall
+      if (now - s.lastCollisionTime > 150) {
+        sfx.collision();
+        if (hapticsEnabled) haptic([200]);
+      }
       if (s.lastCollisionTime) s.behavior.correctionTimes.push(now - s.lastCollisionTime);
       s.lastCollisionTime = now;
     }
@@ -148,6 +178,7 @@ export default function TiltMaze() {
 
   const endGame = useCallback((themeRef: typeof theme) => {
     const s = stateRef.current;
+    if (!s.running) return; // guard: prevent double-fire (timer + celebrate race condition)
     s.running = false;
     cancelAnimationFrame(s.animId);
     if (timerRef.current) clearInterval(timerRef.current);
@@ -167,7 +198,7 @@ export default function TiltMaze() {
     const s = stateRef.current;
     s.behavior = { collisions: 0, correctionTimes: [], completionTime: null, timedOut: false };
     s.timeLeft = 60; s.velX = 0; s.velY = 0; s.running = true;
-    s.ballTrail = []; s.wallFlashUntil = 0; s.joystickX = 0; s.joystickY = 0;
+    s.ballTrail = []; s.wallFlashUntil = 0; s.joystickX = 0; s.joystickY = 0; s.celebrateUntil = 0;
     s.maze = generateMaze(GRID);
     setGameState('playing'); setTimeLeft(60);
     stopMusicRef.current = startMusic('tense');
@@ -176,8 +207,9 @@ export default function TiltMaze() {
     timerRef.current = setInterval(() => {
       s.timeLeft--;
       setTimeLeft(s.timeLeft);
-      sfx.tick();
-      if (s.timeLeft <= 0) { s.behavior.timedOut = true; sfx.fail(); haptic([300]); endGame(capturedTheme); }
+      if (s.timeLeft === 10) sfx.warning();
+      else if (s.timeLeft > 0) sfx.tick(); // guard: don't tick at 0 — sfx.fail fires instead
+      if (s.timeLeft <= 0) { s.behavior.timedOut = true; sfx.fail(); if (hapticsEnabled) haptic([300]); endGame(capturedTheme); }
     }, 1000);
 
     const canvas = canvasRef.current;
@@ -194,6 +226,28 @@ export default function TiltMaze() {
     const loop = () => {
       if (!s.running) return;
       const accent = s.accentColor;
+      const exitX = ox + GRID * cs - cs / 2, exitY = oy + GRID * cs - cs / 2;
+
+      // Celebrate animation: expanding rings before game ends
+      if (s.celebrateUntil > 0) {
+        const elapsed = Date.now() - (s.celebrateUntil - 900);
+        const progress = Math.min(elapsed / 900, 1);
+        const bgGrad2 = ctx2d.createLinearGradient(0, 0, 0, H);
+        bgGrad2.addColorStop(0, '#131921'); bgGrad2.addColorStop(1, '#0d1117');
+        ctx2d.fillStyle = bgGrad2; ctx2d.fillRect(0, 0, W, H);
+        ctx2d.fillStyle = `rgba(0,255,136,${0.25 * (1 - progress)})`; ctx2d.fillRect(0, 0, W, H);
+        for (let ring = 0; ring < 4; ring++) {
+          const rr = ((progress + ring * 0.25) % 1) * cs * 2.5;
+          const alpha = Math.max(0, 1 - (progress + ring * 0.25) % 1) * 0.9;
+          ctx2d.beginPath(); ctx2d.arc(exitX, exitY, rr, 0, Math.PI * 2);
+          ctx2d.strokeStyle = `rgba(0,255,136,${alpha})`; ctx2d.lineWidth = 3; ctx2d.stroke();
+        }
+        ctx2d.save(); ctx2d.shadowBlur = 30; ctx2d.shadowColor = '#00ff88';
+        ctx2d.beginPath(); ctx2d.arc(s.ballX, s.ballY, radius * (1 + progress), 0, Math.PI * 2);
+        ctx2d.fillStyle = `rgba(0,255,136,${1 - progress})`; ctx2d.fill(); ctx2d.restore();
+        if (Date.now() >= s.celebrateUntil) { s.celebrateUntil = 0; endGame(capturedTheme); return; }
+        s.animId = requestAnimationFrame(loop); return;
+      }
       // Dungeon atmosphere — dark stone gradient + vignette
       const bgGrad = ctx2d.createLinearGradient(0, 0, 0, H);
       bgGrad.addColorStop(0, '#131921');
@@ -206,7 +260,8 @@ export default function TiltMaze() {
       ctx2d.fillStyle = vig;
       ctx2d.fillRect(0, 0, W, H);
       if (Date.now() < s.wallFlashUntil) {
-        ctx2d.fillStyle = 'rgba(255,0,0,0.22)'; ctx2d.fillRect(0, 0, W, H);
+        const flashProgress = 1 - (Date.now() - (s.wallFlashUntil - 180)) / 180;
+        ctx2d.fillStyle = `rgba(255,0,0,${Math.max(0, flashProgress) * 0.28})`; ctx2d.fillRect(0, 0, W, H);
       }
       drawMaze(ctx2d, cs, ox, oy, accent);
 
@@ -219,17 +274,19 @@ export default function TiltMaze() {
       s.velX *= 0.85; s.velY *= 0.85;
       s.velX = Math.max(-5, Math.min(5, s.velX)); s.velY = Math.max(-5, Math.min(5, s.velY));
       const { nvx, nvy, hit } = checkWalls(s.ballX + s.velX, s.ballY + s.velY, s.velX, s.velY, cs, ox, oy, radius);
-      if (hit) s.wallFlashUntil = Date.now() + 150;
+      if (hit) s.wallFlashUntil = Date.now() + 180;
       s.velX = nvx; s.velY = nvy; s.ballX += nvx; s.ballY += nvy;
 
-      // Trail
+      // Trail — pre-compute RGB once per frame (not per trail point)
       s.ballTrail.push({ x: s.ballX, y: s.ballY });
       if (s.ballTrail.length > 8) s.ballTrail.shift();
+      const trailHex = accent.replace('#', '');
+      const trailR = parseInt(trailHex.slice(0,2),16);
+      const trailG = parseInt(trailHex.slice(2,4),16);
+      const trailB = parseInt(trailHex.slice(4,6),16);
       s.ballTrail.forEach((pos, i) => {
         ctx2d.beginPath(); ctx2d.arc(pos.x, pos.y, radius * (0.35 + i / 16), 0, Math.PI * 2);
-        const hex = accent.replace('#', '');
-        const r = parseInt(hex.slice(0,2),16), g = parseInt(hex.slice(2,4),16), b2 = parseInt(hex.slice(4,6),16);
-        ctx2d.fillStyle = `rgba(${r},${g},${b2},${(i / 8) * 0.4})`; ctx2d.fill();
+        ctx2d.fillStyle = `rgba(${trailR},${trailG},${trailB},${(i / 8) * 0.4})`; ctx2d.fill();
       });
       ctx2d.save();
       ctx2d.shadowBlur = 22; ctx2d.shadowColor = accent;
@@ -238,7 +295,6 @@ export default function TiltMaze() {
       ctx2d.restore();
 
       // Exit portal
-      const exitX = ox + GRID * cs - cs / 2, exitY = oy + GRID * cs - cs / 2;
       const pulseR = 13 + Math.sin(Date.now() / 220) * 5;
       ctx2d.save(); ctx2d.shadowBlur = 18; ctx2d.shadowColor = '#00ff88';
       ctx2d.beginPath(); ctx2d.arc(exitX, exitY, pulseR, 0, Math.PI * 2);
@@ -246,23 +302,28 @@ export default function TiltMaze() {
       ctx2d.strokeStyle = '#00ff88'; ctx2d.lineWidth = 3; ctx2d.stroke();
       ctx2d.restore();
 
-      if (Math.abs(s.ballX - exitX) < cs * 0.42 && Math.abs(s.ballY - exitY) < cs * 0.42) {
+      if (s.celebrateUntil === 0 && Math.abs(s.ballX - exitX) < cs * 0.42 && Math.abs(s.ballY - exitY) < cs * 0.42) {
         s.behavior.completionTime = Date.now() - s.startTime;
-        sfx.success(); haptic([30, 50, 100]); endGame(capturedTheme); return;
+        sfx.success(); if (hapticsEnabled) haptic([30, 50, 100]);
+        s.celebrateUntil = Date.now() + 900;
+        s.animId = requestAnimationFrame(loop); return;
       }
       s.animId = requestAnimationFrame(loop);
     };
     s.animId = requestAnimationFrame(loop);
   }, [drawMaze, checkWalls, endGame, theme]);
 
-  const handleStart = useCallback(async () => {
-    playerSessionRef.current = savePlayerSession(GAME_ID, playerName, playerAvatar);
-    initAudio(); sfx.click();
+  const handleStart = useCallback(async (name: string, avatar: string) => {
+    setPlayerName(name);
+    setPlayerAvatar(avatar);
+    playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar);
+    await initAudio();
     // Create fresh controller each play
     const controller = createTiltController(() => {}, { sensitivity: 1.0, smoothing: 0.45, deadzone: 2, clamp: 22 });
     tiltControllerRef.current = controller;
     const success = await controller.start();
     if (!success) {
+      if (hapticsEnabled) haptic([10]);
       setJoystickEnabled(true);
     } else {
       // Auto-fallback if no events fire within 1500ms
@@ -275,7 +336,7 @@ export default function TiltMaze() {
       }, 1500);
     }
     setGameState('countdown');
-  }, [playerName, playerAvatar]);
+  }, []);
 
   const handlePlayAgain = useCallback(() => {
     if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
@@ -332,7 +393,7 @@ export default function TiltMaze() {
 
   return (
     <GameShell title="Tilt Maze" emoji="🌀" accentColor={accent} theme={theme}>
-      <canvas ref={canvasRef} style={{ display: gameState==='playing' ? 'block' : 'none', position: 'absolute', top:0, left:0 }} />
+      <canvas ref={canvasRef} style={{ display: gameState==='playing' ? 'block' : 'none', position: 'absolute', top:0, left:0, touchAction: 'none' }} />
       {gameState==='playing' && (
         <GameHUD
           items={[{ label: 'TIME', value: `${timeLeft}s`, danger: timeLeft <= 10 }]}
@@ -374,12 +435,7 @@ export default function TiltMaze() {
           ctaLabel="Enable Motion & Start →"
           accentColor={accent}
           onStart={handleStart}
-        >
-          <PlayerNameInput
-            accentColor={theme.colors.accent ?? accent}
-            onReady={(name, avatar) => { setPlayerName(name); setPlayerAvatar(avatar); }}
-          />
-        </GameStartScreen>
+        />
       )}
       {gameState==='done' && b && (
         <EndScreen
@@ -392,6 +448,7 @@ export default function TiltMaze() {
             { label:'Wall collisions', value:String(b.collisions), color:accent },
             { label:'Avg correction', value:avg ? `${avg}ms` : 'N/A', color:'#c084fc' },
             { label:'Style', value:getProfile(b), color:'#00ff88' },
+            { label:'Result', value:b.completionTime ? `${(b.completionTime/1000).toFixed(1)}s` : 'DNF', color: b.completionTime ? '#00ff88' : '#ef4444' },
           ]}
           accentColor={accent}
           onPlayAgain={handlePlayAgain}

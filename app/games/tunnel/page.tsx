@@ -23,12 +23,12 @@ interface ObstacleInfo {
   group: THREE.Group;
 }
 
-interface BehaviorData { collisions: number; avgTiltMagnitude: number; distance: number; }
+interface BehaviorData { collisions: number; avgTiltMagnitude: number; distance: number; nearMisses: number; }
 
 function getProfile(b: BehaviorData) {
   if (b.collisions === 0 && b.avgTiltMagnitude < 0.3) return 'Precise 🎯';
   if (b.avgTiltMagnitude > 0.7) return 'Aggressive 🔥';
-  return 'Conservative 🧊';
+  return 'Zen Pilot 🧊';
 }
 
 // ─── Gap fraction based on elapsed time ───────────────────────────────────────
@@ -224,6 +224,8 @@ export default function TunnelGame() {
   const mountRef = useRef<HTMLDivElement>(null);
   const stopMusicRef = useRef<(() => void) | null>(null);
   const tiltControllerRef = useRef<ReturnType<typeof createTiltController> | null>(null);
+  const nearMissFlashRef = useRef<HTMLDivElement>(null);
+  const speedBurstRef = useRef<HTMLDivElement>(null);
   const stateRef = useRef({
     renderer: null as THREE.WebGLRenderer | null,
     scene: null as THREE.Scene | null,
@@ -236,6 +238,7 @@ export default function TunnelGame() {
     invincibleFrames: 0,
     joystickX: 0, joystickY: 0,
     nearMissLastTime: 0,
+    nearMissCount: 0,
     // Player trail
     trailPositions: [] as { x: number; y: number; z: number }[],
     trailMeshes: [] as THREE.Mesh[],
@@ -257,13 +260,30 @@ export default function TunnelGame() {
     cancelAnimationFrame(s.animId);
     if (s.intervalId) clearInterval(s.intervalId);
     tiltControllerRef.current?.stop();
+    // End-game sound — survival is always a win (timer always ends the game)
+    sfx.success(); haptic([300]);
     if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
+    // Dispose Three.js scene objects (geometries + materials) to prevent GPU memory leaks
+    // across play-again cycles. renderer.dispose() alone does NOT free scene GPU resources.
+    if (s.scene) {
+      s.scene.traverse((obj: THREE.Object3D) => {
+        const mesh = obj as THREE.Mesh;
+        if (mesh.geometry) mesh.geometry.dispose();
+        if (mesh.material) {
+          const mat = mesh.material;
+          if (Array.isArray(mat)) mat.forEach(m => m.dispose()); else mat.dispose();
+        }
+      });
+      s.scene = null;
+    }
     if (s.renderer) { s.renderer.dispose(); s.renderer = null; }
+    const handler = (s as typeof s & { _resizeHandler?: () => void })._resizeHandler;
+    if (handler) { window.removeEventListener('resize', handler); (s as typeof s & { _resizeHandler?: () => void })._resizeHandler = undefined; }
     const avgTilt = s.tiltMagnitudes.length > 0 ? s.tiltMagnitudes.reduce((a, b) => a + b, 0) / s.tiltMagnitudes.length : 0;
-    const bData: BehaviorData = { collisions: s.collisions, avgTiltMagnitude: Math.round(avgTilt * 100) / 100, distance: Math.round(s.distance) };
+    const bData: BehaviorData = { collisions: s.collisions, avgTiltMagnitude: Math.round(avgTilt * 100) / 100, distance: Math.round(s.distance), nearMisses: s.nearMissCount };
     setBehavior(bData);
     setGameState('done');
-    postWebhook(capturedTheme, 'tunnel', { score: `${Math.round(s.distance)}m`, personality: getProfile(bData), signals: bData }, playerSessionRef.current);
+    postWebhook(capturedTheme, 'tunnel', { score: `${Math.round(s.distance)}m`, personality: getProfile(bData), signals: { collisions: bData.collisions, avgTiltMagnitude: bData.avgTiltMagnitude, distance: bData.distance, nearMisses: bData.nearMisses } }, playerSessionRef.current);
   }, []);
 
   const startLoop = useCallback(() => {
@@ -271,6 +291,7 @@ export default function TunnelGame() {
     s.collisions = 0; s.tiltMagnitudes = []; s.distance = 0; s.speed = 0.08;
     s.timeLeft = 60; s.obstacles = []; s.running = true;
     s.invincibleFrames = 0; s.joystickX = 0; s.joystickY = 0;
+    s.nearMissCount = 0;
     s.trailPositions = []; s.survivedTime = 0;
     setTimeLeft(60); setGameState('playing'); setSurvivedDisplay(0);
     stopMusicRef.current = startMusic('drive');
@@ -364,6 +385,17 @@ export default function TunnelGame() {
     s.scene = scene;
     s.camera = camera;
 
+    // ── Resize handler ─────────────────────────────────────────────────────────
+    const handleResize = () => {
+      if (!s.renderer || !s.camera) return;
+      const w = window.innerWidth, h = window.innerHeight;
+      s.renderer.setSize(w, h);
+      (s.camera as THREE.PerspectiveCamera).aspect = w / h;
+      (s.camera as THREE.PerspectiveCamera).updateProjectionMatrix();
+    };
+    window.addEventListener('resize', handleResize);
+    (s as typeof s & { _resizeHandler?: () => void })._resizeHandler = handleResize;
+
     s.intervalId = setInterval(() => {
       if (!s.running) return;
       s.timeLeft--;
@@ -371,7 +403,20 @@ export default function TunnelGame() {
       setSurvivedDisplay(60 - s.timeLeft);
       setTimeLeft(s.timeLeft);
       s.speed = Math.min(0.26, s.speed + 0.003);
-      if (s.timeLeft === 30) increaseMusicTempo(162);
+      if (s.timeLeft === 30) {
+        increaseMusicTempo(162);
+        // Speed burst visual — DOM ref safe from setInterval
+        if (speedBurstRef.current) {
+          speedBurstRef.current.style.opacity = '1';
+          setTimeout(() => { if (speedBurstRef.current) speedBurstRef.current.style.opacity = '0'; }, 900);
+        }
+      }
+      // Tick sound every second; warning when ≤10s
+      if (s.timeLeft <= 10 && s.timeLeft > 0) {
+        sfx.warning();
+      } else if (s.timeLeft > 10) {
+        sfx.tick();
+      }
       if (s.timeLeft <= 0) endGame(capturedTheme);
     }, 1000);
 
@@ -455,7 +500,15 @@ export default function TunnelGame() {
           }
         } else if (checkNearMiss(camera.position.x, camera.position.y, camera.position.z, obs)) {
           const now = Date.now();
-          if (now - s.nearMissLastTime > 800) { sfx.nearMiss(); s.nearMissLastTime = now; }
+          if (now - s.nearMissLastTime > 800) {
+            sfx.nearMiss(); s.nearMissLastTime = now;
+            s.nearMissCount++;
+            // Brief cyan edge-glow flash — DOM ref to avoid setState in rAF
+            if (nearMissFlashRef.current) {
+              nearMissFlashRef.current.style.opacity = '1';
+              setTimeout(() => { if (nearMissFlashRef.current) nearMissFlashRef.current.style.opacity = '0'; }, 350);
+            }
+          }
         }
       });
 
@@ -465,9 +518,11 @@ export default function TunnelGame() {
     s.animId = requestAnimationFrame(loop);
   }, [endGame, theme]);
 
-  const handleStart = useCallback(async () => {
-    playerSessionRef.current = savePlayerSession(GAME_ID, playerName, playerAvatar);
-    initAudio(); sfx.click();
+  const handleStart = useCallback(async (name: string, avatar: string) => {
+    setPlayerName(name);
+    setPlayerAvatar(avatar);
+    playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar);
+    await initAudio(); sfx.click();
     // Max sensitivity: very twitchy and responsive
     const controller = createTiltController(() => {}, { sensitivity: 1.6, smoothing: 0.3, deadzone: 1, clamp: 15 });
     tiltControllerRef.current = controller;
@@ -484,7 +539,7 @@ export default function TunnelGame() {
       }, 1500);
     }
     setGameState('countdown');
-  }, [playerName, playerAvatar]);
+  }, []);
 
   const handlePlayAgain = useCallback(() => {
     if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
@@ -529,14 +584,24 @@ export default function TunnelGame() {
       tiltControllerRef.current?.stop();
       if (s.renderer) { s.renderer.dispose(); s.renderer = null; }
       if (stopMusicRef.current) stopMusicRef.current();
+      const handler = (s as typeof s & { _resizeHandler?: () => void })._resizeHandler;
+      if (handler) window.removeEventListener('resize', handler);
     };
   }, []);
 
-  const accent = theme.colors.accent;
+  const accent = theme.colors.accent ?? '#00ffff';
 
   return (
-    <GameShell title="Infinite Tunnel" emoji="🚀" accentColor="#00ffff" theme={theme}>
-      <div ref={mountRef} style={{ width: '100%', height: '100%', display: gameState === 'playing' ? 'block' : 'none', position: 'relative', zIndex: 1 }} />
+    <GameShell title="Infinite Tunnel" emoji="🚀" accentColor={accent} theme={theme}>
+      <div ref={mountRef} style={{ width: '100%', height: '100%', display: gameState === 'playing' ? 'block' : 'none', position: 'relative', zIndex: 1, touchAction: 'none' }} />
+
+      {/* Near-miss edge glow — appears via DOM ref, fades out */}
+      <div ref={nearMissFlashRef} style={{ position: 'fixed', inset: 0, boxShadow: `inset 0 0 70px ${accent}`, pointerEvents: 'none', zIndex: 5, opacity: 0, transition: 'opacity 0.35s ease-out' }} />
+
+      {/* Speed burst announcement at 30s */}
+      <div ref={speedBurstRef} style={{ position: 'fixed', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none', zIndex: 15, opacity: 0, transition: 'opacity 0.15s ease-in, opacity 0.6s ease-out 0.3s' }}>
+        <div style={{ color: accent, fontSize: 20, fontWeight: 900, letterSpacing: '0.25em', textTransform: 'uppercase', textShadow: `0 0 24px ${accent}` }}>CRITICAL SPEED</div>
+      </div>
 
       {gameState === 'playing' && (
         <GameHUD
@@ -544,7 +609,7 @@ export default function TunnelGame() {
             { label: 'SURVIVED', value: `${survivedDisplay}s` },
             { label: 'TIME', value: `${timeLeft}s`, danger: timeLeft <= 10 },
           ]}
-          accentColor="#00ffff"
+          accentColor={accent}
         />
       )}
 
@@ -554,8 +619,8 @@ export default function TunnelGame() {
           style={{
             position: 'fixed', bottom: 40, left: '50%', transform: 'translateX(-50%)',
             width: 140, height: 140, borderRadius: '50%',
-            border: '3px solid rgba(0,255,255,0.3)',
-            backgroundColor: 'rgba(0,255,255,0.06)',
+            border: `3px solid ${accent}4d`,
+            backgroundColor: `${accent}0f`,
             zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center',
             touchAction: 'none',
           }}
@@ -565,8 +630,8 @@ export default function TunnelGame() {
         >
           <div style={{
             width: 80, height: 80, borderRadius: '50%',
-            backgroundColor: 'rgba(0,255,255,0.15)',
-            border: '2px solid rgba(0,255,255,0.5)',
+            backgroundColor: `${accent}26`,
+            border: `2px solid ${accent}80`,
             transform: `translate(${joystickThumb.x}px, ${joystickThumb.y}px)`,
             transition: joystickThumb.x === 0 && joystickThumb.y === 0 ? 'transform 0.15s ease' : 'none',
             pointerEvents: 'none',
@@ -574,7 +639,7 @@ export default function TunnelGame() {
         </div>
       )}
 
-      {gameState === 'countdown' && <Countdown onComplete={startLoop} accentColor="#00ffff" />}
+      {gameState === 'countdown' && <Countdown onComplete={startLoop} accentColor={accent} />}
 
       {gameState === 'start' && (
         <GameStartScreen
@@ -583,30 +648,26 @@ export default function TunnelGame() {
           description="Tilt to steer. Dodge rings, crosses, blades and asteroid fields. Survive 60 seconds."
           sensorNote="Uses motion sensors"
           ctaLabel="Enable Motion & Launch →"
-          accentColor="#00ffff"
+          accentColor={accent}
           ctaTextColor="#000"
           onStart={handleStart}
-        >
-          <PlayerNameInput
-            accentColor={theme.colors.accent ?? '#00ffff'}
-            onReady={(name, avatar) => { setPlayerName(name); setPlayerAvatar(avatar); }}
-          />
-        </GameStartScreen>
+        />
       )}
 
       {gameState === 'done' && behavior && (
         <EndScreen
-          gameId="tunnel"
+          gameId={GAME_ID}
           title={getProfile(behavior)}
           emoji="🚀"
           score={`${behavior.distance}m`}
           personality={getProfile(behavior)}
           insights={[
-            { label: 'Distance', value: `${behavior.distance}m`, color: '#00ffff' },
-            { label: 'Collisions', value: String(behavior.collisions), color: behavior.collisions > 5 ? '#ef4444' : '#00ff88' },
-            { label: 'Avg tilt', value: behavior.avgTiltMagnitude > 0 ? `${behavior.avgTiltMagnitude.toFixed(2)}` : '—', color: accent },
+            { label: 'Distance', value: `${behavior.distance}m`, color: accent },
+            { label: 'Collisions', value: behavior.collisions === 0 ? '0 — flawless!' : `${behavior.collisions} hit${behavior.collisions > 1 ? 's' : ''}`, color: behavior.collisions > 5 ? '#ef4444' : '#00ff88' },
+            { label: 'Control Style', value: behavior.avgTiltMagnitude > 0.7 ? 'Aggressive' : behavior.avgTiltMagnitude < 0.3 ? 'Surgical' : 'Balanced', color: accent },
+            { label: 'Near Misses', value: behavior.nearMisses === 0 ? '0 — wide clearance' : `${behavior.nearMisses} — edge hugger`, color: behavior.nearMisses > 4 ? '#facc15' : '#a855f7' },
           ]}
-          accentColor="#00ffff"
+          accentColor={accent}
           onPlayAgain={handlePlayAgain}
           didWin={behavior.collisions === 0}
         />

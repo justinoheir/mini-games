@@ -25,7 +25,6 @@ import { initAudio, sfx, haptic, startMusic } from '@/lib/audio';
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
-import PlayerNameInput from '@/components/PlayerNameInput';
 
 // ─── SPEC CONSTANTS ──────────────────────────────────────────────────────────
 // Replace these with values from your game spec.
@@ -343,12 +342,14 @@ export default function ScaffoldGame() {   // <<REPLACE: function name matches t
 
   // ─── PHASE TRANSITIONS ────────────────────────────────────────────────────
 
-  const handleStart = useCallback(() => {
+  const handleStart = useCallback((name: string, avatar: string) => {
+    setPlayerName(name);
+    setPlayerAvatar(avatar);
     initAudio();
     // Save player session for this game — persists name for pre-fill next time
-    playerSessionRef.current = savePlayerSession(GAME_ID, playerName, playerAvatar);
+    playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar);
     setPhase('countdown');
-  }, [playerName, playerAvatar]);
+  }, []);
 
   const handleCountdownDone = useCallback(() => {
     startLoop();
@@ -395,10 +396,6 @@ export default function ScaffoldGame() {   // <<REPLACE: function name matches t
           onStart={handleStart}
         >
           {/* ⚠️ Per-game name capture — required in every game */}
-          <PlayerNameInput
-            accentColor={theme.colors.accent ?? ACCENT}
-            onReady={(name, avatar) => { setPlayerName(name); setPlayerAvatar(avatar); }}
-          />
         </GameStartScreen>
       )}
 

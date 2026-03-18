@@ -11,7 +11,6 @@ import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
 import { createTiltController } from '@/lib/tilt';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
-import PlayerNameInput from '@/components/PlayerNameInput';
 
 const GAME_ID = 'pulse-sphere';
 
@@ -81,12 +80,18 @@ export default function PulseSphere() {
     joystickX: 0, joystickY: 0,
     lastShimmerTime: 0,
     lastWhooshTime: 0,
+    // Mic fallback: simulated volume from taps
+    fallbackVolume: 0,
+    // ⚡ Pre-allocated analyser buffer — avoids new Uint8Array every rAF frame
+    dataArray: null as Uint8Array<ArrayBuffer> | null,
   });
   const [gameState, setGameState] = useState<GameState>('start');
   const [timeLeft, setTimeLeft] = useState(60);
   const [behavior, setBehavior] = useState<BehaviorData | null>(null);
   const [joystickEnabled, setJoystickEnabled] = useState(false);
   const [joystickThumb, setJoystickThumb] = useState({ x: 0, y: 0 });
+  const [micFallbackEnabled, setMicFallbackEnabled] = useState(false);
+  const micFallbackRef = useRef(false);
   const [playerName, setPlayerName]   = useState('');
   const [playerAvatar, setPlayerAvatar] = useState('🎮');
   const playerSessionRef              = useRef<PlayerSession | null>(null);
@@ -94,11 +99,16 @@ export default function PulseSphere() {
   // Verified: uses getByteFrequencyData, RMS formula correct, smoothingTimeConstant=0.3 ✓
   const getVolume = useCallback((): number => {
     const s = stateRef.current;
-    if (!s.analyser) return 0;
-    const data = new Uint8Array(s.analyser.frequencyBinCount);
-    s.analyser.getByteFrequencyData(data);
-    const sumSq = data.reduce((acc, v) => acc + v * v, 0);
-    return Math.min(100, (Math.sqrt(sumSq / data.length) / 128) * 100);
+    if (micFallbackRef.current) {
+      // Decay fallback volume over time (tap = burst, then fade)
+      s.fallbackVolume = Math.max(0, s.fallbackVolume * 0.9);
+      return s.fallbackVolume;
+    }
+    if (!s.analyser || !s.dataArray) return 0;
+    // ⚡ Reuse pre-allocated buffer — no allocation per frame
+    s.analyser.getByteFrequencyData(s.dataArray);
+    const sumSq = s.dataArray.reduce((acc, v) => acc + v * v, 0);
+    return Math.min(100, (Math.sqrt(sumSq / s.dataArray.length) / 128) * 100);
   }, []);
 
   const endGame = useCallback((capturedTheme: typeof theme) => {
@@ -110,6 +120,7 @@ export default function PulseSphere() {
     if (s.audioCtx) s.audioCtx.close().catch(()=>{/* ignore */});
     if (s.renderer) { s.renderer.dispose(); s.renderer = null; }
     if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
+    (s as typeof s & { _resizeCleanup?: () => void })._resizeCleanup?.();
     tiltControllerRef.current?.stop();
     const avgVol = s.volumeSamples.length > 0 ? s.volumeSamples.reduce((a,b)=>a+b,0)/s.volumeSamples.length : 0;
     const avgTilt = s.tiltMagnitudes.length > 0 ? s.tiltMagnitudes.reduce((a,b)=>a+b,0)/s.tiltMagnitudes.length : 0;
@@ -189,11 +200,30 @@ export default function PulseSphere() {
 
     s.renderer = renderer; s.scene = scene; s.camera = camera;
 
+    // Resize handler
+    const handleResize = () => {
+      const w = window.innerWidth, h = window.innerHeight;
+      renderer.setSize(w, h);
+      camera.aspect = w / h;
+      camera.updateProjectionMatrix();
+    };
+    window.addEventListener('resize', handleResize);
+    // Store cleanup ref
+    (s as typeof s & { _resizeCleanup?: () => void })._resizeCleanup = () => window.removeEventListener('resize', handleResize);
+
     s.intervalId = setInterval(() => {
       if (!s.running) return;
       s.timeLeft--;
       setTimeLeft(s.timeLeft);
-      if (s.timeLeft <= 0) endGame(capturedTheme);
+      // ⚠️ sfx.tick() was firing every second for all 60s — constant metronome noise
+      // that destroys the ambient atmosphere. Fixed: warning at 10s, tick only at ≤5s.
+      if (s.timeLeft === 10) sfx.warning();
+      else if (s.timeLeft <= 5 && s.timeLeft > 0) sfx.tick();
+      if (s.timeLeft <= 0) {
+        sfx.success();
+        haptic([30, 50, 30, 50, 100]);
+        endGame(capturedTheme);
+      }
     }, 1000);
 
     const loop = () => {
@@ -223,12 +253,11 @@ export default function PulseSphere() {
         // Rotation from tilt — 0.05 per frame per unit of tilt
         sphere.rotation.x += inputY * 0.05 + 0.005;
         sphere.rotation.y += inputX * 0.05 + 0.008;
-        // Color from hue
-        const color = new THREE.Color();
-        color.setHSL(s.hue / 360, 0.75, 0.5);
-        (sphere.material as THREE.MeshPhongMaterial).color = color;
-        (sphere.material as THREE.MeshPhongMaterial).emissive.copy(color).multiplyScalar(0.3);
-        pointLight.color = color;
+        // ⚡ Mutate material colors in-place — avoids new THREE.Color() every frame
+        const mat = sphere.material as THREE.MeshPhongMaterial;
+        mat.color.setHSL(s.hue / 360, 0.75, 0.5);
+        mat.emissive.copy(mat.color).multiplyScalar(0.3);
+        pointLight.color.setHSL(s.hue / 360, 0.75, 0.5);
       }
 
       // Particles expand with volume
@@ -243,9 +272,8 @@ export default function PulseSphere() {
         }
         pAttr.needsUpdate = true;
         particles.rotation.y += 0.004;
-        const pColor = new THREE.Color();
-        pColor.setHSL(s.hue / 360, 0.8, 0.65);
-        (particles.material as THREE.PointsMaterial).color = pColor;
+        // ⚡ Mutate in-place — no allocation
+        (particles.material as THREE.PointsMaterial).color.setHSL(s.hue / 360, 0.8, 0.65);
       }
 
       renderer.render(scene, camera);
@@ -254,9 +282,11 @@ export default function PulseSphere() {
     s.animId = requestAnimationFrame(loop);
   }, [getVolume, endGame, theme]);
 
-  const handleStart = useCallback(async () => {
-    playerSessionRef.current = savePlayerSession(GAME_ID, playerName, playerAvatar);
-    initAudio(); sfx.click();
+  const handleStart = useCallback(async (name: string, avatar: string) => {
+    setPlayerName(name);
+    setPlayerAvatar(avatar);
+    playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar);
+    await initAudio(); sfx.click();
     setGameState('permissions');
     try {
       // Start tilt controller (handles iOS permission internally, must be from button click)
@@ -276,23 +306,30 @@ export default function PulseSphere() {
       }
 
       // Mic permission
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const audioCtx = new AudioContext();
-      const source = audioCtx.createMediaStreamSource(stream);
-      const analyser = audioCtx.createAnalyser();
-      // Verified: getByteFrequencyData, smoothingTimeConstant=0.3
-      analyser.fftSize = 256; analyser.smoothingTimeConstant = 0.3;
-      source.connect(analyser);
-      const s = stateRef.current;
-      s.stream = stream; s.analyser = analyser; s.audioCtx = audioCtx;
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const audioCtx = new AudioContext();
+        const source = audioCtx.createMediaStreamSource(stream);
+        const analyser = audioCtx.createAnalyser();
+        // Verified: getByteFrequencyData, smoothingTimeConstant=0.3
+        analyser.fftSize = 256; analyser.smoothingTimeConstant = 0.3;
+        source.connect(analyser);
+        const s = stateRef.current;
+        s.stream = stream; s.analyser = analyser; s.audioCtx = audioCtx;
+        // Pre-allocate analyser read buffer once (reused every frame in getVolume)
+        s.dataArray = new Uint8Array(analyser.frequencyBinCount) as Uint8Array<ArrayBuffer>;
+      } catch {
+        // Mic denied — enable tap-volume fallback (tapping the screen simulates voice input)
+        micFallbackRef.current = true;
+        setMicFallbackEnabled(true);
+      }
       setGameState('countdown');
     } catch {
-      alert('Microphone access needed. Please allow and try again.');
       tiltControllerRef.current?.stop();
       tiltControllerRef.current = null;
       setGameState('start');
     }
-  }, [playerName, playerAvatar]);
+  }, []);
 
   const handlePlayAgain = useCallback(() => {
     if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
@@ -301,6 +338,9 @@ export default function PulseSphere() {
     tiltControllerRef.current = null;
     setJoystickEnabled(false);
     setJoystickThumb({ x: 0, y: 0 });
+    setMicFallbackEnabled(false);
+    micFallbackRef.current = false;
+    stateRef.current.fallbackVolume = 0;
     setGameState('start');
   }, []);
 
@@ -338,9 +378,13 @@ export default function PulseSphere() {
       if (!s.running) return;
       s.hue = (s.hue + 15) % 360;
       s.touchCount++;
-      sfx.shimmer(); haptic([20]);
+      // Mic fallback: each tap injects a volume burst
+      if (micFallbackRef.current) s.fallbackVolume = Math.min(100, s.fallbackVolume + 35);
       const now = Date.now();
-      if (now - s.lastShimmerTime > 300) s.lastShimmerTime = now;
+      if (now - s.lastShimmerTime > 300) {
+        sfx.shimmer(); haptic([20]);
+        s.lastShimmerTime = now;
+      }
     };
     mount.addEventListener('touchstart', onTouch);
     return () => mount.removeEventListener('touchstart', onTouch);
@@ -354,6 +398,7 @@ export default function PulseSphere() {
     if (s.audioCtx) s.audioCtx.close().catch(()=>{/* ignore */});
     if (s.renderer) { s.renderer.dispose(); s.renderer = null; }
     if (stopMusicRef.current) stopMusicRef.current();
+    (s as typeof s & { _resizeCleanup?: () => void })._resizeCleanup?.();
     tiltControllerRef.current?.stop();
   }, []);
 
@@ -361,7 +406,7 @@ export default function PulseSphere() {
 
   return (
     <GameShell title="Pulse Sphere" emoji="🔮" accentColor={accent} theme={theme}>
-      <div ref={mountRef} style={{ width:'100%', height:'100%', display: gameState==='playing' ? 'block' : 'none', position:'relative', zIndex:1 }} />
+      <div ref={mountRef} style={{ width:'100%', height:'100%', display: gameState==='playing' ? 'block' : 'none', position:'relative', zIndex:1, touchAction:'none' }} />
 
       {gameState==='playing' && (
         <GameHUD
@@ -369,6 +414,20 @@ export default function PulseSphere() {
           accentColor="#a855f7"
         />
       )}
+      {/* Mic fallback hint */}
+      {micFallbackEnabled && gameState === 'playing' && (
+        <div style={{
+          /* top: 148 positions hint below the GameHUD panel (HUD is at top:64, ~74px tall) */
+          position: 'fixed', top: 148, left: '50%', transform: 'translateX(-50%)',
+          background: 'rgba(168,85,247,0.15)', border: '1px solid rgba(168,85,247,0.4)',
+          borderRadius: 20, padding: '6px 14px', zIndex: 50,
+          color: 'rgba(255,255,255,0.7)', fontSize: 12, fontWeight: 600,
+          whiteSpace: 'nowrap', pointerEvents: 'none',
+        }}>
+          🎙️ Tap screen to simulate voice
+        </div>
+      )}
+
       {/* Joystick overlay */}
       {joystickEnabled && gameState === 'playing' && (
         <div
@@ -406,12 +465,7 @@ export default function PulseSphere() {
           accentColor="#a855f7"
           ctaTextColor="#fff"
           onStart={handleStart}
-        >
-          <PlayerNameInput
-            accentColor={theme.colors.accent ?? '#a855f7'}
-            onReady={(name, avatar) => { setPlayerName(name); setPlayerAvatar(avatar); }}
-          />
-        </GameStartScreen>
+        />
       )}
 
       {gameState==='permissions' && (
@@ -434,10 +488,13 @@ export default function PulseSphere() {
               { label: '🎙️ Voice engagement', value: `${voiceScore}%`, color: '#3b82f6' },
               { label: '🏃 Movement engagement', value: `${moveScore}%`, color: '#00ff88' },
               { label: '👆 Touch engagement', value: `${touchScore}%`, color: '#a855f7' },
+              { label: '🌟 Overall activity', value: `${Math.round((voiceScore + moveScore + touchScore) / 3)}%`, color: '#facc15' },
             ]}
             accentColor="#a855f7"
             onPlayAgain={handlePlayAgain}
-          />
+          >
+            <RadarChart voice={voiceScore} movement={moveScore} touch={touchScore} />
+          </EndScreen>
         );
       })()}
     </GameShell>

@@ -9,7 +9,6 @@ import { initAudio, sfx, haptic, startMusic } from '@/lib/audio';
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
-import PlayerNameInput from '@/components/PlayerNameInput';
 
 const ACCENT = '#f97316';
 const GAME_ID = 'hoop-shot';
@@ -45,6 +44,7 @@ export default function HoopShot() {
   const [phase, setPhase] = useState<Phase>('start');
   const [timeLeft, setTimeLeft] = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
+  const [streakDisplay, setStreakDisplay] = useState(0);
   const [finalSig, setFinalSig] = useState<Signals | null>(null);
   const [playerName, setPlayerName]   = useState('');
   const [playerAvatar, setPlayerAvatar] = useState('🎮');
@@ -129,6 +129,7 @@ export default function HoopShot() {
     s.floats = [];
     s.netSwish = 0;
     setScoreDisplay(0);
+    setStreakDisplay(0);
     s.rimFlash = 0;
     s.hoopX = W / 2;
     s.hoopY = H * 0.22;
@@ -145,7 +146,8 @@ export default function HoopShot() {
     timerRef.current = setInterval(() => {
       s.timeLeft--;
       setTimeLeft(s.timeLeft);
-      if (s.timeLeft <= 0) { sfx.fail(); haptic([300]); endGame(); }
+      if (s.timeLeft <= 5 && s.timeLeft > 0) sfx.tick(); // urgency cue
+      if (s.timeLeft <= 0) { sfx.success(); haptic([30, 50, 100]); endGame(); }
     }, 1000);
 
     const loop = () => {
@@ -244,8 +246,10 @@ export default function HoopShot() {
             const t = DURATION - s.timeLeft;
             if (t < 40) s.sig.earlyMakes++;
             else s.sig.lateMakes++;
-            if (s.sig.streakCurrent >= 3) { sfx.go(); }
+            // sfx.go() on streak≥3 — delayed 100ms so it doesn't stack with make sound
+            if (s.sig.streakCurrent >= 3) { setTimeout(() => sfx.go(), 100); }
             s.netSwish = 20;
+            setStreakDisplay(s.sig.streakCurrent);
             s.floats.push({ x: s.hoopX, y: s.hoopY - 30, text: `+${pts}`, color: isThree ? '#fbbf24' : '#4ade80', alpha: 1, vy: -2 });
             haptic([60, 30, 60]);
             setTimeout(() => resetBall(), 1200);
@@ -266,7 +270,8 @@ export default function HoopShot() {
           if (!s.hoopScored) {
             s.sig.misses++;
             s.sig.streakCurrent = 0;
-            sfx.collision();
+            setStreakDisplay(0);
+            sfx.nearMiss(); // distinct from rim bounce (sfx.collision); miss = "almost"
           }
           setTimeout(() => resetBall(), 800);
           s.ballInFlight = false;
@@ -386,18 +391,21 @@ export default function HoopShot() {
     };
   }, [endGame]);
 
-  const handleStart = useCallback(async () => {
-    playerSessionRef.current = savePlayerSession(GAME_ID, playerName, playerAvatar);
+  const handleStart = useCallback(async (name: string, avatar: string) => {
+    setPlayerName(name);
+    setPlayerAvatar(avatar);
+    playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar);
     await initAudio();
     sfx.click();
     setPhase('countdown');
-  }, [playerName, playerAvatar]);
+  }, []);
 
   const handlePlayAgain = useCallback(() => {
     if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
     stateRef.current.running = false;
     cancelAnimationFrame(animRef.current);
     if (timerRef.current) clearInterval(timerRef.current);
+    setStreakDisplay(0);
     setPhase('start');
   }, []);
 
@@ -419,6 +427,7 @@ export default function HoopShot() {
           items={[
             { label: 'SCORE', value: scoreDisplay },
             { label: 'TIME', value: `${timeLeft}s`, danger: timeLeft <= 10 },
+            { label: 'STREAK 🔥', value: streakDisplay },
           ]}
           accentColor={ACCENT}
         />
@@ -433,12 +442,7 @@ export default function HoopShot() {
           ctaLabel="Start Game →"
           accentColor={ACCENT}
           onStart={handleStart}
-        >
-          <PlayerNameInput
-            accentColor={theme.colors.accent ?? ACCENT}
-            onReady={(name, avatar) => { setPlayerName(name); setPlayerAvatar(avatar); }}
-          />
-        </GameStartScreen>
+        />
       )}
       {phase === 'done' && sig && (
         <EndScreen
@@ -451,7 +455,7 @@ export default function HoopShot() {
             { label: 'Made / Attempted', value: `${sig.makes}/${sig.totalShots}`, color: ACCENT },
             { label: 'Accuracy', value: `${acc}%`, color: '#4ade80' },
             { label: 'Best Streak', value: `${sig.streakMax}`, color: '#fbbf24' },
-            { label: '3PT Attempts', value: `${sig.threePointAttempts}`, color: '#c084fc' },
+            { label: '3PT Shots', value: `${sig.threePointMakes}/${sig.threePointAttempts}`, color: '#c084fc' },
           ]}
           accentColor={ACCENT}
           onPlayAgain={handlePlayAgain}

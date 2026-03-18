@@ -10,7 +10,6 @@ import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
 import { createTiltController } from '@/lib/tilt';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
-import PlayerNameInput from '@/components/PlayerNameInput';
 
 const ACCENT = '#a16207';
 const GAME_ID = 'spiral-throw';
@@ -71,6 +70,7 @@ export default function SpiralThrow() {
   const [phase, setPhase] = useState<Phase>('start');
   const [timeLeft, setTimeLeft] = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
+  const [streakDisplay, setStreakDisplay] = useState(0);
   const [finalSig, setFinalSig] = useState<Signals | null>(null);
   const [playerName, setPlayerName]   = useState('');
   const [playerAvatar, setPlayerAvatar] = useState('🎮');
@@ -143,13 +143,14 @@ export default function SpiralThrow() {
                leadPasses:0, deepThrows:0, fastDecisions:0, catchStreak:0, streakMax:0 };
     s.floats = []; s.stars = [];
     setupNewPlay();
-    setPhase('playing'); setTimeLeft(DURATION); setScoreDisplay(0);
+    setPhase('playing'); setTimeLeft(DURATION); setScoreDisplay(0); setStreakDisplay(0);
     stopMusicRef.current = startMusic('drive');
 
     timerRef.current = setInterval(() => {
       s.timeLeft--;
       setTimeLeft(s.timeLeft);
-      if (s.timeLeft <= 0) { sfx.fail(); haptic([300]); endGame(); }
+      if (s.timeLeft <= 5 && s.timeLeft > 0) sfx.tick(); // urgency cue
+      if (s.timeLeft <= 0) { sfx.success(); haptic([30, 50, 100]); endGame(); } // timer end = completed session
     }, 1000);
 
     const loop = () => {
@@ -216,7 +217,7 @@ export default function SpiralThrow() {
           const isLead = s.recRouteIdx < s.recRoute.length - 2;
           s.sig.attempts++;
           if (isLead) s.sig.leadPasses++;
-          if (tiltRef.current && Math.abs(tiltRef.current.getValues().y) > 0.3) s.sig.deepThrows++;
+          // deepThrows tracked at throw time (handleTouchEnd) — not here
           const decisionTime = Date.now() - s.snapTime;
           if (decisionTime < 2500) s.sig.fastDecisions++;
 
@@ -225,7 +226,9 @@ export default function SpiralThrow() {
           s.sig.catchStreak++;
           if (s.sig.catchStreak > s.sig.streakMax) s.sig.streakMax = s.sig.catchStreak;
           setScoreDisplay(s.sig.score);
-          if (s.sig.catchStreak >= 3) sfx.success();
+          setStreakDisplay(s.sig.catchStreak);
+          // Streak≥3 celebration: delay sfx.success so it doesn't stack with sfx.collect
+          if (s.sig.catchStreak >= 3) setTimeout(() => sfx.success(), 100);
           sfx.collect(); haptic([60,30,60]);
           s.floats.push({ x: s.recX, y: s.recY - 20, text:'+7', color:'#fbbf24', alpha:1, vy:-2 });
           // Stars
@@ -236,14 +239,22 @@ export default function SpiralThrow() {
           s.recCaught = true; s.ballInFlight = false;
           setTimeout(() => setupNewPlay(), 1200);
         }
-        // Incomplete
-        if (s.ballY < -50 || s.ballX < -50 || s.ballX > canvas.width + 50) {
-          // Interception if throwing behind receiver (ball is below/behind receiver)
+        // Incomplete — all four screen edges (fixed P1: was missing bottom edge)
+        if (s.ballY < -50 || s.ballX < -50 || s.ballX > canvas.width + 50 || s.ballY > canvas.height + 50) {
+          // Interception if ball goes backward (below receiver position = behind the play)
           const isInterception = s.ballY > s.recY + 30;
           s.sig.attempts++;
           s.sig.catchStreak = 0;
-          if (isInterception) { s.sig.interceptions++; s.sig.score -= 3; sfx.fail(); haptic([300]); s.floats.push({ x: s.ballX, y: s.ballY, text:'-3', color:'#ef4444', alpha:1, vy:-1.5 }); }
-          else { sfx.collision(); }
+          setStreakDisplay(0);
+          if (isInterception) {
+            s.sig.interceptions++;
+            s.sig.score -= 3;
+            setScoreDisplay(s.sig.score); // update HUD after score drop (fixed P2)
+            sfx.fail(); haptic([300]);
+            s.floats.push({ x: s.ballX, y: s.ballY, text:'-3', color:'#ef4444', alpha:1, vy:-1.5 });
+          } else {
+            sfx.collision();
+          }
           s.ballInFlight = false;
           setTimeout(() => setupNewPlay(), 900);
         }
@@ -328,6 +339,8 @@ export default function SpiralThrow() {
     s.ballInFlight = true;
     s.gamePhase = 'ball-in-flight';
     s.throwTime = Date.now();
+    // deepThrows: measure at throw time using upfield velocity (negative VY = thrown toward top = downfield)
+    if (s.ballVY < -6) s.sig.deepThrows++;
     sfx.click();
   }, []);
 
@@ -349,14 +362,16 @@ export default function SpiralThrow() {
     };
   }, [endGame]);
 
-  const handleStart = useCallback(async () => {
-    playerSessionRef.current = savePlayerSession(GAME_ID, playerName, playerAvatar);
+  const handleStart = useCallback(async (name: string, avatar: string) => {
+    setPlayerName(name);
+    setPlayerAvatar(avatar);
+    playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar);
     await initAudio(); sfx.click();
     const ctrl = createTiltController(() => {}, { sensitivity: 1.0, smoothing: 0.45, deadzone: 3 });
     tiltRef.current = ctrl;
     await ctrl.start();
     setPhase('countdown');
-  }, [playerName, playerAvatar]);
+  }, []);
 
   const handlePlayAgain = useCallback(() => {
     if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
@@ -364,6 +379,7 @@ export default function SpiralThrow() {
     cancelAnimationFrame(animRef.current);
     if (timerRef.current) clearInterval(timerRef.current);
     tiltRef.current?.stop();
+    setStreakDisplay(0);
     setPhase('start');
   }, []);
 
@@ -383,6 +399,7 @@ export default function SpiralThrow() {
           items={[
             { label: 'SCORE', value: scoreDisplay },
             { label: 'TIME', value: `${timeLeft}s`, danger: timeLeft <= 10 },
+            { label: 'STREAK 🏈', value: streakDisplay },
           ]}
           accentColor={ACCENT}
         />
@@ -398,12 +415,7 @@ export default function SpiralThrow() {
           accentColor={ACCENT}
           ctaTextColor="#000"
           onStart={handleStart}
-        >
-          <PlayerNameInput
-            accentColor={theme.colors.accent ?? ACCENT}
-            onReady={(name, avatar) => { setPlayerName(name); setPlayerAvatar(avatar); }}
-          />
-        </GameStartScreen>
+        />
       )}
       {phase === 'done' && sig && (
         <EndScreen

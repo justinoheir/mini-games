@@ -1,702 +1,701 @@
 'use client';
+
 import { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
-import Link from 'next/link';
-import CrossGameProfile from '@/components/CrossGameProfile';
-import { getOverallTopPlayers, LeaderboardEntry } from '@/lib/leaderboard';
+import NextLink from 'next/link';
+import { motion, AnimatePresence } from 'framer-motion';
+import {
+  Compass,
+  Bomb,
+  Wind,
+  Target,
+  Zap,
+  Activity,
+  Moon,
+  Palette,
+  Grid3x3,
+  Link as ChainLink,
+  Layers,
+  Timer,
+  Circle,
+  Navigation,
+  Flag,
+  RotateCw,
+  Gift,
+  Ghost,
+  Sparkles,
+  Heart,
+  Feather,
+  Snowflake,
+  FlaskConical,
+  Clock,
+  Mail,
+  Wheat,
+  Radio,
+  ChevronsLeftRight,
+  Pen,
+  Music,
+} from 'lucide-react';
+import type React from 'react';
 
-const SKILL_GAMES = [
-  {
-    id: 'tilt-maze',
-    emoji: '🌀',
-    title: 'Tilt Maze',
-    tagline: 'Roll the ball with your body',
-    href: '/games/tilt-maze',
-    accentColor: '#a855f7',
-    duration: '60s',
-  },
-  {
-    id: 'whisper-bomb',
-    emoji: '💣',
-    title: 'Whisper Bomb',
-    tagline: 'Stay silent. Defuse the bomb.',
-    href: '/games/whisper-bomb',
-    accentColor: '#ef4444',
-    duration: '30s',
-  },
-  {
-    id: 'breath-rider',
-    emoji: '🌬️',
-    title: 'Breath Rider',
-    tagline: 'Fly with your breath',
-    href: '/games/breath-rider',
-    accentColor: '#3b82f6',
-    duration: '45s',
-  },
-  {
-    id: 'steady-hand',
-    emoji: '🎯',
-    title: 'Steady Hand',
-    tagline: 'How steady are you really?',
-    href: '/games/steady-hand',
-    accentColor: '#eab308',
-    duration: '60s',
-  },
-  {
-    id: 'tunnel',
-    emoji: '🚀',
-    title: 'Infinite Tunnel',
-    tagline: "Dodge the rings. Don't crash.",
-    href: '/games/tunnel',
-    accentColor: '#00ffff',
-    duration: '60s',
-  },
-  {
-    id: 'pulse-sphere',
-    emoji: '🔮',
-    title: 'Pulse Sphere',
-    tagline: 'Touch. Move. Breathe. Watch it respond.',
-    href: '/games/pulse-sphere',
-    accentColor: '#a855f7',
-    duration: '60s',
-  },
-  {
-    id: 'color-cascade',
-    emoji: '🌈',
-    title: 'Color Cascade',
-    tagline: 'Match the color. Match the speed.',
-    href: '/games/color-cascade',
-    accentColor: '#f43f5e',
-    duration: '45s',
-  },
-  {
-    id: 'memory-grid',
-    emoji: '🧠',
-    title: 'Memory Grid',
-    tagline: 'Remember the pattern. Repeat it.',
-    href: '/games/memory-grid',
-    accentColor: '#8b5cf6',
-    duration: '60s',
-  },
-  {
-    id: 'reaction-chain',
-    emoji: '⚡',
-    title: 'Reaction Chain',
-    tagline: 'Tap fast. Keep the chain alive.',
-    href: '/games/reaction-chain',
-    accentColor: '#facc15',
-    duration: '45s',
-  },
-  {
-    id: 'shadow-tap',
-    emoji: '👁️',
-    title: 'Shadow Tap',
-    tagline: 'Tap what you see. Before it\'s gone.',
-    href: '/games/shadow-tap',
-    accentColor: '#64748b',
-    duration: '45s',
-  },
-  {
-    id: 'stack-drop',
-    emoji: '🧱',
-    title: 'Stack Drop',
-    tagline: 'Drop it. Stack it. Don\'t tip it.',
-    href: '/games/stack-drop',
-    accentColor: '#f97316',
-    duration: '60s',
-  },
-  {
-    id: 'dodge-blitz',
-    emoji: '💨',
-    title: 'Dodge Blitz',
-    tagline: 'Tilt to survive. Don\'t stop moving.',
-    href: '/games/dodge-blitz',
-    accentColor: '#06b6d4',
-    duration: '45s',
-  },
-  {
-    id: 'orbit-control',
-    emoji: '🪐',
-    title: 'Orbit Control',
-    tagline: 'Keep the satellite in orbit. Don\'t let it drift.',
-    href: '/games/orbit-control',
-    accentColor: '#818cf8',
-    duration: '60s',
-  },
-  {
-    id: 'symbol-scan',
-    emoji: '🔍',
-    title: 'Symbol Scan',
-    tagline: 'Find it. Tap it. Before the clock runs out.',
-    href: '/games/symbol-scan',
-    accentColor: '#10b981',
-    duration: '60s',
-  },
-  {
-    id: 'path-trace',
-    emoji: '✏️',
-    title: 'Path Trace',
-    tagline: 'Follow the line. Don\'t stray.',
-    href: '/games/path-trace',
-    accentColor: '#e879f9',
-    duration: '45s',
-  },
-  {
-    id: 'crowd-roar',
-    emoji: '📢',
-    title: 'Crowd Roar',
-    tagline: 'Roar loud. Hold it. Don\'t fade.',
-    href: '/games/crowd-roar',
-    accentColor: '#ef4444',
-    duration: '45s',
-  },
-  {
-    id: 'balance-beam',
-    emoji: '⚖️',
-    title: 'Balance Beam',
-    tagline: 'Keep the ball on the beam. Stay still.',
-    href: '/games/balance-beam',
-    accentColor: '#f59e0b',
-    duration: '60s',
-  },
-  {
-    id: 'pitch-match',
-    emoji: '🎵',
-    title: 'Pitch Match',
-    tagline: 'Hit the note. Hold it. Feel it.',
-    href: '/games/pitch-match',
-    accentColor: '#34d399',
-    duration: '45s',
-  },
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+type GameIcon = React.ComponentType<{ size?: number; color?: string; strokeWidth?: number }>;
+
+interface Game {
+  id: string;
+  title: string;
+  tagline: string;
+  href: string;
+  accentColor: string;
+  duration: string;
+  Icon: GameIcon;
+}
+
+// ─── Game Data ────────────────────────────────────────────────────────────────
+
+const SKILL_GAMES: Game[] = [
+  { id: 'tilt-maze',       title: 'Tilt Maze',       tagline: 'Roll the ball with your body',             href: '/games/tilt-maze',       accentColor: '#a855f7', duration: '60s', Icon: Compass    },
+  { id: 'whisper-bomb',    title: 'Whisper Bomb',    tagline: 'Stay silent. Defuse the bomb.',             href: '/games/whisper-bomb',    accentColor: '#ef4444', duration: '30s', Icon: Bomb       },
+  { id: 'breath-rider',    title: 'Breath Rider',    tagline: 'Fly with your breath',                      href: '/games/breath-rider',    accentColor: '#3b82f6', duration: '45s', Icon: Wind       },
+  { id: 'steady-hand',     title: 'Steady Hand',     tagline: 'Hold perfectly still. We dare you.',       href: '/games/steady-hand',     accentColor: '#22c55e', duration: '30s', Icon: Target     },
+  { id: 'tunnel',          title: 'Infinite Tunnel', tagline: "Dodge the rings. Don't crash.",             href: '/games/tunnel',          accentColor: '#00ffff', duration: '60s', Icon: Zap        },
+  { id: 'pulse-sphere',    title: 'Pulse Sphere',    tagline: 'Touch. Move. Breathe. Watch it respond.',   href: '/games/pulse-sphere',    accentColor: '#a855f7', duration: '60s', Icon: Activity   },
+  { id: 'shadow-tap',      title: 'Shadow Tap',      tagline: "Tap what you see. Before it's gone.",       href: '/games/shadow-tap',      accentColor: '#64748b', duration: '45s', Icon: Moon       },
+  { id: 'color-cascade',   title: 'Color Cascade',   tagline: 'Match the color. Match the speed.',         href: '/games/color-cascade',   accentColor: '#f43f5e', duration: '45s', Icon: Palette    },
+  { id: 'memory-grid',     title: 'Memory Grid',     tagline: 'Remember the pattern. Repeat it.',          href: '/games/memory-grid',     accentColor: '#8b5cf6', duration: '60s', Icon: Grid3x3   },
+  { id: 'reaction-chain',  title: 'Reaction Chain',  tagline: 'Tap fast. Keep the chain alive.',            href: '/games/reaction-chain',  accentColor: '#facc15', duration: '45s', Icon: ChainLink },
+  { id: 'stack-drop',      title: 'Stack Drop',      tagline: "Drop it. Stack it. Don't tip it.",           href: '/games/stack-drop',      accentColor: '#f97316', duration: '60s', Icon: Layers    },
+  { id: 'dodge-blitz',    title: 'Dodge Blitz',    tagline: 'Tilt to survive. Don\'t stop moving.',        href: '/games/dodge-blitz',    accentColor: '#06b6d4', duration: '45s', Icon: ChevronsLeftRight },
+  { id: 'crowd-roar',     title: 'Crowd Roar',      tagline: "Roar loud. Hold it. Don't fade.",             href: '/games/crowd-roar',      accentColor: '#ef4444', duration: '45s', Icon: Radio     },
+  { id: 'balance-beam',   title: 'Balance Beam',    tagline: 'Keep the ball on the beam. Stay still.',      href: '/games/balance-beam',    accentColor: '#f59e0b', duration: '60s', Icon: Activity  },
+  { id: 'path-trace',     title: 'Path Trace',      tagline: "Follow the line. Don't stray.",               href: '/games/path-trace',      accentColor: '#e879f9', duration: '45s', Icon: Pen       },
+  { id: 'pitch-match',   title: 'Pitch Match',     tagline: 'Hit the note. Hold it. Feel it.',              href: '/games/pitch-match',     accentColor: '#34d399', duration: '45s', Icon: Music     },
+  { id: 'symbol-scan',   title: 'Symbol Scan',     tagline: 'Find it. Tap it. Before the clock runs out.',  href: '/games/symbol-scan',     accentColor: '#10b981', duration: '60s', Icon: Grid3x3   },
 ];
 
-const SPORTS_GAMES = [
-  {
-    id: 'hoop-shot',
-    emoji: '🏀',
-    title: 'Hoop Shot',
-    tagline: 'Swipe to score. 60 seconds on the clock.',
-    href: '/games/hoop-shot',
-    accentColor: '#f97316',
-    duration: '60s',
-  },
-  {
-    id: 'penalty-kick',
-    emoji: '⚽',
-    title: 'Penalty Kick',
-    tagline: 'Beat the keeper. Aim for the corners.',
-    href: '/games/penalty-kick',
-    accentColor: '#22c55e',
-    duration: '60s',
-  },
-  {
-    id: 'spiral-throw',
-    emoji: '🏈',
-    title: 'Spiral Throw',
-    tagline: "Lead your receiver. Don't throw behind.",
-    href: '/games/spiral-throw',
-    accentColor: '#f59e0b',
-    duration: '60s',
-  },
-  {
-    id: 'reflex-rally',
-    emoji: '🎾',
-    title: 'Reflex Rally',
-    tagline: "Return every shot. Don't miss.",
-    href: '/games/reflex-rally',
-    accentColor: '#84cc16',
-    duration: '60s',
-  },
-  {
-    id: 'precision-putt',
-    emoji: '🏌️',
-    title: 'Precision Putt',
-    tagline: 'Read the green. Control the power.',
-    href: '/games/precision-putt',
-    accentColor: '#86efac',
-    duration: '60s',
-  },
+const SPORTS_GAMES: Game[] = [
+  { id: 'hoop-shot',      title: 'Hoop Shot',      tagline: 'Swipe to score. 60 seconds on the clock.',     href: '/games/hoop-shot',      accentColor: '#f97316', duration: '60s', Icon: Circle     },
+  { id: 'penalty-kick',   title: 'Penalty Kick',   tagline: 'Beat the keeper. Aim for the corners.',         href: '/games/penalty-kick',   accentColor: '#22c55e', duration: '60s', Icon: Navigation },
+  { id: 'spiral-throw',   title: 'Spiral Throw',   tagline: "Lead your receiver. Don't throw behind.",       href: '/games/spiral-throw',   accentColor: '#f59e0b', duration: '60s', Icon: RotateCw   },
+  { id: 'reflex-rally',   title: 'Reflex Rally',   tagline: "Return every shot. Don't miss.",                href: '/games/reflex-rally',   accentColor: '#84cc16', duration: '60s', Icon: Timer      },
+  { id: 'precision-putt', title: 'Precision Putt', tagline: 'Read the green. Control the power.',            href: '/games/precision-putt', accentColor: '#86efac', duration: '60s', Icon: Flag       },
 ];
 
-const ALL_GAMES = [...SKILL_GAMES, ...SPORTS_GAMES];
+const HOLIDAY_GAMES: Game[] = [
+  { id: 'gift-rush',        title: 'Gift Rush',        tagline: "Swipe left or right. Fast. Santa's watching.", href: '/games/gift-rush',        accentColor: '#ef4444', duration: '45s', Icon: Gift        },
+  { id: 'snow-catch',       title: 'Snow Catch',       tagline: "Tilt to catch the snow. Miss one and it's over.", href: '/games/snow-catch',    accentColor: '#93c5fd', duration: '45s', Icon: Snowflake   },
+  { id: 'boo-blast',        title: 'Boo Blast',        tagline: "Tap the ghosts. They won't wait.",              href: '/games/boo-blast',        accentColor: '#a855f7', duration: '30s', Icon: Ghost       },
+  { id: 'cauldron-bubble',  title: 'Cauldron Bubble',  tagline: 'Blow to bubble. Too quiet = dead. Too loud = BOOM.', href: '/games/cauldron-bubble', accentColor: '#22c55e', duration: '45s', Icon: FlaskConical },
+  { id: 'firework-launch',  title: 'Firework Launch',  tagline: 'Swipe to launch. Tap to detonate. Make it count.', href: '/games/firework-launch', accentColor: '#f59e0b', duration: '45s', Icon: Sparkles    },
+  { id: 'countdown-crush',  title: 'Countdown Crush',  tagline: 'Score before midnight. Every second counts.',   href: '/games/countdown-crush',  accentColor: '#fbbf24', duration: '30s', Icon: Clock       },
+  { id: 'cupid-shot',       title: 'Cupid Shot',       tagline: 'Aim. Wait. Shoot at the perfect moment.',       href: '/games/cupid-shot',       accentColor: '#f43f5e', duration: '45s', Icon: Heart       },
+  { id: 'love-note',        title: 'Love Note',        tagline: 'Remember the sequence. Tap it back. From the heart.', href: '/games/love-note', accentColor: '#ec4899', duration: '60s', Icon: Mail        },
+  { id: 'turkey-trot',      title: 'Turkey Trot',      tagline: "The turkey's running. Prove you're faster.",    href: '/games/turkey-trot',      accentColor: '#f97316', duration: '30s', Icon: Feather     },
+  { id: 'harvest-catch',    title: 'Harvest Catch',    tagline: "Tilt to catch the harvest. Skip the Brussels sprouts.", href: '/games/harvest-catch', accentColor: '#d97706', duration: '45s', Icon: Wheat },
+];
 
-function GameCard({
-  game,
-  played,
-  personality,
-}: {
-  game: typeof ALL_GAMES[0];
-  played: boolean;
-  personality?: string;
-}) {
-  const [hovered, setHovered] = useState(false);
+const ALL_GAMES: Game[] = [...SKILL_GAMES, ...SPORTS_GAMES, ...HOLIDAY_GAMES];
+
+// Hero rotation pool
+const FEATURED_GAMES: Game[] = [
+  SKILL_GAMES[0],   // tilt-maze
+  SKILL_GAMES[1],   // whisper-bomb
+  SKILL_GAMES[4],   // tunnel
+  SKILL_GAMES[9],   // reaction-chain
+  HOLIDAY_GAMES[2], // boo-blast
+  HOLIDAY_GAMES[4], // firework-launch
+];
+
+// "New Arrivals" — last games added to the platform
+const NEW_ARRIVAL_IDS = ['harvest-catch', 'love-note', 'countdown-crush', 'cauldron-bubble', 'snow-catch'];
+const NEW_ARRIVALS: Game[] = NEW_ARRIVAL_IDS
+  .map(id => ALL_GAMES.find(g => g.id === id))
+  .filter((g): g is Game => g !== undefined);
+
+// ─── Netflix Game Card ────────────────────────────────────────────────────────
+
+function NetflixCard({ game }: { game: Game }) {
+  const { Icon } = game;
 
   return (
-    <Link href={game.href} style={{ textDecoration: 'none' }} data-testid="game-card">
-      <div
-        style={{
-          backgroundColor: hovered ? 'var(--color-surface-raised)' : 'var(--color-surface)',
-          border: played
-            ? `1px solid ${game.accentColor}44`
-            : '1px solid var(--color-border)',
-          borderLeft: played
-            ? `3px solid ${game.accentColor}`
-            : hovered
-            ? '1px solid var(--color-border-strong)'
-            : '1px solid var(--color-border)',
-          borderRadius: 'var(--radius-card)',
-          height: 96,
-          padding: '0 16px 0 12px',
-          display: 'flex',
-          alignItems: 'center',
-          gap: 14,
-          cursor: 'pointer',
-          boxShadow: played ? `0 0 20px ${game.accentColor}12` : 'none',
-          transition: 'background 0.15s, transform 0.15s, box-shadow 0.15s',
-          transform: hovered ? 'translateY(-1px)' : 'translateY(0)',
-          position: 'relative',
-          overflow: 'hidden',
-        }}
-        onMouseEnter={() => setHovered(true)}
-        onMouseLeave={() => setHovered(false)}
-      >
-        {/* Shimmer overlay for played cards */}
-        {played && (
+    <div className="game-card-netflix" data-testid="game-card">
+      {/* Main game link */}
+      <NextLink href={game.href} style={{ textDecoration: 'none', display: 'block', height: '100%' }}>
+        <motion.div
+          whileHover={{
+            scale: 1.05,
+            boxShadow: `0 0 0 2px ${game.accentColor}99, 0 8px 32px ${game.accentColor}44`,
+          }}
+          transition={{ duration: 0.2, ease: 'easeOut' }}
+          style={{
+            height: '100%',
+            background: `linear-gradient(160deg, ${game.accentColor}cc 0%, ${game.accentColor}55 45%, #08090f 100%)`,
+            borderRadius: 12,
+            border: `1px solid ${game.accentColor}33`,
+            display: 'flex',
+            flexDirection: 'column',
+            padding: '12px 12px 14px',
+            cursor: 'pointer',
+            position: 'relative',
+          }}
+        >
+          {/* Duration badge — top right */}
           <div
             style={{
               position: 'absolute',
-              inset: 0,
-              background: `linear-gradient(90deg, transparent 0%, ${game.accentColor}08 50%, transparent 100%)`,
-              backgroundSize: '200% 100%',
-              animation: 'shimmer 3s linear infinite',
-              pointerEvents: 'none',
-            }}
-          />
-        )}
-
-        {/* Emoji circle */}
-        <div
-          style={{
-            width: 56,
-            height: 56,
-            borderRadius: '50%',
-            background: `radial-gradient(circle at 40% 40%, ${game.accentColor}33 0%, transparent 70%)`,
-            boxShadow: `0 0 12px ${game.accentColor}22`,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            fontSize: 28,
-            flexShrink: 0,
-          }}
-        >
-          {game.emoji}
-        </div>
-
-        {/* Text */}
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div
-            style={{
-              color: 'var(--color-text)',
-              fontWeight: 700,
-              fontSize: 17,
-              whiteSpace: 'nowrap',
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              letterSpacing: '-0.2px',
+              top: 10,
+              right: 10,
+              background: 'rgba(0,0,0,0.55)',
+              backdropFilter: 'blur(8px)',
+              WebkitBackdropFilter: 'blur(8px)',
+              color: 'rgba(255,255,255,0.9)',
+              fontSize: 11,
+              fontFamily: "'JetBrains Mono', monospace",
+              fontWeight: 600,
+              padding: '3px 8px',
+              borderRadius: 999,
+              letterSpacing: '0.02em',
+              lineHeight: 1.6,
             }}
           >
-            {game.title}
+            {game.duration}
           </div>
+
+          {/* Large decorative icon — centered */}
           <div
             style={{
-              color: 'var(--color-text-secondary)',
-              fontSize: 13,
-              marginTop: 3,
-              whiteSpace: 'nowrap',
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
+              flex: 1,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              opacity: 0.3,
             }}
           >
-            {game.tagline}
+            <Icon size={80} color="white" />
           </div>
-        </div>
 
-        {/* Right badge + arrow */}
-        <div
-          style={{
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'flex-end',
-            gap: 5,
-            flexShrink: 0,
-          }}
-        >
-          {played && personality ? (
+          {/* Bottom text */}
+          <div style={{ flexShrink: 0, paddingBottom: 18 }}>
             <div
               style={{
-                backgroundColor: `${game.accentColor}22`,
-                color: game.accentColor,
-                fontSize: 11,
+                color: '#ffffff',
                 fontWeight: 700,
-                padding: '4px 10px',
-                borderRadius: 8,
+                fontSize: 15,
+                lineHeight: 1.25,
+                marginBottom: 5,
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
                 whiteSpace: 'nowrap',
-                border: `1px solid ${game.accentColor}44`,
-                boxShadow: `0 0 8px ${game.accentColor}22`,
               }}
             >
-              {personality}
+              {game.title}
             </div>
-          ) : !played ? (
             <div
               style={{
-                backgroundColor: 'transparent',
-                color: 'var(--color-text-secondary)',
+                color: 'rgba(255,255,255,0.6)',
                 fontSize: 11,
-                fontWeight: 600,
-                padding: '4px 10px',
-                borderRadius: 8,
-                border: '1px solid var(--color-border)',
+                lineHeight: 1.4,
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
               }}
             >
-              {game.duration}
+              {game.tagline}
             </div>
-          ) : null}
-          <span
-            style={{
-              color: played ? game.accentColor : 'var(--color-text-secondary)',
-              fontSize: 16,
-              lineHeight: 1,
-            }}
-          >
-            {played ? '✓' : '›'}
-          </span>
-        </div>
-      </div>
-    </Link>
-  );
-}
+          </div>
+        </motion.div>
+      </NextLink>
 
-function SectionHeader({ icon, label }: { icon: string; label: string }) {
-  return (
-    <div
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: 10,
-        marginBottom: 12,
-      }}
-    >
-      <span style={{ fontSize: 14 }}>{icon}</span>
-      <span
+      {/* QA button — bottom corner, subtle, above main link */}
+      <NextLink
+        href={`/qa?game=${game.id}`}
+        onClick={(e) => e.stopPropagation()}
         style={{
-          color: 'var(--color-text)',
-          fontSize: 12,
+          position: 'absolute',
+          bottom: 10,
+          right: 10,
+          fontSize: 9,
           fontWeight: 700,
-          textTransform: 'uppercase',
-          letterSpacing: '0.12em',
+          letterSpacing: '0.5px',
+          padding: '2px 6px',
+          borderRadius: 4,
+          background: 'rgba(0,0,0,0.5)',
+          color: 'rgba(255,255,255,0.28)',
+          border: '1px solid rgba(255,255,255,0.1)',
+          textDecoration: 'none',
+          zIndex: 10,
+          lineHeight: 1.6,
+          display: 'block',
         }}
       >
-        {label}
-      </span>
-      <div
-        style={{
-          flex: 1,
-          height: 1,
-          background: 'var(--color-border-strong)',
-          marginLeft: 4,
-        }}
-      />
+        QA
+      </NextLink>
     </div>
   );
 }
 
-const PODIUM_MEDALS = ['🥇', '🥈', '🥉'];
+// ─── Carousel Row ─────────────────────────────────────────────────────────────
 
-function ChampionsTeaser() {
-  const [topPlayers, setTopPlayers] = useState<LeaderboardEntry[]>([]);
-
-  useEffect(() => {
-    setTopPlayers(getOverallTopPlayers());
-  }, []);
-
-  if (topPlayers.length === 0) return null;
+function CarouselRow({ title, games }: { title: string; games: Game[] }) {
+  if (games.length === 0) return null;
 
   return (
-    <div
-      style={{
-        marginTop: 28,
-        backgroundColor: 'var(--color-surface)',
-        border: '1px solid rgba(0,255,136,0.18)',
-        borderRadius: 16,
-        padding: '16px 16px 14px',
-        position: 'relative',
-        overflow: 'hidden',
-      }}
-    >
-      {/* Subtle glow */}
+    <div style={{ marginBottom: 40 }}>
       <div
         style={{
-          position: 'absolute',
-          top: 0, left: 0, right: 0,
-          height: 2,
-          background: 'linear-gradient(90deg, transparent, rgba(0,255,136,0.5), transparent)',
-        }}
-      />
-
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 8,
-          marginBottom: 12,
+          padding: '0 20px',
+          marginBottom: 14,
+          fontSize: 13,
+          fontWeight: 700,
+          letterSpacing: '0.12em',
+          textTransform: 'uppercase',
+          color: 'rgba(255,255,255,0.65)',
+          fontFamily: "'Space Grotesk', system-ui, sans-serif",
         }}
       >
-        <span style={{ fontSize: 14 }}>🏆</span>
-        <span
-          style={{
-            color: 'var(--color-text)',
-            fontSize: 12,
-            fontWeight: 700,
-            textTransform: 'uppercase',
-            letterSpacing: '0.12em',
-          }}
-        >
-          This Week&apos;s Champions
-        </span>
-        <span
-          style={{
-            color: 'var(--color-text-secondary)',
-            fontSize: 11,
-            marginLeft: 'auto',
-          }}
-        >
-          All games
-        </span>
+        {title}
       </div>
-
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        {topPlayers.map((player, i) => (
-          <div
-            key={player.playerId}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 10,
-            }}
-          >
-            <span style={{ fontSize: 18, width: 24, textAlign: 'center' }}>
-              {PODIUM_MEDALS[i]}
-            </span>
-            <span style={{ fontSize: 20, width: 28, textAlign: 'center' }}>
-              {player.avatar}
-            </span>
-            <span
-              style={{
-                color: 'var(--color-text)',
-                fontSize: 14,
-                fontWeight: 600,
-                flex: 1,
-              }}
-            >
-              {player.name}
-            </span>
-            <span
-              style={{
-                color: i === 0 ? '#ffd700' : i === 1 ? '#c0c0c0' : '#cd7f32',
-                fontSize: 14,
-                fontWeight: 700,
-                fontVariantNumeric: 'tabular-nums',
-              }}
-            >
-              {player.score.toLocaleString()} pts
-            </span>
-          </div>
+      <div className="carousel-row" style={{ paddingLeft: 20, paddingRight: 20 }}>
+        {games.map((game) => (
+          <NetflixCard key={game.id} game={game} />
         ))}
       </div>
     </div>
   );
 }
 
+// ─── Ether Stripe Divider ─────────────────────────────────────────────────────
+
+function EtherStripe({ opacity = 0.35, margin = '0' }: { opacity?: number; margin?: string }) {
+  return (
+    <div
+      style={{
+        height: 2,
+        margin,
+        background:
+          'repeating-linear-gradient(to right, #5b9fc0 0px, #5b9fc0 80px, transparent 80px, transparent 100px)',
+        opacity,
+      }}
+    />
+  );
+}
+
+// ─── Main Page ────────────────────────────────────────────────────────────────
+
 export default function Home() {
-  const router = useRouter();
-  const [playedCount, setPlayedCount] = useState(0);
-  const [scores, setScores] = useState<Record<string, { score: string; personality?: string }>>({});
+  const [featuredIndex, setFeaturedIndex] = useState(0);
+  const [userName, setUserName] = useState<string | null>(null);
+  const [playCounts, setPlayCounts] = useState<Record<string, number>>({});
+  const [mostPlayed, setMostPlayed] = useState<Game[]>([]);
   const [visible, setVisible] = useState(false);
 
   useEffect(() => {
+    // Load user name
     try {
       const userRaw = localStorage.getItem('mg_user');
-      if (!userRaw) {
-        router.replace('/onboarding');
-        return;
+      if (userRaw) {
+        const user = JSON.parse(userRaw) as { name?: string };
+        if (user?.name) {
+          setUserName(user.name.split(' ')[0]);
+        }
       }
+    } catch { /* ignore */ }
+
+    // Load play data
+    try {
       const played: string[] = JSON.parse(localStorage.getItem('mg_played') || '[]');
-      setPlayedCount(played.length);
-      const sc = JSON.parse(localStorage.getItem('mg_scores') || '{}');
-      setScores(sc);
-    } catch {
-      router.replace('/onboarding');
-    }
+
+      // Count plays per game
+      const counts: Record<string, number> = {};
+      played.forEach((id) => {
+        counts[id] = (counts[id] || 0) + 1;
+      });
+      setPlayCounts(counts);
+
+      // Most played row
+      const mp = [...ALL_GAMES]
+        .filter((g) => counts[g.id] > 0)
+        .sort((a, b) => (counts[b.id] || 0) - (counts[a.id] || 0))
+        .slice(0, 12);
+      setMostPlayed(mp);
+
+      // Set featured to first unplayed game in the featured pool
+      const firstUnplayed = FEATURED_GAMES.findIndex((g) => !played.includes(g.id));
+      if (firstUnplayed !== -1) {
+        setFeaturedIndex(firstUnplayed);
+      }
+    } catch { /* ignore */ }
+
     setTimeout(() => setVisible(true), 30);
-  }, [router]);
+  }, []);
+
+  // Auto-rotate hero every 6s
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setFeaturedIndex((i) => (i + 1) % FEATURED_GAMES.length);
+    }, 6000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const featuredGame = FEATURED_GAMES[featuredIndex] ?? FEATURED_GAMES[0];
+  const FeaturedIcon = featuredGame.Icon;
 
   return (
-    <main
+    <div
       style={{
-        background: 'var(--color-bg)',
+        background: '#08090f',
         minHeight: '100vh',
-        padding: '48px 16px 56px',
-        transition: 'opacity 0.3s',
         opacity: visible ? 1 : 0,
-        position: 'relative',
+        transition: 'opacity 0.3s ease',
+        fontFamily: "'Space Grotesk', system-ui, sans-serif",
       }}
     >
-      {/* Atmospheric radial gradient */}
-      <div
+      {/* ── Sticky Header ──────────────────────────────────────── */}
+      <header
         style={{
-          position: 'fixed',
+          position: 'sticky',
           top: 0,
-          left: '50%',
-          transform: 'translateX(-50%)',
-          width: 600,
-          height: 600,
-          borderRadius: '50%',
-          background: 'radial-gradient(circle, rgba(0,255,136,0.05) 0%, transparent 70%)',
-          pointerEvents: 'none',
-          zIndex: 0,
+          zIndex: 100,
+          height: 56,
+          background: 'rgba(8, 9, 15, 0.88)',
+          backdropFilter: 'blur(16px)',
+          WebkitBackdropFilter: 'blur(16px)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: '0 20px',
+          borderBottom: '1px solid rgba(255,255,255,0.05)',
         }}
-      />
-
-      <div style={{ maxWidth: 480, margin: '0 auto', position: 'relative', zIndex: 1 }}>
-        {/* Wordmark */}
-        <div style={{ marginBottom: 20 }}>
-          <span
+      >
+        {/* Wordmark — full Ether logo */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <img
+            src="/brand/ether-wordmark-transparent-light.png"
+            alt="Ether"
             style={{
-              color: 'var(--color-accent)',
-              fontSize: 12,
-              fontWeight: 700,
-              letterSpacing: '0.15em',
-              textTransform: 'uppercase',
+              height: 28,
+              width: 'auto',
+              objectFit: 'contain',
+              flexShrink: 0,
             }}
-          >
-            ⚡ ETHER
-          </span>
+          />
         </div>
 
-        {/* Hero */}
-        <div style={{ marginBottom: 32 }}>
-          <h1
-            style={{
-              color: 'var(--color-text)',
-              fontSize: 36,
-              fontWeight: 700,
-              margin: '0 0 8px',
-              letterSpacing: '-0.5px',
-              lineHeight: 1.1,
-            }}
-          >
-            Play. Reveal yourself.
-          </h1>
-          <p
-            style={{
-              color: 'var(--color-text-secondary)',
-              fontSize: 15,
-              margin: '0 0 20px',
-              lineHeight: 1.5,
-            }}
-          >
-            11 games. 60 seconds each. Real signals.
-          </p>
-
-          {/* Progress pill */}
-          <div
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 8,
-              backgroundColor: 'var(--color-surface)',
-              border: '1px solid var(--color-border)',
-              borderRadius: 'var(--radius-pill)',
-              padding: '6px 14px',
-            }}
-          >
+        {/* User avatar — only if logged in */}
+        {userName && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <span
+              style={{
+                color: 'rgba(255,255,255,0.65)',
+                fontSize: 13,
+                fontWeight: 500,
+              }}
+            >
+              {userName}
+            </span>
             <div
               style={{
-                width: 8,
-                height: 8,
+                width: 32,
+                height: 32,
                 borderRadius: '50%',
-                backgroundColor: 'var(--color-accent)',
-                animation: 'dot-pulse 1.8s ease-in-out infinite',
+                background: 'linear-gradient(135deg, #5b9fc0 0%, #a855f7 100%)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: 13,
+                fontWeight: 700,
+                color: '#fff',
+                flexShrink: 0,
               }}
-            />
-            <span style={{ color: 'var(--color-text)', fontSize: 13, fontWeight: 700 }}>
-              {playedCount} of {ALL_GAMES.length} played
-            </span>
-          </div>
-        </div>
-
-        {/* Skill Games section */}
-        <div style={{ marginBottom: 8 }}>
-          <SectionHeader icon="🎮" label="Skill Games" />
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {SKILL_GAMES.map((game) => (
-              <GameCard
-                key={game.id}
-                game={game}
-                played={!!scores[game.id]}
-                personality={scores[game.id]?.personality}
-              />
-            ))}
-          </div>
-        </div>
-
-        {/* Sports Games section */}
-        <div style={{ marginTop: 28, marginBottom: 8 }}>
-          <SectionHeader icon="⚽" label="Sports Games" />
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {SPORTS_GAMES.map((game) => (
-              <GameCard
-                key={game.id}
-                game={game}
-                played={!!scores[game.id]}
-                personality={scores[game.id]?.personality}
-              />
-            ))}
-          </div>
-        </div>
-
-        {/* Champions teaser leaderboard */}
-        <ChampionsTeaser />
-
-        {/* Cross-game behavioral profile — shown after 3+ games */}
-        {playedCount >= 3 && (
-          <div style={{ marginTop: 28 }}>
-            <CrossGameProfile scores={scores} />
+            >
+              {userName[0].toUpperCase()}
+            </div>
           </div>
         )}
+      </header>
 
-        {/* Footer */}
-        <div
-          style={{
-            marginTop: 40,
-            paddingTop: 20,
-            borderTop: '1px solid var(--color-border)',
-            textAlign: 'center',
-          }}
-        >
-          <span
+      {/* ── Hero Section ───────────────────────────────────────── */}
+      <section
+        style={{
+          position: 'relative',
+          height: '40vh',
+          minHeight: 260,
+          maxHeight: 500,
+          overflow: 'hidden',
+        }}
+      >
+        {/* Animated background */}
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={featuredGame.id + '-bg'}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.7, ease: 'easeInOut' }}
             style={{
-              color: 'var(--color-text-secondary)',
-              fontSize: 12,
-              fontWeight: 500,
-              opacity: 0.6,
+              position: 'absolute',
+              inset: 0,
+              background: `
+                radial-gradient(ellipse 120% 100% at 70% 30%, ${featuredGame.accentColor}28 0%, transparent 60%),
+                radial-gradient(ellipse 60% 80% at 20% 80%, ${featuredGame.accentColor}15 0%, transparent 50%),
+                #08090f
+              `,
+            }}
+          />
+        </AnimatePresence>
+
+        {/* Large decorative icon — background */}
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={featuredGame.id + '-icon'}
+            initial={{ opacity: 0, scale: 0.8 }}
+            animate={{ opacity: 0.07, scale: 1 }}
+            exit={{ opacity: 0, scale: 1.1 }}
+            transition={{ duration: 0.8, ease: 'easeOut' }}
+            style={{
+              position: 'absolute',
+              right: '8%',
+              top: '50%',
+              transform: 'translateY(-50%)',
+              pointerEvents: 'none',
             }}
           >
-            ⚡ Powered by Ether
-          </span>
+            <FeaturedIcon size={200} color={featuredGame.accentColor} />
+          </motion.div>
+        </AnimatePresence>
+
+        {/* Bottom gradient fade */}
+        <div
+          style={{
+            position: 'absolute',
+            inset: 0,
+            background: 'linear-gradient(to top, #08090f 0%, transparent 55%)',
+            pointerEvents: 'none',
+          }}
+        />
+
+        {/* Hero content */}
+        <div
+          style={{
+            position: 'absolute',
+            bottom: 0,
+            left: 0,
+            right: 0,
+            padding: '0 24px 28px',
+          }}
+        >
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={featuredGame.id + '-text'}
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              transition={{ duration: 0.45, ease: 'easeOut' }}
+            >
+              {/* Title */}
+              <h1
+                style={{
+                  color: '#ffffff',
+                  fontSize: 'clamp(36px, 8vw, 56px)',
+                  fontWeight: 800,
+                  margin: '0 0 6px',
+                  letterSpacing: '-0.03em',
+                  lineHeight: 1.1,
+                  fontFamily: "'Space Grotesk', system-ui, sans-serif",
+                }}
+              >
+                {featuredGame.title}
+              </h1>
+
+              {/* Tagline */}
+              <p
+                style={{
+                  color: 'rgba(255,255,255,0.65)',
+                  fontSize: 15,
+                  margin: '0 0 18px',
+                  lineHeight: 1.5,
+                  maxWidth: 320,
+                }}
+              >
+                {featuredGame.tagline}
+              </p>
+
+              {/* CTA button */}
+              <NextLink href={featuredGame.href} style={{ textDecoration: 'none' }}>
+                <motion.div
+                  whileHover={{ scale: 1.04 }}
+                  whileTap={{ scale: 0.97 }}
+                  transition={{ duration: 0.15 }}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    background: featuredGame.accentColor,
+                    color: '#08090f',
+                    fontWeight: 800,
+                    fontSize: 15,
+                    padding: '12px 26px',
+                    borderRadius: 10,
+                    letterSpacing: '-0.01em',
+                    cursor: 'pointer',
+                    fontFamily: "'Space Grotesk', system-ui, sans-serif",
+                    boxShadow: `0 4px 24px ${featuredGame.accentColor}55`,
+                  }}
+                >
+                  Play Now →
+                </motion.div>
+              </NextLink>
+            </motion.div>
+          </AnimatePresence>
+
+          {/* Dot indicators */}
+          <div
+            style={{
+              display: 'flex',
+              gap: 6,
+              marginTop: 16,
+            }}
+          >
+            {FEATURED_GAMES.map((_, i) => (
+              <button
+                key={i}
+                onClick={() => setFeaturedIndex(i)}
+                style={{
+                  width: i === featuredIndex ? 20 : 6,
+                  height: 6,
+                  borderRadius: 999,
+                  background: i === featuredIndex ? featuredGame.accentColor : 'rgba(255,255,255,0.2)',
+                  border: 'none',
+                  padding: 0,
+                  cursor: 'pointer',
+                  transition: 'all 0.3s ease',
+                }}
+                aria-label={`Featured game ${i + 1}`}
+              />
+            ))}
+          </div>
         </div>
+
+        {/* Powered by Ether badge — bottom right of hero */}
+        <div
+          style={{
+            position: 'absolute',
+            bottom: 20,
+            right: 20,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6,
+            opacity: 0.4,
+            pointerEvents: 'none',
+          }}
+        >
+          <img
+            src="/brand/ether-wordmark-light.jpg"
+            alt="Ether"
+            style={{
+              height: 16,
+              width: 'auto',
+              mixBlendMode: 'screen',
+            }}
+          />
+        </div>
+
+        {/* Ether stripe — bottom edge of hero */}
+        <div
+          style={{
+            position: 'absolute',
+            bottom: 0,
+            left: 0,
+            right: 0,
+            height: 2,
+            background:
+              'repeating-linear-gradient(to right, #5b9fc0 0px, #5b9fc0 80px, transparent 80px, transparent 100px)',
+            opacity: 0.5,
+          }}
+        />
+      </section>
+
+      {/* ── Category Rows ──────────────────────────────────────── */}
+      <div style={{ paddingTop: 36 }}>
+        <CarouselRow title="🎮 Skill Games" games={[...SKILL_GAMES, ...SPORTS_GAMES]} />
+        <EtherStripe opacity={0.25} margin="4px 0 20px" />
+        <CarouselRow title="🎉 Holiday Games" games={HOLIDAY_GAMES} />
+        {mostPlayed.length > 0 && (
+          <>
+            <EtherStripe opacity={0.25} margin="4px 0 20px" />
+            <CarouselRow title="🔥 Most Played" games={mostPlayed} />
+          </>
+        )}
+        <EtherStripe opacity={0.25} margin="4px 0 20px" />
+        <CarouselRow title="⭐ New Arrivals" games={NEW_ARRIVALS} />
       </div>
-    </main>
+
+      {/* ── Footer ─────────────────────────────────────────────── */}
+      <footer
+        style={{
+          borderTop: '1px solid rgba(255,255,255,0.05)',
+          marginTop: 16,
+          paddingTop: 0,
+        }}
+      >
+        {/* Ether stripe at top of footer */}
+        <EtherStripe opacity={0.5} margin="0 0 28px" />
+
+        {/* Wordmark + tagline */}
+        <div
+          style={{
+            textAlign: 'center',
+            padding: '0 20px 48px',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            gap: 10,
+          }}
+        >
+          {/* "Powered by ETHER" */}
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+            }}
+          >
+            <span
+              style={{
+                color: 'rgba(255,255,255,0.3)',
+                fontSize: 12,
+                fontWeight: 500,
+                letterSpacing: '0.08em',
+                fontFamily: "'Space Grotesk', system-ui, sans-serif",
+              }}
+            >
+              Powered by
+            </span>
+            <img
+              src="/brand/ether-wordmark-transparent-light.png"
+              alt="Ether"
+              style={{
+                height: 18,
+                width: 'auto',
+                opacity: 0.75,
+              }}
+            />
+          </div>
+
+          {/* Copyright */}
+          <div
+            style={{
+              color: 'rgba(255,255,255,0.15)',
+              fontSize: 11,
+              fontWeight: 400,
+              letterSpacing: '0.06em',
+              fontFamily: "'Space Grotesk', system-ui, sans-serif",
+            }}
+          >
+            © 2026 Ether
+          </div>
+        </div>
+      </footer>
+    </div>
   );
 }

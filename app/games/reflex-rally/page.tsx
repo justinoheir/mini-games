@@ -9,7 +9,6 @@ import { initAudio, sfx, haptic, startMusic, increaseMusicTempo } from '@/lib/au
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
-import PlayerNameInput from '@/components/PlayerNameInput';
 
 const ACCENT = '#84cc16';
 const GAME_ID = 'reflex-rally';
@@ -45,6 +44,7 @@ export default function ReflexRally() {
   const [timeLeft, setTimeLeft] = useState(DURATION);
   const [lives, setLives] = useState(MAX_LIVES);
   const [scoreDisplay, setScoreDisplay] = useState(0);
+  const [streakDisplay, setStreakDisplay] = useState(0);
   const [finalSig, setFinalSig] = useState<Signals | null>(null);
   const [playerName, setPlayerName]   = useState('');
   const [playerAvatar, setPlayerAvatar] = useState('🎮');
@@ -73,6 +73,8 @@ export default function ReflexRally() {
     sig: { returns:0, misses:0, forehands:0, backhands:0, reactionTimes:[], score:0, streakMax:0, streakCurrent:0 } as Signals,
     // Narrow at 30s
     courtNarrow: false,
+    // Player Y (lerped)
+    playerY: 0,
   });
 
   const endGame = useCallback(() => {
@@ -117,7 +119,7 @@ export default function ReflexRally() {
     s.running = true; s.timeLeft = DURATION; s.lives = MAX_LIVES;
     s.sig = { returns:0, misses:0, forehands:0, backhands:0, reactionTimes:[], score:0, streakMax:0, streakCurrent:0 };
     s.floats = []; s.swooshes = [];
-    setScoreDisplay(0);
+    setScoreDisplay(0); setStreakDisplay(0);
     s.speed = s.baseSpeed = 5; s.speedTier = 0;
     s.netX = W / 2;
     s.playerZoneX = W * 0.3;
@@ -143,12 +145,15 @@ export default function ReflexRally() {
         s.courtNarrow = true;
         s.courtTop = H * 0.28; s.courtBottom = H * 0.72;
       }
-      if (s.timeLeft <= 0) { sfx.fail(); haptic([300]); endGame(); }
+      if (s.timeLeft <= 5 && s.timeLeft > 0) sfx.tick(); // urgency cue
+      if (s.timeLeft <= 0) { sfx.success(); haptic([30, 50, 100]); endGame(); } // timer end = survived 60s = success
     }, 1000);
 
     const loop = () => {
       if (!s.running) return;
-      // Clay court — terracotta atmosphere
+      // Init playerY on first frame
+    if (!s.playerY) s.playerY = (s.courtTop + s.courtBottom) / 2;
+    // Clay court — terracotta atmosphere
       const bg = ctx.createLinearGradient(0, 0, 0, H);
       bg.addColorStop(0, '#200e06'); bg.addColorStop(1, '#0d0603');
       ctx.fillStyle = bg;
@@ -173,8 +178,12 @@ export default function ReflexRally() {
       ctx.beginPath(); ctx.moveTo(s.playerZoneX, ct); ctx.lineTo(s.playerZoneX, cb); ctx.stroke();
       ctx.setLineDash([]);
 
-      // Player silhouette (left side)
-      const px = W * 0.1, py = (ct + cb) / 2;
+      // Player silhouette (left side) — tracks ball Y with lerp
+      const px = W * 0.1;
+      const targetPy = s.ballActive ? Math.max(ct + 40, Math.min(cb - 40, s.ballY)) : (ct + cb) / 2;
+      if (!s.playerY) s.playerY = (ct + cb) / 2;
+      s.playerY += (targetPy - s.playerY) * 0.1;
+      const py = s.playerY;
       ctx.fillStyle = 'rgba(255,255,255,0.5)';
       ctx.beginPath(); ctx.arc(px, py - 28, 12, 0, Math.PI*2); ctx.fill();
       ctx.fillRect(px - 8, py - 16, 16, 32);
@@ -219,6 +228,7 @@ export default function ReflexRally() {
           s.sig.misses++;
           s.sig.streakCurrent = 0;
           setLives(s.lives);
+          setStreakDisplay(0);
           sfx.collision(); haptic([300]);
           s.floats.push({ x: W*0.15, y: (ct+cb)/2, text:'MISS!', color:'#ef4444', alpha:1, vy:-1.5 });
           s.ballActive = false;
@@ -298,9 +308,13 @@ export default function ReflexRally() {
     s.sig.streakCurrent++;
     if (s.sig.streakCurrent > s.sig.streakMax) s.sig.streakMax = s.sig.streakCurrent;
     setScoreDisplay(s.sig.score);
+    setStreakDisplay(s.sig.streakCurrent);
 
     sfx.collect(); haptic([40]);
-    if (reactionTime < 300) sfx.nearMiss();
+    // Fast return (<300ms) = great reflex — celebrate with success sound (not nearMiss which is semantically wrong)
+    if (reactionTime < 300) setTimeout(() => sfx.success(), 80);
+    // Streak milestone: sfx.go() delayed so it follows the return sound
+    if (s.sig.streakCurrent >= 3) setTimeout(() => sfx.go(), 120);
     s.floats.push({ x: s.ballX, y: s.ballY - 20, text:'+10', color: ACCENT, alpha:1, vy:-2 });
     s.swooshes.push({ x: s.ballX, y: s.ballY, dx, alpha: 1 });
 
@@ -330,17 +344,20 @@ export default function ReflexRally() {
     };
   }, [endGame]);
 
-  const handleStart = useCallback(async () => {
-    playerSessionRef.current = savePlayerSession(GAME_ID, playerName, playerAvatar);
+  const handleStart = useCallback(async (name: string, avatar: string) => {
+    setPlayerName(name);
+    setPlayerAvatar(avatar);
+    playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar);
     await initAudio(); sfx.click();
     setPhase('countdown');
-  }, [playerName, playerAvatar]);
+  }, []);
 
   const handlePlayAgain = useCallback(() => {
     if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
     stateRef.current.running = false;
     cancelAnimationFrame(animRef.current);
     if (timerRef.current) clearInterval(timerRef.current);
+    setStreakDisplay(0);
     setPhase('start');
   }, []);
 
@@ -352,7 +369,7 @@ export default function ReflexRally() {
     <GameShell title="Reflex Rally" emoji="🎾" accentColor={ACCENT} theme={theme}>
       <canvas
         ref={canvasRef}
-        style={{ display: phase === 'playing' ? 'block' : 'none', position: 'absolute', top: 0, left: 0 }}
+        style={{ display: phase === 'playing' ? 'block' : 'none', position: 'absolute', top: 0, left: 0, touchAction: 'none' }}
         onTouchStart={handleTouchStart}
         onTouchEnd={handleTouchEnd}
       />
@@ -362,6 +379,7 @@ export default function ReflexRally() {
             { label: 'SCORE', value: scoreDisplay },
             { label: 'TIME', value: `${timeLeft}s`, danger: timeLeft <= 10 },
             { label: 'LIVES', value: '❤️'.repeat(lives) },
+            { label: 'STREAK 🎾', value: streakDisplay },
           ]}
           accentColor={ACCENT}
         />
@@ -376,12 +394,7 @@ export default function ReflexRally() {
           ctaLabel="Start Game →"
           accentColor={ACCENT}
           onStart={handleStart}
-        >
-          <PlayerNameInput
-            accentColor={theme.colors.accent ?? ACCENT}
-            onReady={(name, avatar) => { setPlayerName(name); setPlayerAvatar(avatar); }}
-          />
-        </GameStartScreen>
+        />
       )}
       {phase === 'done' && sig && (
         <EndScreen

@@ -51,6 +51,17 @@ const PERSONALITIES_BY_GAME: Record<string, string[]> = {
   'crowd-roar': ['Crowd King 👑', 'Burst Machine 💥', 'Steady Roar 🔥', 'Building Up 🌊'],
   'balance-beam': ['Zen Master 🧘', 'Micromanager 🔄', 'Bold Corrector 💪', 'Learning Curve 🌊'],
   'pitch-match': ['Natural Pitch 🎼', 'Sustained Voice 🌬️', 'Close Enough 🎸', 'Finding Voice 🌊'],
+  // Holiday games
+  'gift-rush':        ['Santa\'s MVP 🎅', 'The Elf 🧝', 'Quick Sorter ⚡', 'Still Learning 🌱'],
+  'snow-catch':       ['Blizzard Survivor 🌨️', 'Snow Magnet ❄️', 'Golden Hunter ✨', 'First Snowfall 🌱'],
+  'boo-blast':        ['Ghost Hunter 🔪', 'The Exorcist 📿', 'Precision Buster 🎯', 'First Time Ghost 🌱'],
+  'cauldron-bubble':  ['Master Witch 🧙', 'Potion Master 🧪', 'Cauldron Keeper 🌙', 'The Muggle 😅'],
+  'firework-launch':  ['Pyrotechnist 🎆', 'Sky Painter ✨', 'Precision Igniter 🎇', 'Happy New Year! 🎉'],
+  'countdown-crush':  ['Midnight Champion 🏆', 'Champagne Crusher 🥂', 'Party Animal 🎉', 'New Year, New Me 🎆'],
+  'cupid-shot':       ['Cupid Himself 💘', 'True Love ❤️‍🔥', 'Sharpshooter 🏹', 'Still Searching 💔'],
+  'love-note':        ['Love Poet 📝', 'Devoted ❤️‍🔥', 'Sweet Talker 💬', 'Short Love Note 💌'],
+  'turkey-trot':      ['Turkey Whisperer 🦃', 'The Hunter 🍂', 'Quick Hands ⚡', 'Thankful Anyway 🙏'],
+  'harvest-catch':    ['Harvest Champion 🏆', 'Head of the Table 🦃', 'Golden Gatherer ✨', 'Still Loading Plate 🍽️'],
 };
 
 // Score ranges per game (realistic — must match parseScoreNum output of actual game scores)
@@ -78,6 +89,17 @@ const SCORE_RANGES: Record<string, [number, number]> = {
   'crowd-roar': [100, 850],
   'balance-beam': [150, 950],
   'pitch-match': [50, 380],
+  // Holiday games
+  'gift-rush':        [15, 45],
+  'snow-catch':       [20, 60],
+  'boo-blast':        [10, 35],
+  'cauldron-bubble':  [15, 42],
+  'firework-launch':  [20, 80],
+  'countdown-crush':  [30, 100],
+  'cupid-shot':       [10, 50],
+  'love-note':        [4, 14],
+  'turkey-trot':      [8, 25],
+  'harvest-catch':    [15, 55],
   'all': [500, 4500],
 };
 

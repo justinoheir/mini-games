@@ -10,7 +10,6 @@ import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
 import { createTiltController } from '@/lib/tilt';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
-import PlayerNameInput from '@/components/PlayerNameInput';
 
 const ACCENT = '#22c55e';
 const GAME_ID = 'penalty-kick';
@@ -214,8 +213,8 @@ export default function PenaltyKick() {
         ctx.fillText('⬡', s.ballX, s.ballY);
         ctx.restore();
 
-        // Check goal
-        if (s.ballY < s.goalY + s.goalH && s.ballY > s.goalY &&
+        // Check goal (guard: only once per flight — phase check mirrors the miss path)
+        if (s.phase === 'flying' && s.ballY < s.goalY + s.goalH && s.ballY > s.goalY &&
             s.ballX > gx && s.ballX < gx + gw) {
           // Check keeper save
           const keeperLeft = s.keeperX - s.keeperW * (s.keeperDiving ? 1.5 : 0.5);
@@ -227,28 +226,28 @@ export default function PenaltyKick() {
           s.sig.powerSum += s.power;
           if (Math.abs(s.curveX) > 3) s.sig.curveShots++;
 
-          // Corner check
+          // Corner check — use actual ball X (accounts for curve), not aim position
           const leftThird = gx + gw * 0.25;
           const rightThird = gx + gw * 0.75;
-          if (s.aimX < leftThird || s.aimX > rightThird) s.sig.cornerShots++;
+          if (s.ballX < leftThird || s.ballX > rightThird) s.sig.cornerShots++;
 
           if (saved) {
             s.sig.lastSavedResult = true;
             sfx.collision(); haptic([200]);
             s.resultText = 'SAVED!'; s.resultColor = '#ef4444';
             s.floats.push({ x: W/2, y: H/2, text:'SAVED!', color:'#ef4444', alpha:1, vy:-1.5 });
-            if (s.power > 85) sfx.boom();
+            // sfx.boom() already fired at kick time (handleTouchEnd) for powerful shots — no double-boom here
           } else {
             s.goals++;
-            s.sig.goals++;
-            s.sig.goals = s.goals;
+            s.sig.goals = s.goals; // keep goal count in sync
             setGoalsDisplay(s.goals);
             if (s.sig.lastSavedResult) { s.sig.postSaveGoals++; s.sig.adaptCount++; }
             s.sig.lastSavedResult = false;
-            sfx.collect(); sfx.success(); haptic([60, 30, 60]);
+            // Delay success so it follows collect, not stacks with it
+            sfx.collect(); setTimeout(() => sfx.success(), 100); haptic([60, 30, 60]);
             s.resultText = 'GOAL!'; s.resultColor = '#4ade80';
             s.floats.push({ x: W/2, y: H/2, text:'GOAL!', color:'#4ade80', alpha:1, vy:-1.5 });
-            if (s.power > 85) sfx.boom();
+            // sfx.boom() already fired at kick time (handleTouchEnd) for powerful shots — no double-boom here
           }
           s.resultTimer = 90;
           if (s.sig.shots >= MAX_SHOTS) {
@@ -363,8 +362,8 @@ export default function PenaltyKick() {
     const spd = 4 + s.power * 0.12;
     s.ballVX = (dx / dist) * spd;
     s.ballVY = (dy / dist) * spd;
-    // Keeper reaction
-    const keeperSaveRate = 0.5 + (s.shots * 0.025);
+    // Keeper reaction — adapts each shot (uses sig.shots which is updated correctly)
+    const keeperSaveRate = 0.5 + (s.sig.shots * 0.025);
     const reacts = Math.random() < keeperSaveRate;
     if (reacts) {
       const shotDir = dx > 0 ? 1 : -1;
@@ -394,14 +393,16 @@ export default function PenaltyKick() {
     };
   }, [endGame]);
 
-  const handleStart = useCallback(async () => {
-    playerSessionRef.current = savePlayerSession(GAME_ID, playerName, playerAvatar);
+  const handleStart = useCallback(async (name: string, avatar: string) => {
+    setPlayerName(name);
+    setPlayerAvatar(avatar);
+    playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar);
     await initAudio(); sfx.click();
     const ctrl = createTiltController(() => {}, { sensitivity: 1.0, smoothing: 0.3, deadzone: 3 });
     tiltRef.current = ctrl;
     await ctrl.start();
     setPhase('countdown');
-  }, [playerName, playerAvatar]);
+  }, []);
 
   const handlePlayAgain = useCallback(() => {
     if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
@@ -442,12 +443,7 @@ export default function PenaltyKick() {
           ctaLabel="Start Kicking →"
           accentColor={ACCENT}
           onStart={handleStart}
-        >
-          <PlayerNameInput
-            accentColor={theme.colors.accent ?? ACCENT}
-            onReady={(name, avatar) => { setPlayerName(name); setPlayerAvatar(avatar); }}
-          />
-        </GameStartScreen>
+        />
       )}
       {phase === 'done' && sig && (
         <EndScreen

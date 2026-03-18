@@ -17,7 +17,6 @@ import { initAudio, sfx, haptic } from '@/lib/audio';
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
-import PlayerNameInput from '@/components/PlayerNameInput';
 
 // ─── SPEC CONSTANTS ───────────────────────────────────────────────────────────
 const GAME_ID      = 'shadow-tap';
@@ -88,6 +87,13 @@ interface GameState {
   hitFlashY:        number;
   hitFlashTime:     number;      // timestamp of last hit (0 = none)
   hitFlashSize:     number;
+  // Miss flash effect (red burst on miss/wrong tap)
+  missFlashX:       number;
+  missFlashY:       number;
+  missFlashTime:    number;      // 0 = inactive
+  // Combo flash (visual + audio at streak milestones)
+  comboFlashTime:   number;
+  comboMultiplier:  number;
   accentColor:      string;
 }
 
@@ -104,8 +110,9 @@ function randomDarkDuration(): number {
 }
 
 function getShapeWindowMs(elapsedMs: number): number {
-  // Linearly interpolate: 600ms at 0s → 300ms at 25s, then clamp
-  return Math.max(300, 600 - (elapsedMs / 25000) * 300);
+  // Linearly interpolate: 900ms at 0s → 400ms at 35s, then clamp
+  // Starts accessible for casual players (700ms reaction), ramps to challenging
+  return Math.max(400, 900 - (elapsedMs / 35000) * 500);
 }
 
 // Draw a shape on the canvas
@@ -211,13 +218,18 @@ export default function ShadowTapGame() {
     shapeSize:       36,
     shapePhase:      'dark',
     shapeSpawnTime:  0,
-    shapeWindowMs:   600,
+    shapeWindowMs:   900,
     darkStartTime:   0,
     darkDurationMs:  600,
     hitFlashX:       0,
     hitFlashY:       0,
     hitFlashTime:    0,
     hitFlashSize:    0,
+    missFlashX:      0,
+    missFlashY:      0,
+    missFlashTime:   0,
+    comboFlashTime:  0,
+    comboMultiplier: 0,
     accentColor:     ACCENT,
   });
 
@@ -227,6 +239,7 @@ export default function ShadowTapGame() {
   const [finalSig, setFinalSig]         = useState<Signals | null>(null);
   const [playerName, setPlayerName]     = useState('');
   const [playerAvatar, setPlayerAvatar] = useState('🎮');
+
   const playerSessionRef                = useRef<PlayerSession | null>(null);
 
   // Sync brand theme accent into mutable state ref
@@ -277,10 +290,13 @@ export default function ShadowTapGame() {
       hitsOnFirst: 0, misses: 0, flashReactionTimes: [], wrongAreaTaps: 0,
       hits: 0, streak: 0, maxStreak: 0, score: 0,
     };
-    s.shapePhase   = 'dark';
+    s.shapePhase     = 'dark';
     s.darkStartTime  = Date.now();
     s.darkDurationMs = randomDarkDuration();
     s.hitFlashTime   = 0;
+    s.missFlashTime  = 0;
+    s.comboFlashTime = 0;
+    s.comboMultiplier = 0;
     setScoreDisplay(0);
     setTimeLeft(DURATION);
 
@@ -288,6 +304,8 @@ export default function ShadowTapGame() {
     timerRef.current = setInterval(() => {
       s.timeLeft--;
       setTimeLeft(s.timeLeft);
+      // Timer warning: tick every second for last 10 seconds
+      if (s.timeLeft <= 10 && s.timeLeft > 0) sfx.tick();
       if (s.timeLeft <= 0) { endGame(); }
     }, 1000);
 
@@ -303,6 +321,28 @@ export default function ShadowTapGame() {
       ctx.fillStyle = BG_COLOR;
       ctx.fillRect(0, 0, W, H);
 
+      // ── Miss flash effect (red burst at miss/wrong-tap position) ────────────
+      if (s.missFlashTime > 0) {
+        const mAge = now - s.missFlashTime;
+        const mDur = 320;
+        if (mAge < mDur) {
+          const alpha = (1 - mAge / mDur) * 0.6;
+          const expand = mAge / mDur;
+          const r = 36 * (1.0 + expand * 2.0);
+          ctx.save();
+          ctx.globalAlpha = alpha;
+          ctx.shadowBlur  = 28;
+          ctx.shadowColor = '#ef4444';
+          ctx.fillStyle   = '#ef4444';
+          ctx.beginPath();
+          ctx.arc(s.missFlashX, s.missFlashY, r, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+        } else {
+          s.missFlashTime = 0;
+        }
+      }
+
       // ── Shape state machine ─────────────────────────────────────────────────
       if (s.shapePhase === 'dark') {
         if (now - s.darkStartTime >= s.darkDurationMs) {
@@ -317,12 +357,37 @@ export default function ShadowTapGame() {
           s.sig.streak = 0;
           sfx.collision();
           haptic([40]);
+          // Trigger red miss flash at shape position
+          s.missFlashX    = s.shapeX;
+          s.missFlashY    = s.shapeY;
+          s.missFlashTime = now;
           s.shapePhase    = 'dark';
           s.darkStartTime  = now;
           s.darkDurationMs = randomDarkDuration();
         } else {
-          // Draw silhouette — visible but subtle
-          drawShape(ctx, s.shapeType, s.shapeX, s.shapeY, s.shapeSize, SHAPE_COLOR);
+          // Draw silhouette with accent-colored glow for visibility (shadow aesthetic)
+          drawShape(ctx, s.shapeType, s.shapeX, s.shapeY, s.shapeSize, SHAPE_COLOR, s.accentColor, 1.0);
+        }
+      }
+
+      // ── Combo flash text overlay ────────────────────────────────────────────
+      if (s.comboFlashTime > 0) {
+        const cAge = now - s.comboFlashTime;
+        const cDur = 700;
+        if (cAge < cDur) {
+          const alpha = cAge < 150 ? cAge / 150 : Math.max(0, 1 - (cAge - 150) / 550);
+          const yOff  = -50 - (cAge / cDur) * 20; // floats upward
+          ctx.save();
+          ctx.globalAlpha = alpha;
+          ctx.fillStyle   = s.accentColor;
+          ctx.shadowBlur  = 14;
+          ctx.shadowColor = s.accentColor;
+          ctx.font        = 'bold 22px system-ui, -apple-system, sans-serif';
+          ctx.textAlign   = 'center';
+          ctx.fillText(`×${s.comboMultiplier} STREAK`, s.hitFlashX, s.hitFlashY + yOff);
+          ctx.restore();
+        } else {
+          s.comboFlashTime = 0;
         }
       }
 
@@ -353,6 +418,8 @@ export default function ShadowTapGame() {
 
     animRef.current = requestAnimationFrame(loop);
     setPhase('playing');
+    // ⚠️ Spec: audio.music = "none" — silence between flashes IS the core mechanic.
+    // Do NOT start any background music here; it destroys the tension of the dark intervals.
   }, [endGame, spawnShape]);
 
   // ─── TAP / POINTER INPUT ────────────────────────────────────────────────────
@@ -383,7 +450,13 @@ export default function ShadowTapGame() {
         else                         pts = 2;
 
         // Streak bonus: +15 on every 5th consecutive hit
-        if (s.sig.streak > 0 && s.sig.streak % 5 === 0) pts += 15;
+        if (s.sig.streak > 0 && s.sig.streak % 5 === 0) {
+          pts += 15;
+          // Combo visual + audio milestone
+          sfx.shimmer();
+          s.comboFlashTime  = Date.now();
+          s.comboMultiplier = s.sig.streak / 5;
+        }
 
         s.sig.score += pts;
         setScoreDisplay(s.sig.score);
@@ -408,6 +481,11 @@ export default function ShadowTapGame() {
         const penalty = Math.max(0, s.sig.score - 3);
         s.sig.score = penalty;
         setScoreDisplay(s.sig.score);
+        // Red miss flash at tap position
+        s.missFlashX    = x;
+        s.missFlashY    = y;
+        s.missFlashTime = Date.now();
+        sfx.nearMiss();   // subtle negative cue for false positive
         haptic([50]);
       }
     } else {
@@ -417,6 +495,11 @@ export default function ShadowTapGame() {
       const penalty = Math.max(0, s.sig.score - 3);
       s.sig.score = penalty;
       setScoreDisplay(s.sig.score);
+      // Red miss flash at tap position
+      s.missFlashX    = x;
+      s.missFlashY    = y;
+      s.missFlashTime = Date.now();
+      sfx.nearMiss();   // subtle negative cue for false positive
       haptic([50]);
     }
   }, []);
@@ -455,11 +538,14 @@ export default function ShadowTapGame() {
   }, []);
 
   // ─── PHASE TRANSITIONS ───────────────────────────────────────────────────────
-  const handleStart = useCallback(() => {
-    playerSessionRef.current = savePlayerSession(GAME_ID, playerName, playerAvatar);
-    initAudio();
+  const handleStart = useCallback(async (name: string, avatar: string) => {
+    setPlayerName(name);
+    setPlayerAvatar(avatar);
+    playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar);
+    await initAudio();
+    sfx.click();
     setPhase('countdown');
-  }, [playerName, playerAvatar]);
+  }, []);
 
   const handleCountdownDone = useCallback(() => {
     startLoop();
@@ -532,12 +618,7 @@ export default function ShadowTapGame() {
           ctaLabel="Start"
           accentColor={theme.colors.accent ?? ACCENT}
           onStart={handleStart}
-        >
-          <PlayerNameInput
-            accentColor={theme.colors.accent ?? ACCENT}
-            onReady={(name, avatar) => { setPlayerName(name); setPlayerAvatar(avatar); }}
-          />
-        </GameStartScreen>
+        />
       )}
 
       {/* ── Countdown ─────────────────────────────────────────────────────── */}
@@ -639,3 +720,5 @@ function WebhookEmitter({
   }, [theme, gameId, sig, personality, player]);
   return null;
 }
+
+

@@ -12,6 +12,7 @@
 
 'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
+import { Brain } from 'lucide-react';
 import GameShell from '@/components/GameShell';
 import GameHUD from '@/components/GameHUD';
 import GameStartScreen from '@/components/GameStartScreen';
@@ -21,7 +22,6 @@ import { initAudio, sfx, haptic, startMusic } from '@/lib/audio';
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
-import PlayerNameInput from '@/components/PlayerNameInput';
 
 // ─── SPEC CONSTANTS ───────────────────────────────────────────────────────────
 
@@ -172,6 +172,9 @@ function startWatchPhase(s: GameState): void {
   s.watchInGap = false;
   s.subPhase = 'watch';
   s.cellFlashes = Array<CellFlash | null>(CELL_COUNT).fill(null);
+  // Sound for the first cell activating — safe to call sfx here since initAudio()
+  // is always called before startWatchPhase (handled in handleStart pre-countdown)
+  sfx.click();
 }
 
 function startRecallPhase(s: GameState): void {
@@ -272,7 +275,8 @@ function drawFrame(
   ctx.save();
   ctx.textAlign   = 'center';
   ctx.textBaseline = 'middle';
-  ctx.font        = `bold ${Math.floor(W * 0.045)}px -apple-system, system-ui, sans-serif`;
+  // Minimum 18px on any screen size for legibility (WCAG readable label threshold)
+  ctx.font        = `bold ${Math.max(18, Math.floor(W * 0.045))}px -apple-system, system-ui, sans-serif`;
 
   if (s.subPhase === 'watch') {
     ctx.shadowBlur  = 16;
@@ -371,12 +375,15 @@ export default function MemoryGridGame() {
   });
 
   const [phase, setPhase]             = useState<Phase>('start');
+  const phaseRef                      = useRef<Phase>('start');
   const [timeLeft, setTimeLeft]       = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(3); // shows current sequence length (LEVEL)
   const [finalSig, setFinalSig]       = useState<Signals | null>(null);
   const [playerName, setPlayerName]   = useState('');
   const [playerAvatar, setPlayerAvatar] = useState('🎮');
   const playerSessionRef              = useRef<PlayerSession | null>(null);
+
+
 
   // Sync brand theme accent into state ref
   useEffect(() => {
@@ -394,6 +401,7 @@ export default function MemoryGridGame() {
     sfx.success();
     haptic([30, 50, 30, 50, 100]);
     setFinalSig({ ...s.sig });
+    phaseRef.current = 'done';
     setPhase('done');
   }, []);
 
@@ -420,6 +428,7 @@ export default function MemoryGridGame() {
     s.sequenceLength = 3;
     setScoreDisplay(3);
     setTimeLeft(DURATION);
+    phaseRef.current = 'playing';
     setPhase('playing');
 
     stopMusicRef.current = startMusic('calm');
@@ -427,6 +436,10 @@ export default function MemoryGridGame() {
     timerRef.current = setInterval(() => {
       s.timeLeft--;
       setTimeLeft(s.timeLeft);
+      // Fire warning sfx once at exactly 10s (matches HUD danger threshold)
+      if (s.timeLeft === 10) sfx.warning();
+      // Tick each second for the final 9s
+      if (s.timeLeft > 0 && s.timeLeft < 10) sfx.tick();
       if (s.timeLeft <= 0) endGame();
     }, 1000);
 
@@ -460,6 +473,7 @@ export default function MemoryGridGame() {
             } else {
               s.watchInGap   = false;
               s.watchStepStart = now;
+              sfx.click(); // per-cell audio cue — aids multi-sensory memory encoding
             }
           }
         }
@@ -573,7 +587,7 @@ export default function MemoryGridGame() {
     window.addEventListener('resize', resize);
 
     const onPointerDown = (e: PointerEvent) => {
-      if (phase !== 'playing') return;
+      if (phaseRef.current !== 'playing') return;
       handleTap(e.clientX, e.clientY);
     };
     canvas.addEventListener('pointerdown', onPointerDown);
@@ -582,7 +596,7 @@ export default function MemoryGridGame() {
       window.removeEventListener('resize', resize);
       canvas.removeEventListener('pointerdown', onPointerDown);
     };
-  }, [phase, handleTap]);
+  }, [handleTap]);
 
   // ─── CLEANUP ON UNMOUNT ───────────────────────────────────────────────────
 
@@ -596,21 +610,27 @@ export default function MemoryGridGame() {
 
   // ─── PHASE TRANSITIONS ────────────────────────────────────────────────────
 
-  const handleStart = useCallback(() => {
-    playerSessionRef.current = savePlayerSession(GAME_ID, playerName, playerAvatar);
+  const handleStart = useCallback((name: string, avatar: string) => {
+    setPlayerName(name);
+    setPlayerAvatar(avatar);
+    playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar);
     initAudio();
+    phaseRef.current = 'countdown';
     setPhase('countdown');
-  }, [playerName, playerAvatar]);
+  }, []);
 
   const handleCountdownDone = useCallback(() => {
     startLoop();
   }, [startLoop]);
 
   const handlePlayAgain = useCallback(() => {
-    setPhase('start');
+    // Skip the start screen — go straight to countdown so the game restarts immediately.
+    // The startLoop() call (triggered by handleCountdownDone) resets all game state.
     setScoreDisplay(3);
     setTimeLeft(DURATION);
     setFinalSig(null);
+    phaseRef.current = 'countdown';
+    setPhase('countdown');
   }, []);
 
   // ─── END SCREEN INSIGHTS ─────────────────────────────────────────────────
@@ -677,12 +697,8 @@ export default function MemoryGridGame() {
           ctaLabel="Start"
           accentColor={accentColor}
           onStart={handleStart}
-        >
-          <PlayerNameInput
-            accentColor={accentColor}
-            onReady={(name, avatar) => { setPlayerName(name); setPlayerAvatar(avatar); }}
-          />
-        </GameStartScreen>
+          iconNode={<Brain size={80} color={accentColor} strokeWidth={1.5} />}
+        />
       )}
 
       {/* ── Countdown ──────────────────────────────────────────────────────── */}
@@ -707,8 +723,8 @@ export default function MemoryGridGame() {
             <GameHUD
               accentColor={accentColor}
               items={[
-                { label: 'TIME',  value: timeLeft, danger: timeLeft <= 10 },
-                { label: 'LEVEL', value: scoreDisplay },
+                { label: 'TIME',  value: timeLeft, danger: timeLeft <= 10, testId: 'timer' },
+                { label: 'LEVEL', value: scoreDisplay, testId: 'score' },
               ]}
             />
           )}

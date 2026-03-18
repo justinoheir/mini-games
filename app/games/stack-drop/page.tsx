@@ -9,7 +9,6 @@ import { initAudio, sfx, haptic, startMusic } from '@/lib/audio';
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
-import PlayerNameInput from '@/components/PlayerNameInput';
 
 const GAME_ID      = 'stack-drop';
 const ACCENT       = '#f97316';
@@ -18,16 +17,29 @@ const GAME_EMOJI   = '🧱';
 const GAME_TITLE   = 'Stack Drop';
 const GAME_TAGLINE = 'Drop it. Stack it. Don\'t tip it.';
 
-const BLOCK_HEIGHT   = 28;
-const INITIAL_WIDTH  = 0.78; // fraction of canvas width
-const MIN_WIDTH_FRAC = 0.08; // below this, block is "lost"
-const PERFECT_PX     = 10;   // overlap within this = perfect drop
+const BLOCK_HEIGHT    = 28;
+const INITIAL_WIDTH   = 0.78;  // fraction of canvas width
+const MIN_WIDTH_FRAC  = 0.20;  // below 20% of original = "too narrow", reset to top block width
+const PERFECT_PX      = 10;    // overlap within this = perfect drop
+const MISS_PAUSE_MS   = 1000;  // pause slider for 1s on complete miss (per spec)
 
 interface Block {
   x: number;       // left edge
   width: number;
   y: number;       // top edge in canvas coords
   color: string;
+}
+
+interface Particle {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  w: number;
+  h: number;
+  color: string;
+  alpha: number;
+  life: number;    // remaining life 1→0
 }
 
 interface Signals {
@@ -68,6 +80,13 @@ interface GameState {
   stack: Block[];
   cameraY: number;         // canvas offset — camera follows stack height
   accentColor: string;
+  // miss shake feedback
+  missActive: boolean;
+  missStartTs: number;
+  // pause slider on miss (spec: 1s pause)
+  missUntilTs: number;
+  // overhang particle debris
+  particles: Particle[];
 }
 
 export default function StackDropGame() {
@@ -81,12 +100,18 @@ export default function StackDropGame() {
     sig: { blocksDropped: 0, perfectDrops: 0, overhangs: [], maxHeight: 0, earlyDrops: 0, lateDrops: 0, score: 0 },
     sliderX: 0, sliderDir: 1, sliderSpeed: 3.5, sliderWidth: 0,
     stack: [], cameraY: 0, accentColor: ACCENT,
+    // miss shake feedback
+    missActive: false, missStartTs: 0,
+    // pause + particles
+    missUntilTs: 0, particles: [],
   });
   const phaseRef     = useRef<Phase>('start');
 
   const [phase, setPhase]             = useState<Phase>('start');
   const [timeLeft, setTimeLeft]       = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
+  // ⚡ heightDisplay tracks actual block count — HUD label is 'HEIGHT', not 'SCORE'
+  const [heightDisplay, setHeightDisplay] = useState(0);
   const [finalSig, setFinalSig]       = useState<Signals | null>(null);
   const [playerName, setPlayerName]   = useState('');
   const [playerAvatar, setPlayerAvatar] = useState('🎮');
@@ -113,6 +138,8 @@ export default function StackDropGame() {
     s.sliderDir    = 1;
     s.sliderSpeed  = 3.5;
     s.cameraY      = 0;
+    s.missUntilTs  = 0;
+    s.particles    = [];
     s.sig          = { blocksDropped: 0, perfectDrops: 0, overhangs: [], maxHeight: 0, earlyDrops: 0, lateDrops: 0, score: 0 };
   }, []);
 
@@ -135,14 +162,33 @@ export default function StackDropGame() {
 
     s.sig.blocksDropped++;
 
-    if (overlap <= 0) {
-      // Completely missed — don't add to stack, just reset slider
+    const canvas = canvasRef.current;
+    const W = canvas?.width ?? 300;
+    const originalWidth = W * INITIAL_WIDTH;
+
+    const handleMiss = () => {
       sfx.collision();
       haptic([60]);
-      s.sliderWidth  = top.width; // keep slider same as top block
-      s.sliderX      = (canvasRef.current?.width ?? 300) / 2 - s.sliderWidth / 2;
+      s.sliderWidth  = top.width;
+      s.sliderX      = W / 2 - s.sliderWidth / 2;
       s.sig.score    = Math.max(0, s.sig.score - 5);
       setScoreDisplay(s.sig.score);
+      // Arm shake animation
+      s.missActive   = true;
+      s.missStartTs  = 0;
+      // Pause slider for 1 second (spec requirement)
+      s.missUntilTs  = performance.now() + MISS_PAUSE_MS;
+    };
+
+    if (overlap <= 0) {
+      // Completely missed
+      handleMiss();
+      return;
+    }
+
+    // ⚡ "Too narrow" check — if trimmed overlap < 20% of original width, treat as miss
+    if (overlap < originalWidth * MIN_WIDTH_FRAC) {
+      handleMiss();
       return;
     }
 
@@ -165,6 +211,33 @@ export default function StackDropGame() {
     if (slCenter < topCenter) s.sig.earlyDrops++;
     else if (slCenter > topCenter) s.sig.lateDrops++;
 
+    // ⚡ Spawn particle debris for the trimmed overhang (left and/or right side)
+    if (!isPerfect) {
+      const spawnDebris = (fromX: number, toX: number, blockY: number) => {
+        const segW = Math.abs(toX - fromX);
+        if (segW < 2) return;
+        const numP = Math.min(8, Math.max(2, Math.round(segW / 12)));
+        for (let pi = 0; pi < numP; pi++) {
+          const px = fromX + Math.random() * segW;
+          const pw = 4 + Math.random() * 8;
+          const ph = 4 + Math.random() * (BLOCK_HEIGHT * 0.6);
+          s.particles.push({
+            x: px, y: blockY,
+            vx: (Math.random() - 0.5) * 2.5,
+            vy: 1.5 + Math.random() * 3,
+            w: pw, h: ph,
+            color: s.accentColor,
+            alpha: 0.85,
+            life: 1,
+          });
+        }
+      };
+      // Left overhang trim
+      if (slLeft < overlapLeft) spawnDebris(slLeft, overlapLeft, top.y - BLOCK_HEIGHT);
+      // Right overhang trim
+      if (slRight > overlapRight) spawnDebris(overlapRight, slRight, top.y - BLOCK_HEIGHT);
+    }
+
     // New block placed at overlap position, one row above top
     const newY = top.y - BLOCK_HEIGHT;
     const newBlock: Block = {
@@ -180,7 +253,6 @@ export default function StackDropGame() {
     setScoreDisplay(s.sig.score);
 
     // Camera: scroll up if stack is getting tall
-    const canvas = canvasRef.current;
     if (canvas) {
       const stackTopInCanvas = newY - s.cameraY;
       if (stackTopInCanvas < canvas.height * 0.35) {
@@ -194,8 +266,10 @@ export default function StackDropGame() {
     // Increase speed over time
     s.sliderSpeed = 3.5 + s.sig.blocksDropped * 0.12;
 
-    if (isPerfect) sfx.collect();
-    else sfx.collect();
+    // ⚡ Update height display with actual block count (not points)
+    setHeightDisplay(s.sig.maxHeight);
+    // Both perfect and hit play collect; sfx.collect() is spec hitSound
+    sfx.collect();
   }, []);
 
   // ─── GAME LOOP ───────────────────────────────────────────────────────────
@@ -217,11 +291,16 @@ export default function StackDropGame() {
       const st = stateRef.current;
       st.timeLeft = Math.max(0, st.timeLeft - 1);
       setTimeLeft(st.timeLeft);
+      // Urgency cue at ≤5s
+      if (st.timeLeft <= 5 && st.timeLeft > 0) sfx.tick();
       if (st.timeLeft <= 0) {
         st.running = false;
         clearInterval(timerRef.current!);
         cancelAnimationFrame(animRef.current);
         stopMusicRef.current?.();
+        // ⚡ End sound + celebratory haptic
+        sfx.success();
+        haptic([30, 50, 30, 50, 100]);
         setFinalSig({ ...st.sig });
         setPhase('done');
         phaseRef.current = 'done';
@@ -309,6 +388,31 @@ export default function StackDropGame() {
       }
 
       ctx.restore();
+
+      // ⚡ Miss shake + MISS! text flash (600ms)
+      if (s.missActive) {
+        if (s.missStartTs === 0) s.missStartTs = ts;
+        const elapsed = ts - s.missStartTs;
+        if (elapsed < 600) {
+          // Shake: oscillate canvas translate
+          const shakeX = Math.sin(elapsed * 0.08) * 7 * (1 - elapsed / 600);
+          ctx.save();
+          ctx.translate(shakeX, 0);
+          ctx.font         = 'bold 32px sans-serif';
+          ctx.textAlign    = 'center';
+          ctx.textBaseline = 'middle';
+          const alpha = Math.max(0, 1 - elapsed / 600);
+          ctx.globalAlpha = alpha;
+          ctx.fillStyle   = '#ef4444';
+          ctx.fillText('MISS!', W / 2, H / 2);
+          ctx.globalAlpha = 1;
+          ctx.restore();
+        } else {
+          s.missActive   = false;
+          s.missStartTs  = 0;
+        }
+      }
+
       animRef.current = requestAnimationFrame(loop);
     }
 
@@ -352,12 +456,14 @@ export default function StackDropGame() {
 
   // ─── PHASE HANDLERS ──────────────────────────────────────────────────────
 
-  const handleStart = useCallback(() => {
-    initAudio();
-    playerSessionRef.current = savePlayerSession(GAME_ID, playerName, playerAvatar);
+  const handleStart = useCallback(async (name: string, avatar: string) => {
+    setPlayerName(name);
+    setPlayerAvatar(avatar);
+    await initAudio(); sfx.click();
+    playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar);
     setPhase('countdown');
     phaseRef.current = 'countdown';
-  }, [playerName, playerAvatar]);
+  }, []);
 
   const handleCountdownDone = useCallback(() => { startLoop(); }, [startLoop]);
 
@@ -365,6 +471,7 @@ export default function StackDropGame() {
     setPhase('start');
     phaseRef.current = 'start';
     setScoreDisplay(0);
+    setHeightDisplay(0);
     setTimeLeft(DURATION);
     setFinalSig(null);
   }, []);
@@ -395,12 +502,7 @@ export default function StackDropGame() {
           ctaLabel="Drop In"
           accentColor={theme.colors.accent ?? ACCENT}
           onStart={handleStart}
-        >
-          <PlayerNameInput
-            accentColor={theme.colors.accent ?? ACCENT}
-            onReady={(name, avatar) => { setPlayerName(name); setPlayerAvatar(avatar); }}
-          />
-        </GameStartScreen>
+        />
       )}
 
       {phase === 'countdown' && (
@@ -417,8 +519,8 @@ export default function StackDropGame() {
             <GameHUD
               accentColor={theme.colors.accent ?? ACCENT}
               items={[
-                { label: 'TIME',   value: timeLeft,      danger: timeLeft <= 10 },
-                { label: 'HEIGHT', value: scoreDisplay },
+                { label: 'TIME',   value: timeLeft,       danger: timeLeft <= 10 },
+                { label: 'HEIGHT', value: heightDisplay },
               ]}
             />
           )}

@@ -1,0 +1,257 @@
+import fs from 'fs';
+import path from 'path';
+import { Suspense } from 'react';
+import type { QAResult, GameInfo, GameWithResult } from './types';
+import QaDashboardClient from './QaDashboardClient';
+
+const ALL_GAMES: GameInfo[] = [
+  // Skill Games
+  {
+    id: 'tilt-maze',
+    emoji: '🌀',
+    title: 'Tilt Maze',
+    tagline: 'Roll the ball with your body',
+    href: '/games/tilt-maze',
+    accentColor: '#a855f7',
+    duration: '60s',
+  },
+  {
+    id: 'whisper-bomb',
+    emoji: '💣',
+    title: 'Whisper Bomb',
+    tagline: 'Stay silent. Defuse the bomb.',
+    href: '/games/whisper-bomb',
+    accentColor: '#ef4444',
+    duration: '30s',
+  },
+  {
+    id: 'breath-rider',
+    emoji: '🌬️',
+    title: 'Breath Rider',
+    tagline: 'Fly with your breath',
+    href: '/games/breath-rider',
+    accentColor: '#3b82f6',
+    duration: '45s',
+  },
+  {
+    id: 'steady-hand',
+    emoji: '🎯',
+    title: 'Steady Hand',
+    tagline: 'How steady are you really?',
+    href: '/games/steady-hand',
+    accentColor: '#eab308',
+    duration: '60s',
+  },
+  {
+    id: 'tunnel',
+    emoji: '🚀',
+    title: 'Infinite Tunnel',
+    tagline: "Dodge the rings. Don't crash.",
+    href: '/games/tunnel',
+    accentColor: '#00ffff',
+    duration: '60s',
+  },
+  {
+    id: 'pulse-sphere',
+    emoji: '🔮',
+    title: 'Pulse Sphere',
+    tagline: 'Touch. Move. Breathe. Watch it respond.',
+    href: '/games/pulse-sphere',
+    accentColor: '#a855f7',
+    duration: '60s',
+  },
+  {
+    id: 'color-cascade',
+    emoji: '🌈',
+    title: 'Color Cascade',
+    tagline: 'Match the color. Match the speed.',
+    href: '/games/color-cascade',
+    accentColor: '#f43f5e',
+    duration: '45s',
+  },
+  {
+    id: 'memory-grid',
+    emoji: '🧠',
+    title: 'Memory Grid',
+    tagline: 'Remember the pattern. Repeat it.',
+    href: '/games/memory-grid',
+    accentColor: '#8b5cf6',
+    duration: '60s',
+  },
+  {
+    id: 'reaction-chain',
+    emoji: '⚡',
+    title: 'Reaction Chain',
+    tagline: 'Tap fast. Keep the chain alive.',
+    href: '/games/reaction-chain',
+    accentColor: '#facc15',
+    duration: '45s',
+  },
+  {
+    id: 'shadow-tap',
+    emoji: '👁️',
+    title: 'Shadow Tap',
+    tagline: "Tap what you see. Before it's gone.",
+    href: '/games/shadow-tap',
+    accentColor: '#64748b',
+    duration: '45s',
+  },
+  {
+    id: 'stack-drop',
+    emoji: '🧱',
+    title: 'Stack Drop',
+    tagline: "Drop it. Stack it. Don't tip it.",
+    href: '/games/stack-drop',
+    accentColor: '#f97316',
+    duration: '60s',
+  },
+  {
+    id: 'dodge-blitz',
+    emoji: '💨',
+    title: 'Dodge Blitz',
+    tagline: 'Tilt to survive. Don\'t stop moving.',
+    href: '/games/dodge-blitz',
+    accentColor: '#06b6d4',
+    duration: '45s',
+  },
+  {
+    id: 'orbit-control',
+    emoji: '🪐',
+    title: 'Orbit Control',
+    tagline: "Keep the satellite in orbit. Don't let it drift.",
+    href: '/games/orbit-control',
+    accentColor: '#818cf8',
+    duration: '60s',
+  },
+  {
+    id: 'symbol-scan',
+    emoji: '🔍',
+    title: 'Symbol Scan',
+    tagline: 'Find it. Tap it. Before the clock runs out.',
+    href: '/games/symbol-scan',
+    accentColor: '#10b981',
+    duration: '60s',
+  },
+  {
+    id: 'path-trace',
+    emoji: '✏️',
+    title: 'Path Trace',
+    tagline: "Follow the line. Don't stray.",
+    href: '/games/path-trace',
+    accentColor: '#e879f9',
+    duration: '45s',
+  },
+  {
+    id: 'crowd-roar',
+    emoji: '📢',
+    title: 'Crowd Roar',
+    tagline: 'Roar loud. Hold it. Don\'t fade.',
+    href: '/games/crowd-roar',
+    accentColor: '#ef4444',
+    duration: '45s',
+  },
+  {
+    id: 'balance-beam',
+    emoji: '⚖️',
+    title: 'Balance Beam',
+    tagline: 'Keep the ball on the beam. Stay still.',
+    href: '/games/balance-beam',
+    accentColor: '#f59e0b',
+    duration: '60s',
+  },
+  {
+    id: 'pitch-match',
+    emoji: '🎵',
+    title: 'Pitch Match',
+    tagline: 'Hit the note. Hold it. Feel it.',
+    href: '/games/pitch-match',
+    accentColor: '#34d399',
+    duration: '45s',
+  },
+  // Sports Games
+  {
+    id: 'hoop-shot',
+    emoji: '🏀',
+    title: 'Hoop Shot',
+    tagline: 'Swipe to score. 60 seconds on the clock.',
+    href: '/games/hoop-shot',
+    accentColor: '#f97316',
+    duration: '60s',
+  },
+  {
+    id: 'penalty-kick',
+    emoji: '⚽',
+    title: 'Penalty Kick',
+    tagline: 'Beat the keeper. Aim for the corners.',
+    href: '/games/penalty-kick',
+    accentColor: '#22c55e',
+    duration: '60s',
+  },
+  {
+    id: 'spiral-throw',
+    emoji: '🏈',
+    title: 'Spiral Throw',
+    tagline: "Lead your receiver. Don't throw behind.",
+    href: '/games/spiral-throw',
+    accentColor: '#f59e0b',
+    duration: '60s',
+  },
+  {
+    id: 'reflex-rally',
+    emoji: '🎾',
+    title: 'Reflex Rally',
+    tagline: "Return every shot. Don't miss.",
+    href: '/games/reflex-rally',
+    accentColor: '#84cc16',
+    duration: '60s',
+  },
+  {
+    id: 'precision-putt',
+    emoji: '🏌️',
+    title: 'Precision Putt',
+    tagline: 'Read the green. Control the power.',
+    href: '/games/precision-putt',
+    accentColor: '#86efac',
+    duration: '60s',
+  },
+  // Holiday Games
+  { id: 'gift-rush',       emoji: '🎁',  title: 'Gift Rush',       tagline: "Swipe left or right. Fast. Santa's watching.", href: '/games/gift-rush',       accentColor: '#ef4444', duration: '45s' },
+  { id: 'snow-catch',      emoji: '❄️',  title: 'Snow Catch',      tagline: 'Tilt to catch the snow.', href: '/games/snow-catch',      accentColor: '#93c5fd', duration: '45s' },
+  { id: 'boo-blast',       emoji: '👻',  title: 'Boo Blast',       tagline: "Tap the ghosts. They won't wait.", href: '/games/boo-blast',       accentColor: '#a855f7', duration: '30s' },
+  { id: 'cauldron-bubble', emoji: '🧪',  title: 'Cauldron Bubble', tagline: 'Blow to bubble. Too loud = BOOM.', href: '/games/cauldron-bubble', accentColor: '#22c55e', duration: '45s' },
+  { id: 'firework-launch', emoji: '🎆',  title: 'Firework Launch', tagline: 'Swipe to launch. Tap to detonate.', href: '/games/firework-launch', accentColor: '#f59e0b', duration: '45s' },
+  { id: 'countdown-crush', emoji: '🥂',  title: 'Countdown Crush', tagline: 'Score before midnight.', href: '/games/countdown-crush', accentColor: '#fbbf24', duration: '30s' },
+  { id: 'cupid-shot',      emoji: '💘',  title: 'Cupid Shot',      tagline: 'Aim. Wait. Shoot at the perfect moment.', href: '/games/cupid-shot',      accentColor: '#f43f5e', duration: '45s' },
+  { id: 'love-note',       emoji: '💌',  title: 'Love Note',       tagline: 'Remember the sequence. From the heart.', href: '/games/love-note',       accentColor: '#ec4899', duration: '60s' },
+  { id: 'turkey-trot',     emoji: '🦃',  title: 'Turkey Trot',     tagline: "The turkey's running. Prove you're faster.", href: '/games/turkey-trot',     accentColor: '#f97316', duration: '30s' },
+  { id: 'harvest-catch',   emoji: '🍁',  title: 'Harvest Catch',   tagline: 'Tilt to catch. Skip the Brussels sprouts.', href: '/games/harvest-catch',   accentColor: '#d97706', duration: '45s' },
+];
+
+export default function QaDashboard() {
+  const resultsMap: Record<string, QAResult> = {};
+
+  try {
+    const resultsDir = path.join(process.cwd(), 'tests', 'results');
+    const files = fs.readdirSync(resultsDir);
+    for (const file of files) {
+      if (file.endsWith('.json') && !file.startsWith('__')) {
+        const content = fs.readFileSync(path.join(resultsDir, file), 'utf-8');
+        const data = JSON.parse(content) as QAResult;
+        resultsMap[data.gameId] = data;
+      }
+    }
+  } catch {
+    // No results directory yet — renders empty state gracefully
+  }
+
+  const gamesWithResults: GameWithResult[] = ALL_GAMES.map((game) => ({
+    game,
+    result: resultsMap[game.id] ?? null,
+  }));
+
+  return (
+    <Suspense fallback={<div style={{ color: 'rgba(255,255,255,0.4)', padding: 40, textAlign: 'center' }}>Loading QA Dashboard...</div>}>
+      <QaDashboardClient gamesWithResults={gamesWithResults} />
+    </Suspense>
+  );
+}

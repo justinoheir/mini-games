@@ -1,0 +1,88 @@
+# Page snapshot
+
+```yaml
+- generic [ref=e1]:
+  - generic [active]:
+    - generic [ref=e4]:
+      - generic [ref=e5]:
+        - navigation [ref=e7]:
+          - button "previous" [disabled] [ref=e8]:
+            - img "previous" [ref=e9]
+          - generic [ref=e11]:
+            - generic [ref=e12]: 1/
+            - text: "1"
+          - button "next" [disabled] [ref=e13]:
+            - img "next" [ref=e14]
+        - generic [ref=e17]:
+          - img [ref=e18]
+          - generic "Latest available version is detected (16.1.6)." [ref=e20]: Next.js 16.1.6
+          - generic [ref=e21]: Turbopack
+      - dialog "Runtime Error" [ref=e23]:
+        - generic [ref=e26]:
+          - generic [ref=e27]:
+            - generic [ref=e28]:
+              - generic [ref=e30]: Runtime Error
+              - generic [ref=e31]:
+                - button "Copy Error Info" [ref=e32] [cursor=pointer]:
+                  - img [ref=e33]
+                - button "No related documentation found" [disabled] [ref=e35]:
+                  - img [ref=e36]
+                - button "Attach Node.js inspector" [ref=e38] [cursor=pointer]:
+                  - img [ref=e39]
+            - generic [ref=e51]: param must be an AudioParam
+          - generic [ref=e52]:
+            - generic [ref=e53]:
+              - paragraph [ref=e55]:
+                - img [ref=e57]
+                - generic [ref=e61]: lib/audio.ts (265:32) @ slam
+                - button "Open in editor" [ref=e62] [cursor=pointer]:
+                  - img [ref=e64]
+              - generic [ref=e67]:
+                - generic [ref=e68]: 263 | if (!initialized || muted) return
+                - generic [ref=e69]: 264 | const T = Tone; if (!T) return
+                - generic [ref=e70]: "> 265 | const reverb = new T.Reverb({ decay: 0.8, wet: 0.35 }).connect(dryGain)"
+                - generic [ref=e71]: "| ^"
+                - generic [ref=e72]: 266 | // Deep kick thud
+                - generic [ref=e73]: "267 | const kick = new T.MembraneSynth({"
+                - generic [ref=e74]: "268 | pitchDecay: 0.06, octaves: 12, volume: -4,"
+            - generic [ref=e75]:
+              - generic [ref=e76]:
+                - paragraph [ref=e77]:
+                  - text: Call Stack
+                  - generic [ref=e78]: "51"
+                - button "Show 48 ignore-listed frame(s)" [ref=e79] [cursor=pointer]:
+                  - text: Show 48 ignore-listed frame(s)
+                  - img [ref=e80]
+              - generic [ref=e82]:
+                - generic [ref=e83]:
+                  - text: slam
+                  - button "Open slam in editor" [ref=e84] [cursor=pointer]:
+                    - img [ref=e85]
+                - text: lib/audio.ts (265:32)
+              - generic [ref=e87]:
+                - generic [ref=e88]:
+                  - text: Countdown.useEffect
+                  - button "Open Countdown.useEffect in editor" [ref=e89] [cursor=pointer]:
+                    - img [ref=e90]
+                - text: components/Countdown.tsx (30:15)
+              - generic [ref=e92]:
+                - generic [ref=e93]:
+                  - text: BalanceBeamGame
+                  - button "Open BalanceBeamGame in editor" [ref=e94] [cursor=pointer]:
+                    - img [ref=e95]
+                - text: app/games/balance-beam/page.tsx (738:9)
+        - generic [ref=e97]: "1"
+        - generic [ref=e98]: "2"
+    - generic [ref=e103] [cursor=pointer]:
+      - button "Open Next.js Dev Tools" [ref=e104]:
+        - img [ref=e105]
+      - generic [ref=e110]:
+        - button "Open issues overlay" [ref=e111]:
+          - generic [ref=e112]:
+            - generic [ref=e113]: "0"
+            - generic [ref=e114]: "1"
+          - generic [ref=e115]: Issue
+        - button "Collapse issues badge" [ref=e116]:
+          - img [ref=e117]
+  - 'heading "Application error: a client-side exception has occurred while loading localhost (see the browser console for more information)." [level=2] [ref=e121]'
+```

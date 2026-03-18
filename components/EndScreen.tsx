@@ -36,6 +36,17 @@ const GAME_TITLES: Record<string, string> = {
   'crowd-roar': 'Crowd Roar',
   'balance-beam': 'Balance Beam',
   'pitch-match': 'Pitch Match',
+  // Holiday games
+  'gift-rush': 'Gift Rush',
+  'snow-catch': 'Snow Catch',
+  'boo-blast': 'Boo Blast',
+  'cauldron-bubble': 'Cauldron Bubble',
+  'firework-launch': 'Firework Launch',
+  'countdown-crush': 'Countdown Crush',
+  'cupid-shot': 'Cupid Shot',
+  'love-note': 'Love Note',
+  'turkey-trot': 'Turkey Trot',
+  'harvest-catch': 'Harvest Catch',
 };
 
 interface EndScreenProps {
@@ -49,6 +60,10 @@ interface EndScreenProps {
   onPlayAgain: () => void;
   didWin?: boolean;
   brandId?: string;
+  /** Text color for the Play Again CTA. Default '#000' (high contrast on bright accents). */
+  ctaTextColor?: string;
+  /** Optional content rendered between insight chips and buttons (e.g. RadarChart) */
+  children?: React.ReactNode;
 }
 
 /** Parse a numeric value from score strings like "42 pts", "3.2s", "7", "87%" */
@@ -68,6 +83,8 @@ export default function EndScreen({
   onPlayAgain,
   didWin,
   brandId = 'ether',
+  ctaTextColor = '#000',
+  children,
 }: EndScreenProps) {
   const router = useRouter();
   const confettiDone = useRef(false);
@@ -120,16 +137,24 @@ export default function EndScreen({
     requestAnimationFrame(raf);
   }, [score]);
 
-  // Confetti
+  // Confetti — rendered on a dedicated canvas at z-index:10 (BEHIND the result content at z-index:90)
+  // IMPORTANT: never use the default confetti() call — it renders at z-index:2147483647 and covers text
   useEffect(() => {
     if (confettiDone.current) return;
     confettiDone.current = true;
     import('canvas-confetti').then(({ default: confetti }) => {
-      confetti({
+      const canvas = document.createElement('canvas');
+      canvas.style.cssText =
+        'position:fixed;inset:0;width:100%;height:100%;pointer-events:none;z-index:10;';
+      document.body.appendChild(canvas);
+      const myConfetti = confetti.create(canvas, { resize: true, useWorker: false });
+      myConfetti({
         particleCount: didWin ? 160 : 60,
         spread: didWin ? 90 : 60,
-        origin: { y: 0.35 },
+        origin: { y: 0.25 },
       });
+      // Remove canvas after animation completes
+      setTimeout(() => canvas.remove(), 4000);
     });
   }, [didWin]);
 
@@ -196,13 +221,18 @@ export default function EndScreen({
         background: `radial-gradient(ellipse 80% 60% at 50% 0%, ${accentColor}18 0%, #08090f 60%)`,
         display: 'flex',
         flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: '80px 20px 32px',
-        overflowY: 'auto',
         zIndex: 90,
       }}
     >
+      {/* Scrollable content area */}
+      <div style={{
+        flex: 1,
+        overflowY: 'auto',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        padding: '72px 20px 16px',
+      }}>
       {/* Big emoji with bounce animation */}
       <motion.div
         initial={{ scale: 0, rotate: -20 }}
@@ -299,19 +329,31 @@ export default function EndScreen({
                 gap: 3,
               }}
             >
-              <span style={{ color: 'var(--color-text-secondary)', fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em' }}>{ins.label}</span>
-              <span style={{ color: ins.color, fontWeight: 700, fontSize: 15 }}>{ins.value}</span>
+              <span style={{ color: 'rgba(255,255,255,0.6)', fontSize: 16, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em' }}>{ins.label}</span>
+              <span style={{ color: ins.color, fontWeight: 700, fontSize: 16 }}>{ins.value}</span>
             </div>
           ))}
         </motion.div>
       )}
 
-      {/* Buttons */}
+      {/* Optional game-specific visual content (e.g. RadarChart) */}
+      {children && (
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.42 }}
+          style={{ width: '100%', maxWidth: 360, display: 'flex', justifyContent: 'center', marginBottom: 8 }}
+        >
+          {children}
+        </motion.div>
+      )}
+
+      {/* Secondary buttons: share, leaderboard, all games */}
       <motion.div
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.44 }}
-        style={{ display: 'flex', flexDirection: 'column', gap: 10, width: '100%', maxWidth: 360 }}
+        style={{ display: 'flex', flexDirection: 'column', gap: 8, width: '100%', maxWidth: 360 }}
       >
         {/* Share button */}
         <button
@@ -321,8 +363,8 @@ export default function EndScreen({
             color: accentColor,
             border: `1px solid ${accentColor}66`,
             borderRadius: 12,
-            height: 52,
-            fontSize: 15,
+            height: 48,
+            fontSize: 17,
             fontWeight: 700,
             cursor: 'pointer',
             width: '100%',
@@ -340,8 +382,8 @@ export default function EndScreen({
             color: accentColor,
             border: `1px solid ${accentColor}44`,
             borderRadius: 12,
-            height: 52,
-            fontSize: 15,
+            height: 48,
+            fontSize: 17,
             fontWeight: 700,
             cursor: 'pointer',
             width: '100%',
@@ -352,32 +394,14 @@ export default function EndScreen({
         </button>
 
         <button
-          onClick={onPlayAgain}
-          style={{
-            backgroundColor: accentColor,
-            color: '#000',
-            border: 'none',
-            borderRadius: 12,
-            height: 52,
-            fontSize: 16,
-            fontWeight: 800,
-            cursor: 'pointer',
-            width: '100%',
-            letterSpacing: '-0.2px',
-          }}
-        >
-          Play Again
-        </button>
-
-        <button
           onClick={() => router.push('/')}
           style={{
             backgroundColor: 'transparent',
             color: 'var(--color-text)',
             border: '1px solid var(--color-border)',
             borderRadius: 12,
-            height: 52,
-            fontSize: 15,
+            height: 48,
+            fontSize: 17,
             fontWeight: 600,
             cursor: 'pointer',
             width: '100%',
@@ -392,12 +416,48 @@ export default function EndScreen({
           color: 'var(--color-text-secondary)',
           fontSize: 11,
           textAlign: 'center',
-          marginTop: 20,
+          marginTop: 16,
+          marginBottom: 8,
           opacity: 0.35,
         }}
       >
         ⚡ Powered by Ether
       </p>
+      </div>{/* end scrollable content */}
+
+      {/* Sticky Play Again — always visible at bottom, never requires scrolling */}
+      <motion.div
+        initial={{ opacity: 0, y: 16 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.44, type: 'spring', stiffness: 300, damping: 28 }}
+        style={{
+          flexShrink: 0,
+          padding: '12px 20px 20px',
+          background: 'linear-gradient(transparent, #08090f 30%)',
+        }}
+      >
+        <button
+          onClick={onPlayAgain}
+          style={{
+            backgroundColor: accentColor,
+            color: ctaTextColor,
+            border: 'none',
+            borderRadius: 12,
+            height: 52,
+            /* 20px = 15pt bold → WCAG "large text" → 3:1 contrast threshold */
+            fontSize: 20,
+            fontWeight: 800,
+            cursor: 'pointer',
+            width: '100%',
+            maxWidth: 360,
+            display: 'block',
+            margin: '0 auto',
+            letterSpacing: '-0.2px',
+          }}
+        >
+          Play Again
+        </button>
+      </motion.div>
     </motion.div>
   );
 }

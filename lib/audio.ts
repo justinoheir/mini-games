@@ -25,20 +25,47 @@ let masterReverb: import('tone').Reverb
 // ─── Init (must be called inside a user gesture) ──────────────────────────────
 export async function initAudio(): Promise<void> {
   if (initialized || !isBrowser) return
+  // Test environment: skip Tone.js entirely so setPhase('countdown') fires immediately
+  if ((window as unknown as Record<string, unknown>).__DISABLE_AUDIO) { initialized = true; return; }
   const T = await getTone()
   if (!T) return
-  await T.start()
+  try {
+    await T.start()
+  } catch {
+    // Audio context failed to start (test environment, permission denied, missing Web Audio API)
+    // Keep initialized = false so all sfx/music calls are no-ops
+    return
+  }
 
-  masterCompressor = new T.Compressor({ threshold: -14, ratio: 3, attack: 0.003, release: 0.25 })
-  const masterLimiter = new T.Limiter(-3)
-  masterCompressor.connect(masterLimiter)
-  masterLimiter.toDestination()
+  try {
+    masterCompressor = new T.Compressor({ threshold: -14, ratio: 3, attack: 0.003, release: 0.25 })
+    const masterLimiter = new T.Limiter(-3)
+    masterCompressor.connect(masterLimiter)
+    masterLimiter.toDestination()
+  } catch {
+    // Fallback: no compression (e.g. headless / test environments without full Web Audio API)
+    // NOTE: do NOT call T.getDestination() here — it also accesses the native destination and will throw
+    masterCompressor = { connect: (n: any) => n } as any
+  }
 
-  masterReverb = new T.Reverb({ decay: 2.0, wet: 0.3 })
-  await masterReverb.ready  // CRITICAL — must await or reverb sounds broken
-  masterReverb.toDestination()
+  try {
+    masterReverb = new T.Reverb({ decay: 2.0, wet: 0.3 })
+    // Race against a 2s timeout — reverb.ready can hang in headless/test environments
+    await Promise.race([
+      masterReverb.ready,
+      new Promise<void>(resolve => setTimeout(resolve, 2000)),
+    ])
+    masterReverb.toDestination()
+  } catch {
+    masterReverb = { toDestination: () => {}, connect: () => ({}) } as any
+  }
 
-  dryGain = new T.Gain(0.9).connect(masterCompressor)
+  try {
+    dryGain = new T.Gain(0.9).connect(masterCompressor)
+  } catch {
+    // NOTE: do NOT call .toDestination() here — it also crashes in mock AudioContext environments
+    dryGain = { connect: () => ({}), toDestination: () => ({}) } as any
+  }
 
   try {
     muted = localStorage.getItem('mg_muted') === '1'
@@ -212,6 +239,109 @@ export const sfx = {
     setTimeout(() => { synth.dispose(); reverb.dispose() }, 2000)
   },
 
+  // ── Intro / cinematic SFX ───────────────────────────────────────────────────
+
+  /** Cinematic whoosh — fires when the countdown screen enters */
+  swoosh: () => {
+    if (!initialized || muted) return
+    const T = Tone; if (!T) return
+    const reverb = new T.Reverb({ decay: 1.0, wet: 0.4 }).connect(dryGain)
+    const noise = new T.NoiseSynth({
+      noise: { type: 'pink' },
+      envelope: { attack: 0.01, decay: 0.35, sustain: 0, release: 0.2 },
+      volume: -16,
+    }).connect(reverb)
+    // Pitch sweep up: two sine tones gliding
+    const sweep = new T.Synth({
+      oscillator: { type: 'sine' },
+      envelope: { attack: 0.02, decay: 0.3, sustain: 0, release: 0.2 },
+      volume: -20,
+    }).connect(reverb)
+    noise.triggerAttackRelease('16n')
+    sweep.triggerAttackRelease('A3', '8n', T.now())
+    sweep.triggerAttackRelease('E5', '8n', T.now() + 0.08)
+    sweep.triggerAttackRelease('A5', '8n', T.now() + 0.16)
+    setTimeout(() => { noise.dispose(); sweep.dispose(); reverb.dispose() }, 900)
+  },
+
+  /** Heavy slam — fires on each countdown number (3, 2, 1) */
+  slam: () => {
+    if (!initialized || muted) return
+    const T = Tone; if (!T) return
+    const reverb = new T.Reverb({ decay: 0.8, wet: 0.35 }).connect(dryGain)
+    // Deep kick thud
+    const kick = new T.MembraneSynth({
+      pitchDecay: 0.06, octaves: 12, volume: -4,
+      envelope: { attack: 0.001, decay: 0.4, sustain: 0, release: 0.15 },
+    }).connect(reverb)
+    // Transient click on top
+    const click = new T.NoiseSynth({
+      noise: { type: 'white' },
+      envelope: { attack: 0.001, decay: 0.04, sustain: 0, release: 0.02 },
+      volume: -10,
+    }).connect(dryGain)
+    // Metallic ring
+    const metal = new T.MetalSynth({
+      envelope: { attack: 0.001, decay: 0.12, release: 0.06 },
+      harmonicity: 12, modulationIndex: 20,
+      resonance: 800, octaves: 0.5, volume: -22,
+    }).connect(reverb)
+    kick.triggerAttackRelease('C1', '4n')
+    click.triggerAttackRelease('32n')
+    metal.triggerAttackRelease('64n', T.now() + 0.01)
+    setTimeout(() => { kick.dispose(); click.dispose(); metal.dispose(); reverb.dispose() }, 800)
+  },
+
+  /** Energetic power-on burst — fires on GO */
+  powerOn: () => {
+    if (!initialized || muted) return
+    const T = Tone; if (!T) return
+    const reverb = new T.Reverb({ decay: 1.5, wet: 0.45 }).connect(dryGain)
+    // Ascending pitch sweep
+    const synth = new T.Synth({
+      oscillator: { type: 'sawtooth' },
+      envelope: { attack: 0.001, decay: 0.08, sustain: 0.3, release: 0.5 },
+      volume: -14,
+    }).connect(reverb)
+    // Rising arpeggio: C, E, G, C5
+    const notes = [['C4', 0], ['E4', 0.06], ['G4', 0.12], ['C5', 0.18], ['E5', 0.24]]
+    notes.forEach(([note, time]) => synth.triggerAttackRelease(note as string, '16n', T.now() + (time as number)))
+    // White noise burst underneath
+    const noise = new T.NoiseSynth({
+      noise: { type: 'white' },
+      envelope: { attack: 0.001, decay: 0.3, sustain: 0, release: 0.15 },
+      volume: -18,
+    }).connect(reverb)
+    noise.triggerAttackRelease('8n')
+    // Sub thud
+    const sub = new T.MembraneSynth({ pitchDecay: 0.08, octaves: 10, volume: -8 }).connect(dryGain)
+    sub.triggerAttackRelease('C1', '4n')
+    setTimeout(() => { synth.dispose(); noise.dispose(); sub.dispose(); reverb.dispose() }, 1200)
+  },
+
+  /** Rising tension — fires when start screen button is tapped */
+  introTap: () => {
+    if (!initialized || muted) return
+    const T = Tone; if (!T) return
+    const reverb = new T.Reverb({ decay: 0.6, wet: 0.3 }).connect(dryGain)
+    const synth = new T.Synth({
+      oscillator: { type: 'triangle' },
+      envelope: { attack: 0.001, decay: 0.12, sustain: 0.1, release: 0.3 },
+      volume: -14,
+    }).connect(reverb)
+    // Quick ascending minor third
+    synth.triggerAttackRelease('G4', '32n', T.now())
+    synth.triggerAttackRelease('C5', '16n', T.now() + 0.06)
+    // Soft noise for texture
+    const noise = new T.NoiseSynth({
+      noise: { type: 'pink' },
+      envelope: { attack: 0.001, decay: 0.08, sustain: 0, release: 0.04 },
+      volume: -22,
+    }).connect(dryGain)
+    noise.triggerAttackRelease('32n')
+    setTimeout(() => { synth.dispose(); noise.dispose(); reverb.dispose() }, 600)
+  },
+
   shimmer: () => {
     if (!initialized || muted) return
     const T = Tone; if (!T) return
@@ -236,24 +366,42 @@ export const sfx = {
   },
 }
 
+// ─── Defensive wrapper: catch any uncaught Web Audio API errors ───────────────
+// In some environments (headless Chromium, restricted Web Audio, certain iOS versions),
+// Tone.js node creation (especially T.Reverb) can throw "param must be an AudioParam".
+// Rather than wrapping every individual node in try/catch, we guard the entire sfx
+// object so no individual SFX function can ever throw an uncaught exception.
+;(Object.keys(sfx) as (keyof typeof sfx)[]).forEach(key => {
+  const orig = sfx[key]
+  ;(sfx as any)[key] = (...args: unknown[]) => {
+    try { (orig as any)(...args) } catch { /* ignore – audio failure is non-critical */ }
+  }
+})
+
 // ─── Music Patterns ───────────────────────────────────────────────────────────
 export type MusicPattern = 'tense' | 'calm' | 'pulse' | 'drive' | 'ambient' | 'minimal'
 
 export function startMusic(pattern: MusicPattern): () => void {
   if (!initialized || muted || !Tone) return () => {}
-  const T = Tone
-  stopAllMusic()
-  T.getTransport().stop()
-  T.getTransport().cancel()
+  try {
+    const T = Tone
+    stopAllMusic()
+    T.getTransport().stop()
+    T.getTransport().cancel()
 
-  switch (pattern) {
-    case 'tense':   return startTenseMusic()
-    case 'calm':    return startCalmMusic()
-    case 'pulse':   return startPulseMusic()
-    case 'drive':   return startDriveMusic()
-    case 'ambient': return startAmbientMusic()
-    case 'minimal': return startMinimalMusic()
-    default:        return () => {}
+    switch (pattern) {
+      case 'tense':   return startTenseMusic()
+      case 'calm':    return startCalmMusic()
+      case 'pulse':   return startPulseMusic()
+      case 'drive':   return startDriveMusic()
+      case 'ambient': return startAmbientMusic()
+      case 'minimal': return startMinimalMusic()
+      default:        return () => {}
+    }
+  } catch {
+    // Gracefully handle Tone.js errors in headless/test environments
+    // (e.g. "param must be an AudioParam" in Chromium without full Web Audio support)
+    return () => {}
   }
 }
 

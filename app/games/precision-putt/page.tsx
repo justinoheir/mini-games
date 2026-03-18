@@ -10,7 +10,6 @@ import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
 import { createTiltController } from '@/lib/tilt';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
-import PlayerNameInput from '@/components/PlayerNameInput';
 
 const ACCENT = '#86efac';
 const GAME_ID = 'precision-putt';
@@ -24,7 +23,6 @@ interface Signals {
 type Phase = 'start' | 'countdown' | 'playing' | 'done';
 
 function getPersonality(sig: Signals): string {
-  const total = sig.holes || 1;
   const powerAcc = sig.sweetSpotHits / Math.max(1, sig.totalStrokes);
   const avgRead = sig.avgReadTime;
   if (powerAcc > 0.7 && avgRead > 2) return '🔬 Surgeon';
@@ -55,6 +53,10 @@ export default function PrecisionPutt() {
   const animRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const tiltRef = useRef<ReturnType<typeof createTiltController> | null>(null);
+  const endGameRef = useRef<(() => void) | null>(null); // stable ref for canvas effect
+  const touchStartXRef = useRef(0);
+  const chargeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isDraggingRef = useRef(false);
   const [phase, setPhase] = useState<Phase>('start');
   const [timeLeft, setTimeLeft] = useState(60);
   const [holeDisplay, setHoleDisplay] = useState(1);
@@ -88,6 +90,8 @@ export default function PrecisionPutt() {
     phase: 'aiming' as 'aiming' | 'putting' | 'result',
     strokesThisHole: 0,
     holeComplete: false,
+    // Audio throttle — prevents sfx.tick() from firing 60x/sec during charging
+    lastTickTime: 0,
   });
 
   const endGame = useCallback(() => {
@@ -97,6 +101,11 @@ export default function PrecisionPutt() {
     if (timerRef.current) clearInterval(timerRef.current);
     tiltRef.current?.stop();
     if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
+    // Finalize: accumulate any strokes on the in-progress hole (timer expiry mid-hole)
+    // Without this, strokes played on an incomplete hole are lost from the total count
+    if (!s.holeComplete && s.strokesThisHole > 0) {
+      s.sig.totalStrokes += s.strokesThisHole;
+    }
     // Final avg read time
     if (s.sig.readTimes.length > 0) {
       s.sig.avgReadTime = s.sig.readTimes.reduce((a,b)=>a+b,0) / s.sig.readTimes.length;
@@ -146,6 +155,7 @@ export default function PrecisionPutt() {
     timerRef.current = setInterval(() => {
       s.timeLeft--;
       setTimeLeft(s.timeLeft);
+      if (s.timeLeft <= 5 && s.timeLeft > 0) sfx.tick();
       if (s.timeLeft <= 0) { sfx.fail(); haptic([300]); endGame(); }
     }, 1000);
 
@@ -258,6 +268,9 @@ export default function PrecisionPutt() {
             s.holeIndex++;
             setHoleDisplay(s.holeIndex + 1);
             if (s.holeIndex >= MAX_HOLES) {
+              // Round complete — celebratory sound (only fires once, from a setTimeout so
+              // it doesn't interfere with the per-hole result sound above)
+              setTimeout(() => { sfx.success(); haptic([60,30,60,30,60,30,100]); }, 300);
               setTimeout(() => endGame(), 1500);
             } else {
               setTimeout(() => setupHole(), 1500);
@@ -277,7 +290,13 @@ export default function PrecisionPutt() {
 
       // Power bar (charging)
       if (s.charging) {
-        sfx.tick();
+        // ⚠️ Throttle: sfx.tick() creates a new Tone.js node each call.
+        // At 60fps without throttling = 60 nodes/sec → audio distortion + memory leak.
+        const nowMs = Date.now();
+        if (nowMs - s.lastTickTime >= 200) {
+          s.lastTickTime = nowMs;
+          sfx.tick();
+        }
         const pFill = s.power / 100;
         const barW = 180, barH = 16;
         const barX = (W - barW) / 2, barY = H - 60;
@@ -318,14 +337,42 @@ export default function PrecisionPutt() {
     const s = stateRef.current;
     if (!s.running || s.phase !== 'aiming' || s.ballMoving || s.holeComplete) return;
     e.preventDefault();
-    s.charging = true; s.power = 0; s.powerStart = Date.now();
-    // Record read time
-    const readTime = (Date.now() - s.aimReadStart) / 1000;
-    s.sig.readTimes.push(readTime);
+    touchStartXRef.current = e.touches[0].clientX;
+    isDraggingRef.current = false;
+    // Delay charge start by 120ms — gives time to detect a drag vs. a hold.
+    // If the touch moves > 8px horizontally, handleTouchMove cancels this timer.
+    chargeTimerRef.current = setTimeout(() => {
+      if (!isDraggingRef.current && s.running && !s.ballMoving && !s.holeComplete) {
+        s.charging = true;
+        s.power = 0;
+        s.powerStart = Date.now();
+        s.lastTickTime = 0;
+        // Record read time only when charging actually starts (not on drag-aim gestures).
+        // Measuring from setupHole/last-putt to charge-start accurately captures decision time.
+        const readTime = (Date.now() - s.aimReadStart) / 1000;
+        s.sig.readTimes.push(readTime);
+      }
+    }, 120);
+  }, []);
+
+  // ── Drag-to-aim fallback (works as primary control when tilt is denied) ──────
+  const handleTouchMove = useCallback((e: React.TouchEvent) => {
+    const s = stateRef.current;
+    if (!s.running) return;
+    const dx = e.touches[0].clientX - touchStartXRef.current;
+    if (!s.charging && Math.abs(dx) > 8) {
+      isDraggingRef.current = true;
+      if (chargeTimerRef.current) { clearTimeout(chargeTimerRef.current); chargeTimerRef.current = null; }
+      // 0.009 rad/px — gentle rotation; continuous delta (update start each move)
+      s.aimAngle += dx * 0.009;
+      touchStartXRef.current = e.touches[0].clientX;
+    }
   }, []);
 
   const handleTouchEnd = useCallback((e: React.TouchEvent) => {
     const s = stateRef.current;
+    if (chargeTimerRef.current) { clearTimeout(chargeTimerRef.current); chargeTimerRef.current = null; }
+    isDraggingRef.current = false;
     if (!s.running || !s.charging) return;
     s.charging = false;
     const pwr = s.power;
@@ -343,12 +390,18 @@ export default function PrecisionPutt() {
     sfx.click(); haptic([40]);
   }, []);
 
+  // Keep endGameRef always pointing to the latest endGame (breaks the [endGame] dep cycle)
+  useEffect(() => { endGameRef.current = endGame; }, [endGame]);
+
+  // ⚠️ Canvas effect MUST use [] deps — [endGame] would re-run cleanup (cancelAnimationFrame,
+  // clearInterval, tilt.stop) every time theme changes, stopping the game unexpectedly.
+  // Use endGameRef.current inside to always call the latest endGame.
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     canvas.width = window.innerWidth; canvas.height = window.innerHeight;
     const onResize = () => { canvas.width = window.innerWidth; canvas.height = window.innerHeight; };
-    const onForceEnd = () => { if (stateRef.current.running) endGame(); };
+    const onForceEnd = () => { if (stateRef.current.running) endGameRef.current?.(); };
     window.addEventListener('resize', onResize);
     window.addEventListener('game:force-end', onForceEnd);
     return () => {
@@ -356,13 +409,16 @@ export default function PrecisionPutt() {
       window.removeEventListener('game:force-end', onForceEnd);
       cancelAnimationFrame(animRef.current);
       if (timerRef.current) clearInterval(timerRef.current);
+      if (chargeTimerRef.current) clearTimeout(chargeTimerRef.current);
       tiltRef.current?.stop();
       if (stopMusicRef.current) stopMusicRef.current();
     };
-  }, [endGame]);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleStart = useCallback(async () => {
-    playerSessionRef.current = savePlayerSession(GAME_ID, playerName, playerAvatar);
+  const handleStart = useCallback(async (name: string, avatar: string) => {
+    setPlayerName(name);
+    setPlayerAvatar(avatar);
+    playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar);
     await initAudio(); sfx.click();
     const ctrl = createTiltController((x) => {
       stateRef.current.aimAngle += x * 0.05;
@@ -370,11 +426,13 @@ export default function PrecisionPutt() {
     tiltRef.current = ctrl;
     await ctrl.start();
     setPhase('countdown');
-  }, [playerName, playerAvatar]);
+  }, []);
 
   const handlePlayAgain = useCallback(() => {
     if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
+    if (chargeTimerRef.current) { clearTimeout(chargeTimerRef.current); chargeTimerRef.current = null; }
     stateRef.current.running = false;
+    stateRef.current.charging = false;
     cancelAnimationFrame(animRef.current);
     if (timerRef.current) clearInterval(timerRef.current);
     tiltRef.current?.stop();
@@ -388,8 +446,9 @@ export default function PrecisionPutt() {
     <GameShell title="Precision Putt" emoji="🏌️" accentColor={ACCENT} theme={theme}>
       <canvas
         ref={canvasRef}
-        style={{ display: phase === 'playing' ? 'block' : 'none', position: 'absolute', top: 0, left: 0 }}
+        style={{ display: phase === 'playing' ? 'block' : 'none', position: 'absolute', top: 0, left: 0, touchAction: 'none' }}
         onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
       />
       {phase === 'playing' && (
@@ -411,12 +470,7 @@ export default function PrecisionPutt() {
           ctaLabel="Start Putting →"
           accentColor={ACCENT}
           onStart={handleStart}
-        >
-          <PlayerNameInput
-            accentColor={theme.colors.accent ?? ACCENT}
-            onReady={(name, avatar) => { setPlayerName(name); setPlayerAvatar(avatar); }}
-          />
-        </GameStartScreen>
+        />
       )}
       {phase === 'done' && sig && (
         <EndScreen

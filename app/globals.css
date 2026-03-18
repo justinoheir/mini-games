@@ -1,3 +1,39 @@
+/* ─── Carousel rows ──────────────────────────────────────── */
+.carousel-row {
+  display: flex;
+  gap: 12px;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  padding-bottom: 8px;
+}
+.carousel-row::-webkit-scrollbar {
+  display: none;
+}
+
+/* ─── Netflix game card ──────────────────────────────────── */
+.game-card-netflix {
+  width: 160px;
+  height: 220px;
+  flex-shrink: 0;
+  scroll-snap-align: start;
+  border-radius: 12px;
+  overflow: hidden;
+  position: relative;
+}
+
+@media (min-width: 768px) {
+  .game-card-netflix {
+    width: 200px;
+    height: 280px;
+  }
+  .carousel-row {
+    gap: 16px;
+  }
+}
+
 :root {
   --color-bg:             #08090f;
   --color-surface:        #0e1018;
@@ -5,14 +41,38 @@
   --color-border:         rgba(255, 255, 255, 0.07);
   --color-border-strong:  rgba(255, 255, 255, 0.14);
   --color-text:           #f0f4ff;
+  --color-text-muted:     rgba(240, 244, 255, 0.65);
   --color-text-secondary: #6b7a99;
   --color-accent:         #00ff88;
   --color-primary:        #00ff88;
+  --color-header-bg:      rgba(8, 9, 15, 0.88);
+  --color-logo-blend:     screen;
+  --color-logo-src:       url('/brand/ether-wordmark-light.jpg');
   --font-display:         'Space Grotesk', system-ui, sans-serif;
   --font-family:          'Space Grotesk', system-ui, sans-serif;
   --radius-pill:          12px;
   --radius-card:          16px;
   --shadow-glow:          0 0 24px rgba(0, 255, 136, 0.12);
+}
+
+/* ─── Light Mode ─────────────────────────────────────────── */
+.theme-light {
+  --color-bg:             #f4f5f8;
+  --color-surface:        #ffffff;
+  --color-surface-raised: #eef0f5;
+  --color-border:         rgba(0, 0, 0, 0.07);
+  --color-border-strong:  rgba(0, 0, 0, 0.14);
+  --color-text:           #0d0f1a;
+  --color-text-muted:     rgba(13, 15, 26, 0.65);
+  --color-text-secondary: #5a6075;
+  --color-header-bg:      rgba(244, 245, 248, 0.92);
+  --color-logo-blend:     multiply;
+  --color-logo-src:       url('/brand/ether-wordmark-dark.jpg');
+}
+
+.theme-light body {
+  background: var(--color-bg);
+  color: var(--color-text);
 }
 
 *, *::before, *::after {

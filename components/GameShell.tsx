@@ -5,6 +5,7 @@ import { ThemeContext } from '@/lib/ThemeContext';
 import { BrandTheme, DEFAULT_THEME } from '@/lib/brands';
 import { applyTheme } from '@/lib/theme';
 import MuteButton from './MuteButton';
+import MobileGate from './MobileGate';
 
 interface GameShellProps {
   title: string;
@@ -12,9 +13,11 @@ interface GameShellProps {
   accentColor: string;
   children: React.ReactNode;
   theme?: BrandTheme;
+  /** Set false to disable the mobile-only gate for a specific game (e.g. a demo mode). Default: true */
+  mobileOnly?: boolean;
 }
 
-export default function GameShell({ title, emoji, accentColor, children, theme }: GameShellProps) {
+export default function GameShell({ title, emoji, accentColor, children, theme, mobileOnly = true }: GameShellProps) {
   const router = useRouter();
   const resolvedTheme = theme ?? DEFAULT_THEME;
   const [backHovered, setBackHovered] = useState(false);
@@ -23,9 +26,9 @@ export default function GameShell({ title, emoji, accentColor, children, theme }
     applyTheme(resolvedTheme);
   }, [resolvedTheme]);
 
-  void accentColor; // accentColor kept for API compatibility
+  void accentColor;
 
-  return (
+  const shell = (
     <ThemeContext.Provider value={resolvedTheme}>
       <div
         style={{
@@ -56,12 +59,13 @@ export default function GameShell({ title, emoji, accentColor, children, theme }
             borderBottom: '1px solid rgba(255, 255, 255, 0.06)',
           }}
         >
-          {/* Back arrow — 44px tap target */}
+          {/* Back button — 44px tap target */}
           <button
+            data-testid="back-button"
             onClick={() => router.push('/')}
             onMouseEnter={() => setBackHovered(true)}
             onMouseLeave={() => setBackHovered(false)}
-            aria-label="Back"
+            aria-label="Back to all games"
             style={{
               width: 44,
               height: 44,
@@ -82,7 +86,7 @@ export default function GameShell({ title, emoji, accentColor, children, theme }
             ←
           </button>
 
-          {/* Center: emoji + title */}
+          {/* Center: logo or emoji + title */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, flex: 1, justifyContent: 'center' }}>
             {resolvedTheme.logo ? (
               <img
@@ -134,4 +138,14 @@ export default function GameShell({ title, emoji, accentColor, children, theme }
       </div>
     </ThemeContext.Provider>
   );
+
+  if (mobileOnly) {
+    return (
+      <MobileGate accentColor={accentColor} gameEmoji={emoji} gameTitle={title}>
+        {shell}
+      </MobileGate>
+    );
+  }
+
+  return shell;
 }

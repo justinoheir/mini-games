@@ -9,7 +9,8 @@ import { initAudio, sfx, haptic, startMusic } from '@/lib/audio';
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
-import PlayerNameInput from '@/components/PlayerNameInput';
+import { Particle, spawnBurst, updateAndDrawParticles } from '@/lib/particles';
+import { ShakeState, triggerShake, applyShake } from '@/lib/screenShake';
 
 // ─── SPEC CONSTANTS ───────────────────────────────────────────────────────────
 
@@ -60,16 +61,19 @@ function getPersonality(sig: Signals): string {
 // ─── GAME STATE ───────────────────────────────────────────────────────────────
 
 interface GameState {
-  running:         boolean;
-  timeLeft:        number;
-  sig:             Signals;
-  nodeX:           number;
-  nodeY:           number;
-  nodeSpawnTime:   number;
-  nodeAlive:       boolean;
-  nodeWindowMs:    number;
-  chainBreakFlash: number; // 0..1 — fades out red overlay after a miss
-  accentColor:     string;
+  running:              boolean;
+  timeLeft:             number;
+  sig:                  Signals;
+  nodeX:                number;
+  nodeY:                number;
+  nodeSpawnTime:        number;
+  nodeAlive:            boolean;
+  nodeWindowMs:         number;
+  chainBreakFlash:      number;   // 0..1 — fades out red overlay after a miss
+  accentColor:          string;
+  lastChainDisplayed:   number;   // change guard — avoids redundant setScoreDisplay calls
+  particles:            Particle[];
+  shake:                ShakeState;
 }
 
 type Phase = 'start' | 'countdown' | 'playing' | 'done';
@@ -85,24 +89,27 @@ export default function ReactionChain() {
   const respawnRef   = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const stateRef = useRef<GameState>({
-    running:         false,
-    timeLeft:        DURATION,
+    running:              false,
+    timeLeft:             DURATION,
     sig: {
-      reactionTimes: [],
-      longestChain:  0,
-      chainBreaks:   0,
-      totalNodes:    0,
-      tappedNodes:   0,
-      currentChain:  0,
-      score:         0,
+      reactionTimes:  [],
+      longestChain:   0,
+      chainBreaks:    0,
+      totalNodes:     0,
+      tappedNodes:    0,
+      currentChain:   0,
+      score:          0,
     },
-    nodeX:           0,
-    nodeY:           0,
-    nodeSpawnTime:   0,
-    nodeAlive:       false,
-    nodeWindowMs:    800,
-    chainBreakFlash: 0,
-    accentColor:     ACCENT,
+    nodeX:                0,
+    nodeY:                0,
+    nodeSpawnTime:        0,
+    nodeAlive:            false,
+    nodeWindowMs:         800,
+    chainBreakFlash:      0,
+    accentColor:          ACCENT,
+    lastChainDisplayed:   0,
+    particles:            [],
+    shake:                { intensity: 0, duration: 0 },
   });
 
   const [phase, setPhase]               = useState<Phase>('start');
@@ -112,6 +119,8 @@ export default function ReactionChain() {
   const [playerName, setPlayerName]     = useState('');
   const [playerAvatar, setPlayerAvatar] = useState('🎮');
   const playerSessionRef                = useRef<PlayerSession | null>(null);
+
+
 
   // Sync brand accent into game state so rAF loop gets fresh value without stale closure
   useEffect(() => {
@@ -169,8 +178,11 @@ export default function ReactionChain() {
       currentChain:  0,
       score:         0,
     };
-    s.nodeAlive       = false;
-    s.chainBreakFlash = 0;
+    s.nodeAlive           = false;
+    s.chainBreakFlash     = 0;
+    s.lastChainDisplayed  = 0;
+    s.particles           = [];
+    s.shake               = { intensity: 0, duration: 0 };
 
     setScoreDisplay(0);
     setTimeLeft(DURATION);
@@ -181,9 +193,13 @@ export default function ReactionChain() {
     timerRef.current = setInterval(() => {
       s.timeLeft--;
       setTimeLeft(s.timeLeft);
+      // Warning at 10s, urgency ticks at ≤5s
+      if (s.timeLeft === 10) sfx.warning();
+      if (s.timeLeft <= 5 && s.timeLeft > 0) sfx.tick();
       if (s.timeLeft <= 0) {
-        sfx.fail();
-        haptic([300]);
+        // Spec endSound = "success" — the game always completes, never globally fails
+        sfx.success();
+        haptic([30, 50, 30, 50, 100]);
         endGame();
       }
     }, 1000);
@@ -206,6 +222,10 @@ export default function ReactionChain() {
         s.chainBreakFlash = Math.max(0, s.chainBreakFlash - 0.035);
       }
 
+      // ── Screen shake offset for node + particles (background stays fixed) ───
+      ctx.save();
+      if (s.shake.duration > 0) applyShake(ctx, s.shake);
+
       // ── Node ────────────────────────────────────────────────────────────────
       if (s.nodeAlive) {
         const age      = Date.now() - s.nodeSpawnTime;
@@ -218,12 +238,14 @@ export default function ReactionChain() {
           s.sig.currentChain  = 0;
           s.sig.chainBreaks++;
           s.chainBreakFlash   = 1;
-          setScoreDisplay(0);
+          s.lastChainDisplayed = 0;
+          triggerShake(s.shake, 5, 8);
           sfx.collision();
           haptic([80]);
           // Post-miss pause before next node (≤ 500ms — within rules)
+          // setScoreDisplay here (outside rAF hot-path) to avoid React setState in animation frame
           respawnRef.current = setTimeout(() => {
-            if (s.running) spawnNode();
+            if (s.running) { setScoreDisplay(0); spawnNode(); }
           }, 500);
         } else {
           const alpha         = 1 - progress * 0.55;
@@ -267,6 +289,11 @@ export default function ReactionChain() {
           ctx.restore();
         }
       }
+
+      // ── Tap particles ────────────────────────────────────────────────────────
+      updateAndDrawParticles(ctx, s.particles);
+
+      ctx.restore(); // end shake transform
 
       // ── Watermark chain count (grows with chain, very subtle) ───────────────
       if (s.sig.currentChain > 0) {
@@ -312,7 +339,13 @@ export default function ReactionChain() {
       // +1 per tap, +5 bonus if reaction under 300ms
       s.sig.score += 1 + (reactionMs < 300 ? 5 : 0);
 
-      setScoreDisplay(s.sig.currentChain);
+      // Particle burst at tap position
+      spawnBurst(s.particles, x, y, s.accentColor, 14, 5);
+
+      if (s.lastChainDisplayed !== s.sig.currentChain) {
+        s.lastChainDisplayed = s.sig.currentChain;
+        setScoreDisplay(s.sig.currentChain);
+      }
       sfx.collect();
       haptic([20]);
 
@@ -361,11 +394,14 @@ export default function ReactionChain() {
 
   // ─── PHASE TRANSITIONS ──────────────────────────────────────────────────────
 
-  const handleStart = useCallback(() => {
-    playerSessionRef.current = savePlayerSession(GAME_ID, playerName, playerAvatar);
-    initAudio();
+  const handleStart = useCallback(async (name: string, avatar: string) => {
+    setPlayerName(name);
+    setPlayerAvatar(avatar);
+    playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar);
+    await initAudio();
+    sfx.click();
     setPhase('countdown');
-  }, [playerName, playerAvatar]);
+  }, []);
 
   const handleCountdownDone = useCallback(() => {
     startLoop();
@@ -432,12 +468,7 @@ export default function ReactionChain() {
           ctaLabel="Start"
           accentColor={theme.colors.accent ?? ACCENT}
           onStart={handleStart}
-        >
-          <PlayerNameInput
-            accentColor={theme.colors.accent ?? ACCENT}
-            onReady={(name, avatar) => { setPlayerName(name); setPlayerAvatar(avatar); }}
-          />
-        </GameStartScreen>
+        />
       )}
 
       {/* ── Countdown ─────────────────────────────────────────────────────── */}
