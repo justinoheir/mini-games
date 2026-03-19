@@ -876,14 +876,15 @@ export default function HarvestCatch() {
   // ─── RENDER ───────────────────────────────────────────────────────────────
 
   return (
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
-      {showInstructions && (
+    <>
+      {phase === 'start' && showInstructions && (
         <SwipeInstructions
           gameId="harvest-catch"
           steps={[{ icon: "🍎", title: "Catch the harvest", body: "Tilt your device to move the basket." }, { icon: "⭐", title: "Rare items = more", body: "Golden items are worth extra — don't miss them." }, { icon: "🚫", title: "Avoid rocks", body: "Catching rocks costs you a life." }]}
           onDone={() => setShowInstructions(false)}
         />
       )}
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
 
       {/* ── Start Screen ─────────────────────────────────────────────────── */}
       {phase === 'start' && (
@@ -1002,6 +1003,7 @@ export default function HarvestCatch() {
         </>
       )}
     </GameShell>
+    </>
   );
 }
 
