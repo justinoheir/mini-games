@@ -1,9 +1,8 @@
 /**
  * lib/haptics.ts — Semantic haptic patterns via Web Vibration API
  * ─────────────────────────────────────────────────────────────────
- * Wraps navigator.vibrate() with meaningful patterns so game code
- * expresses *intent* (score, fail, victory, impact) rather than raw
- * milliseconds.  Silent fallback on unsupported devices.
+ * Duolingo-level haptics: crisp, punchy, satisfying.
+ * Each pattern is tuned to feel meaningful — not just a buzz.
  */
 
 function vibrate(pattern: number | number[]): void {
@@ -17,55 +16,76 @@ function vibrate(pattern: number | number[]): void {
 }
 
 /**
- * hapticScore — fired on any successful scoring event
- * (basket made, goal scored, pass completed, correct tap, etc.)
+ * hapticScore — satisfying double-punch on every score
+ * Like Duolingo's correct answer: crisp, confident
  */
 export function hapticScore(): void {
-  vibrate([40, 20, 40]);
+  vibrate([60, 30, 100]);
 }
 
 /**
- * hapticFail — fired on miss, failure, chain break, or wrong input
+ * hapticFail — thuddy triple that reads as "wrong"
  */
 export function hapticFail(): void {
-  vibrate([80, 40, 80]);
+  vibrate([120, 60, 120, 60, 80]);
 }
 
 /**
- * hapticVictory — fired on personal best, round complete, or game-end celebration
+ * hapticVictory — escalating celebration burst
+ * Feels like confetti going off in your hand
  */
 export function hapticVictory(): void {
-  vibrate([30, 20, 30, 20, 60, 20, 100]);
+  vibrate([40, 20, 60, 20, 80, 20, 120, 20, 200]);
 }
 
 /**
- * hapticImpact — fired on physical collision events
- * (rim bounce, wall hit, block land, keeper save)
+ * hapticImpact — single hard thud for physical collisions
  */
 export function hapticImpact(): void {
-  vibrate([60]);
+  vibrate([100]);
 }
 
 /**
- * hapticCelebration — fired on exceptional moments
- * (new personal best, streak milestone, perfect run)
- * Long escalating burst with a triumphant final kick.
+ * hapticCelebration — personal best / streak milestone
+ * Maximum intensity — phone should feel it
  */
 export function hapticCelebration(): void {
-  vibrate([20, 10, 20, 10, 20, 10, 40, 20, 100]);
+  vibrate([80, 30, 80, 30, 80, 30, 200, 50, 200]);
 }
 
 /**
- * hapticWarning — fired on near-miss or low time alert
+ * hapticWarning — urgent pulse for low time / danger
  */
 export function hapticWarning(): void {
-  vibrate([40, 20, 40]);
+  vibrate([80, 40, 80, 40, 120]);
 }
 
 /**
- * hapticCombo — fired on combo/streak increment (scales with level)
+ * hapticCombo — escalates with combo level
+ * Level 3: noticeable. Level 10: can't miss it.
  */
 export function hapticCombo(level: number = 1): void {
-  const base = Math.min(level * 15, 60);
-  vibrate([base, 10, base + 10]);
+  const intensity = Math.min(level * 20, 150);
+  const pause = 30;
+  if (level >= 10) {
+    vibrate([intensity, pause, intensity, pause, intensity * 1.5]);
+  } else if (level >= 5) {
+    vibrate([intensity, pause, intensity]);
+  } else {
+    vibrate([intensity]);
+  }
+}
+
+/**
+ * hapticMilestone — 50% score, new area unlocked, major moment
+ */
+export function hapticMilestone(): void {
+  vibrate([60, 20, 60, 20, 200]);
+}
+
+/**
+ * hapticTick — subtle single tap for countdown / rhythm games
+ */
+export function hapticTick(): void {
+  vibrate([30]);
 }

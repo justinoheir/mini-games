@@ -7,7 +7,7 @@ import Countdown from '@/components/Countdown';
 import EndScreen from '@/components/EndScreen';
 import { initAudio, sfx, haptic, startMusic } from '@/lib/audio';
 import { playScoreHit, playVictoryFanfare, playNearMiss } from '@/lib/audio';
-import { hapticScore, hapticFail, hapticVictory } from '@/lib/haptics';
+import { hapticScore, hapticFail, hapticVictory, hapticCelebration, hapticCombo } from '@/lib/haptics';
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
@@ -373,7 +373,7 @@ export default function BooBlastGame() {
             setHauntingLevel(s.sig.hauntingLevel);
           }
           sfx.warning(); // spec: missSound = "warning" — ominous low sawtooth
-          haptic([40]);
+          hapticFail();
           if (s.sig.hauntingLevel >= 5) {
             s.running = false; // early game over — handled below
           }
@@ -386,7 +386,7 @@ export default function BooBlastGame() {
         ctx.globalAlpha  = ghost.opacity;
         ctx.shadowBlur   = isBoss ? 50 : 22;
         ctx.shadowColor  = isBoss ? '#ff44ff' : s.accentColor;
-        ctx.font         = `${ghost.size}px serif`;
+        ctx.font         = `${ghost.size}px "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif`;
         ctx.textAlign    = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText(ghost.emoji, ghost.x, ghost.y);
@@ -407,7 +407,7 @@ export default function BooBlastGame() {
         if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
         if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
         sfx.fail();
-        haptic([500]);
+        hapticFail();
         setFinalSig({ ...s.sig });
         setPhase('done');
         return;
@@ -535,7 +535,14 @@ export default function BooBlastGame() {
         s.ghosts.splice(i, 1);
         setScoreDisplay(s.sig.score);
         sfx.boom(); // spec: hitSound = "boom" — satisfying ghost-blast explosion
-        haptic([30]);
+        // Duolingo-level haptics: boss = celebration, streak milestone, normal = score punch
+        if (ghost.typeId === 'boss_ghost') {
+          hapticCelebration();
+        } else if (s.sig.streakCurrent > 0 && s.sig.streakCurrent % 5 === 0) {
+          hapticCombo(s.sig.streakCurrent);
+        } else {
+          hapticScore();
+        }
         break; // only one ghost per tap
       }
     }
@@ -628,16 +635,21 @@ export default function BooBlastGame() {
 
   return (
     <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accent}>
-      {showInstructions && (
+      {/* ── Instructions — shown before start screen on first visit ────────── */}
+      {phase === 'start' && showInstructions && (
         <SwipeInstructions
           gameId="boo-blast"
-          steps={[{ icon: "👆", title: "Tap to blast", body: "Tap the ghosts before they reach you." }, { icon: "👻", title: "Don't miss", body: "Letting 3 ghosts through ends the game." }, { icon: "💥", title: "Bigger ghosts = more", body: "Larger ghosts are worth more points but move slower." }]}
+          steps={[
+            { icon: "👆", title: "Tap the ghosts", body: "Tap them before they disappear — each ghost is worth points." },
+            { icon: "👻", title: "Don't let them escape", body: "5 escaped ghosts ends the game early. Stay sharp." },
+            { icon: "💀", title: "Boss ghosts = 5pts", body: "The big skull ghost is rare and worth 5x. Prioritize it." },
+          ]}
           onDone={() => setShowInstructions(false)}
         />
       )}
 
       {/* ── Start Screen ────────────────────────────────────────────────────── */}
-      {phase === 'start' && (
+      {phase === 'start' && !showInstructions && (
         <GameStartScreen
           emoji={GAME_EMOJI}
           title={GAME_TITLE}
