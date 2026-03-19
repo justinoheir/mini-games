@@ -18,6 +18,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import ScorePopEffect, { useScorePop } from '@/components/ScorePopEffect';
 import StreakBadge from '@/components/StreakBadge';
 import { CATEGORY_THEMES } from '@/lib/theme';
+import SwipeInstructions from '@/components/SwipeInstructions';
 
 const CATEGORY_ACCENT = CATEGORY_THEMES.sports.primaryAccent;
 
@@ -53,6 +54,7 @@ export default function PenaltyKick() {
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const tiltRef = useRef<ReturnType<typeof createTiltController> | null>(null);
   const [phase, setPhase] = useState<Phase>('start');
+  const [showInstructions, setShowInstructions] = useState(true);
   const [shotsState, setShotsState] = useState(0);
   const [goalsDisplay, setGoalsDisplay] = useState(0);
   const [finalSig, setFinalSig] = useState<Signals | null>(null);
@@ -456,6 +458,13 @@ export default function PenaltyKick() {
 
   return (
     <GameShell title="Penalty Kick" emoji="⚽" accentColor={ACCENT} theme={theme}>
+      {showInstructions && (
+        <SwipeInstructions
+          gameId="penalty-kick"
+          steps={[{ icon: "👆", title: "Swipe to kick", body: "Swipe in the direction you want to shoot." }, { icon: "⚽", title: "Aim for gaps", body: "The goalkeeper moves — find the open corner." }, { icon: "🥅", title: "Score goals", body: "You have 5 shots. Score as many as possible." }]}
+          onDone={() => setShowInstructions(false)}
+        />
+      )}
       <canvas
         ref={canvasRef}
         style={{ display: phase === 'playing' ? 'block' : 'none', position: 'absolute', top: 0, left: 0 }}

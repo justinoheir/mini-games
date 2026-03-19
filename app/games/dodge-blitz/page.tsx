@@ -26,6 +26,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import ScorePopEffect, { useScorePop } from '@/components/ScorePopEffect';
 import StreakBadge from '@/components/StreakBadge';
 import { CATEGORY_THEMES } from '@/lib/theme';
+import SwipeInstructions from '@/components/SwipeInstructions';
 
 const CATEGORY_ACCENT = CATEGORY_THEMES.sports.primaryAccent;
 
@@ -197,6 +198,7 @@ export default function DodgeBlitzGame() {
   });
 
   const [phase, setPhase]               = useState<Phase>('start');
+  const [showInstructions, setShowInstructions] = useState(true);
   const [timeLeft, setTimeLeft]         = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
   const [finalSig, setFinalSig]         = useState<Signals | null>(null);
@@ -768,6 +770,13 @@ export default function DodgeBlitzGame() {
 
   return (
     <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
+      {showInstructions && (
+        <SwipeInstructions
+          gameId="dodge-blitz"
+          steps={[{ icon: "👆", title: "Tap to dodge", body: "Tap anywhere to jump or dodge incoming obstacles." }, { icon: "⚡", title: "React fast", body: "Obstacles speed up as your score grows." }, { icon: "🔥", title: "Survive", body: "How long can you last?" }]}
+          onDone={() => setShowInstructions(false)}
+        />
+      )}
 
       {/* ── Start Screen ──────────────────────────────────────────────────── */}
       {phase === 'start' && (

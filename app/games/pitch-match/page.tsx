@@ -26,6 +26,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import ScorePopEffect, { useScorePop } from '@/components/ScorePopEffect';
 import StreakBadge from '@/components/StreakBadge';
 import { CATEGORY_THEMES } from '@/lib/theme';
+import SwipeInstructions from '@/components/SwipeInstructions';
 
 const CATEGORY_ACCENT = CATEGORY_THEMES.breath.primaryAccent;
 
@@ -266,6 +267,7 @@ export default function PitchMatchGame() {
 
   // ⚠️ Only these drive re-renders
   const [phase, setPhase]               = useState<Phase>('start');
+  const [showInstructions, setShowInstructions] = useState(true);
   const [timeLeft, setTimeLeft]         = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
   const [finalSig, setFinalSig]         = useState<Signals | null>(null);
@@ -872,6 +874,13 @@ export default function PitchMatchGame() {
 
   return (
     <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
+      {showInstructions && (
+        <SwipeInstructions
+          gameId="pitch-match"
+          steps={[{ icon: "🎤", title: "Sing or hum", body: "Match the target pitch shown on screen." }, { icon: "🎵", title: "Hold steady", body: "Stay on pitch as long as you can." }, { icon: "🏆", title: "Score points", body: "The closer your pitch, the more you score." }]}
+          onDone={() => setShowInstructions(false)}
+        />
+      )}
 
       {/* ── Start Screen ─────────────────────────────────────────────────── */}
       {phase === 'start' && (

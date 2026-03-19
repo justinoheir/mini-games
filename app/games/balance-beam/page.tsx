@@ -25,6 +25,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import ScorePopEffect, { useScorePop } from '@/components/ScorePopEffect';
 import StreakBadge from '@/components/StreakBadge';
 import { CATEGORY_THEMES } from '@/lib/theme';
+import SwipeInstructions from '@/components/SwipeInstructions';
 
 const CATEGORY = CATEGORY_THEMES.sports;
 
@@ -195,6 +196,7 @@ export default function BalanceBeamGame() {
   });
 
   const [phase, setPhase]               = useState<Phase>('start');
+  const [showInstructions, setShowInstructions] = useState(true);
   const [timeLeft, setTimeLeft]         = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
   const [finalSig, setFinalSig]         = useState<Signals | null>(null);
@@ -744,6 +746,13 @@ export default function BalanceBeamGame() {
   // ─── RENDER ───────────────────────────────────────────────────────────────
   return (
     <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
+      {showInstructions && (
+        <SwipeInstructions
+          gameId="balance-beam"
+          steps={[{ icon: "📱", title: "Tilt to balance", body: "Tilt your device left and right to stay on the beam." }, { icon: "⚖️", title: "Stay centered", body: "Too far either way and you fall off." }, { icon: "🏆", title: "Beat your time", body: "Balance as long as possible to set a new best." }]}
+          onDone={() => setShowInstructions(false)}
+        />
+      )}
 
       {/* ── Start Screen ────────────────────────────────────────────────── */}
       {phase === 'start' && (

@@ -29,6 +29,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import ScorePopEffect, { useScorePop } from '@/components/ScorePopEffect';
 import StreakBadge from '@/components/StreakBadge';
 import { CATEGORY_THEMES } from '@/lib/theme';
+import SwipeInstructions from '@/components/SwipeInstructions';
 
 const CATEGORY_ACCENT = CATEGORY_THEMES.sports.primaryAccent;
 
@@ -183,6 +184,7 @@ export default function CrowdRoarGame() {
   });
 
   const [phase, setPhase]             = useState<Phase>('start');
+  const [showInstructions, setShowInstructions] = useState(true);
   const [timeLeft, setTimeLeft]       = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
   const [finalSig, setFinalSig]       = useState<Signals | null>(null);
@@ -1006,6 +1008,13 @@ export default function CrowdRoarGame() {
 
   return (
     <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
+      {showInstructions && (
+        <SwipeInstructions
+          gameId="crowd-roar"
+          steps={[{ icon: "📣", title: "Make noise", body: "Shout, clap, or cheer into your mic." }, { icon: "🔊", title: "Hit the meter", body: "Fill the volume meter to energize the crowd." }, { icon: "🏟️", title: "Keep it up", body: "Don't let the crowd go quiet — sustain the roar!" }]}
+          onDone={() => setShowInstructions(false)}
+        />
+      )}
 
       {/* ── Start Screen ───────────────────────────────────────────────────── */}
       {phase === 'start' && (
