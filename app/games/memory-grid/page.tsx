@@ -725,14 +725,15 @@ export default function MemoryGridGame() {
   const accentColor = theme.colors.accent ?? ACCENT;
 
   return (
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accentColor}>
-      {showInstructions && (
+    <>
+      {phase === 'start' && showInstructions && (
         <SwipeInstructions
           gameId="memory-grid"
           steps={[{ icon: "👁️", title: "Watch the pattern", body: "A sequence of tiles will light up." }, { icon: "👆", title: "Repeat it", body: "Tap the tiles in the same order." }, { icon: "🧠", title: "Go longer", body: "Each round adds one more tile to remember." }]}
           onDone={() => setShowInstructions(false)}
         />
       )}
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accentColor}>
       {/* ── Start Screen ───────────────────────────────────────────────────── */}
       {phase === 'start' && (
         <GameStartScreen
@@ -832,6 +833,7 @@ export default function MemoryGridGame() {
         </>
       )}
     </GameShell>
+    </>
   );
 }
 

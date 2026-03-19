@@ -405,14 +405,15 @@ export default function ReflexRally() {
     ? Math.round(sig.reactionTimes.reduce((a,b)=>a+b,0)/sig.reactionTimes.length) : 0;
 
   return (
-    <GameShell title="Reflex Rally" emoji="🎾" accentColor={ACCENT} theme={theme}>
-      {showInstructions && (
+    <>
+      {phase === 'start' && showInstructions && (
         <SwipeInstructions
           gameId="reflex-rally"
           steps={[{ icon: "👆", title: "Tap to return", body: "Tap when the ball reaches your side." }, { icon: "⚡", title: "Time it right", body: "Tap too early or too late and you miss." }, { icon: "🔥", title: "Speed up", body: "Each rally gets faster — how long can you keep it going?" }]}
           onDone={() => setShowInstructions(false)}
         />
       )}
+    <GameShell title="Reflex Rally" emoji="🎾" accentColor={ACCENT} theme={theme}>
       <canvas
         ref={canvasRef}
         style={{ display: phase === 'playing' ? 'block' : 'none', position: 'absolute', top: 0, left: 0, touchAction: 'none' }}
@@ -491,5 +492,6 @@ export default function ReflexRally() {
         </>
       )}
     </GameShell>
+    </>
   );
 }

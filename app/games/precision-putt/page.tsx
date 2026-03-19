@@ -469,14 +469,15 @@ export default function PrecisionPutt() {
   const parTotal = sig ? sig.pars + sig.holesInOne : 0;
 
   return (
-    <GameShell title="Precision Putt" emoji="🏌️" accentColor={ACCENT} theme={theme}>
-      {showInstructions && (
+    <>
+      {phase === 'start' && showInstructions && (
         <SwipeInstructions
           gameId="precision-putt"
           steps={[{ icon: "👆", title: "Swipe to putt", body: "Swipe to aim and set the power of your putt." }, { icon: "⛳", title: "Read the green", body: "Adjust for distance and angle to the hole." }, { icon: "🏆", title: "Fewer strokes", body: "Get the ball in with as few shots as possible." }]}
           onDone={() => setShowInstructions(false)}
         />
       )}
+    <GameShell title="Precision Putt" emoji="🏌️" accentColor={ACCENT} theme={theme}>
       <canvas
         ref={canvasRef}
         style={{ display: phase === 'playing' ? 'block' : 'none', position: 'absolute', top: 0, left: 0, touchAction: 'none' }}
@@ -553,5 +554,6 @@ export default function PrecisionPutt() {
         </>
       )}
     </GameShell>
+    </>
   );
 }

@@ -429,14 +429,15 @@ export default function SpiralThrow() {
   const compRate = sig ? Math.round(sig.completions / Math.max(1, sig.attempts) * 100) : 0;
 
   return (
-    <GameShell title="Spiral Throw" emoji="🏈" accentColor={ACCENT} theme={theme}>
-      {showInstructions && (
+    <>
+      {phase === 'start' && showInstructions && (
         <SwipeInstructions
           gameId="spiral-throw"
           steps={[{ icon: "👆", title: "Swipe to throw", body: "Swipe up to launch the football in a spiral." }, { icon: "🏈", title: "Hit the target", body: "Aim for the moving receiver downfield." }, { icon: "🔥", title: "Build combos", body: "Consecutive completions multiply your score." }]}
           onDone={() => setShowInstructions(false)}
         />
       )}
+    <GameShell title="Spiral Throw" emoji="🏈" accentColor={ACCENT} theme={theme}>
       <canvas
         ref={canvasRef}
         style={{ display: phase === 'playing' ? 'block' : 'none', position: 'absolute', top: 0, left: 0 }}
@@ -515,5 +516,6 @@ export default function SpiralThrow() {
         </>
       )}
     </GameShell>
+    </>
   );
 }

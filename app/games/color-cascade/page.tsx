@@ -665,14 +665,15 @@ export default function ColorCascadeGame() {
   // ─── RENDER ───────────────────────────────────────────────────────────────
 
   return (
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
-      {showInstructions && (
+    <>
+      {phase === 'start' && showInstructions && (
         <SwipeInstructions
           gameId="color-cascade"
           steps={[{ icon: "🎨", title: "Match the color", body: "Tap the falling block that matches the target color." }, { icon: "⚡", title: "Move fast", body: "Blocks speed up as your score grows." }, { icon: "🔥", title: "Build combos", body: "Consecutive correct taps multiply your score." }]}
           onDone={() => setShowInstructions(false)}
         />
       )}
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
 
       {/* ── Start Screen ────────────────────────────────────────────────────── */}
       {phase === 'start' && (
@@ -768,6 +769,7 @@ export default function ColorCascadeGame() {
         </>
       )}
     </GameShell>
+    </>
   );
 }
 
