@@ -1,0 +1,63 @@
+#!/bin/sh
+# Pre-commit hook: block hardcoded secrets before they ever hit git history
+
+FAIL=0
+
+# Files staged for commit
+STAGED=$(git diff --cached --name-only --diff-filter=ACM)
+
+for FILE in $STAGED; do
+  # Skip binary files, lock files, and the example file
+  case "$FILE" in
+    *.png|*.jpg|*.jpeg|*.gif|*.ico|*.svg|*.woff|*.ttf|package-lock.json|yarn.lock|.env.example) continue ;;
+  esac
+
+  [ ! -f "$FILE" ] && continue
+
+  # Block Supabase service role keys
+  if grep -qE "sb_secret_[A-Za-z0-9_-]+" "$FILE" 2>/dev/null; then
+    echo "🚨 BLOCKED: Supabase service key found in $FILE"
+    FAIL=1
+  fi
+
+  # Block Supabase keys hardcoded as string literals
+  if grep -qE "SUPABASE_KEY\s*=\s*['\"]sb_" "$FILE" 2>/dev/null; then
+    echo "🚨 BLOCKED: Hardcoded Supabase key in $FILE — use process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY"
+    FAIL=1
+  fi
+
+  # Block NVIDIA API keys
+  if grep -qE "nvapi-[A-Za-z0-9_-]{20,}" "$FILE" 2>/dev/null; then
+    echo "🚨 BLOCKED: NVIDIA API key found in $FILE"
+    FAIL=1
+  fi
+
+  # Block Anthropic API keys
+  if grep -qE "sk-ant-api[A-Za-z0-9_-]+" "$FILE" 2>/dev/null; then
+    echo "🚨 BLOCKED: Anthropic API key found in $FILE"
+    FAIL=1
+  fi
+
+  # Block GitHub PATs
+  if grep -qE "ghp_[A-Za-z0-9]{36}" "$FILE" 2>/dev/null; then
+    echo "🚨 BLOCKED: GitHub PAT found in $FILE"
+    FAIL=1
+  fi
+
+  # Block ClickUp API keys
+  if grep -qE "pk_[0-9]+_[A-Za-z0-9]{30,}" "$FILE" 2>/dev/null; then
+    echo "🚨 BLOCKED: ClickUp API key found in $FILE"
+    FAIL=1
+  fi
+done
+
+if [ "$FAIL" -eq 1 ]; then
+  echo ""
+  echo "❌ Commit blocked — secrets detected. Use environment variables."
+  echo "   See .env.example for the correct pattern."
+  echo "   To bypass (only if you are sure): git commit --no-verify"
+  exit 1
+fi
+
+echo "✅ Secret scan passed"
+exit 0
