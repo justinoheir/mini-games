@@ -873,14 +873,15 @@ export default function PitchMatchGame() {
   // ─── RENDER ──────────────────────────────────────────────────────────────
 
   return (
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
-      {showInstructions && (
+    <>
+      {phase === 'start' && showInstructions && (
         <SwipeInstructions
           gameId="pitch-match"
           steps={[{ icon: "🎤", title: "Sing or hum", body: "Match the target pitch shown on screen." }, { icon: "🎵", title: "Hold steady", body: "Stay on pitch as long as you can." }, { icon: "🏆", title: "Score points", body: "The closer your pitch, the more you score." }]}
           onDone={() => setShowInstructions(false)}
         />
       )}
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
 
       {/* ── Start Screen ─────────────────────────────────────────────────── */}
       {phase === 'start' && (
@@ -1019,6 +1020,7 @@ export default function PitchMatchGame() {
         </>
       )}
     </GameShell>
+    </>
   );
 }
 

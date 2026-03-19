@@ -1007,14 +1007,15 @@ export default function CrowdRoarGame() {
   // ─── RENDER ──────────────────────────────────────────────────────────────
 
   return (
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
-      {showInstructions && (
+    <>
+      {phase === 'start' && showInstructions && (
         <SwipeInstructions
           gameId="crowd-roar"
           steps={[{ icon: "📣", title: "Make noise", body: "Shout, clap, or cheer into your mic." }, { icon: "🔊", title: "Hit the meter", body: "Fill the volume meter to energize the crowd." }, { icon: "🏟️", title: "Keep it up", body: "Don't let the crowd go quiet — sustain the roar!" }]}
           onDone={() => setShowInstructions(false)}
         />
       )}
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
 
       {/* ── Start Screen ───────────────────────────────────────────────────── */}
       {phase === 'start' && (
@@ -1232,6 +1233,7 @@ export default function CrowdRoarGame() {
         </>
       )}
     </GameShell>
+    </>
   );
 }
 

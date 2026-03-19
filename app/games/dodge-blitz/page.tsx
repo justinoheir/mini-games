@@ -769,14 +769,15 @@ export default function DodgeBlitzGame() {
   // ─── RENDER ───────────────────────────────────────────────────────────────
 
   return (
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
-      {showInstructions && (
+    <>
+      {phase === 'start' && showInstructions && (
         <SwipeInstructions
           gameId="dodge-blitz"
           steps={[{ icon: "👆", title: "Tap to dodge", body: "Tap anywhere to jump or dodge incoming obstacles." }, { icon: "⚡", title: "React fast", body: "Obstacles speed up as your score grows." }, { icon: "🔥", title: "Survive", body: "How long can you last?" }]}
           onDone={() => setShowInstructions(false)}
         />
       )}
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
 
       {/* ── Start Screen ──────────────────────────────────────────────────── */}
       {phase === 'start' && (
@@ -882,6 +883,7 @@ export default function DodgeBlitzGame() {
         </>
       )}
     </GameShell>
+    </>
   );
 }
 

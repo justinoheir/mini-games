@@ -457,14 +457,15 @@ export default function PenaltyKick() {
   const goals = sig?.goals ?? 0;
 
   return (
-    <GameShell title="Penalty Kick" emoji="⚽" accentColor={ACCENT} theme={theme}>
-      {showInstructions && (
+    <>
+      {phase === 'start' && showInstructions && (
         <SwipeInstructions
           gameId="penalty-kick"
           steps={[{ icon: "👆", title: "Swipe to kick", body: "Swipe in the direction you want to shoot." }, { icon: "⚽", title: "Aim for gaps", body: "The goalkeeper moves — find the open corner." }, { icon: "🥅", title: "Score goals", body: "You have 5 shots. Score as many as possible." }]}
           onDone={() => setShowInstructions(false)}
         />
       )}
+    <GameShell title="Penalty Kick" emoji="⚽" accentColor={ACCENT} theme={theme}>
       <canvas
         ref={canvasRef}
         style={{ display: phase === 'playing' ? 'block' : 'none', position: 'absolute', top: 0, left: 0 }}
@@ -541,5 +542,6 @@ export default function PenaltyKick() {
         </>
       )}
     </GameShell>
+    </>
   );
 }
