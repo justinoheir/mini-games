@@ -457,14 +457,15 @@ export default function BreathRider() {
   const accent = theme.colors.accent;
 
   return (
-    <GameShell title="Breath Rider" emoji="🌬️" accentColor={accent} theme={theme}>
-      {showInstructions && (
+    <>
+      {gameState === 'start' && showInstructions && (
         <SwipeInstructions
           gameId="breath-rider"
           steps={[{ icon: "🌬️", title: "Breathe in", body: "Inhale slowly to rise. Exhale to descend." }, { icon: "🚀", title: "Navigate", body: "Guide your rider through the gaps." }, { icon: "💨", title: "Stay smooth", body: "Calm, steady breaths = better control." }]}
           onDone={() => setShowInstructions(false)}
         />
       )}
+    <GameShell title="Breath Rider" emoji="🌬️" accentColor={accent} theme={theme}>
       <canvas
         ref={canvasRef}
         style={{
@@ -626,5 +627,6 @@ export default function BreathRider() {
         </>
       )}
     </GameShell>
+    </>
   );
 }

@@ -400,14 +400,15 @@ export default function WhisperBomb() {
   }, []);
 
   return (
-    <GameShell title="Whisper Bomb" emoji="💣" accentColor={accent} theme={theme}>
-      {showInstructions && (
+    <>
+      {gameState === 'start' && showInstructions && (
         <SwipeInstructions
           gameId="whisper-bomb"
           steps={[{ icon: "🎤", title: "Blow softly", body: "Use your mic to breathe into the bomb fuse." }, { icon: "💣", title: "Control the fuse", body: "Too loud = fuse burns fast. Too quiet = nothing happens." }, { icon: "🏆", title: "Last longest", body: "Survive longer than your personal best." }]}
           onDone={() => setShowInstructions(false)}
         />
       )}
+    <GameShell title="Whisper Bomb" emoji="💣" accentColor={accent} theme={theme}>
       {/* Flash overlay */}
       <div
         ref={flashRef}
@@ -766,5 +767,6 @@ export default function WhisperBomb() {
         </>
       )}
     </GameShell>
+    </>
   );
 }

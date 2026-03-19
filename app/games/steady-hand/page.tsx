@@ -856,14 +856,15 @@ export default function SteadyHandGame() {
   // ─── RENDER ──────────────────────────────────────────────────────────────
 
   return (
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accent}>
-      {showInstructions && (
+    <>
+      {phase === 'start' && showInstructions && (
         <SwipeInstructions
           gameId="steady-hand"
           steps={[{ icon: "✋", title: "Hold still", body: "Keep your device as still as possible." }, { icon: "⏱️", title: "Steady wins", body: "The less you move, the higher you score." }, { icon: "🏆", title: "Beat your best", body: "Try to beat your personal steadiness record." }]}
           onDone={() => setShowInstructions(false)}
         />
       )}
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accent}>
 
       {/* ── Start Screen ──────────────────────────────────────────────────── */}
       {phase === 'start' && (
@@ -1070,6 +1071,7 @@ export default function SteadyHandGame() {
         </>
       )}
     </GameShell>
+    </>
   );
 }
 

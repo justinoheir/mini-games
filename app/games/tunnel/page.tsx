@@ -645,14 +645,15 @@ export default function TunnelGame() {
   const accent = theme.colors.accent ?? '#00ffff';
 
   return (
-    <GameShell title="Infinite Tunnel" emoji="🚀" accentColor={accent} theme={theme}>
-      {showInstructions && (
+    <>
+      {gameState === 'start' && showInstructions && (
         <SwipeInstructions
           gameId="tunnel"
           steps={[{ icon: "👆", title: "Tap to steer", body: "Tap left or right to move through the tunnel." }, { icon: "⚡", title: "Don't touch walls", body: "Hitting the walls ends your run." }, { icon: "🔥", title: "Go further", body: "The tunnel speeds up — how far can you go?" }]}
           onDone={() => setShowInstructions(false)}
         />
       )}
+    <GameShell title="Infinite Tunnel" emoji="🚀" accentColor={accent} theme={theme}>
       <div ref={mountRef} style={{ width: '100%', height: '100%', display: gameState === 'playing' ? 'block' : 'none', position: 'relative', zIndex: 1, touchAction: 'none' }} />
 
       {/* Near-miss edge glow — appears via DOM ref, fades out */}
@@ -819,5 +820,6 @@ export default function TunnelGame() {
         </>
       )}
     </GameShell>
+    </>
   );
 }

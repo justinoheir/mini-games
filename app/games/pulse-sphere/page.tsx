@@ -462,14 +462,15 @@ export default function PulseSphere() {
   const accent = theme.colors.accent;
 
   return (
-    <GameShell title="Pulse Sphere" emoji="🔮" accentColor={accent} theme={theme}>
-      {showInstructions && (
+    <>
+      {gameState === 'start' && showInstructions && (
         <SwipeInstructions
           gameId="pulse-sphere"
           steps={[{ icon: "👆", title: "Tap the sphere", body: "Tap in rhythm with the pulse to score." }, { icon: "🎵", title: "Feel the beat", body: "The sphere glows on every beat." }, { icon: "🔥", title: "Build combos", body: "Perfect timing builds your streak multiplier." }]}
           onDone={() => setShowInstructions(false)}
         />
       )}
+    <GameShell title="Pulse Sphere" emoji="🔮" accentColor={accent} theme={theme}>
       <div ref={mountRef} style={{ width:'100%', height:'100%', display: gameState==='playing' ? 'block' : 'none', position:'relative', zIndex:1, touchAction:'none' }} />
 
       {gameState==='playing' && (
@@ -615,5 +616,6 @@ export default function PulseSphere() {
         )}
       </AnimatePresence>
     </GameShell>
+    </>
   );
 }
