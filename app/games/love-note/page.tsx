@@ -9,6 +9,12 @@ import { initAudio, sfx, haptic, startMusic } from '@/lib/audio';
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
+import { motion, AnimatePresence } from 'framer-motion';
+import ScorePopEffect, { useScorePop } from '@/components/ScorePopEffect';
+import StreakBadge from '@/components/StreakBadge';
+import { CATEGORY_THEMES } from '@/lib/theme';
+
+const CATEGORY_ACCENT = CATEGORY_THEMES.holiday.primaryAccent;
 
 // ─── SPEC CONSTANTS ──────────────────────────────────────────────────────────
 
@@ -147,6 +153,16 @@ export default function LoveNoteGame() {
   // ── Player session ─────────────────────────────────────────────────────────
   const [playerName,   setPlayerName]   = useState('');
   const [playerAvatar, setPlayerAvatar] = useState('🎮');
+  const { pops, triggerPop } = useScorePop();
+  const prevScoreRef = useRef(0);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const numScore = 0;
+    if (numScore > prevScoreRef.current) {
+      triggerPop(`+${numScore - prevScoreRef.current}`, window.innerWidth / 2, 200);
+    }
+    prevScoreRef.current = numScore;
+  }, [0]);
   const playerSessionRef = useRef<PlayerSession | null>(null);
 
   // ─── TIMEOUT HELPERS ───────────────────────────────────────────────────────
@@ -616,6 +632,12 @@ export default function LoveNoteGame() {
         />
       )}
 
+      {outerPhase === 'playing' && (
+        <>
+          <ScorePopEffect pops={pops} accentColor={CATEGORY_ACCENT} />
+          <StreakBadge streak={0} accentColor={CATEGORY_ACCENT} />
+        </>
+      )}
     </GameShell>
   );
 }

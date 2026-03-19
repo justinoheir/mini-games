@@ -1,6 +1,5 @@
 'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
 import * as THREE from 'three';
 import GameShell from '@/components/GameShell';
 import GameHUD from '@/components/GameHUD';
@@ -15,6 +14,12 @@ import { postWebhook } from '@/lib/webhook';
 import { createTiltController } from '@/lib/tilt';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
 import PlayerNameInput from '@/components/PlayerNameInput';
+import { motion, AnimatePresence } from 'framer-motion';
+import ScorePopEffect, { useScorePop } from '@/components/ScorePopEffect';
+import StreakBadge from '@/components/StreakBadge';
+import { CATEGORY_THEMES } from '@/lib/theme';
+
+const CATEGORY_ACCENT = CATEGORY_THEMES.sports.primaryAccent;
 
 const GAME_ID = 'tunnel';
 const PB_KEY  = 'pb_tunnel';
@@ -256,6 +261,16 @@ export default function TunnelGame() {
   const [survivedDisplay, setSurvivedDisplay] = useState(0);
   const [playerName, setPlayerName]   = useState('');
   const [playerAvatar, setPlayerAvatar] = useState('🎮');
+  const { pops, triggerPop } = useScorePop();
+  const prevScoreRef = useRef(0);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const numScore = typeof survivedDisplay === 'number' ? survivedDisplay : 0;
+    if (numScore > prevScoreRef.current) {
+      triggerPop(`+${numScore - prevScoreRef.current}`, window.innerWidth / 2, 200);
+    }
+    prevScoreRef.current = numScore;
+  }, [survivedDisplay]); // triggerPop is stable
   const playerSessionRef              = useRef<PlayerSession | null>(null);
   const [scorePop, setScorePop]       = useState<string | null>(null);
   const [nearMissVisible, setNearMissVisible] = useState(false);
@@ -788,6 +803,12 @@ export default function TunnelGame() {
           100% { opacity: 0; transform: translateX(-50%) scale(0.9) translateY(-40px); }
         }
       `}</style>
+      {gameState === 'playing' && (
+        <>
+          <ScorePopEffect pops={pops} accentColor={CATEGORY_ACCENT} />
+          <StreakBadge streak={0} accentColor={CATEGORY_ACCENT} />
+        </>
+      )}
     </GameShell>
   );
 }

@@ -1,6 +1,5 @@
 'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
 import { Mic } from 'lucide-react';
 import GameShell from '@/components/GameShell';
 import GameStartScreen from '@/components/GameStartScreen';
@@ -10,6 +9,12 @@ import { hapticScore, hapticFail, hapticVictory } from '@/lib/haptics';
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
+import { motion, AnimatePresence } from 'framer-motion';
+import ScorePopEffect, { useScorePop } from '@/components/ScorePopEffect';
+import StreakBadge from '@/components/StreakBadge';
+import { CATEGORY_THEMES } from '@/lib/theme';
+
+const CATEGORY_ACCENT = CATEGORY_THEMES.breath.primaryAccent;
 
 const GAME_ID = 'whisper-bomb';
 const GAME_ACCENT = '#ef4444';
@@ -77,6 +82,16 @@ export default function WhisperBomb() {
   const [micError, setMicError]         = useState(false);
   const [playerName, setPlayerName]     = useState('');
   const [playerAvatar, setPlayerAvatar] = useState('🎮');
+  const { pops, triggerPop } = useScorePop();
+  const prevScoreRef = useRef(0);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const numScore = typeof 0 === 'number' ? 0 : 0;
+    if (numScore > prevScoreRef.current) {
+      triggerPop(`+${numScore - prevScoreRef.current}`, window.innerWidth / 2, 200);
+    }
+    prevScoreRef.current = numScore;
+  }, [0]); // triggerPop is stable
   const playerSessionRef                = useRef<PlayerSession | null>(null);
 
   // ── Polish state ───────────────────────────────────────────────────────────
@@ -735,6 +750,12 @@ export default function WhisperBomb() {
           </motion.div>
         )}
       </AnimatePresence>
+      {gameState === 'playing' && (
+        <>
+          <ScorePopEffect pops={pops} accentColor={CATEGORY_ACCENT} />
+          <StreakBadge streak={0} accentColor={CATEGORY_ACCENT} />
+        </>
+      )}
     </GameShell>
   );
 }

@@ -19,6 +19,12 @@ import { postWebhook } from '@/lib/webhook';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
 import { createTiltController } from '@/lib/tilt';
 import { Particle, spawnBurst, updateAndDrawParticles } from '@/lib/particles';
+import { motion, AnimatePresence } from 'framer-motion';
+import ScorePopEffect, { useScorePop } from '@/components/ScorePopEffect';
+import StreakBadge from '@/components/StreakBadge';
+import { CATEGORY_THEMES } from '@/lib/theme';
+
+const CATEGORY = CATEGORY_THEMES.sports;
 
 // ─── SPEC CONSTANTS ────────────────────────────────────────────────────────────
 const GAME_ID      = 'balance-beam';
@@ -191,6 +197,14 @@ export default function BalanceBeamGame() {
   const [finalSig, setFinalSig]         = useState<Signals | null>(null);
   const [playerName, setPlayerName]     = useState('');
   const [playerAvatar, setPlayerAvatar] = useState('🎮');
+  const { pops, triggerPop } = useScorePop();
+  const prevScoreRef = useRef(0);
+  useEffect(() => {
+    if (scoreDisplay > prevScoreRef.current) {
+      triggerPop(`+${scoreDisplay - prevScoreRef.current}`, window.innerWidth / 2, 200);
+    }
+    prevScoreRef.current = scoreDisplay;
+  }, [scoreDisplay, triggerPop]);
   const playerSessionRef                = useRef<PlayerSession | null>(null);
 
   // Sync brand theme into state for rAF loop
@@ -756,6 +770,12 @@ export default function BalanceBeamGame() {
                 { label: 'BALANCE', value: scoreDisplay },
               ]}
             />
+          )}
+          {phase === 'playing' && (
+            <>
+              <ScorePopEffect pops={pops} accentColor={CATEGORY.primaryAccent} />
+              <StreakBadge streak={0} accentColor={CATEGORY.primaryAccent} />
+            </>
           )}
         </>
       )}
