@@ -9,6 +9,14 @@ Justin reviews at 10am. No new spend. No security issues. Every commit to `stagi
 - Vercel preview: https://mini-games-intoether-ethertc.vercel.app
 - ClickUp list: 901614090394 (Overnight Sprint — AAA Polish 2026-03-18)
 
+## Critical Directives from Justin
+1. **Keep working until 10am EST** — even if your games are done, find more to improve. There's always room to push further. Second pass every game. Third pass if needed. Keep raising the bar.
+2. **Document everything in ClickUp** — for every task you complete or update, POST a comment to the ClickUp task with:
+   - What you changed and why
+   - Before/after description
+   - Any known limitations or follow-up opportunities
+   - Use: POST https://api.clickup.com/api/v2/task/{task_id}/comment with body `{"comment_text": "..."}` and header `Authorization: pk_26240221_VMLZQXF2CKTB8LUGR0TJ0P2H0UYVJ4M5`
+
 ## Rules
 1. NEVER hardcode API keys or secrets. Use env vars only.
 2. Always `git pull --rebase origin staging` before every push
