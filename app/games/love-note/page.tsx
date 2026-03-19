@@ -195,7 +195,7 @@ export default function LoveNoteGame() {
     // Personal best tracking
     try {
       const _pbPrev = parseInt(localStorage.getItem(PB_KEY) || '0', 10);
-      const _pbVal = parseFloat(String(0));
+      const _pbVal = parseFloat(String(sigRef.current?.longestSequence ?? 0));
       if (!isNaN(_pbVal) && _pbVal > _pbPrev) {
         localStorage.setItem(PB_KEY, String(Math.round(_pbVal)));
         setIsNewBest(true);
