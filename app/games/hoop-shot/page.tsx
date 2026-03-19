@@ -5,7 +5,8 @@ import GameHUD from '@/components/GameHUD';
 import GameStartScreen from '@/components/GameStartScreen';
 import Countdown from '@/components/Countdown';
 import EndScreen from '@/components/EndScreen';
-import { initAudio, sfx, haptic, startMusic, increaseMusicTempo } from '@/lib/audio';
+import { initAudio, sfx, startMusic, increaseMusicTempo } from '@/lib/audio';
+import { hapticScore, hapticFail, hapticVictory, hapticImpact } from '@/lib/haptics';
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
@@ -16,7 +17,16 @@ const ACCENT = '#f97316';
 const GAME_ID = 'hoop-shot';
 const DURATION = 60;
 
-interface FloatText { x: number; y: number; text: string; color: string; alpha: number; vy: number; }
+// Stadium energy crowd comments shown on streak milestones
+const CROWD_LINES = [
+  '🏟️ CROWD GOES WILD!',
+  '🔥 ON FIRE!',
+  '🏆 UNSTOPPABLE!',
+  '⚡ ELECTRIC!',
+  '👑 LEGENDARY!',
+];
+
+interface FloatText { x: number; y: number; text: string; color: string; alpha: number; vy: number; scale: number; }
 interface Signals {
   totalShots: number; makes: number; misses: number;
   threePointAttempts: number; threePointMakes: number;
@@ -48,6 +58,7 @@ export default function HoopShot() {
   const [scoreDisplay, setScoreDisplay] = useState(0);
   const [streakDisplay, setStreakDisplay] = useState(0);
   const [finalSig, setFinalSig] = useState<Signals | null>(null);
+  const [isNewBest, setIsNewBest] = useState(false);
   const [playerName, setPlayerName]   = useState('');
   const [playerAvatar, setPlayerAvatar] = useState('🎮');
   const playerSessionRef              = useRef<PlayerSession | null>(null);
@@ -56,6 +67,8 @@ export default function HoopShot() {
     running: false,
     timeLeft: DURATION,
     score: 0,
+    prevBest: 0,
+    milestoneFired50: false,
     // Ball state
     ballX: 0, ballY: 0, ballVX: 0, ballVY: 0,
     ballInFlight: false, ballVisible: true,
@@ -85,6 +98,7 @@ export default function HoopShot() {
     hoopScored: false,
     particles: [] as Particle[],
     shake: { intensity: 0, duration: 0 } as ShakeState,
+    nearMissX: 0, nearMissY: 0, nearMissTimer: 0,
   });
 
   const endGame = useCallback(() => {
@@ -96,6 +110,14 @@ export default function HoopShot() {
     const finalScore = s.sig.score;
     const finalSigSnap = { ...s.sig };
     setFinalSig(finalSigSnap);
+    const isNewBestVal = finalScore > s.prevBest;
+    if (isNewBestVal) {
+      localStorage.setItem(`pb_${GAME_ID}`, String(finalScore));
+      hapticVictory();
+    } else {
+      hapticVictory();
+    }
+    setIsNewBest(isNewBestVal);
     setPhase('done');
     postWebhook(theme, GAME_ID, {
       score: `${finalScore} pts`,
@@ -127,6 +149,8 @@ export default function HoopShot() {
     s.running = true;
     s.timeLeft = DURATION;
     s.score = 0;
+    s.prevBest = parseInt(localStorage.getItem(`pb_${GAME_ID}`) ?? '0');
+    s.milestoneFired50 = false;
     s.sig = { totalShots:0, makes:0, misses:0, threePointAttempts:0, threePointMakes:0,
                streakCurrent:0, streakMax:0, earlyMakes:0, earlyAttempts:0,
                lateMakes:0, lateAttempts:0, powerSum:0, score:0 };
@@ -134,6 +158,7 @@ export default function HoopShot() {
     s.netSwish = 0;
     s.particles = [];
     s.shake = { intensity: 0, duration: 0 };
+    s.nearMissTimer = 0;
     setScoreDisplay(0);
     setStreakDisplay(0);
     s.rimFlash = 0;
@@ -152,9 +177,9 @@ export default function HoopShot() {
     timerRef.current = setInterval(() => {
       s.timeLeft--;
       setTimeLeft(s.timeLeft);
-      if (s.timeLeft === 15) increaseMusicTempo(120); // ramp music for final stretch
-      if (s.timeLeft <= 5 && s.timeLeft > 0) sfx.tick(); // urgency cue
-      if (s.timeLeft <= 0) { sfx.success(); haptic([30, 50, 100]); endGame(); }
+      if (s.timeLeft === 15) increaseMusicTempo(120);
+      if (s.timeLeft <= 5 && s.timeLeft > 0) sfx.tick();
+      if (s.timeLeft <= 0) { sfx.success(); endGame(); }
     }, 1000);
 
     const loop = () => {
@@ -232,13 +257,11 @@ export default function HoopShot() {
         s.ballX += s.ballVX;
         s.ballY += s.ballVY;
 
-        // Check hoop collision
         const dx = s.ballX - s.hoopX;
         const dy = s.ballY - s.hoopY;
         const dist = Math.sqrt(dx*dx + dy*dy);
 
         if (dist < s.hoopRadius + s.ballRadius && !s.hoopScored) {
-          // Check if going downward through hoop
           if (s.ballVY > 0 && Math.abs(dx) < s.hoopRadius * 0.7) {
             // SCORED!
             s.hoopScored = true;
@@ -255,13 +278,31 @@ export default function HoopShot() {
             const t = DURATION - s.timeLeft;
             if (t < 40) s.sig.earlyMakes++;
             else s.sig.lateMakes++;
-            // sfx.go() on streak≥3 — delayed 100ms so it doesn't stack with make sound
             if (s.sig.streakCurrent >= 3) { setTimeout(() => sfx.go(), 100); }
             s.netSwish = 20;
             setStreakDisplay(s.sig.streakCurrent);
-            s.floats.push({ x: s.hoopX, y: s.hoopY - 30, text: `+${pts}`, color: isThree ? '#fbbf24' : '#4ade80', alpha: 1, vy: -2 });
-            haptic([60, 30, 60]);
-            spawnBurst(s.particles, s.hoopX, s.hoopY, isThree ? '#fbbf24' : '#4ade80', 20, 6);
+            hapticScore();
+
+            // Larger score pop for 3pt
+            const popSize = isThree ? 52 : 40;
+            s.floats.push({ x: s.hoopX, y: s.hoopY - 30, text: `+${pts}`, color: isThree ? '#fbbf24' : '#4ade80', alpha: 1, vy: -2.5, scale: isThree ? 1.4 : 1.0 });
+
+            // Stadium energy at streak milestones
+            if (s.sig.streakCurrent === 3) {
+              s.floats.push({ x: W/2, y: H*0.45, text: '🔥 STREAK!', color: '#f97316', alpha: 1, vy: -1.2, scale: 1.1 });
+            } else if (s.sig.streakCurrent >= 5 && s.sig.streakCurrent % 3 === 2) {
+              const line = CROWD_LINES[Math.min(Math.floor(s.sig.streakCurrent / 3) - 1, CROWD_LINES.length - 1)];
+              s.floats.push({ x: W/2, y: H*0.4, text: line, color: '#fbbf24', alpha: 1, vy: -1.0, scale: 1.2 });
+            }
+
+            // PB mid-game milestone
+            if (!s.milestoneFired50 && s.score > s.prevBest && s.prevBest > 0) {
+              s.milestoneFired50 = true;
+              s.floats.push({ x: W/2, y: H*0.35, text: '🏆 NEW BEST!', color: '#fbbf24', alpha: 1, vy: -0.8, scale: 1.3 });
+              setTimeout(() => sfx.success(), 150);
+            }
+
+            spawnBurst(s.particles, s.hoopX, s.hoopY, isThree ? '#fbbf24' : '#4ade80', isThree ? 30 : 20, 6);
             setTimeout(() => resetBall(), 1200);
             s.ballInFlight = false;
             s.ballVisible = false;
@@ -271,17 +312,24 @@ export default function HoopShot() {
             s.ballVX = Math.cos(angle) * Math.abs(s.ballVX + s.ballVY) * 0.5;
             s.ballVY = -Math.abs(s.ballVY) * 0.6;
             sfx.collision();
+            hapticImpact();
             s.rimFlash = Date.now() + 200;
+            // Near-miss "So close!" if ball was very close to scoring
+            if (Math.abs(dx) < s.hoopRadius * 0.4) {
+              s.nearMissX = s.hoopX;
+              s.nearMissY = s.hoopY - 50;
+              s.nearMissTimer = 60;
+            }
           }
         }
 
-        // Out of bounds
         if (s.ballY > H + 60 || s.ballX < -60 || s.ballX > W + 60) {
           if (!s.hoopScored) {
             s.sig.misses++;
             s.sig.streakCurrent = 0;
             setStreakDisplay(0);
-            sfx.nearMiss(); // distinct from rim bounce (sfx.collision); miss = "almost"
+            sfx.nearMiss();
+            hapticFail();
             triggerShake(s.shake, 5, 8);
             spawnBurst(s.particles, s.ballX, s.ballY, '#ef4444', 10, 4);
           }
@@ -299,12 +347,10 @@ export default function HoopShot() {
         const br = s.ballRadius;
         ctx.save();
         ctx.shadowBlur = 12; ctx.shadowColor = ACCENT;
-        // Ball base
         const ballGrad = ctx.createRadialGradient(s.ballX - br*0.3, s.ballY - br*0.3, br*0.1, s.ballX, s.ballY, br);
         ballGrad.addColorStop(0, '#f97316'); ballGrad.addColorStop(1, '#c2410c');
         ctx.fillStyle = ballGrad;
         ctx.beginPath(); ctx.arc(s.ballX, s.ballY, br, 0, Math.PI*2); ctx.fill();
-        // Basketball lines
         ctx.strokeStyle = 'rgba(0,0,0,0.4)'; ctx.lineWidth = 1.5;
         ctx.beginPath(); ctx.arc(s.ballX, s.ballY, br, 0, Math.PI*2); ctx.stroke();
         ctx.beginPath(); ctx.moveTo(s.ballX - br, s.ballY); ctx.lineTo(s.ballX + br, s.ballY); ctx.stroke();
@@ -327,30 +373,45 @@ export default function HoopShot() {
         ctx.restore();
       }
 
-      // Float texts
+      // Near-miss "So close!" overlay
+      if (s.nearMissTimer > 0) {
+        const alpha = Math.min(1, s.nearMissTimer / 20) * Math.min(1, (s.nearMissTimer > 40 ? 1 : s.nearMissTimer / 40));
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = '#fbbf24';
+        ctx.font = 'bold 28px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.shadowBlur = 12;
+        ctx.shadowColor = '#fbbf24';
+        ctx.fillText('So close! 😬', s.nearMissX, s.nearMissY);
+        ctx.restore();
+        s.nearMissTimer--;
+      }
+
+      // Float texts with scale
       s.floats = s.floats.filter(f => f.alpha > 0.02);
       s.floats.forEach(f => {
         ctx.save();
         ctx.globalAlpha = f.alpha;
         ctx.fillStyle = f.color;
-        ctx.font = `bold 28px sans-serif`;
+        const sz = Math.round((f.scale ?? 1) * 36);
+        ctx.font = `bold ${sz}px sans-serif`;
         ctx.textAlign = 'center';
+        ctx.shadowBlur = 10;
+        ctx.shadowColor = f.color;
         ctx.fillText(f.text, f.x, f.y);
         ctx.restore();
-        f.y += f.vy; f.alpha *= 0.96;
+        f.y += f.vy; f.alpha *= 0.955;
       });
 
-      // Particles layer (drawn outside shake transform for stability)
       ctx.restore();
       updateAndDrawParticles(ctx, s.particles);
-      // HUD drawn by DOM overlay GameHUD component
 
       animRef.current = requestAnimationFrame(loop);
     };
     animRef.current = requestAnimationFrame(loop);
   }, [endGame, resetBall]);
 
-  // Touch handlers
   const handleTouchStart = useCallback((e: React.TouchEvent) => {
     const s = stateRef.current;
     if (!s.running || s.ballInFlight || !s.ballVisible) return;
@@ -371,7 +432,7 @@ export default function HoopShot() {
     const speed = Math.sqrt(dx*dx + dy*dy) / dt;
     s.isSwiping = false;
 
-    if (dy > -20) return; // must swipe up
+    if (dy > -20) return;
     const power = Math.min(speed * 18, 22);
     const angle = Math.atan2(dy, dx);
     s.ballVX = Math.cos(angle) * power;
@@ -421,6 +482,7 @@ export default function HoopShot() {
     cancelAnimationFrame(animRef.current);
     if (timerRef.current) clearInterval(timerRef.current);
     setStreakDisplay(0);
+    setIsNewBest(false);
     setPhase('start');
   }, []);
 
@@ -471,6 +533,7 @@ export default function HoopShot() {
             { label: 'Accuracy', value: `${acc}%`, color: '#4ade80' },
             { label: 'Best Streak', value: `${sig.streakMax}`, color: '#fbbf24' },
             { label: '3PT Shots', value: `${sig.threePointMakes}/${sig.threePointAttempts}`, color: '#c084fc' },
+            ...(isNewBest ? [{ label: '🏆 Personal Best', value: 'NEW RECORD!', color: '#fbbf24' }] : []),
           ]}
           accentColor={ACCENT}
           onPlayAgain={handlePlayAgain}
