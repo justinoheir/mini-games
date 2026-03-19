@@ -26,6 +26,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import ScorePopEffect, { useScorePop } from '@/components/ScorePopEffect';
 import StreakBadge from '@/components/StreakBadge';
 import { CATEGORY_THEMES } from '@/lib/theme';
+import SwipeInstructions from '@/components/SwipeInstructions';
 
 const CATEGORY_ACCENT = CATEGORY_THEMES.holiday.primaryAccent;
 
@@ -323,6 +324,7 @@ export default function HarvestCatch() {
 
   const phaseRef                        = useRef<Phase>('start');
   const [phase, setPhase]               = useState<Phase>('start');
+  const [showInstructions, setShowInstructions] = useState(true);
   const [timeLeft, setTimeLeft]         = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
   const [streakDisplay, setStreakDisplay] = useState(0);
@@ -875,6 +877,13 @@ export default function HarvestCatch() {
 
   return (
     <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
+      {showInstructions && (
+        <SwipeInstructions
+          gameId="harvest-catch"
+          steps={[{ icon: "🍎", title: "Catch the harvest", body: "Tilt your device to move the basket." }, { icon: "⭐", title: "Rare items = more", body: "Golden items are worth extra — don't miss them." }, { icon: "🚫", title: "Avoid rocks", body: "Catching rocks costs you a life." }]}
+          onDone={() => setShowInstructions(false)}
+        />
+      )}
 
       {/* ── Start Screen ─────────────────────────────────────────────────── */}
       {phase === 'start' && (

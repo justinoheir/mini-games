@@ -15,6 +15,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import ScorePopEffect, { useScorePop } from '@/components/ScorePopEffect';
 import StreakBadge from '@/components/StreakBadge';
 import { CATEGORY_THEMES } from '@/lib/theme';
+import SwipeInstructions from '@/components/SwipeInstructions';
 
 const CATEGORY_ACCENT = CATEGORY_THEMES.holiday.primaryAccent;
 
@@ -193,6 +194,7 @@ export default function TurkeyTrotGame() {
 
   // Only minimal state drives re-renders
   const [phase, setPhase]               = useState<Phase>('start');
+  const [showInstructions, setShowInstructions] = useState(true);
   const [timeLeft, setTimeLeft]         = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
   // ⚡ SPEED % — spec HUD item 3: (currentSpeed - BASE) / (MAX - BASE) * 100
@@ -724,6 +726,13 @@ export default function TurkeyTrotGame() {
 
   return (
     <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accent}>
+      {showInstructions && (
+        <SwipeInstructions
+          gameId="turkey-trot"
+          steps={[{ icon: "🦃", title: "Help the turkey run", body: "Tap left or right to dodge obstacles." }, { icon: "🌽", title: "Collect corn", body: "Grab corn for bonus points as you run." }, { icon: "🏃", title: "Don't get caught", body: "Avoid the farmer — how far can you run?" }]}
+          onDone={() => setShowInstructions(false)}
+        />
+      )}
       {/* ── Start Screen ──────────────────────────────────────────────────── */}
       {phase === 'start' && (
         <GameStartScreen
