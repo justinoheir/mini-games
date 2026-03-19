@@ -332,18 +332,28 @@ export default function CrowdRoarGame() {
     const s = stateRef.current;
 
     // ── FIX: Size canvas to viewport before any drawing ─────────────────
-    canvas.width  = canvas.offsetWidth  || window.innerWidth;
-    canvas.height = canvas.offsetHeight || window.innerHeight;
+    const dpr = window.devicePixelRatio || 1;
+    const w = canvas.offsetWidth;
+    const h = canvas.offsetHeight;
+    canvas.width  = w * dpr;
+    canvas.height = h * dpr;
+    const ctx2 = canvas.getContext('2d');
+    if (ctx2) ctx2.setTransform(dpr, 0, 0, dpr, 0, 0);
 
     // Re-init crowd for current canvas size
-    initCrowd(canvas.width, canvas.height);
+    initCrowd(canvas.offsetWidth, canvas.offsetHeight);
 
     // ── FIX: Add resize listener here (canvas wasn't mounted during useEffect)
     const onResize = () => {
-      canvas.width  = canvas.offsetWidth  || window.innerWidth;
-      canvas.height = canvas.offsetHeight || window.innerHeight;
+      const dpr = window.devicePixelRatio || 1;
+      const w = canvas.offsetWidth;
+      const h = canvas.offsetHeight;
+      canvas.width  = w * dpr;
+      canvas.height = h * dpr;
+      const ctx2 = canvas.getContext('2d');
+      if (ctx2) ctx2.setTransform(dpr, 0, 0, dpr, 0, 0);
       if (stateRef.current.running || stateRef.current.finaleActive) {
-        initCrowd(canvas.width, canvas.height);
+        initCrowd(canvas.offsetWidth, canvas.offsetHeight);
       }
     };
     window.addEventListener('resize', onResize);
@@ -436,8 +446,8 @@ export default function CrowdRoarGame() {
     const loop = () => {
       // ── FIX: Allow loop to continue during finale for stadium explosion ─
       if (!s.running && !s.finaleActive) return;
-      const W   = canvas.width;
-      const H   = canvas.height;
+      const W   = canvas.offsetWidth;
+      const H   = canvas.offsetHeight;
       const now = Date.now();
 
       // ── During finale: skip game logic, just render the crowd explosion ─
@@ -884,10 +894,15 @@ export default function CrowdRoarGame() {
     if (!canvas) return;
 
     const resize = () => {
-      canvas.width  = canvas.offsetWidth  || window.innerWidth;
-      canvas.height = canvas.offsetHeight || window.innerHeight;
+      const dpr = window.devicePixelRatio || 1;
+      const w = canvas.offsetWidth;
+      const h = canvas.offsetHeight;
+      canvas.width  = w * dpr;
+      canvas.height = h * dpr;
+      const ctx2 = canvas.getContext('2d');
+      if (ctx2) ctx2.setTransform(dpr, 0, 0, dpr, 0, 0);
       if (stateRef.current.running) {
-        initCrowd(canvas.width, canvas.height);
+        initCrowd(canvas.offsetWidth, canvas.offsetHeight);
       }
     };
     resize();

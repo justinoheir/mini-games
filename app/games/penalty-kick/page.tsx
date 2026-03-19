@@ -130,7 +130,7 @@ export default function PenaltyKick() {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const s = stateRef.current;
-    const W = canvas.width, H = canvas.height;
+    const W = window.innerWidth, H = window.innerHeight;
     s.ballX = W / 2; s.ballY = H * 0.75;
     s.ballVX = 0; s.ballVY = 0; s.ballInFlight = false;
     s.keeperX = W / 2; s.keeperDiving = false; s.keeperVX = 0;
@@ -147,7 +147,7 @@ export default function PenaltyKick() {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
     const s = stateRef.current;
-    const W = canvas.width, H = canvas.height;
+    const W = window.innerWidth, H = window.innerHeight;
 
     s.running = true;
     s.shots = 0; s.goals = 0;
@@ -419,8 +419,22 @@ export default function PenaltyKick() {
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    canvas.width = window.innerWidth; canvas.height = window.innerHeight;
-    const onResize = () => { canvas.width = window.innerWidth; canvas.height = window.innerHeight; };
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width  = window.innerWidth  * dpr;
+    canvas.height = window.innerHeight * dpr;
+    canvas.style.width  = window.innerWidth  + 'px';
+    canvas.style.height = window.innerHeight + 'px';
+    const ctx2 = canvas.getContext('2d');
+    if (ctx2) ctx2.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const onResize = () => {
+      const d = window.devicePixelRatio || 1;
+      canvas.width  = window.innerWidth  * d;
+      canvas.height = window.innerHeight * d;
+      canvas.style.width  = window.innerWidth  + 'px';
+      canvas.style.height = window.innerHeight + 'px';
+      const c2 = canvas.getContext('2d');
+      if (c2) c2.setTransform(d, 0, 0, d, 0, 0);
+    };
     const onForceEnd = () => { if (stateRef.current.running) endGame(); };
     window.addEventListener('resize', onResize);
     window.addEventListener('game:force-end', onForceEnd);

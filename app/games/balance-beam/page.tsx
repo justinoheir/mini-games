@@ -362,8 +362,8 @@ export default function BalanceBeamGame() {
       s.lastFrameTime   = timestamp;
       s.gameElapsedMs  += deltaMs;
 
-      const W        = canvas.width;
-      const H        = canvas.height;
+      const W        = canvas.offsetWidth;
+      const H        = canvas.offsetHeight;
       const beamHalfLen = W * (BEAM_FRAC / 2);
       const beamCX   = W / 2;
       const beamCY   = H * BEAM_Y_FRAC;
@@ -629,8 +629,13 @@ export default function BalanceBeamGame() {
     if (!canvas) return;
 
     const resize = () => {
-      canvas.width  = canvas.offsetWidth;
-      canvas.height = canvas.offsetHeight;
+      const dpr = window.devicePixelRatio || 1;
+      const w = canvas.offsetWidth;
+      const h = canvas.offsetHeight;
+      canvas.width  = w * dpr;
+      canvas.height = h * dpr;
+      const ctx2 = canvas.getContext('2d');
+      if (ctx2) ctx2.setTransform(dpr, 0, 0, dpr, 0, 0);
     };
     resize();
     window.addEventListener('resize', resize);
@@ -639,8 +644,8 @@ export default function BalanceBeamGame() {
       const s = stateRef.current;
       if (!s.running || !s.usingTouchFallback) return;
       const rect = canvas.getBoundingClientRect();
-      const cx   = (e.clientX - rect.left) * (canvas.width / rect.width);
-      if (cx < canvas.width / 2) {
+      const cx   = (e.clientX - rect.left) * (canvas.offsetWidth / rect.width);
+      if (cx < canvas.offsetWidth / 2) {
         s.touchLeftHeld  = true;
         s.touchRightHeld = false;
       } else {

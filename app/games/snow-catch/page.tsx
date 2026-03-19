@@ -387,7 +387,7 @@ export default function SnowCatchGame() {
     const vx = (Math.random() - 0.5) * 1.5;
 
     stateRef.current.flakes.push({
-      x:             size + Math.random() * (canvas.width - size * 2),
+      x:             size + Math.random() * (canvas.offsetWidth - size * 2),
       y:             -size * 2,
       vx,
       vy,
@@ -440,7 +440,7 @@ export default function SnowCatchGame() {
     s.sig                  = { score: 0, goldenCaught: 0, iciclesHit: 0, maxStreak: 0, blizzardSurvived: false, totalMissed: 0, streakCurrent: 0 };
     s.flakes               = [];
     s.particles            = [];
-    s.basketX              = canvas.width / 2;
+    s.basketX              = canvas.offsetWidth / 2;
     s.lastSpawnTime        = performance.now();
     s.shake                = { intensity: 0, duration: 0 };
     s.blizzardActive       = false;
@@ -497,8 +497,8 @@ export default function SnowCatchGame() {
 
     const loop = (now: number) => {
       if (!s.running) return;
-      const W = canvas.width;
-      const H = canvas.height;
+      const W = canvas.offsetWidth;
+      const H = canvas.offsetHeight;
 
       // ── Basket movement ────────────────────────────────────────────────
       const tilt = tiltRef.current;
@@ -709,12 +709,17 @@ export default function SnowCatchGame() {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const resize = () => {
-      canvas.width  = canvas.offsetWidth;
-      canvas.height = canvas.offsetHeight;
+      const dpr = window.devicePixelRatio || 1;
+      const w = canvas.offsetWidth;
+      const h = canvas.offsetHeight;
+      canvas.width  = w * dpr;
+      canvas.height = h * dpr;
+      const ctx2 = canvas.getContext('2d');
+      if (ctx2) ctx2.setTransform(dpr, 0, 0, dpr, 0, 0);
       if (stateRef.current.running) {
         stateRef.current.basketX = Math.min(
           Math.max(stateRef.current.basketX, BASKET_WIDTH / 2),
-          canvas.width - BASKET_WIDTH / 2,
+          canvas.offsetWidth - BASKET_WIDTH / 2,
         );
       }
     };
@@ -731,7 +736,7 @@ export default function SnowCatchGame() {
     const onPointerMove = (e: PointerEvent) => {
       if (!stateRef.current.running) return;
       const rect = canvas.getBoundingClientRect();
-      const x = (e.clientX - rect.left) * (canvas.width / rect.width);
+      const x = (e.clientX - rect.left) * (canvas.offsetWidth / rect.width);
       stateRef.current.touchTargetX  = x;
       stateRef.current.useTouchFallback = true;
     };

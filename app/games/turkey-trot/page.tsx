@@ -319,8 +319,8 @@ export default function TurkeyTrotGame() {
 
     const s    = stateRef.current;
     const now0 = Date.now();
-    const W0   = canvas.width;
-    const H0   = canvas.height;
+    const W0   = canvas.offsetWidth;
+    const H0   = canvas.offsetHeight;
     const a0   = Math.random() * Math.PI * 2;
 
     // Reset all state
@@ -370,8 +370,8 @@ export default function TurkeyTrotGame() {
       if (!s.running) return;
       const dt  = Math.min((nowMs - lastFrameMs) / 1000, 0.05);
       lastFrameMs = nowMs;
-      const W   = canvas.width;
-      const H   = canvas.height;
+      const W   = canvas.offsetWidth;
+      const H   = canvas.offsetHeight;
       const now = Date.now();
 
       ctx.imageSmoothingEnabled = true;
@@ -547,10 +547,10 @@ export default function TurkeyTrotGame() {
     if (!s.running) return;
 
     const rect = canvas.getBoundingClientRect();
-    const px   = (clientX - rect.left) * (canvas.width  / rect.width);
-    const py   = (clientY - rect.top)  * (canvas.height / rect.height);
-    const W    = canvas.width;
-    const H    = canvas.height;
+    const px   = (clientX - rect.left) * (canvas.offsetWidth  / rect.width);
+    const py   = (clientY - rect.top)  * (canvas.offsetHeight / rect.height);
+    const W    = canvas.offsetWidth;
+    const H    = canvas.offsetHeight;
     const now  = Date.now();
 
     s.sig.totalAttempts++;
@@ -661,8 +661,13 @@ export default function TurkeyTrotGame() {
     if (!canvas) return;
 
     const resize = () => {
-      canvas.width  = canvas.offsetWidth;
-      canvas.height = canvas.offsetHeight;
+      const dpr = window.devicePixelRatio || 1;
+      const w = canvas.offsetWidth;
+      const h = canvas.offsetHeight;
+      canvas.width  = w * dpr;
+      canvas.height = h * dpr;
+      const ctx2 = canvas.getContext('2d');
+      if (ctx2) ctx2.setTransform(dpr, 0, 0, dpr, 0, 0);
     };
     resize();
     window.addEventListener('resize', resize);

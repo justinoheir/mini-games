@@ -482,8 +482,13 @@ export default function MemoryGridGame() {
     }, 1000);
 
     // Size canvas
-    canvas.width  = canvas.offsetWidth;
-    canvas.height = canvas.offsetHeight;
+    const dpr = window.devicePixelRatio || 1;
+    const w = canvas.offsetWidth;
+    const h = canvas.offsetHeight;
+    canvas.width  = w * dpr;
+    canvas.height = h * dpr;
+    const ctx2 = canvas.getContext('2d');
+    if (ctx2) ctx2.setTransform(dpr, 0, 0, dpr, 0, 0);
 
     // Start first watch phase
     startWatchPhase(s);
@@ -491,8 +496,8 @@ export default function MemoryGridGame() {
     const loop = (now: number) => {
       if (!s.running) return;
 
-      const W = canvas.width;
-      const H = canvas.height;
+      const W = canvas.offsetWidth;
+      const H = canvas.offsetHeight;
 
       // ── Watch phase advancement ─────────────────────────────────────────
       if (s.subPhase === 'watch') {
@@ -540,10 +545,10 @@ export default function MemoryGridGame() {
     if (!s.running || s.subPhase !== 'recall') return;
 
     const rect = canvas.getBoundingClientRect();
-    const x = (clientX - rect.left) * (canvas.width  / rect.width);
-    const y = (clientY - rect.top)  * (canvas.height / rect.height);
+    const x = (clientX - rect.left) * (canvas.offsetWidth  / rect.width);
+    const y = (clientY - rect.top)  * (canvas.offsetHeight / rect.height);
 
-    const cellIdx = getCellFromCoords(x, y, canvas.width, canvas.height);
+    const cellIdx = getCellFromCoords(x, y, canvas.offsetWidth, canvas.offsetHeight);
     if (cellIdx < 0) return;
 
     const expected = s.sequence[s.recallIdx];
@@ -618,8 +623,13 @@ export default function MemoryGridGame() {
     if (!canvas) return;
 
     const resize = () => {
-      canvas.width  = canvas.offsetWidth;
-      canvas.height = canvas.offsetHeight;
+      const dpr = window.devicePixelRatio || 1;
+      const w = canvas.offsetWidth;
+      const h = canvas.offsetHeight;
+      canvas.width  = w * dpr;
+      canvas.height = h * dpr;
+      const ctx2 = canvas.getContext('2d');
+      if (ctx2) ctx2.setTransform(dpr, 0, 0, dpr, 0, 0);
     };
     resize();
     window.addEventListener('resize', resize);

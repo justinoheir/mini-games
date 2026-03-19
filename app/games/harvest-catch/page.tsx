@@ -367,7 +367,7 @@ export default function HarvestCatch() {
       points: def.points,
       label: def.label,
       good: def.good,
-      x: margin + Math.random() * (canvas.width - margin * 2),
+      x: margin + Math.random() * (canvas.offsetWidth - margin * 2),
       y: -35,
       speed: def.baseSpeed * (0.8 + Math.random() * 0.4),
       rotation: Math.random() * Math.PI * 2,
@@ -413,8 +413,13 @@ export default function HarvestCatch() {
     // ⚠️ Critical: size canvas to actual DOM dimensions.
     // The canvas resize useEffect may have run before the canvas was in the DOM (phase='start'),
     // so we must size it here when the canvas is guaranteed to be present.
-    canvas.width  = canvas.offsetWidth;
-    canvas.height = canvas.offsetHeight;
+    const dpr = window.devicePixelRatio || 1;
+    const w = canvas.offsetWidth;
+    const h = canvas.offsetHeight;
+    canvas.width  = w * dpr;
+    canvas.height = h * dpr;
+    const ctx2 = canvas.getContext('2d');
+    if (ctx2) ctx2.setTransform(dpr, 0, 0, dpr, 0, 0);
 
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
@@ -427,12 +432,12 @@ export default function HarvestCatch() {
       score: 0, turkeyCaught: 0, negativeItemsCaught: 0,
       goldenTurkeyCaught: 0, maxStreak: 0, streakCurrent: 0, cornucopiaTriggers: 0,
     };
-    s.basketX = canvas.width / 2;
+    s.basketX = canvas.offsetWidth / 2;
     s.tiltX = 0;
     s.items = [];
     s.particles = [];
     s.scoreFloats = [];
-    s.bgLeaves = makeBgLeaves(18, canvas.height);
+    s.bgLeaves = makeBgLeaves(18, canvas.offsetHeight);
     s.spawnTimer = 0;
     s.spawnInterval = 70;
     s.redFlashUntil = 0;
@@ -466,8 +471,8 @@ export default function HarvestCatch() {
 
     const loop = () => {
       if (!s.running) return;
-      const W = canvas.width;
-      const H = canvas.height;
+      const W = canvas.offsetWidth;
+      const H = canvas.offsetHeight;
       const now = Date.now();
 
       // ── Move basket ─────────────────────────────────────────────────────────
@@ -749,10 +754,15 @@ export default function HarvestCatch() {
     const handleResize = () => {
       const canvas = canvasRef.current;
       if (!canvas) return;
-      canvas.width  = canvas.offsetWidth;
-      canvas.height = canvas.offsetHeight;
+      const dpr = window.devicePixelRatio || 1;
+      const w = canvas.offsetWidth;
+      const h = canvas.offsetHeight;
+      canvas.width  = w * dpr;
+      canvas.height = h * dpr;
+      const ctx2 = canvas.getContext('2d');
+      if (ctx2) ctx2.setTransform(dpr, 0, 0, dpr, 0, 0);
       if (stateRef.current.running) {
-        stateRef.current.bgLeaves = makeBgLeaves(18, canvas.height);
+        stateRef.current.bgLeaves = makeBgLeaves(18, canvas.offsetHeight);
       }
     };
     window.addEventListener('resize', handleResize);

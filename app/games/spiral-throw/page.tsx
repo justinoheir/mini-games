@@ -147,7 +147,7 @@ export default function SpiralThrow() {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const s = stateRef.current;
-    const W = canvas.width, H = canvas.height;
+    const W = window.innerWidth, H = window.innerHeight;
     s.recX = W / 2 + (Math.random() - 0.5) * W * 0.2;
     s.recY = H * 0.65;
     s.currentRoute = ROUTES[Math.floor(Math.random() * ROUTES.length)];
@@ -166,7 +166,7 @@ export default function SpiralThrow() {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
     const s = stateRef.current;
-    const W = canvas.width, H = canvas.height;
+    const W = window.innerWidth, H = window.innerHeight;
 
     s.running = true; s.timeLeft = DURATION;
     s.sig = { attempts:0, completions:0, interceptions:0, score:0,
@@ -275,7 +275,7 @@ export default function SpiralThrow() {
           setTimeout(() => setupNewPlay(), 1200);
         }
         // Incomplete — all four screen edges (fixed P1: was missing bottom edge)
-        if (s.ballY < -50 || s.ballX < -50 || s.ballX > canvas.width + 50 || s.ballY > canvas.height + 50) {
+        if (s.ballY < -50 || s.ballX < -50 || s.ballX > window.innerWidth + 50 || s.ballY > window.innerHeight + 50) {
           // Interception if ball goes backward (below receiver position = behind the play)
           const isInterception = s.ballY > s.recY + 30;
           s.sig.attempts++;
@@ -287,8 +287,8 @@ export default function SpiralThrow() {
             setScoreDisplay(s.sig.score); // update HUD after score drop (fixed P2)
             sfx.fail(); haptic([300]);
             triggerShake(s.shake, 7, 10);
-            spawnBurst(s.particles, s.ballX > 0 && s.ballX < canvas.width ? s.ballX : W/2,
-                       s.ballY > 0 && s.ballY < canvas.height ? s.ballY : H/2, '#ef4444', 14, 5);
+            spawnBurst(s.particles, s.ballX > 0 && s.ballX < window.innerWidth ? s.ballX : W/2,
+                       s.ballY > 0 && s.ballY < window.innerHeight ? s.ballY : H/2, '#ef4444', 14, 5);
             s.floats.push({ x: s.ballX, y: s.ballY, text:'-3', color:'#ef4444', alpha:1, vy:-1.5 });
           } else {
             sfx.collision();
@@ -389,8 +389,22 @@ export default function SpiralThrow() {
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    canvas.width = window.innerWidth; canvas.height = window.innerHeight;
-    const onResize = () => { canvas.width = window.innerWidth; canvas.height = window.innerHeight; };
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width  = window.innerWidth  * dpr;
+    canvas.height = window.innerHeight * dpr;
+    canvas.style.width  = window.innerWidth  + 'px';
+    canvas.style.height = window.innerHeight + 'px';
+    const ctx2 = canvas.getContext('2d');
+    if (ctx2) ctx2.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const onResize = () => {
+      const d = window.devicePixelRatio || 1;
+      canvas.width  = window.innerWidth  * d;
+      canvas.height = window.innerHeight * d;
+      canvas.style.width  = window.innerWidth  + 'px';
+      canvas.style.height = window.innerHeight + 'px';
+      const c2 = canvas.getContext('2d');
+      if (c2) c2.setTransform(d, 0, 0, d, 0, 0);
+    };
     const onForceEnd = () => { if (stateRef.current.running) endGame(); };
     window.addEventListener('resize', onResize);
     window.addEventListener('game:force-end', onForceEnd);

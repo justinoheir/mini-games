@@ -127,10 +127,10 @@ export default function ReflexRally() {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const s = stateRef.current;
-    const H = canvas.height;
+    const H = window.innerHeight;
     const mid = (s.courtTop + s.courtBottom) / 2;
     const range = (s.courtBottom - s.courtTop) * 0.35;
-    s.ballX = canvas.width + s.ballRadius;
+    s.ballX = window.innerWidth + s.ballRadius;
     s.ballY = mid + (Math.random() - 0.5) * range * 2;
     s.ballVX = -(s.speed + Math.random() * 2);
     s.ballVY = (Math.random() - 0.5) * 2;
@@ -144,7 +144,7 @@ export default function ReflexRally() {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
     const s = stateRef.current;
-    const W = canvas.width, H = canvas.height;
+    const W = window.innerWidth, H = window.innerHeight;
 
     s.running = true; s.timeLeft = DURATION; s.lives = MAX_LIVES;
     s.sig = { returns:0, misses:0, forehands:0, backhands:0, reactionTimes:[], score:0, streakMax:0, streakCurrent:0 };
@@ -369,8 +369,22 @@ export default function ReflexRally() {
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    canvas.width = window.innerWidth; canvas.height = window.innerHeight;
-    const onResize = () => { canvas.width = window.innerWidth; canvas.height = window.innerHeight; };
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width  = window.innerWidth  * dpr;
+    canvas.height = window.innerHeight * dpr;
+    canvas.style.width  = window.innerWidth  + 'px';
+    canvas.style.height = window.innerHeight + 'px';
+    const ctx2 = canvas.getContext('2d');
+    if (ctx2) ctx2.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const onResize = () => {
+      const d = window.devicePixelRatio || 1;
+      canvas.width  = window.innerWidth  * d;
+      canvas.height = window.innerHeight * d;
+      canvas.style.width  = window.innerWidth  + 'px';
+      canvas.style.height = window.innerHeight + 'px';
+      const c2 = canvas.getContext('2d');
+      if (c2) c2.setTransform(d, 0, 0, d, 0, 0);
+    };
     const onForceEnd = () => { if (stateRef.current.running) endGame(); };
     window.addEventListener('resize', onResize);
     window.addEventListener('game:force-end', onForceEnd);

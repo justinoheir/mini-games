@@ -419,8 +419,8 @@ export default function SteadyHandGame() {
     // ── rAF loop ────────────────────────────────────────────────────────────
     const loop = (timestamp: number) => {
       if (!s.running) return;
-      const W = canvas.width;
-      const H = canvas.height;
+      const W = canvas.offsetWidth;
+      const H = canvas.offsetHeight;
       const cx = W / 2;
       const cy = H / 2;
       const elapsed = Date.now() - s.gameStartTime;
@@ -715,8 +715,13 @@ export default function SteadyHandGame() {
     if (!canvas) return;
 
     const resize = () => {
-      canvas.width  = canvas.offsetWidth;
-      canvas.height = canvas.offsetHeight;
+      const dpr = window.devicePixelRatio || 1;
+      const w = canvas.offsetWidth;
+      const h = canvas.offsetHeight;
+      canvas.width  = w * dpr;
+      canvas.height = h * dpr;
+      const ctx2 = canvas.getContext('2d');
+      if (ctx2) ctx2.setTransform(dpr, 0, 0, dpr, 0, 0);
     };
     resize();
     window.addEventListener('resize', resize);

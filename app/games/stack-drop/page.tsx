@@ -149,9 +149,9 @@ export default function StackDropGame() {
 
   const initStack = useCallback((canvas: HTMLCanvasElement) => {
     const s = stateRef.current;
-    const baseWidth = canvas.width * INITIAL_WIDTH;
-    const baseX = (canvas.width - baseWidth) / 2;
-    const baseY = canvas.height - BLOCK_HEIGHT - 20; // near bottom
+    const baseWidth = canvas.offsetWidth * INITIAL_WIDTH;
+    const baseX = (canvas.offsetWidth - baseWidth) / 2;
+    const baseY = canvas.offsetHeight - BLOCK_HEIGHT - 20; // near bottom
 
     s.stack = [{
       x: baseX,
@@ -281,8 +281,8 @@ export default function StackDropGame() {
     // Camera: scroll up if stack is getting tall
     if (canvas) {
       const stackTopInCanvas = newY - s.cameraY;
-      if (stackTopInCanvas < canvas.height * 0.35) {
-        s.cameraY -= (canvas.height * 0.35 - stackTopInCanvas);
+      if (stackTopInCanvas < canvas.offsetHeight * 0.35) {
+        s.cameraY -= (canvas.offsetHeight * 0.35 - stackTopInCanvas);
       }
     }
 
@@ -464,8 +464,13 @@ export default function StackDropGame() {
     if (!canvas) return;
 
     const resize = () => {
-      canvas.width  = canvas.offsetWidth;
-      canvas.height = canvas.offsetHeight;
+      const dpr = window.devicePixelRatio || 1;
+      const w = canvas.offsetWidth;
+      const h = canvas.offsetHeight;
+      canvas.width  = w * dpr;
+      canvas.height = h * dpr;
+      const ctx2 = canvas.getContext('2d');
+      if (ctx2) ctx2.setTransform(dpr, 0, 0, dpr, 0, 0);
     };
     resize();
     window.addEventListener('resize', resize);

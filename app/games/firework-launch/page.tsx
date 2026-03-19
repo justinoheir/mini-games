@@ -398,8 +398,8 @@ export default function FireworkLaunchGame() {
     if (!canvas) return;
     const s = stateRef.current;
     const rect = canvas.getBoundingClientRect();
-    const scaleX = canvas.width  / rect.width;
-    const scaleY = canvas.height / rect.height;
+    const scaleX = canvas.offsetWidth  / rect.width;
+    const scaleY = canvas.offsetHeight / rect.height;
 
     const startCX = (clientX  - rect.left) * scaleX;
     const startCY = (clientY  - rect.top)  * scaleY;
@@ -544,8 +544,8 @@ export default function FireworkLaunchGame() {
     s.screenFlashTime    = 0;
     s.streakResetPending = false;
     s.lastAutoLaunchTime = 0;
-    s.buildings          = generateBuildings(canvas.width, canvas.height);
-    s.stars              = generateStars(canvas.width, canvas.height);
+    s.buildings          = generateBuildings(canvas.offsetWidth, canvas.offsetHeight);
+    s.stars              = generateStars(canvas.offsetWidth, canvas.offsetHeight);
 
     setScoreDisplay(0);
     setStreakDisplay(0);
@@ -568,8 +568,8 @@ export default function FireworkLaunchGame() {
 
     const loop = () => {
       if (!s.running) return;
-      const W = canvas.width;
-      const H = canvas.height;
+      const W = canvas.offsetWidth;
+      const H = canvas.offsetHeight;
       const now = Date.now();
 
       // ── Background ───────────────────────────────────────────────────────
@@ -848,13 +848,18 @@ export default function FireworkLaunchGame() {
     if (!canvas) return;
 
     const resize = () => {
-      canvas.width  = canvas.offsetWidth;
-      canvas.height = canvas.offsetHeight;
+      const dpr = window.devicePixelRatio || 1;
+      const w = canvas.offsetWidth;
+      const h = canvas.offsetHeight;
+      canvas.width  = w * dpr;
+      canvas.height = h * dpr;
+      const ctx2 = canvas.getContext('2d');
+      if (ctx2) ctx2.setTransform(dpr, 0, 0, dpr, 0, 0);
       // Regenerate skyline on resize
       const s = stateRef.current;
-      if (s.buildings.length === 0 || canvas.width !== s.buildings[s.buildings.length - 1].x) {
-        s.buildings = generateBuildings(canvas.width, canvas.height);
-        s.stars     = generateStars(canvas.width, canvas.height);
+      if (s.buildings.length === 0 || canvas.offsetWidth !== s.buildings[s.buildings.length - 1].x) {
+        s.buildings = generateBuildings(canvas.offsetWidth, canvas.offsetHeight);
+        s.stars     = generateStars(canvas.offsetWidth, canvas.offsetHeight);
       }
     };
     resize();

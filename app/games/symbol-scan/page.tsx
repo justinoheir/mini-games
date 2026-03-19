@@ -344,8 +344,8 @@ export default function SymbolScanGame() {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const s   = stateRef.current;
-    const W   = canvas.width;
-    const H   = canvas.height;
+    const W   = canvas.offsetWidth;
+    const H   = canvas.offsetHeight;
     const TAH = Math.min(200, Math.max(160, H * 0.26)); // target area height
     const PAD = 14;
     const avail = H - TAH;
@@ -441,8 +441,8 @@ export default function SymbolScanGame() {
       if (!s.running) return;
 
       const now = Date.now();
-      const W   = canvas.width;
-      const H   = canvas.height;
+      const W   = canvas.offsetWidth;
+      const H   = canvas.offsetHeight;
       const { cellSize, gridX, gridY, targetAreaH, accentColor } = s;
 
       // ── Background ─────────────────────────────────────────────────────────
@@ -637,8 +637,8 @@ export default function SymbolScanGame() {
     if (!s.running) return;
 
     const rect = canvas.getBoundingClientRect();
-    const x    = (clientX - rect.left) * (canvas.width  / rect.width);
-    const y    = (clientY - rect.top)  * (canvas.height / rect.height);
+    const x    = (clientX - rect.left) * (canvas.offsetWidth  / rect.width);
+    const y    = (clientY - rect.top)  * (canvas.offsetHeight / rect.height);
 
     const { cellSize, gridX, gridY } = s;
 
@@ -712,8 +712,13 @@ export default function SymbolScanGame() {
     if (!canvas) return;
 
     const resize = () => {
-      canvas.width  = canvas.offsetWidth;
-      canvas.height = canvas.offsetHeight;
+      const dpr = window.devicePixelRatio || 1;
+      const w = canvas.offsetWidth;
+      const h = canvas.offsetHeight;
+      canvas.width  = w * dpr;
+      canvas.height = h * dpr;
+      const ctx2 = canvas.getContext('2d');
+      if (ctx2) ctx2.setTransform(dpr, 0, 0, dpr, 0, 0);
       computeLayout();
     };
     resize();

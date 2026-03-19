@@ -308,8 +308,8 @@ export default function CountdownCrushGame() {
     if (s.subPhase !== 'scoring' && s.subPhase !== 'midnight') return;
 
     const rect = canvas.getBoundingClientRect();
-    const x = (clientX - rect.left) * (canvas.width  / rect.width);
-    const y = (clientY - rect.top)  * (canvas.height / rect.height);
+    const x = (clientX - rect.left) * (canvas.offsetWidth  / rect.width);
+    const y = (clientY - rect.top)  * (canvas.offsetHeight / rect.height);
 
     const win = WINDOWS[Math.min(s.countIndex, WINDOWS.length - 1)];
     const mult = s.subPhase === 'midnight' ? 5 : win.multiplier;
@@ -385,7 +385,7 @@ export default function CountdownCrushGame() {
     s.countIndex               = 0;
     s.phaseStart               = now;
     s.slamScale                = 1.5;
-    s.ripples                  = [{ radius: 5, maxRadius: Math.max(canvas.width, canvas.height), alpha: 0.5, cx: canvas.width / 2, cy: canvas.height / 2 }];
+    s.ripples                  = [{ radius: 5, maxRadius: Math.max(canvas.offsetWidth, canvas.offsetHeight), alpha: 0.5, cx: canvas.offsetWidth / 2, cy: canvas.offsetHeight / 2 }];
     s.ballY                    = 0;
     s.bubbles                  = [];
     s.nextBubbleId             = 0;
@@ -414,8 +414,8 @@ export default function CountdownCrushGame() {
     const loop = () => {
       if (!s.running) return;
 
-      const W       = canvas.width;
-      const H       = canvas.height;
+      const W       = canvas.offsetWidth;
+      const H       = canvas.offsetHeight;
       const nowT    = Date.now();
       const elapsed = nowT - s.phaseStart;
       const win     = WINDOWS[s.countIndex] ?? WINDOWS[WINDOWS.length - 1];
@@ -720,8 +720,13 @@ export default function CountdownCrushGame() {
     if (!canvas) return;
 
     const resize = () => {
-      canvas.width  = canvas.offsetWidth;
-      canvas.height = canvas.offsetHeight;
+      const dpr = window.devicePixelRatio || 1;
+      const w = canvas.offsetWidth;
+      const h = canvas.offsetHeight;
+      canvas.width  = w * dpr;
+      canvas.height = h * dpr;
+      const ctx2 = canvas.getContext('2d');
+      if (ctx2) ctx2.setTransform(dpr, 0, 0, dpr, 0, 0);
     };
     resize();
     window.addEventListener('resize', resize);

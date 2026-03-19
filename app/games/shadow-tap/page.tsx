@@ -280,8 +280,8 @@ export default function ShadowTapGame() {
     const s = stateRef.current;
     const elapsed = (DURATION - s.timeLeft) * 1000;
     s.shapeType       = randomShapeType();
-    s.shapeX          = SHAPE_MARGIN + Math.random() * (canvas.width  - SHAPE_MARGIN * 2);
-    s.shapeY          = SHAPE_MARGIN + Math.random() * (canvas.height - SHAPE_MARGIN * 2);
+    s.shapeX          = SHAPE_MARGIN + Math.random() * (canvas.offsetWidth  - SHAPE_MARGIN * 2);
+    s.shapeY          = SHAPE_MARGIN + Math.random() * (canvas.offsetHeight - SHAPE_MARGIN * 2);
     s.shapeSize       = 28 + Math.random() * 16; // 28–44px
     s.shapeWindowMs   = getShapeWindowMs(elapsed);
     s.shapeSpawnTime  = Date.now();
@@ -352,8 +352,8 @@ export default function ShadowTapGame() {
     const loop = () => {
       if (!s.running) return;
       const now  = Date.now();
-      const W    = canvas.width;
-      const H    = canvas.height;
+      const W    = canvas.offsetWidth;
+      const H    = canvas.offsetHeight;
 
       // ── Background ──────────────────────────────────────────────────────────
       ctx.fillStyle = BG_COLOR;
@@ -468,8 +468,8 @@ export default function ShadowTapGame() {
     if (!s.running) return;
 
     const rect = canvas.getBoundingClientRect();
-    const x = (clientX - rect.left) * (canvas.width  / rect.width);
-    const y = (clientY - rect.top)  * (canvas.height / rect.height);
+    const x = (clientX - rect.left) * (canvas.offsetWidth  / rect.width);
+    const y = (clientY - rect.top)  * (canvas.offsetHeight / rect.height);
 
     if (s.shapePhase === 'visible') {
       const hit = isInsideShape(x, y, s.shapeType, s.shapeX, s.shapeY, s.shapeSize);
@@ -548,8 +548,13 @@ export default function ShadowTapGame() {
     if (!canvas) return;
 
     const resize = () => {
-      canvas.width  = canvas.offsetWidth;
-      canvas.height = canvas.offsetHeight;
+      const dpr = window.devicePixelRatio || 1;
+      const w = canvas.offsetWidth;
+      const h = canvas.offsetHeight;
+      canvas.width  = w * dpr;
+      canvas.height = h * dpr;
+      const ctx2 = canvas.getContext('2d');
+      if (ctx2) ctx2.setTransform(dpr, 0, 0, dpr, 0, 0);
     };
     resize();
     window.addEventListener('resize', resize);

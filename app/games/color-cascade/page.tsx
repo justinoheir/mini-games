@@ -209,7 +209,7 @@ export default function ColorCascadeGame() {
                        : s.elapsedSeconds < 30 ? 1800
                        : 1200;
     const margin     = DROP_RADIUS + 10;
-    const x          = margin + Math.random() * (canvas.width - margin * 2);
+    const x          = margin + Math.random() * (canvas.offsetWidth - margin * 2);
     const colorIndex = Math.floor(Math.random() * COLORS.length);
 
     s.drops.push({
@@ -317,8 +317,8 @@ export default function ColorCascadeGame() {
         fpsWindowStart = rafTs;
       }
 
-      const W   = canvas.width;
-      const H   = canvas.height;
+      const W   = canvas.offsetWidth;
+      const H   = canvas.offsetHeight;
       const now = Date.now();
 
       // ── Background ──────────────────────────────────────────────────────────
@@ -507,9 +507,9 @@ export default function ColorCascadeGame() {
     if (!s.running) return;
 
     const rect = canvas.getBoundingClientRect();
-    const x    = (clientX - rect.left) * (canvas.width  / rect.width);
-    const y    = (clientY - rect.top)  * (canvas.height / rect.height);
-    const H    = canvas.height;
+    const x    = (clientX - rect.left) * (canvas.offsetWidth  / rect.width);
+    const y    = (clientY - rect.top)  * (canvas.offsetHeight / rect.height);
+    const H    = canvas.offsetHeight;
     const now  = Date.now();
 
     // Find closest untapped drop within tap radius
@@ -579,8 +579,13 @@ export default function ColorCascadeGame() {
     if (!canvas) return;
 
     const resize = () => {
-      canvas.width  = canvas.offsetWidth;
-      canvas.height = canvas.offsetHeight;
+      const dpr = window.devicePixelRatio || 1;
+      const w = canvas.offsetWidth;
+      const h = canvas.offsetHeight;
+      canvas.width  = w * dpr;
+      canvas.height = h * dpr;
+      const ctx2 = canvas.getContext('2d');
+      if (ctx2) ctx2.setTransform(dpr, 0, 0, dpr, 0, 0);
     };
     resize();
     window.addEventListener('resize', resize);
