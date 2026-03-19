@@ -6,6 +6,8 @@ import GameStartScreen from '@/components/GameStartScreen';
 import Countdown from '@/components/Countdown';
 import EndScreen from '@/components/EndScreen';
 import { initAudio, sfx, haptic, startMusic, increaseMusicTempo } from '@/lib/audio';
+import { playScoreHit, playVictoryFanfare, playNearMiss } from '@/lib/audio';
+import { hapticScore, hapticFail, hapticVictory } from '@/lib/haptics';
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
@@ -20,6 +22,7 @@ const CATEGORY_ACCENT = CATEGORY_THEMES.sports.primaryAccent;
 
 const ACCENT = '#84cc16';
 const GAME_ID = 'reflex-rally';
+const PB_KEY       = 'pb_reflex-rally';
 const DURATION = 60;
 const MAX_LIVES = 5;
 
@@ -57,12 +60,17 @@ export default function ReflexRally() {
   const [playerName, setPlayerName]   = useState('');
   const [playerAvatar, setPlayerAvatar] = useState('🎮');
   const { pops, triggerPop } = useScorePop();
+  const [streak, setStreak] = useState(0);
+  const [isNewBest, setIsNewBest] = useState(false);
   const prevScoreRef = useRef(0);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     const numScore = typeof scoreDisplay === 'number' ? scoreDisplay : 0;
     if (numScore > prevScoreRef.current) {
       triggerPop(`+${numScore - prevScoreRef.current}`, window.innerWidth / 2, 200);
+      hapticScore();
+      playScoreHit('default', numScore - prevScoreRef.current);
+      setStreak(Math.floor(numScore / 5));
     }
     prevScoreRef.current = numScore;
   }, [scoreDisplay]); // triggerPop is stable
@@ -252,7 +260,7 @@ export default function ReflexRally() {
           s.sig.streakCurrent = 0;
           setLives(s.lives);
           setStreakDisplay(0);
-          sfx.collision(); haptic([300]);
+          sfx.collision(); hapticFail();
           triggerShake(s.shake, 7, 10);
           spawnBurst(s.particles, W*0.1, s.ballY, '#ef4444', 12, 5);
           s.floats.push({ x: W*0.15, y: (ct+cb)/2, text:'MISS!', color:'#ef4444', alpha:1, vy:-1.5 });
@@ -425,6 +433,30 @@ export default function ReflexRally() {
           onStart={handleStart}
         />
       )}
+            {/* New best banner */}
+      <AnimatePresence>
+        {isNewBest && (
+          <motion.div
+            key="new-best"
+            initial={{ opacity: 0, y: -20, scale: 0.8 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -20 }}
+            transition={{ duration: 0.4, delay: 0.5 }}
+            style={{
+              position: 'fixed', top: '10%', left: '50%', transform: 'translateX(-50%)',
+              zIndex: 90, pointerEvents: 'none',
+              background: 'linear-gradient(135deg, #fbbf24, #f59e0b)',
+              borderRadius: 20, padding: '8px 20px', fontSize: 20,
+              fontWeight: 900, color: '#000', whiteSpace: 'nowrap',
+              boxShadow: '0 4px 20px rgba(251,191,36,0.5)',
+            }}
+          >
+            🏆 New Best!
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+
       {phase === 'done' && sig && (
         <EndScreen
           gameId={GAME_ID}

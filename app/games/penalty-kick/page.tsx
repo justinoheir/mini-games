@@ -6,6 +6,8 @@ import GameStartScreen from '@/components/GameStartScreen';
 import Countdown from '@/components/Countdown';
 import EndScreen from '@/components/EndScreen';
 import { initAudio, sfx, haptic, startMusic } from '@/lib/audio';
+import { playScoreHit, playVictoryFanfare, playNearMiss } from '@/lib/audio';
+import { hapticScore, hapticFail, hapticVictory } from '@/lib/haptics';
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
 import { createTiltController } from '@/lib/tilt';
@@ -21,6 +23,7 @@ const CATEGORY_ACCENT = CATEGORY_THEMES.sports.primaryAccent;
 
 const ACCENT = '#22c55e';
 const GAME_ID = 'penalty-kick';
+const PB_KEY       = 'pb_penalty-kick';
 const MAX_SHOTS = 10;
 
 interface FloatText { x: number; y: number; text: string; color: string; alpha: number; vy: number; }
@@ -56,12 +59,17 @@ export default function PenaltyKick() {
   const [playerName, setPlayerName]   = useState('');
   const [playerAvatar, setPlayerAvatar] = useState('🎮');
   const { pops, triggerPop } = useScorePop();
+  const [streak, setStreak] = useState(0);
+  const [isNewBest, setIsNewBest] = useState(false);
   const prevScoreRef = useRef(0);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     const numScore = typeof goalsDisplay === 'number' ? goalsDisplay : 0;
     if (numScore > prevScoreRef.current) {
       triggerPop(`+${numScore - prevScoreRef.current}`, window.innerWidth / 2, 200);
+      hapticScore();
+      playScoreHit('default', numScore - prevScoreRef.current);
+      setStreak(Math.floor(numScore / 5));
     }
     prevScoreRef.current = numScore;
   }, [goalsDisplay]); // triggerPop is stable
@@ -256,7 +264,7 @@ export default function PenaltyKick() {
 
           if (saved) {
             s.sig.lastSavedResult = true;
-            sfx.collision(); haptic([200]);
+            sfx.collision(); hapticFail();
             triggerShake(s.shake, 6, 10);
             spawnBurst(s.particles, s.ballX, s.ballY, '#ef4444', 14, 5);
             s.resultText = 'SAVED!'; s.resultColor = '#ef4444';
@@ -476,6 +484,29 @@ export default function PenaltyKick() {
           onStart={handleStart}
         />
       )}
+      {/* New best banner */}
+      <AnimatePresence>
+        {isNewBest && (
+          <motion.div
+            key="new-best"
+            initial={{ opacity: 0, y: -20, scale: 0.8 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -20 }}
+            transition={{ duration: 0.4, delay: 0.5 }}
+            style={{
+              position: 'fixed', top: '10%', left: '50%', transform: 'translateX(-50%)',
+              zIndex: 90, pointerEvents: 'none',
+              background: 'linear-gradient(135deg, #fbbf24, #f59e0b)',
+              borderRadius: 20, padding: '8px 20px', fontSize: 20,
+              fontWeight: 900, color: '#000', whiteSpace: 'nowrap',
+              boxShadow: '0 4px 20px rgba(251,191,36,0.5)',
+            }}
+          >
+            🏆 New Best!
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {phase === 'done' && sig && (
         <EndScreen
           gameId={GAME_ID}
@@ -497,7 +528,7 @@ export default function PenaltyKick() {
       {phase === 'playing' && (
         <>
           <ScorePopEffect pops={pops} accentColor={CATEGORY_ACCENT} />
-          <StreakBadge streak={0} accentColor={CATEGORY_ACCENT} />
+          <StreakBadge streak={streak} accentColor={CATEGORY_ACCENT} />
         </>
       )}
     </GameShell>
