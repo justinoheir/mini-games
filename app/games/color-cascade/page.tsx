@@ -27,6 +27,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import ScorePopEffect, { useScorePop } from '@/components/ScorePopEffect';
 import StreakBadge from '@/components/StreakBadge';
 import { CATEGORY_THEMES } from '@/lib/theme';
+import SwipeInstructions from '@/components/SwipeInstructions';
 
 const CATEGORY_ACCENT = CATEGORY_THEMES.cognitive.primaryAccent;
 
@@ -146,6 +147,7 @@ export default function ColorCascadeGame() {
   });
 
   const [phase, setPhase]               = useState<Phase>('start');
+  const [showInstructions, setShowInstructions] = useState(true);
   const [timeLeft, setTimeLeft]         = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
   const [finalSig, setFinalSig]         = useState<Signals | null>(null);
@@ -664,6 +666,13 @@ export default function ColorCascadeGame() {
 
   return (
     <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
+      {showInstructions && (
+        <SwipeInstructions
+          gameId="color-cascade"
+          steps={[{ icon: "🎨", title: "Match the color", body: "Tap the falling block that matches the target color." }, { icon: "⚡", title: "Move fast", body: "Blocks speed up as your score grows." }, { icon: "🔥", title: "Build combos", body: "Consecutive correct taps multiply your score." }]}
+          onDone={() => setShowInstructions(false)}
+        />
+      )}
 
       {/* ── Start Screen ────────────────────────────────────────────────────── */}
       {phase === 'start' && (

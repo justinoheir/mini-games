@@ -18,6 +18,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import ScorePopEffect, { useScorePop } from '@/components/ScorePopEffect';
 import StreakBadge from '@/components/StreakBadge';
 import { CATEGORY_THEMES } from '@/lib/theme';
+import SwipeInstructions from '@/components/SwipeInstructions';
 
 const CATEGORY_ACCENT = CATEGORY_THEMES.sports.primaryAccent;
 
@@ -79,6 +80,7 @@ export default function SpiralThrow() {
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const tiltRef = useRef<ReturnType<typeof createTiltController> | null>(null);
   const [phase, setPhase] = useState<Phase>('start');
+  const [showInstructions, setShowInstructions] = useState(true);
   const [timeLeft, setTimeLeft] = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
   const [streakDisplay, setStreakDisplay] = useState(0);
@@ -428,6 +430,13 @@ export default function SpiralThrow() {
 
   return (
     <GameShell title="Spiral Throw" emoji="🏈" accentColor={ACCENT} theme={theme}>
+      {showInstructions && (
+        <SwipeInstructions
+          gameId="spiral-throw"
+          steps={[{ icon: "👆", title: "Swipe to throw", body: "Swipe up to launch the football in a spiral." }, { icon: "🏈", title: "Hit the target", body: "Aim for the moving receiver downfield." }, { icon: "🔥", title: "Build combos", body: "Consecutive completions multiply your score." }]}
+          onDone={() => setShowInstructions(false)}
+        />
+      )}
       <canvas
         ref={canvasRef}
         style={{ display: phase === 'playing' ? 'block' : 'none', position: 'absolute', top: 0, left: 0 }}

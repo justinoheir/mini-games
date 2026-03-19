@@ -28,6 +28,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import ScorePopEffect, { useScorePop } from '@/components/ScorePopEffect';
 import StreakBadge from '@/components/StreakBadge';
 import { CATEGORY_THEMES } from '@/lib/theme';
+import SwipeInstructions from '@/components/SwipeInstructions';
 
 const CATEGORY_ACCENT = CATEGORY_THEMES.cognitive.primaryAccent;
 
@@ -385,6 +386,7 @@ export default function MemoryGridGame() {
 
   const [phase, setPhase]             = useState<Phase>('start');
   const phaseRef                      = useRef<Phase>('start');
+  const [showInstructions, setShowInstructions] = useState(true);
   const [timeLeft, setTimeLeft]       = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(3); // shows current sequence length (LEVEL)
   const [finalSig, setFinalSig]       = useState<Signals | null>(null);
@@ -724,6 +726,13 @@ export default function MemoryGridGame() {
 
   return (
     <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accentColor}>
+      {showInstructions && (
+        <SwipeInstructions
+          gameId="memory-grid"
+          steps={[{ icon: "👁️", title: "Watch the pattern", body: "A sequence of tiles will light up." }, { icon: "👆", title: "Repeat it", body: "Tap the tiles in the same order." }, { icon: "🧠", title: "Go longer", body: "Each round adds one more tile to remember." }]}
+          onDone={() => setShowInstructions(false)}
+        />
+      )}
       {/* ── Start Screen ───────────────────────────────────────────────────── */}
       {phase === 'start' && (
         <GameStartScreen

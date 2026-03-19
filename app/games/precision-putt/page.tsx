@@ -16,6 +16,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import ScorePopEffect, { useScorePop } from '@/components/ScorePopEffect';
 import StreakBadge from '@/components/StreakBadge';
 import { CATEGORY_THEMES } from '@/lib/theme';
+import SwipeInstructions from '@/components/SwipeInstructions';
 
 const CATEGORY_ACCENT = CATEGORY_THEMES.sports.primaryAccent;
 
@@ -67,6 +68,7 @@ export default function PrecisionPutt() {
   const chargeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isDraggingRef = useRef(false);
   const [phase, setPhase] = useState<Phase>('start');
+  const [showInstructions, setShowInstructions] = useState(true);
   const [timeLeft, setTimeLeft] = useState(60);
   const [holeDisplay, setHoleDisplay] = useState(1);
   const [finalSig, setFinalSig] = useState<Signals | null>(null);
@@ -468,6 +470,13 @@ export default function PrecisionPutt() {
 
   return (
     <GameShell title="Precision Putt" emoji="🏌️" accentColor={ACCENT} theme={theme}>
+      {showInstructions && (
+        <SwipeInstructions
+          gameId="precision-putt"
+          steps={[{ icon: "👆", title: "Swipe to putt", body: "Swipe to aim and set the power of your putt." }, { icon: "⛳", title: "Read the green", body: "Adjust for distance and angle to the hole." }, { icon: "🏆", title: "Fewer strokes", body: "Get the ball in with as few shots as possible." }]}
+          onDone={() => setShowInstructions(false)}
+        />
+      )}
       <canvas
         ref={canvasRef}
         style={{ display: phase === 'playing' ? 'block' : 'none', position: 'absolute', top: 0, left: 0, touchAction: 'none' }}

@@ -17,6 +17,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import ScorePopEffect, { useScorePop } from '@/components/ScorePopEffect';
 import StreakBadge from '@/components/StreakBadge';
 import { CATEGORY_THEMES } from '@/lib/theme';
+import SwipeInstructions from '@/components/SwipeInstructions';
 
 const CATEGORY_ACCENT = CATEGORY_THEMES.sports.primaryAccent;
 
@@ -52,6 +53,7 @@ export default function ReflexRally() {
   const animRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [phase, setPhase] = useState<Phase>('start');
+  const [showInstructions, setShowInstructions] = useState(true);
   const [timeLeft, setTimeLeft] = useState(DURATION);
   const [lives, setLives] = useState(MAX_LIVES);
   const [scoreDisplay, setScoreDisplay] = useState(0);
@@ -404,6 +406,13 @@ export default function ReflexRally() {
 
   return (
     <GameShell title="Reflex Rally" emoji="🎾" accentColor={ACCENT} theme={theme}>
+      {showInstructions && (
+        <SwipeInstructions
+          gameId="reflex-rally"
+          steps={[{ icon: "👆", title: "Tap to return", body: "Tap when the ball reaches your side." }, { icon: "⚡", title: "Time it right", body: "Tap too early or too late and you miss." }, { icon: "🔥", title: "Speed up", body: "Each rally gets faster — how long can you keep it going?" }]}
+          onDone={() => setShowInstructions(false)}
+        />
+      )}
       <canvas
         ref={canvasRef}
         style={{ display: phase === 'playing' ? 'block' : 'none', position: 'absolute', top: 0, left: 0, touchAction: 'none' }}
