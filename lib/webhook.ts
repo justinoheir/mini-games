@@ -2,7 +2,7 @@ import { BrandTheme } from './brands';
 import { PlayerSession } from './playerSession';
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? '';
-const SUPABASE_KEY = 'REDACTED';
+const SUPABASE_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? '';
 
 async function insertGlimmerSession(
   brand: string,
