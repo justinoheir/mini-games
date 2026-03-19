@@ -23,6 +23,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import ScorePopEffect, { useScorePop } from '@/components/ScorePopEffect';
 import StreakBadge from '@/components/StreakBadge';
 import { CATEGORY_THEMES } from '@/lib/theme';
+import SwipeInstructions from '@/components/SwipeInstructions';
 
 const CATEGORY_ACCENT = CATEGORY_THEMES.cognitive.primaryAccent;
 
@@ -243,6 +244,7 @@ export default function ShadowTapGame() {
   });
 
   const [phase, setPhase]               = useState<Phase>('start');
+  const [showInstructions, setShowInstructions] = useState(true);
   const [timeLeft, setTimeLeft]         = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
   const [finalSig, setFinalSig]         = useState<Signals | null>(null);
@@ -644,6 +646,13 @@ export default function ShadowTapGame() {
   // ─── RENDER ──────────────────────────────────────────────────────────────────
   return (
     <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
+      {showInstructions && (
+        <SwipeInstructions
+          gameId="shadow-tap"
+          steps={[{ icon: "👁️", title: "Watch the shadow", body: "A shape will appear briefly then vanish." }, { icon: "👆", title: "Tap the match", body: "Find and tap the matching shape from the options." }, { icon: "⚡", title: "Be quick", body: "You have limited time — trust your memory." }]}
+          onDone={() => setShowInstructions(false)}
+        />
+      )}
 
       {/* ── Start Screen ──────────────────────────────────────────────────── */}
       {phase === 'start' && (

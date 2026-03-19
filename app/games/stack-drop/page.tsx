@@ -15,6 +15,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import ScorePopEffect, { useScorePop } from '@/components/ScorePopEffect';
 import StreakBadge from '@/components/StreakBadge';
 import { CATEGORY_THEMES } from '@/lib/theme';
+import SwipeInstructions from '@/components/SwipeInstructions';
 
 const CATEGORY_ACCENT = CATEGORY_THEMES.cognitive.primaryAccent;
 
@@ -117,6 +118,7 @@ export default function StackDropGame() {
   const phaseRef     = useRef<Phase>('start');
 
   const [phase, setPhase]             = useState<Phase>('start');
+  const [showInstructions, setShowInstructions] = useState(true);
   const [timeLeft, setTimeLeft]       = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
   // ⚡ heightDisplay tracks actual block count — HUD label is 'HEIGHT', not 'SCORE'
@@ -530,6 +532,13 @@ export default function StackDropGame() {
 
   return (
     <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
+      {showInstructions && (
+        <SwipeInstructions
+          gameId="stack-drop"
+          steps={[{ icon: "👆", title: "Tap to drop", body: "Tap the screen to drop the block onto the stack." }, { icon: "⬜", title: "Stack perfectly", body: "Align blocks precisely — overhanging parts fall off." }, { icon: "🏆", title: "Stack higher", body: "How tall can you build before it falls?" }]}
+          onDone={() => setShowInstructions(false)}
+        />
+      )}
       {phase === 'start' && (
         <GameStartScreen
           emoji={GAME_EMOJI}

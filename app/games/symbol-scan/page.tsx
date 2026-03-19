@@ -24,6 +24,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import ScorePopEffect, { useScorePop } from '@/components/ScorePopEffect';
 import StreakBadge from '@/components/StreakBadge';
 import { CATEGORY_THEMES } from '@/lib/theme';
+import SwipeInstructions from '@/components/SwipeInstructions';
 
 const CATEGORY_ACCENT = CATEGORY_THEMES.cognitive.primaryAccent;
 
@@ -308,6 +309,7 @@ export default function SymbolScanGame() {
   });
 
   const [phase, setPhase]               = useState<Phase>('start');
+  const [showInstructions, setShowInstructions] = useState(true);
   const [timeLeft, setTimeLeft]         = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
   const [finalSig, setFinalSig]         = useState<Signals | null>(null);
@@ -800,6 +802,13 @@ export default function SymbolScanGame() {
 
   return (
     <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accent}>
+      {showInstructions && (
+        <SwipeInstructions
+          gameId="symbol-scan"
+          steps={[{ icon: "👁️", title: "Find the symbol", body: "Scan the grid to find the target symbol." }, { icon: "👆", title: "Tap it fast", body: "Tap the correct symbol before time runs out." }, { icon: "🔥", title: "Chain correct taps", body: "Fast correct answers build your streak." }]}
+          onDone={() => setShowInstructions(false)}
+        />
+      )}
 
       {/* ── Start Screen ──────────────────────────────────────────────────── */}
       {phase === 'start' && (

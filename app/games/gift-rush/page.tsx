@@ -16,6 +16,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import ScorePopEffect, { useScorePop } from '@/components/ScorePopEffect';
 import StreakBadge from '@/components/StreakBadge';
 import { CATEGORY_THEMES } from '@/lib/theme';
+import SwipeInstructions from '@/components/SwipeInstructions';
 
 const CATEGORY_ACCENT = CATEGORY_THEMES.holiday.primaryAccent;
 
@@ -151,6 +152,7 @@ export default function GiftRushGame() {
   });
 
   const [phase, setPhase]               = useState<GamePhase>('start');
+  const [showInstructions, setShowInstructions] = useState(true);
   const [timeLeft, setTimeLeft]         = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
   const [streakDisplay, setStreakDisplay] = useState(0);
@@ -452,6 +454,13 @@ export default function GiftRushGame() {
 
   return (
     <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accentColor}>
+      {showInstructions && (
+        <SwipeInstructions
+          gameId="gift-rush"
+          steps={[{ icon: "🎁", title: "Catch the gifts", body: "Tap falling gifts before they hit the ground." }, { icon: "⭐", title: "Gold gifts = bonus", body: "Golden gifts are worth extra points — prioritize them." }, { icon: "💨", title: "Speed increases", body: "Gifts fall faster as time goes on. Keep up!" }]}
+          onDone={() => setShowInstructions(false)}
+        />
+      )}
       {/* Global CSS: snowfall + score pop animations */}
       <style>{`
         @keyframes gr-snowfall {

@@ -28,6 +28,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import ScorePopEffect, { useScorePop } from '@/components/ScorePopEffect';
 import StreakBadge from '@/components/StreakBadge';
 import { CATEGORY_THEMES } from '@/lib/theme';
+import SwipeInstructions from '@/components/SwipeInstructions';
 
 const CATEGORY_ACCENT = CATEGORY_THEMES.holiday.primaryAccent;
 
@@ -335,6 +336,7 @@ export default function SnowCatchGame() {
 
   // React state — HUD values only
   const [phase, setPhase]               = useState<Phase>('start');
+  const [showInstructions, setShowInstructions] = useState(true);
   const [timeLeft, setTimeLeft]         = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
   const [streakDisplay, setStreakDisplay] = useState(0);
@@ -812,6 +814,13 @@ export default function SnowCatchGame() {
 
   return (
     <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
+      {showInstructions && (
+        <SwipeInstructions
+          gameId="snow-catch"
+          steps={[{ icon: "❄️", title: "Catch the snowflakes", body: "Tilt your device to move the catcher left and right." }, { icon: "⭐", title: "Big flakes = more", body: "Larger snowflakes score more points." }, { icon: "🔥", title: "Build a streak", body: "Catch consecutive flakes without missing for a bonus." }]}
+          onDone={() => setShowInstructions(false)}
+        />
+      )}
 
       {/* ── Start Screen ─────────────────────────────────────────────────── */}
       {phase === 'start' && (
