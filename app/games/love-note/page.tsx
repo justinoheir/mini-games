@@ -15,6 +15,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import ScorePopEffect, { useScorePop } from '@/components/ScorePopEffect';
 import StreakBadge from '@/components/StreakBadge';
 import { CATEGORY_THEMES } from '@/lib/theme';
+import SwipeInstructions from '@/components/SwipeInstructions';
 
 const CATEGORY_ACCENT = CATEGORY_THEMES.holiday.primaryAccent;
 
@@ -133,6 +134,7 @@ export default function LoveNoteGame() {
   // ── Display state (drives re-renders) ──────────────────────────────────────
   const [gamePhase,   setGamePhase]   = useState<GamePhase>('showing');
   const [sequence,    setSequence]    = useState<HeartId[]>([]);
+  const [showInstructions, setShowInstructions] = useState(true);
   const [lives,       setLives]       = useState(MAX_LIVES);
   const [round,       setRound]       = useState(1);
   const [activeHeart, setActiveHeart] = useState<HeartId | null>(null);
@@ -475,6 +477,13 @@ export default function LoveNoteGame() {
 
   return (
     <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accentColor}>
+      {showInstructions && (
+        <SwipeInstructions
+          gameId="love-note"
+          steps={[{ icon: "🎵", title: "Tap in rhythm", body: "Tap along with the falling music notes." }, { icon: "❤️", title: "Hit on the beat", body: "Perfect timing scores the most points." }, { icon: "🔥", title: "Build combos", body: "Consecutive perfect taps multiply your score." }]}
+          onDone={() => setShowInstructions(false)}
+        />
+      )}
 
       {/* ── CSS Keyframes ─────────────────────────────────────────────────── */}
       <style dangerouslySetInnerHTML={{ __html: `

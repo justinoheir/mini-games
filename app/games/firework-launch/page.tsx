@@ -28,6 +28,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import ScorePopEffect, { useScorePop } from '@/components/ScorePopEffect';
 import StreakBadge from '@/components/StreakBadge';
 import { CATEGORY_THEMES } from '@/lib/theme';
+import SwipeInstructions from '@/components/SwipeInstructions';
 
 const CATEGORY_ACCENT = CATEGORY_THEMES.holiday.primaryAccent;
 
@@ -258,6 +259,7 @@ export default function FireworkLaunchGame() {
   });
 
   const [phase, setPhase]               = useState<Phase>('start');
+  const [showInstructions, setShowInstructions] = useState(true);
   const [timeLeft, setTimeLeft]         = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
   const [streakDisplay, setStreakDisplay] = useState(0);
@@ -971,6 +973,13 @@ export default function FireworkLaunchGame() {
   // ─── RENDER ───────────────────────────────────────────────────────────────
   return (
     <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
+      {showInstructions && (
+        <SwipeInstructions
+          gameId="firework-launch"
+          steps={[{ icon: "👆", title: "Tap to launch", body: "Tap and hold to aim, release to fire." }, { icon: "🎆", title: "Hit the targets", body: "Launch fireworks to hit the glowing targets." }, { icon: "🔥", title: "Chain explosions", body: "Hitting multiple targets with one burst multiplies your score." }]}
+          onDone={() => setShowInstructions(false)}
+        />
+      )}
 
       {/* ── Start Screen ──────────────────────────────────────────────────── */}
       {phase === 'start' && (

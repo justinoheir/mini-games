@@ -15,6 +15,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import ScorePopEffect, { useScorePop } from '@/components/ScorePopEffect';
 import StreakBadge from '@/components/StreakBadge';
 import { CATEGORY_THEMES } from '@/lib/theme';
+import SwipeInstructions from '@/components/SwipeInstructions';
 
 const CATEGORY_ACCENT = CATEGORY_THEMES.holiday.primaryAccent;
 
@@ -174,6 +175,7 @@ export default function BooBlastGame() {
 
   // Only these drive re-renders
   const [phase, setPhase]               = useState<Phase>('start');
+  const [showInstructions, setShowInstructions] = useState(true);
   const [timeLeft, setTimeLeft]         = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
   const [hauntingLevel, setHauntingLevel] = useState(0);
@@ -626,6 +628,13 @@ export default function BooBlastGame() {
 
   return (
     <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accent}>
+      {showInstructions && (
+        <SwipeInstructions
+          gameId="boo-blast"
+          steps={[{ icon: "👆", title: "Tap to blast", body: "Tap the ghosts before they reach you." }, { icon: "👻", title: "Don't miss", body: "Letting 3 ghosts through ends the game." }, { icon: "💥", title: "Bigger ghosts = more", body: "Larger ghosts are worth more points but move slower." }]}
+          onDone={() => setShowInstructions(false)}
+        />
+      )}
 
       {/* ── Start Screen ────────────────────────────────────────────────────── */}
       {phase === 'start' && (

@@ -17,6 +17,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import ScorePopEffect, { useScorePop } from '@/components/ScorePopEffect';
 import StreakBadge from '@/components/StreakBadge';
 import { CATEGORY_THEMES } from '@/lib/theme';
+import SwipeInstructions from '@/components/SwipeInstructions';
 
 const CATEGORY_ACCENT = CATEGORY_THEMES.cognitive.primaryAccent;
 
@@ -195,6 +196,7 @@ export default function CountdownCrushGame() {
 
   // React state — only for re-renders
   const [phase, setPhase]               = useState<Phase>('start');
+  const [showInstructions, setShowInstructions] = useState(true);
   const [scoreDisplay, setScoreDisplay] = useState(0);
   const [currentCount, setCurrentCount] = useState(10);
   const [subPhaseUI, setSubPhaseUI]     = useState<SubPhase>('slamming');
@@ -811,6 +813,13 @@ export default function CountdownCrushGame() {
 
   return (
     <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accent}>
+      {showInstructions && (
+        <SwipeInstructions
+          gameId="countdown-crush"
+          steps={[{ icon: "🔢", title: "Find the number", body: "Tap numbers in order from lowest to highest." }, { icon: "⏱️", title: "Race the clock", body: "You have limited time — move fast." }, { icon: "🔥", title: "Clear the board", body: "Clear all numbers before time runs out to win." }]}
+          onDone={() => setShowInstructions(false)}
+        />
+      )}
 
       {/* ── Start Screen ─────────────────────────────────────────────────── */}
       {phase === 'start' && (
