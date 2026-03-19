@@ -801,14 +801,15 @@ export default function SymbolScanGame() {
   const accent = theme.colors.accent ?? ACCENT;
 
   return (
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accent}>
-      {showInstructions && (
+    <>
+      {phase === 'start' && showInstructions && (
         <SwipeInstructions
           gameId="symbol-scan"
           steps={[{ icon: "👁️", title: "Find the symbol", body: "Scan the grid to find the target symbol." }, { icon: "👆", title: "Tap it fast", body: "Tap the correct symbol before time runs out." }, { icon: "🔥", title: "Chain correct taps", body: "Fast correct answers build your streak." }]}
           onDone={() => setShowInstructions(false)}
         />
       )}
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accent}>
 
       {/* ── Start Screen ──────────────────────────────────────────────────── */}
       {phase === 'start' && (
@@ -909,6 +910,7 @@ export default function SymbolScanGame() {
         </>
       )}
     </GameShell>
+    </>
   );
 }
 

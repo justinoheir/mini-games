@@ -531,14 +531,15 @@ export default function StackDropGame() {
   // ─── RENDER ──────────────────────────────────────────────────────────────
 
   return (
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
-      {showInstructions && (
+    <>
+      {phase === 'start' && showInstructions && (
         <SwipeInstructions
           gameId="stack-drop"
           steps={[{ icon: "👆", title: "Tap to drop", body: "Tap the screen to drop the block onto the stack." }, { icon: "⬜", title: "Stack perfectly", body: "Align blocks precisely — overhanging parts fall off." }, { icon: "🏆", title: "Stack higher", body: "How tall can you build before it falls?" }]}
           onDone={() => setShowInstructions(false)}
         />
       )}
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
       {phase === 'start' && (
         <GameStartScreen
           emoji={GAME_EMOJI}
@@ -620,6 +621,7 @@ export default function StackDropGame() {
         </>
       )}
     </GameShell>
+    </>
   );
 }
 

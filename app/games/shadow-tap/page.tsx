@@ -645,14 +645,15 @@ export default function ShadowTapGame() {
 
   // ─── RENDER ──────────────────────────────────────────────────────────────────
   return (
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
-      {showInstructions && (
+    <>
+      {phase === 'start' && showInstructions && (
         <SwipeInstructions
           gameId="shadow-tap"
           steps={[{ icon: "👁️", title: "Watch the shadow", body: "A shape will appear briefly then vanish." }, { icon: "👆", title: "Tap the match", body: "Find and tap the matching shape from the options." }, { icon: "⚡", title: "Be quick", body: "You have limited time — trust your memory." }]}
           onDone={() => setShowInstructions(false)}
         />
       )}
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
 
       {/* ── Start Screen ──────────────────────────────────────────────────── */}
       {phase === 'start' && (
@@ -752,6 +753,7 @@ export default function ShadowTapGame() {
         </>
       )}
     </GameShell>
+    </>
   );
 }
 

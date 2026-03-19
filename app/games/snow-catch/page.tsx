@@ -813,14 +813,15 @@ export default function SnowCatchGame() {
   // ─── RENDER ───────────────────────────────────────────────────────────────
 
   return (
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
-      {showInstructions && (
+    <>
+      {phase === 'start' && showInstructions && (
         <SwipeInstructions
           gameId="snow-catch"
           steps={[{ icon: "❄️", title: "Catch the snowflakes", body: "Tilt your device to move the catcher left and right." }, { icon: "⭐", title: "Big flakes = more", body: "Larger snowflakes score more points." }, { icon: "🔥", title: "Build a streak", body: "Catch consecutive flakes without missing for a bonus." }]}
           onDone={() => setShowInstructions(false)}
         />
       )}
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
 
       {/* ── Start Screen ─────────────────────────────────────────────────── */}
       {phase === 'start' && (
@@ -922,6 +923,7 @@ export default function SnowCatchGame() {
         </>
       )}
     </GameShell>
+    </>
   );
 }
 
