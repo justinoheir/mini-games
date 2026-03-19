@@ -1,27 +1,32 @@
 'use client';
 import { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 
 interface Step {
-  icon: string;   // emoji
+  icon: string;
   title: string;
   body: string;
 }
 
 interface Props {
-  gameId: string;   // used for localStorage key
-  steps: Step[];    // max 3 steps
+  gameId: string;
+  steps: Step[];
   onDone: () => void;
 }
 
 export default function SwipeInstructions({ gameId, steps, onDone }: Props) {
   const [current, setCurrent] = useState(0);
-  const [dragStart, setDragStart] = useState<number | null>(null);
+  const [mounted, setMounted] = useState(false);
 
-  // Skip if already seen
   useEffect(() => {
-    if (localStorage.getItem(`seen_${gameId}`)) onDone();
-  }, []);
+    // Skip if already seen
+    if (typeof window !== 'undefined' && localStorage.getItem(`seen_${gameId}`)) {
+      onDone();
+      return;
+    }
+    setMounted(true);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const advance = () => {
     if (current < steps.length - 1) {
@@ -32,50 +37,125 @@ export default function SwipeInstructions({ gameId, steps, onDone }: Props) {
     }
   };
 
-  const handleDragEnd = (_: any, info: any) => {
-    if (info.offset.x < -40) advance();  // swipe left = next
+  const handleDragEnd = (_: unknown, info: { offset: { x: number } }) => {
+    if (info.offset.x < -40) advance();
   };
+
+  if (!mounted) return null;
 
   const step = steps[current];
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm">
-      <div className="w-full max-w-sm mx-4">
-        {/* Step dots */}
-        <div className="flex justify-center gap-2 mb-6">
-          {steps.map((_, i) => (
-            <div key={i} className={`h-1.5 rounded-full transition-all duration-300 ${i === current ? 'w-6 bg-white' : 'w-1.5 bg-white/30'}`} />
-          ))}
-        </div>
+  const content = (
+    <div
+      style={{
+        position: 'fixed',
+        inset: 0,
+        zIndex: 9999,
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        background: 'rgba(0,0,0,0.92)',
+        backdropFilter: 'blur(8px)',
+        WebkitBackdropFilter: 'blur(8px)',
+        padding: '24px 20px',
+      }}
+    >
+      {/* Dots */}
+      <div style={{ display: 'flex', gap: 8, marginBottom: 32 }}>
+        {steps.map((_, i) => (
+          <div
+            key={i}
+            style={{
+              height: 6,
+              width: i === current ? 24 : 6,
+              borderRadius: 9999,
+              background: i === current ? '#fff' : 'rgba(255,255,255,0.25)',
+              transition: 'all 0.3s ease',
+            }}
+          />
+        ))}
+      </div>
 
-        <AnimatePresence mode="wait">
-          <motion.div
-            key={current}
-            initial={{ opacity: 0, x: 40 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: -40 }}
-            transition={{ duration: 0.2 }}
-            drag="x"
-            dragConstraints={{ left: 0, right: 0 }}
-            onDragEnd={handleDragEnd}
-            className="bg-gray-900 border border-white/10 rounded-2xl p-8 text-center select-none"
-          >
-            <div className="text-6xl mb-4">{step.icon}</div>
-            <h2 className="text-white text-xl font-bold mb-2">{step.title}</h2>
-            <p className="text-gray-400 text-sm leading-relaxed">{step.body}</p>
-          </motion.div>
-        </AnimatePresence>
+      {/* Card */}
+      <AnimatePresence mode="wait">
+        <motion.div
+          key={current}
+          initial={{ opacity: 0, x: 48 }}
+          animate={{ opacity: 1, x: 0 }}
+          exit={{ opacity: 0, x: -48 }}
+          transition={{ duration: 0.22, ease: 'easeOut' }}
+          drag="x"
+          dragConstraints={{ left: 0, right: 0 }}
+          onDragEnd={handleDragEnd}
+          style={{
+            width: '100%',
+            maxWidth: 340,
+            background: 'rgba(255,255,255,0.07)',
+            border: '1px solid rgba(255,255,255,0.12)',
+            borderRadius: 24,
+            padding: '36px 28px',
+            textAlign: 'center',
+            userSelect: 'none',
+            cursor: 'grab',
+          }}
+        >
+          <div style={{ fontSize: 64, lineHeight: 1, marginBottom: 20 }}>{step.icon}</div>
+          <h2 style={{
+            color: '#fff',
+            fontSize: 22,
+            fontWeight: 800,
+            marginBottom: 12,
+            lineHeight: 1.2,
+          }}>
+            {step.title}
+          </h2>
+          <p style={{
+            color: 'rgba(255,255,255,0.6)',
+            fontSize: 15,
+            lineHeight: 1.6,
+            margin: 0,
+          }}>
+            {step.body}
+          </p>
+        </motion.div>
+      </AnimatePresence>
 
-        <div className="mt-6 flex items-center justify-between px-2">
-          <span className="text-gray-500 text-xs">← swipe to advance</span>
-          <button
-            onClick={advance}
-            className="bg-white text-black font-bold text-sm px-6 py-2 rounded-full active:scale-95 transition-transform"
-          >
-            {current === steps.length - 1 ? 'Play' : 'Next'}
-          </button>
-        </div>
+      {/* Controls */}
+      <div style={{
+        marginTop: 28,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        width: '100%',
+        maxWidth: 340,
+      }}>
+        <span style={{ color: 'rgba(255,255,255,0.3)', fontSize: 12 }}>
+          ← swipe to advance
+        </span>
+        <button
+          onClick={advance}
+          style={{
+            background: '#fff',
+            color: '#000',
+            fontWeight: 800,
+            fontSize: 14,
+            padding: '10px 28px',
+            borderRadius: 9999,
+            border: 'none',
+            cursor: 'pointer',
+            transform: 'scale(1)',
+            transition: 'transform 0.1s',
+          }}
+          onPointerDown={e => (e.currentTarget.style.transform = 'scale(0.95)')}
+          onPointerUp={e => (e.currentTarget.style.transform = 'scale(1)')}
+        >
+          {current === steps.length - 1 ? 'Play' : 'Next →'}
+        </button>
       </div>
     </div>
   );
+
+  // Portal to document.body — escapes any parent overflow/transform/z-index issues
+  return createPortal(content, document.body);
 }

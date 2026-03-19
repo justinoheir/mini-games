@@ -634,22 +634,23 @@ export default function BooBlastGame() {
   const accent = theme.colors.accent ?? ACCENT;
 
   return (
+    <>
+    {/* ── Instructions — portal to body, renders above everything ─────────── */}
+    {phase === 'start' && showInstructions && (
+      <SwipeInstructions
+        gameId="boo-blast"
+        steps={[
+          { icon: "👆", title: "Tap the ghosts", body: "Tap them before they disappear — each ghost is worth points." },
+          { icon: "👻", title: "Don't let them escape", body: "5 escaped ghosts ends the game early. Stay sharp." },
+          { icon: "💀", title: "Boss ghosts = 5pts", body: "The skull ghost is rare and worth 5x. Prioritize it." },
+        ]}
+        onDone={() => setShowInstructions(false)}
+      />
+    )}
     <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accent}>
-      {/* ── Instructions — shown before start screen on first visit ────────── */}
-      {phase === 'start' && showInstructions && (
-        <SwipeInstructions
-          gameId="boo-blast"
-          steps={[
-            { icon: "👆", title: "Tap the ghosts", body: "Tap them before they disappear — each ghost is worth points." },
-            { icon: "👻", title: "Don't let them escape", body: "5 escaped ghosts ends the game early. Stay sharp." },
-            { icon: "💀", title: "Boss ghosts = 5pts", body: "The big skull ghost is rare and worth 5x. Prioritize it." },
-          ]}
-          onDone={() => setShowInstructions(false)}
-        />
-      )}
 
       {/* ── Start Screen ────────────────────────────────────────────────────── */}
-      {phase === 'start' && !showInstructions && (
+      {phase === 'start' && (
         <GameStartScreen
           emoji={GAME_EMOJI}
           title={GAME_TITLE}
@@ -798,6 +799,7 @@ export default function BooBlastGame() {
         </>
       )}
     </GameShell>
+    </>
   );
 }
 
