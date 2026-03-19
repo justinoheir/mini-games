@@ -690,3 +690,789 @@ function startMinimalMusic(): () => void {
     reverb.dispose(); pingPong.dispose(); marimba.dispose(); bass.dispose(); chords.dispose()
   }
 }
+
+// ─── SPORTS: high-energy stadium beats ────────────────────────────────────────
+function startSportsMusic(): () => void {
+  const T = Tone!
+  const compressor = new T.Compressor({ threshold: -12, ratio: 4 }).connect(dryGain)
+  const kick = new T.MembraneSynth({
+    pitchDecay: 0.07, octaves: 12, volume: -4,
+    envelope: { attack: 0.001, decay: 0.3, sustain: 0, release: 0.1 },
+  }).connect(compressor)
+  const snare = new T.NoiseSynth({
+    noise: { type: 'white' },
+    envelope: { attack: 0.001, decay: 0.15, sustain: 0, release: 0.06 }, volume: -10,
+  }).connect(compressor)
+  const hihat = new T.MetalSynth({
+    envelope: { attack: 0.001, decay: 0.06, release: 0.04 },
+    harmonicity: 5.1, modulationIndex: 16, resonance: 4000, octaves: 0.3, volume: -22,
+  }).connect(compressor)
+  const bass = new T.Synth({
+    oscillator: { type: 'sawtooth' },
+    envelope: { attack: 0.01, decay: 0.2, sustain: 0.5, release: 0.1 }, volume: -14,
+  }).connect(compressor)
+  const stab = new T.PolySynth(T.Synth, {
+    oscillator: { type: 'sawtooth4' as any },
+    envelope: { attack: 0.002, decay: 0.1, sustain: 0.2, release: 0.15 }, volume: -18,
+  }).connect(compressor)
+
+  const kickSeq = new T.Sequence((time) => kick.triggerAttackRelease('C1', '8n', time),
+    [0, null, null, null, 0, null, null, null], '8n')
+  const snareSeq = new T.Sequence((time) => snare.triggerAttackRelease('16n', time),
+    [null, null, null, null, 0, null, null, null], '8n')
+  const hihatSeq = new T.Sequence((time) => hihat.triggerAttackRelease('32n', time),
+    [0, 0, 0, 0, 0, 0, 0, 0], '8n')
+  const bassNotes = ['A1','A1','A1','G1','A1','A1','F1','G1']
+  const bassSeq = new T.Sequence((time, n) => bass.triggerAttackRelease(n as string, '8n', time), bassNotes, '8n')
+  let stabIdx = 0
+  const stabProg: string[][] = [['A3','C4','E4'],['G3','B3','D4'],['F3','A3','C4'],['E3','G3','B3']]
+  const stabSeq = new T.Sequence((time) => {
+    if (stabIdx % 4 === 0) stab.triggerAttackRelease(stabProg[Math.floor(stabIdx/4) % 4], '16n', time)
+    stabIdx++
+  }, [0,0,0,0,0,0,0,0], '8n')
+
+  kickSeq.start(0); snareSeq.start(0); hihatSeq.start(0); bassSeq.start(0); stabSeq.start(0)
+  activeParts.push(kickSeq, snareSeq, hihatSeq, bassSeq, stabSeq)
+  T.getTransport().bpm.value = 145
+  T.getTransport().start()
+  return () => {
+    stopAllMusic()
+    compressor.dispose(); kick.dispose(); snare.dispose(); hihat.dispose(); bass.dispose(); stab.dispose()
+  }
+}
+
+// ─── HOLIDAY: festive bells and warmth ────────────────────────────────────────
+function startHolidayMusic(): () => void {
+  const T = Tone!
+  const reverb = new T.Reverb({ decay: 2.0, wet: 0.4 }).connect(dryGain)
+  const bell = new T.MetalSynth({
+    envelope: { attack: 0.001, decay: 0.3, release: 0.2 },
+    harmonicity: 5.1, modulationIndex: 16, resonance: 2000, octaves: 0.5, volume: -14,
+  }).connect(reverb)
+  const pad = new T.PolySynth(T.Synth, {
+    oscillator: { type: 'sine4' as any },
+    envelope: { attack: 0.1, decay: 0.5, sustain: 0.6, release: 1.5 }, volume: -20,
+  }).connect(reverb)
+  const bass = new T.Synth({
+    oscillator: { type: 'triangle' },
+    envelope: { attack: 0.05, decay: 0.4, sustain: 0.3, release: 0.5 }, volume: -18,
+  }).connect(dryGain)
+
+  const bellMelody = ['C6','E6','G6','B5','C6',null,'G5','B5']
+  let bIdx = 0
+  const bellSeq = new T.Sequence((time) => {
+    const n = bellMelody[bIdx % bellMelody.length]
+    if (n) bell.triggerAttackRelease('8n', time)
+    bIdx++
+  }, [0,0,0,0,0,0,0,0], '8n')
+  const padChords: string[][] = [['C4','E4','G4'],['F3','A3','C4'],['G3','B3','D4'],['A3','C4','E4']]
+  const bassNotes = ['C2','F2','G2','A2']
+  let idx = 0
+  const padSeq = new T.Sequence((time) => {
+    pad.triggerAttackRelease(padChords[idx % 4], '2n', time)
+    bass.triggerAttackRelease(bassNotes[idx % 4], '2n', time)
+    idx++
+  }, [0,0,0,0], '2n')
+
+  bellSeq.start(0); padSeq.start(0)
+  activeParts.push(bellSeq, padSeq)
+  T.getTransport().bpm.value = 100
+  T.getTransport().start()
+  return () => { stopAllMusic(); reverb.dispose(); bell.dispose(); pad.dispose(); bass.dispose() }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ─── AAA SOUND DESIGN — HIGH-LEVEL EXPORTED FUNCTIONS ─────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+
+/** Semitone randomisation helper. */
+function randSemitones(max: number): number {
+  return Math.pow(2, ((Math.random() - 0.5) * 2 * max) / 12)
+}
+
+/**
+ * playScoreHit — category-aware score sound with ±1 semitone pitch variation.
+ * category: 'sports' | 'cognitive' | 'social' | 'seasonal' | 'default'
+ * points: shimmer layer added at ≥50pts.
+ */
+export function playScoreHit(category: string = 'default', points: number = 10): void {
+  if (!initialized || muted || !Tone) return
+  try {
+    const T = Tone; const now = T.now()
+    const reverb = new T.Reverb({ decay: 0.8, wet: 0.3 }).connect(dryGain)
+    const baseFreqs: Record<string,number> = {
+      sports: 659.25, cognitive: 523.25, social: 698.46, seasonal: 783.99, default: 587.33,
+    }
+    const base = (baseFreqs[category] ?? baseFreqs.default) * randSemitones(1)
+    const synth = new T.Synth({
+      oscillator: { type: 'triangle' },
+      envelope: { attack: 0.001, decay: 0.18, sustain: 0.05, release: 0.4 }, volume: -10,
+    }).connect(reverb)
+    synth.triggerAttackRelease(base, '16n', now)
+    synth.triggerAttackRelease(base * 1.25, '32n', now + 0.06)
+    if (points >= 50) {
+      const sp = new T.MetalSynth({
+        envelope: { attack: 0.001, decay: 0.1, release: 0.08 },
+        harmonicity: 5.1, modulationIndex: 12, resonance: 1800, octaves: 0.5, volume: -22,
+      }).connect(reverb)
+      sp.triggerAttackRelease('32n', now + 0.05)
+      setTimeout(() => sp.dispose(), 600)
+    }
+    setTimeout(() => { synth.dispose(); reverb.dispose() }, 800)
+  } catch { /* non-critical */ }
+}
+
+/**
+ * playComboSfx — escalating combo sound.
+ * streak 1-4: rising note; 3+: harmony; 5+: chord burst.
+ */
+export function playComboSfx(streak: number): void {
+  if (!initialized || muted || !Tone) return
+  try {
+    const T = Tone; const now = T.now()
+    const reverb = new T.Reverb({ decay: 1.0, wet: 0.4 }).connect(dryGain)
+    const step = Math.min(streak - 1, 8)
+    const baseFreq = 440 * Math.pow(2, step / 12) * randSemitones(0.5)
+    const vol = Math.max(-18, -18 + streak)
+    const synth = new T.Synth({
+      oscillator: { type: streak >= 5 ? ('sawtooth4' as any) : 'triangle' },
+      envelope: { attack: 0.001, decay: streak >= 5 ? 0.3 : 0.15, sustain: 0.1, release: 0.5 },
+      volume: vol,
+    }).connect(reverb)
+    synth.triggerAttackRelease(baseFreq, '16n', now)
+    if (streak >= 3) {
+      const h = new T.Synth({
+        oscillator: { type: 'sine' },
+        envelope: { attack: 0.001, decay: 0.2, sustain: 0, release: 0.3 }, volume: vol - 6,
+      }).connect(reverb)
+      h.triggerAttackRelease(baseFreq * 1.5, '32n', now + 0.04)
+      setTimeout(() => h.dispose(), 500)
+    }
+    if (streak >= 5) {
+      const ch = new T.PolySynth(T.Synth, {
+        oscillator: { type: 'sine' },
+        envelope: { attack: 0.001, decay: 0.4, sustain: 0.1, release: 0.8 }, volume: vol - 8,
+      }).connect(reverb)
+      ch.triggerAttackRelease([baseFreq, baseFreq * 1.25, baseFreq * 1.5], '8n', now + 0.05)
+      setTimeout(() => ch.dispose(), 1000)
+    }
+    setTimeout(() => { synth.dispose(); reverb.dispose() }, 900)
+  } catch { /* non-critical */ }
+}
+
+/**
+ * playNearMiss — tense descending whiff for close calls.
+ */
+export function playNearMiss(): void {
+  if (!initialized || muted || !Tone) return
+  try {
+    const T = Tone; const now = T.now()
+    const reverb = new T.Reverb({ decay: 0.6, wet: 0.25 }).connect(dryGain)
+    const synth = new T.Synth({
+      oscillator: { type: 'sine' },
+      envelope: { attack: 0.001, decay: 0.2, sustain: 0, release: 0.15 }, volume: -10,
+    }).connect(reverb)
+    ;[659.25, 523.25, 440].forEach((f, i) => synth.triggerAttackRelease(f, '32n', now + i * 0.07))
+    const noise = new T.NoiseSynth({
+      noise: { type: 'pink' },
+      envelope: { attack: 0.001, decay: 0.1, sustain: 0, release: 0.05 }, volume: -20,
+    }).connect(dryGain)
+    noise.triggerAttackRelease('16n', now)
+    setTimeout(() => { synth.dispose(); noise.dispose(); reverb.dispose() }, 700)
+  } catch { /* non-critical */ }
+}
+
+/**
+ * playCountdown — per-number countdown beep (n=3,2,1) or GO (n=0).
+ * Pitch rises as n decreases; n=0 = triumphant major chord.
+ */
+export function playCountdown(n: number): void {
+  if (!initialized || muted || !Tone) return
+  try {
+    const T = Tone; const now = T.now()
+    if (n === 0) {
+      const reverb = new T.Reverb({ decay: 0.8, wet: 0.3 }).connect(dryGain)
+      const ch = new T.PolySynth(T.Synth, {
+        oscillator: { type: 'triangle' },
+        envelope: { attack: 0.001, decay: 0.3, sustain: 0.2, release: 0.8 }, volume: -10,
+      }).connect(reverb)
+      ch.triggerAttackRelease(['C4','E4','G4','C5'], '4n', now)
+      setTimeout(() => { ch.dispose(); reverb.dispose() }, 1200)
+    } else {
+      const freqs: Record<number,number> = { 3: 330, 2: 440, 1: 660 }
+      const freq = (freqs[n] ?? 440) * randSemitones(0.3)
+      const synth = new T.Synth({
+        oscillator: { type: n === 1 ? 'sawtooth' : 'sine' },
+        envelope: { attack: 0.001, decay: n === 1 ? 0.25 : 0.18, sustain: 0, release: 0.1 },
+        volume: n === 1 ? -6 : -10,
+      }).connect(dryGain)
+      synth.triggerAttackRelease(freq, '16n', now)
+      setTimeout(() => synth.dispose(), 500)
+    }
+  } catch { /* non-critical */ }
+}
+
+/**
+ * playVictoryFanfare — rising major arpeggio with sparkle tail.
+ */
+export function playVictoryFanfare(): void {
+  if (!initialized || muted || !Tone) return
+  try {
+    const T = Tone; const now = T.now()
+    const reverb = new T.Reverb({ decay: 2.0, wet: 0.45 }).connect(dryGain)
+    const lead = new T.Synth({
+      oscillator: { type: 'sawtooth4' as any },
+      envelope: { attack: 0.001, decay: 0.25, sustain: 0.3, release: 0.8 }, volume: -8,
+    }).connect(reverb)
+    const notes = ['C4','E4','G4','C5','E5','G5','C6']
+    notes.forEach((note, i) => lead.triggerAttackRelease(note, '16n', now + i * 0.075))
+    const t = now + notes.length * 0.075
+    const chord = new T.PolySynth(T.Synth, {
+      oscillator: { type: 'sine4' as any },
+      envelope: { attack: 0.001, decay: 0.5, sustain: 0.4, release: 1.5 }, volume: -12,
+    }).connect(reverb)
+    chord.triggerAttackRelease(['C5','E5','G5','C6'], '2n', t)
+    const sp = new T.MetalSynth({
+      envelope: { attack: 0.001, decay: 0.3, release: 0.2 },
+      harmonicity: 5.1, modulationIndex: 16, resonance: 2400, octaves: 0.5, volume: -20,
+    }).connect(reverb)
+    sp.triggerAttackRelease('8n', t + 0.1)
+    setTimeout(() => { lead.dispose(); chord.dispose(); sp.dispose(); reverb.dispose() }, 2500)
+  } catch { /* non-critical */ }
+}
+
+/**
+ * playPersonalBest — genuinely exciting PB fanfare.
+ * Bass hit → 2-octave arpeggio → massive chord → bell cascade → sparkle shower.
+ */
+export function playPersonalBest(): void {
+  if (!initialized || muted || !Tone) return
+  try {
+    const T = Tone; const now = T.now()
+    const reverb = new T.Reverb({ decay: 3.0, wet: 0.5 }).connect(dryGain)
+    const pingPong = new T.PingPongDelay({ delayTime: '8n', feedback: 0.25, wet: 0.3 }).connect(dryGain)
+    // Big bass hit
+    const kick = new T.MembraneSynth({
+      pitchDecay: 0.08, octaves: 12, volume: -4,
+      envelope: { attack: 0.001, decay: 0.5, sustain: 0, release: 0.2 },
+    }).connect(dryGain)
+    kick.triggerAttackRelease('C1', '8n', now)
+    const sub = new T.Synth({
+      oscillator: { type: 'sine' },
+      envelope: { attack: 0.001, decay: 0.6, sustain: 0, release: 0.4 }, volume: -10,
+    }).connect(dryGain)
+    sub.triggerAttackRelease('C2', '4n', now + 0.02)
+    // 2-octave arpeggio
+    const lead = new T.Synth({
+      oscillator: { type: 'sawtooth4' as any },
+      envelope: { attack: 0.001, decay: 0.18, sustain: 0.2, release: 0.6 }, volume: -8,
+    }).connect(reverb)
+    const arp = ['C3','E3','G3','C4','E4','G4','C5','E5','G5','C6']
+    arp.forEach((n, i) => lead.triggerAttackRelease(n, '32n', now + 0.05 + i * 0.06))
+    const arpEnd = now + 0.05 + arp.length * 0.06
+    // Massive chord
+    const chord = new T.PolySynth(T.Synth, {
+      oscillator: { type: 'sine4' as any },
+      envelope: { attack: 0.002, decay: 0.8, sustain: 0.5, release: 2.5 }, volume: -10,
+    }).connect(reverb)
+    chord.triggerAttackRelease(['C4','E4','G4','B4','D5','G5','C6'], '1n', arpEnd)
+    // Bell cascade
+    const bell = new T.Synth({
+      oscillator: { type: 'sine' },
+      envelope: { attack: 0.001, decay: 0.6, sustain: 0.1, release: 1.5 }, volume: -12,
+    }).connect(reverb)
+    ;(bell as any).connect(pingPong)
+    ;['C6','E6','G6','C7','E7'].forEach((n, i) => bell.triggerAttackRelease(n, '8n', arpEnd + 0.1 + i * 0.08))
+    // Sparkle shower
+    const sparkles = [0, 0.05, 0.1, 0.15].map((offset) => {
+      const m = new T.MetalSynth({
+        envelope: { attack: 0.001, decay: 0.25 + Math.random() * 0.25, release: 0.15 },
+        harmonicity: 3 + Math.random() * 4, modulationIndex: 12 + Math.random() * 8,
+        resonance: 1200 + Math.random() * 2000, octaves: 0.5, volume: -22 + Math.random() * 4,
+      }).connect(reverb)
+      m.triggerAttackRelease('16n', arpEnd + 0.2 + offset)
+      return m
+    })
+    setTimeout(() => {
+      kick.dispose(); sub.dispose(); lead.dispose(); chord.dispose()
+      bell.dispose(); sparkles.forEach(s => s.dispose())
+      reverb.dispose(); pingPong.dispose()
+    }, 5000)
+  } catch { /* non-critical */ }
+}
+
+/**
+ * playUrgentTick — last-5-seconds countdown escalation.
+ * secondsLeft 5→1: higher pitch, louder, adds trill at 1.
+ */
+export function playUrgentTick(secondsLeft: number): void {
+  if (!initialized || muted || !Tone) return
+  try {
+    const T = Tone; const now = T.now()
+    const step = Math.max(1, Math.min(5, secondsLeft))
+    const freqs: Record<number,number> = { 5: 329.63, 4: 440, 3: 659.25, 2: 880, 1: 1318.51 }
+    const freq = freqs[step] * randSemitones(0.2)
+    const vol = -16 + (5 - step) * 2.5
+    const synth = new T.Synth({
+      oscillator: { type: step <= 2 ? 'square' : 'sine' },
+      envelope: { attack: 0.001, decay: 0.08, sustain: 0, release: 0.06 }, volume: vol,
+    }).connect(dryGain)
+    synth.triggerAttackRelease(freq, '32n', now)
+    const metal = new T.MetalSynth({
+      envelope: { attack: 0.001, decay: 0.05, release: 0.03 },
+      harmonicity: 5.1, modulationIndex: step <= 2 ? 24 : 16,
+      resonance: freq * 4, octaves: 0.5, volume: vol - 10,
+    }).connect(dryGain)
+    metal.triggerAttackRelease('32n', now)
+    if (step <= 2) synth.triggerAttackRelease(freq * 1.5, '32n', now + 0.06)
+    if (step === 1) {
+      synth.triggerAttackRelease(freq * 2, '32n', now + 0.12)
+      synth.triggerAttackRelease(freq * 2, '32n', now + 0.18)
+    }
+    setTimeout(() => { synth.dispose(); metal.dispose() }, 700)
+  } catch { /* non-critical */ }
+}
+
+// ─── Ambient loops by game category ──────────────────────────────────────────
+let ambientLoop: { stop: () => void } | null = null
+
+export function startAmbient(category: string = 'default'): void {
+  if (!initialized || muted || !Tone) return
+  stopAmbient()
+  try {
+    const T = Tone; const now = T.now()
+    let dispose: (() => void) | null = null
+
+    if (category === 'sports') {
+      const reverb = new T.Reverb({ decay: 4.0, wet: 0.6 }).connect(dryGain)
+      const crowd = new T.NoiseSynth({
+        noise: { type: 'pink' },
+        envelope: { attack: 2.0, decay: 0, sustain: 1, release: 2.0 }, volume: -28,
+      }).connect(reverb)
+      crowd.triggerAttack(now)
+      const filter = new T.Filter({ frequency: 500, type: 'lowpass', Q: 0.5 }).connect(dryGain)
+      const pad = new T.Synth({
+        oscillator: { type: 'sine' },
+        envelope: { attack: 3.0, decay: 0, sustain: 1, release: 3.0 }, volume: -30,
+      }).connect(filter)
+      pad.triggerAttack('C2', now)
+      dispose = () => { crowd.dispose(); pad.dispose(); reverb.dispose(); filter.dispose() }
+
+    } else if (category === 'cognitive') {
+      const reverb = new T.Reverb({ decay: 5.0, wet: 0.7 }).connect(dryGain)
+      const hum = new T.PolySynth(T.Synth, {
+        oscillator: { type: 'sine4' as any },
+        envelope: { attack: 4.0, decay: 0, sustain: 1, release: 4.0 }, volume: -30,
+      }).connect(reverb)
+      hum.triggerAttack(['C3','G3','E4'], now)
+      dispose = () => { hum.dispose(); reverb.dispose() }
+
+    } else if (category === 'seasonal') {
+      const reverb = new T.Reverb({ decay: 6.0, wet: 0.7 }).connect(dryGain)
+      const wind = new T.NoiseSynth({
+        noise: { type: 'pink' },
+        envelope: { attack: 3.0, decay: 0, sustain: 1, release: 3.0 }, volume: -30,
+      }).connect(reverb)
+      wind.triggerAttack(now)
+      dispose = () => { wind.dispose(); reverb.dispose() }
+
+    } else if (category === 'social') {
+      const reverb = new T.Reverb({ decay: 4.0, wet: 0.5 }).connect(dryGain)
+      const pad = new T.PolySynth(T.Synth, {
+        oscillator: { type: 'sine' },
+        envelope: { attack: 3.0, decay: 0, sustain: 1, release: 3.0 }, volume: -26,
+      }).connect(reverb)
+      pad.triggerAttack(['C3','E3','G3'], now)
+      dispose = () => { pad.dispose(); reverb.dispose() }
+
+    } else if (category === 'path') {
+      const reverb = new T.Reverb({ decay: 3.0, wet: 0.5 }).connect(dryGain)
+      const noise = new T.NoiseSynth({
+        noise: { type: 'brown' },
+        envelope: { attack: 2.0, decay: 0, sustain: 1, release: 2.0 }, volume: -34,
+      }).connect(reverb)
+      noise.triggerAttack(now)
+      dispose = () => { noise.dispose(); reverb.dispose() }
+
+    } else if (category === 'orbit') {
+      const reverb = new T.Reverb({ decay: 6.0, wet: 0.7 }).connect(dryGain)
+      const hum = new T.Synth({
+        oscillator: { type: 'sine' },
+        envelope: { attack: 4.0, decay: 0, sustain: 1, release: 4.0 }, volume: -28,
+      }).connect(reverb)
+      hum.triggerAttack('A0', now)
+      const harm = new T.Synth({
+        oscillator: { type: 'sine' },
+        envelope: { attack: 6.0, decay: 0, sustain: 1, release: 4.0 }, volume: -34,
+      }).connect(reverb)
+      harm.triggerAttack('E1', now + 1)
+      dispose = () => { hum.dispose(); harm.dispose(); reverb.dispose() }
+
+    } else {
+      const reverb = new T.Reverb({ decay: 4.0, wet: 0.5 }).connect(dryGain)
+      const pad = new T.PolySynth(T.Synth, {
+        oscillator: { type: 'sine4' as any },
+        envelope: { attack: 4.0, decay: 0, sustain: 1, release: 4.0 }, volume: -28,
+      }).connect(reverb)
+      pad.triggerAttack(['C3','G3'], now)
+      dispose = () => { pad.dispose(); reverb.dispose() }
+    }
+
+    ambientLoop = { stop: () => { if (dispose) dispose() } }
+  } catch { /* non-critical */ }
+}
+
+export function stopAmbient(): void {
+  if (ambientLoop) { try { ambientLoop.stop() } catch { /* ok */ }; ambientLoop = null }
+}
+
+// ─── Game-specific AAA Sound Effects ─────────────────────────────────────────
+
+/** Ascending pitch sweep for firework launch (~0.4s). */
+export function playFireworkWhistle(): void {
+  if (!initialized || muted || !Tone) return
+  try {
+    const T = Tone; const now = T.now()
+    const synth = new T.Synth({
+      oscillator: { type: 'sine' },
+      envelope: { attack: 0.01, decay: 0.35, sustain: 0, release: 0.1 }, volume: -12,
+    }).connect(dryGain)
+    const hiss = new T.NoiseSynth({
+      noise: { type: 'white' },
+      envelope: { attack: 0.02, decay: 0.35, sustain: 0, release: 0.1 }, volume: -24,
+    }).connect(dryGain)
+    ;['G3','C4','G4','C5','G5','C6','G6'].forEach((p, i) => synth.triggerAttackRelease(p, '32n', now + i * 0.055))
+    hiss.triggerAttackRelease('4n', now)
+    setTimeout(() => { synth.dispose(); hiss.dispose() }, 700)
+  } catch { /* non-critical */ }
+}
+
+/** Multi-layered firework explosion: sub boom + noise + sparkle cluster. */
+export function playFireworkBurst(): void {
+  if (!initialized || muted || !Tone) return
+  try {
+    const T = Tone; const now = T.now()
+    const reverb = new T.Reverb({ decay: 2.5, wet: 0.55 }).connect(dryGain)
+    const sub = new T.MembraneSynth({
+      pitchDecay: 0.06, octaves: 8, volume: -8,
+      envelope: { attack: 0.001, decay: 0.5, sustain: 0, release: 0.3 },
+    }).connect(dryGain)
+    const noise = new T.NoiseSynth({
+      noise: { type: 'pink' },
+      envelope: { attack: 0.001, decay: 0.3, sustain: 0, release: 0.2 }, volume: -14,
+    }).connect(reverb)
+    const sparkles = [1800, 2400, 3200, 4000].map((res, i) => {
+      const m = new T.MetalSynth({
+        envelope: { attack: 0.001, decay: 0.2 + Math.random() * 0.2, release: 0.15 },
+        harmonicity: 3 + Math.random() * 4, modulationIndex: 12 + Math.random() * 8,
+        resonance: res, octaves: 0.5 + Math.random() * 0.5, volume: -20,
+      }).connect(reverb)
+      m.triggerAttackRelease('16n', now + i * 0.015)
+      return m
+    })
+    sub.triggerAttackRelease('C1', '4n', now)
+    noise.triggerAttackRelease('4n', now)
+    setTimeout(() => { sub.dispose(); noise.dispose(); sparkles.forEach(s => s.dispose()); reverb.dispose() }, 2000)
+  } catch { /* non-critical */ }
+}
+
+/** Wet cauldron bubble pop. Pitch ±4 semitones. */
+export function playBubblePop(): void {
+  if (!initialized || muted || !Tone) return
+  try {
+    const T = Tone; const now = T.now()
+    const reverb = new T.Reverb({ decay: 0.8, wet: 0.35 }).connect(dryGain)
+    const freq = 220 * randSemitones(4)
+    const synth = new T.FMSynth({
+      harmonicity: 0.5, modulationIndex: 10,
+      envelope: { attack: 0.001, decay: 0.12, sustain: 0, release: 0.08 }, volume: -10,
+    }).connect(reverb)
+    synth.triggerAttackRelease(freq, '32n', now)
+    const noise = new T.NoiseSynth({
+      noise: { type: 'pink' },
+      envelope: { attack: 0.001, decay: 0.06, sustain: 0, release: 0.03 }, volume: -20,
+    }).connect(reverb)
+    noise.triggerAttackRelease('32n', now)
+    setTimeout(() => { synth.dispose(); noise.dispose(); reverb.dispose() }, 600)
+  } catch { /* non-critical */ }
+}
+
+/** Eerie descending squeal for boo-blast ghost hits. */
+export function playGhostScream(): void {
+  if (!initialized || muted || !Tone) return
+  try {
+    const T = Tone; const now = T.now()
+    const reverb = new T.Reverb({ decay: 1.8, wet: 0.55 }).connect(dryGain)
+    const synth = new T.Synth({
+      oscillator: { type: 'sine' },
+      envelope: { attack: 0.01, decay: 0.45, sustain: 0.1, release: 0.35 }, volume: -10,
+    }).connect(reverb)
+    ;[880, 659, 494, 330, 220].forEach((f, i) =>
+      synth.triggerAttackRelease(f * randSemitones(1), '32n', now + i * 0.07))
+    const noise = new T.NoiseSynth({
+      noise: { type: 'pink' },
+      envelope: { attack: 0.05, decay: 0.35, sustain: 0, release: 0.15 }, volume: -22,
+    }).connect(reverb)
+    noise.triggerAttackRelease('4n', now)
+    setTimeout(() => { synth.dispose(); noise.dispose(); reverb.dispose() }, 1000)
+  } catch { /* non-critical */ }
+}
+
+/** High bell cluster for snow-catch. Pitch ±3 semitones from random C6-C7. */
+export function playSnowTinkle(): void {
+  if (!initialized || muted || !Tone) return
+  try {
+    const T = Tone; const now = T.now()
+    const reverb = new T.Reverb({ decay: 2.0, wet: 0.65 }).connect(dryGain)
+    const pool = [1046.5, 1174.66, 1318.51, 1396.91, 1568, 1760, 2093]
+    const base = pool[Math.floor(Math.random() * pool.length)] * randSemitones(3)
+    const bell = new T.Synth({
+      oscillator: { type: 'sine' },
+      envelope: { attack: 0.001, decay: 0.35, sustain: 0.02, release: 1.0 }, volume: -10,
+    }).connect(reverb)
+    bell.triggerAttackRelease(base, '16n', now)
+    bell.triggerAttackRelease(base * 2, '32n', now + 0.04)
+    setTimeout(() => { bell.dispose(); reverb.dispose() }, 1400)
+  } catch { /* non-critical */ }
+}
+
+/** Rapid jingle trio for gift-rush. */
+export function playGiftJingle(): void {
+  if (!initialized || muted || !Tone) return
+  try {
+    const T = Tone; const now = T.now()
+    const reverb = new T.Reverb({ decay: 1.2, wet: 0.45 }).connect(dryGain)
+    const bell = new T.MetalSynth({
+      envelope: { attack: 0.001, decay: 0.14, release: 0.1 },
+      harmonicity: 5.1, modulationIndex: 16,
+      resonance: 2000 + Math.random() * 800, octaves: 0.5, volume: -14,
+    }).connect(reverb)
+    bell.triggerAttackRelease('16n', now)
+    bell.triggerAttackRelease('16n', now + 0.07)
+    bell.triggerAttackRelease('16n', now + 0.14)
+    const chord = new T.PolySynth(T.Synth, {
+      oscillator: { type: 'sine' },
+      envelope: { attack: 0.001, decay: 0.2, sustain: 0.05, release: 0.5 }, volume: -18,
+    }).connect(reverb)
+    chord.triggerAttackRelease(['C5','E5','G5'], '8n', now)
+    setTimeout(() => { bell.dispose(); chord.dispose(); reverb.dispose() }, 900)
+  } catch { /* non-critical */ }
+}
+
+/** String pluck for cupid-shot arrow fire. Pitch ±2 semitones. */
+export function playBowTwang(): void {
+  if (!initialized || muted || !Tone) return
+  try {
+    const T = Tone; const now = T.now()
+    const reverb = new T.Reverb({ decay: 0.8, wet: 0.25 }).connect(dryGain)
+    const freq = 246.94 * randSemitones(2)
+    const synth = new T.FMSynth({
+      harmonicity: 2, modulationIndex: 5,
+      envelope: { attack: 0.001, decay: 0.4, sustain: 0.1, release: 0.5 },
+      modulation: { type: 'triangle' },
+      modulationEnvelope: { attack: 0.001, decay: 0.1, sustain: 0.1, release: 0.5 },
+      volume: -10,
+    }).connect(reverb)
+    synth.triggerAttackRelease(freq, '8n', now)
+    const noise = new T.NoiseSynth({
+      noise: { type: 'white' },
+      envelope: { attack: 0.001, decay: 0.05, sustain: 0, release: 0.03 }, volume: -18,
+    }).connect(dryGain)
+    noise.triggerAttackRelease('64n', now)
+    setTimeout(() => { synth.dispose(); noise.dispose(); reverb.dispose() }, 1200)
+  } catch { /* non-critical */ }
+}
+
+/** Warm thud + ascending E4→G4→C5 for cupid-shot hits. */
+export function playHeartHit(): void {
+  if (!initialized || muted || !Tone) return
+  try {
+    const T = Tone; const now = T.now()
+    const reverb = new T.Reverb({ decay: 1.5, wet: 0.45 }).connect(dryGain)
+    const kick = new T.MembraneSynth({
+      pitchDecay: 0.04, octaves: 6, volume: -12,
+      envelope: { attack: 0.001, decay: 0.2, sustain: 0, release: 0.1 },
+    }).connect(dryGain)
+    kick.triggerAttackRelease('F2', '8n', now)
+    const melody = new T.Synth({
+      oscillator: { type: 'sine' },
+      envelope: { attack: 0.001, decay: 0.2, sustain: 0.05, release: 0.5 }, volume: -12,
+    }).connect(reverb)
+    ;['E4','G4','C5'].forEach((n, i) => melody.triggerAttackRelease(n, '16n', now + 0.02 + i * 0.07))
+    const sp = new T.MetalSynth({
+      envelope: { attack: 0.001, decay: 0.12, release: 0.08 },
+      harmonicity: 5.1, modulationIndex: 12, resonance: 1200, octaves: 0.5, volume: -22,
+    }).connect(reverb)
+    sp.triggerAttackRelease('16n', now + 0.18)
+    setTimeout(() => { kick.dispose(); melody.dispose(); sp.dispose(); reverb.dispose() }, 1100)
+  } catch { /* non-critical */ }
+}
+
+/**
+ * playPianoNote — piano-like tone for love-note game.
+ * freq: Hz (e.g. 261.63=C4). Bright transient + warm triangle decay.
+ */
+export function playPianoNote(freq: number): void {
+  if (!initialized || muted || !Tone) return
+  try {
+    const T = Tone; const now = T.now()
+    const reverb = new T.Reverb({ decay: 2.8, wet: 0.4 }).connect(dryGain)
+    const main = new T.Synth({
+      oscillator: { type: 'triangle' },
+      envelope: { attack: 0.002, decay: 0.8, sustain: 0.15, release: 1.2 }, volume: -10,
+    }).connect(reverb)
+    const bright = new T.Synth({
+      oscillator: { type: 'sine' },
+      envelope: { attack: 0.001, decay: 0.05, sustain: 0, release: 0.03 }, volume: -18,
+    }).connect(reverb)
+    main.triggerAttackRelease(freq, '4n', now)
+    bright.triggerAttackRelease(freq * 2, '64n', now)
+    setTimeout(() => { main.dispose(); bright.dispose(); reverb.dispose() }, 2800)
+  } catch { /* non-critical */ }
+}
+
+/**
+ * playScanBeep — match/miss beep for symbol-scan.
+ * matched: ascending double ping | !matched: low FM buzz.
+ */
+export function playScanBeep(matched: boolean): void {
+  if (!initialized || muted || !Tone) return
+  try {
+    const T = Tone; const now = T.now()
+    if (matched) {
+      const reverb = new T.Reverb({ decay: 0.5, wet: 0.2 }).connect(dryGain)
+      const synth = new T.Synth({
+        oscillator: { type: 'sine' },
+        envelope: { attack: 0.001, decay: 0.1, sustain: 0, release: 0.08 }, volume: -10,
+      }).connect(reverb)
+      const base = 880 * randSemitones(2)
+      synth.triggerAttackRelease(base, '32n', now)
+      synth.triggerAttackRelease(base * 1.25, '32n', now + 0.09)
+      setTimeout(() => { synth.dispose(); reverb.dispose() }, 600)
+    } else {
+      const synth = new T.FMSynth({
+        harmonicity: 0.5, modulationIndex: 8,
+        envelope: { attack: 0.01, decay: 0.2, sustain: 0, release: 0.1 }, volume: -12,
+      }).connect(dryGain)
+      synth.triggerAttackRelease('A2', '8n', now)
+      setTimeout(() => synth.dispose(), 500)
+    }
+  } catch { /* non-critical */ }
+}
+
+/**
+ * playStackThud — pitched thud for stack-drop blocks.
+ * height: blocks stacked. ±2 semitone variation.
+ */
+export function playStackThud(height: number): void {
+  if (!initialized || muted || !Tone) return
+  try {
+    const T = Tone; const now = T.now()
+    const reverb = new T.Reverb({ decay: 0.5, wet: 0.2 }).connect(dryGain)
+    const freq = 32.7 * Math.pow(2, Math.min(12, Math.floor(height / 2)) / 12) * randSemitones(2)
+    const kick = new T.MembraneSynth({
+      pitchDecay: 0.05, octaves: 8, volume: -8,
+      envelope: { attack: 0.001, decay: 0.25, sustain: 0, release: 0.12 },
+    }).connect(dryGain)
+    kick.triggerAttackRelease(freq, '8n', now)
+    const body = new T.Synth({
+      oscillator: { type: 'triangle' },
+      envelope: { attack: 0.001, decay: 0.15, sustain: 0, release: 0.1 }, volume: -16,
+    }).connect(reverb)
+    body.triggerAttackRelease(freq * 4, '32n', now)
+    setTimeout(() => { kick.dispose(); body.dispose(); reverb.dispose() }, 700)
+  } catch { /* non-critical */ }
+}
+
+/**
+ * playBalanceCreak — creaking for balance-beam tilt.
+ * tiltAmount 0..1 (0=center, 1=max). Pitch and volume scale with tilt.
+ */
+export function playBalanceCreak(tiltAmount: number): void {
+  if (!initialized || muted || !Tone) return
+  try {
+    const T = Tone; const now = T.now()
+    const a = Math.max(0, Math.min(1, tiltAmount))
+    const freq = (180 + a * 420) * randSemitones(0.5)
+    const vol = -28 + a * 10
+    const synth = new T.Synth({
+      oscillator: { type: 'sawtooth' },
+      envelope: { attack: 0.01, decay: 0.08, sustain: 0.2, release: 0.12 }, volume: vol,
+    }).connect(dryGain)
+    synth.triggerAttackRelease(freq, '64n', now)
+    if (a > 0.5) {
+      const noise = new T.NoiseSynth({
+        noise: { type: 'brown' },
+        envelope: { attack: 0.01, decay: 0.07, sustain: 0, release: 0.04 }, volume: vol - 6,
+      }).connect(dryGain)
+      noise.triggerAttackRelease('32n', now)
+      setTimeout(() => { synth.dispose(); noise.dispose() }, 350)
+    } else {
+      setTimeout(() => synth.dispose(), 280)
+    }
+  } catch { /* non-critical */ }
+}
+
+/** Synthesized turkey gobble for turkey-trot. ±2 semitone pitch variation. */
+export function playGobble(): void {
+  if (!initialized || muted || !Tone) return
+  try {
+    const T = Tone; const now = T.now()
+    const reverb = new T.Reverb({ decay: 0.6, wet: 0.3 }).connect(dryGain)
+    const base = 220 * randSemitones(2)
+    const synth = new T.FMSynth({
+      harmonicity: 1.5, modulationIndex: 6,
+      envelope: { attack: 0.02, decay: 0.15, sustain: 0.3, release: 0.2 },
+      modulation: { type: 'sine' },
+      modulationEnvelope: { attack: 0.02, decay: 0.1, sustain: 0.5, release: 0.2 }, volume: -10,
+    }).connect(reverb)
+    synth.triggerAttackRelease(base, '32n', now)
+    synth.triggerAttackRelease(base * 1.33, '16n', now + 0.06)
+    synth.triggerAttackRelease(base, '32n', now + 0.15)
+    setTimeout(() => { synth.dispose(); reverb.dispose() }, 700)
+  } catch { /* non-critical */ }
+}
+
+/**
+ * playHarvestThud — basket catch thud for harvest-catch.
+ * pitchNote: semitone offset from C1 (vary per item type). ±1.5 semitone variation.
+ */
+export function playHarvestThud(pitchNote: number = 0): void {
+  if (!initialized || muted || !Tone) return
+  try {
+    const T = Tone; const now = T.now()
+    const reverb = new T.Reverb({ decay: 0.4, wet: 0.2 }).connect(dryGain)
+    const freq = 32.7 * Math.pow(2, pitchNote / 12) * randSemitones(1.5)
+    const kick = new T.MembraneSynth({
+      pitchDecay: 0.04, octaves: 6, volume: -10,
+      envelope: { attack: 0.001, decay: 0.2, sustain: 0, release: 0.1 },
+    }).connect(dryGain)
+    kick.triggerAttackRelease(freq, '16n', now)
+    const body = new T.Synth({
+      oscillator: { type: 'sine' },
+      envelope: { attack: 0.001, decay: 0.12, sustain: 0, release: 0.08 }, volume: -18,
+    }).connect(reverb)
+    body.triggerAttackRelease(freq * 3, '32n', now)
+    setTimeout(() => { kick.dispose(); body.dispose(); reverb.dispose() }, 600)
+  } catch { /* non-critical */ }
+}
+
+/**
+ * playOrbitHum — gravitational resonance for orbit-control.
+ * proximity 0..1 (1=close to planet). Closer = louder + brighter tone.
+ */
+export function playOrbitHum(proximity: number = 0.5): void {
+  if (!initialized || muted || !Tone) return
+  try {
+    const T = Tone; const now = T.now()
+    const a = Math.max(0, Math.min(1, proximity))
+    const reverb = new T.Reverb({ decay: 3.0, wet: 0.6 }).connect(dryGain)
+    const freq = 55 + a * 110
+    const synth = new T.Synth({
+      oscillator: { type: 'sine' },
+      envelope: { attack: 0.06, decay: 0.2, sustain: 0.5, release: 0.5 }, volume: -28 + a * 10,
+    }).connect(reverb)
+    synth.triggerAttackRelease(freq, '8n', now)
+    setTimeout(() => { synth.dispose(); reverb.dispose() }, 900)
+  } catch { /* non-critical */ }
+}
