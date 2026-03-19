@@ -17,6 +17,7 @@ import GameStartScreen from '@/components/GameStartScreen';
 import Countdown from '@/components/Countdown';
 import EndScreen from '@/components/EndScreen';
 import { initAudio, sfx, haptic, startMusic } from '@/lib/audio';
+import { hapticScore, hapticFail, hapticVictory, hapticCelebration } from '@/lib/haptics';
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
@@ -241,6 +242,10 @@ export default function PathTraceGame() {
   const [phase, setPhase]               = useState<Phase>('start');
   const [timeLeft, setTimeLeft]         = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
+  const [scorePopKey, setScorePopKey]   = useState(0);
+  const [scorePopText, setScorePopText] = useState('');
+  const [milestoneKey, setMilestoneKey] = useState(0);
+  const [milestoneText, setMilestoneText] = useState('');
   const [finalSig, setFinalSig]         = useState<Signals | null>(null);
   const [playerName, setPlayerName]     = useState('');
   const [playerAvatar, setPlayerAvatar] = useState('✏️');
@@ -334,10 +339,12 @@ export default function PathTraceGame() {
       if (s.timeLeft === 10) {
         sfx.warning();
         haptic([50, 30, 50]);
+        setMilestoneText('⏰ 10 seconds!');
+        setMilestoneKey(k => k + 1);
       } else if (s.timeLeft > 0) {
         sfx.tick();
       }
-      if (s.timeLeft <= 0) { sfx.success(); haptic([30, 50, 30, 50, 100]); endGame(); }
+      if (s.timeLeft <= 0) { sfx.success(); hapticVictory(); endGame(); }
     }, 1000);
 
     spawnPath();
@@ -567,7 +574,7 @@ export default function PathTraceGame() {
         s.pathStartTime      = Date.now();
         s.showHint           = false;
         s.hintTimer          = 0;
-        haptic([10]);
+        hapticScore();
       }
     };
 
@@ -618,7 +625,7 @@ export default function PathTraceGame() {
         s.flashTimer = 18;
         s.flashType  = 'reset';
         sfx.collision();
-        haptic([40]);
+        hapticFail();
         return;
       }
 
@@ -643,6 +650,15 @@ export default function PathTraceGame() {
           s.totalDeviationCount > 0 ? s.totalDeviationSum / s.totalDeviationCount : 0;
 
         setScoreDisplay(s.sig.score);
+        setScorePopText(`+${pathScore}`);
+        setScorePopKey(k => k + 1);
+
+        // Milestone: every 3 paths completed
+        if (s.sig.pathsCompleted % 3 === 0) {
+          setMilestoneText(`🎯 ${s.sig.pathsCompleted} paths!`);
+          setMilestoneKey(k => k + 1);
+          hapticCelebration();
+        }
 
         spawnBurst(s.particles, s.currentPath.endX, s.currentPath.endY, s.accentColor, 18, 6);
 
@@ -653,7 +669,7 @@ export default function PathTraceGame() {
         s.activePointerId = null;
 
         sfx.collect();
-        haptic([30, 20, 30]);
+        hapticScore();
 
         // Spawn next path after celebration (spawnPath has [] deps — stable ref)
         setTimeout(() => {
@@ -685,7 +701,7 @@ export default function PathTraceGame() {
         s.flashTimer = 18;
         s.flashType  = 'reset';
         sfx.collision();
-        haptic([40]);
+        hapticFail();
       }
     };
 
@@ -710,7 +726,7 @@ export default function PathTraceGame() {
         s.flashTimer = 18;
         s.flashType  = 'reset';
         sfx.collision();
-        haptic([40]);
+        hapticFail();
       }
     };
 
@@ -815,6 +831,20 @@ export default function PathTraceGame() {
         <Countdown onComplete={handleCountdownDone} accentColor={theme.colors.accent ?? ACCENT} />
       )}
 
+      {/* ── Score pop + milestone CSS ─────────────────────────────────────── */}
+      <style>{`
+        @keyframes pt-scorepop {
+          0%   { transform: translateX(-50%) scale(0.8); opacity: 1; }
+          100% { transform: translateX(-50%) translateY(-60px) scale(1.4); opacity: 0; }
+        }
+        @keyframes pt-milestone {
+          0%   { transform: translateX(-50%) scale(0.7); opacity: 0; }
+          20%  { transform: translateX(-50%) scale(1.1); opacity: 1; }
+          75%  { transform: translateX(-50%) scale(1.0); opacity: 1; }
+          100% { transform: translateX(-50%) scale(0.9); opacity: 0; }
+        }
+      `}</style>
+
       {/* ── Playing (canvas + HUD) ────────────────────────────────────────── */}
       {(phase === 'playing' || phase === 'countdown') && (
         <>
@@ -829,13 +859,40 @@ export default function PathTraceGame() {
             }}
           />
           {phase === 'playing' && (
-            <GameHUD
-              accentColor={theme.colors.accent ?? ACCENT}
-              items={[
-                { label: 'TIME',  value: timeLeft,     danger: timeLeft <= 10 },
-                { label: 'SCORE', value: scoreDisplay },
-              ]}
-            />
+            <>
+              <GameHUD
+                accentColor={theme.colors.accent ?? ACCENT}
+                items={[
+                  { label: 'TIME',  value: timeLeft,     danger: timeLeft <= 10 },
+                  { label: 'SCORE', value: scoreDisplay },
+                ]}
+              />
+              {/* Score pop overlay */}
+              {scorePopKey > 0 && (
+                <div key={scorePopKey} style={{
+                  position: 'absolute', top: '45%', left: '50%',
+                  color: theme.colors.accent ?? ACCENT, fontSize: 28, fontWeight: 900,
+                  pointerEvents: 'none', zIndex: 50,
+                  animation: 'pt-scorepop 0.55s ease-out forwards',
+                  textShadow: `0 0 20px ${theme.colors.accent ?? ACCENT}`,
+                }}>
+                  {scorePopText}
+                </div>
+              )}
+              {/* Milestone overlay */}
+              {milestoneKey > 0 && (
+                <div key={milestoneKey} style={{
+                  position: 'absolute', top: '32%', left: '50%',
+                  color: '#facc15', fontSize: 20, fontWeight: 900,
+                  letterSpacing: '0.04em', pointerEvents: 'none', zIndex: 50,
+                  animation: 'pt-milestone 1.2s ease-out forwards',
+                  textShadow: '0 0 18px rgba(250,204,21,0.8)',
+                  whiteSpace: 'nowrap',
+                }}>
+                  {milestoneText}
+                </div>
+              )}
+            </>
           )}
         </>
       )}
