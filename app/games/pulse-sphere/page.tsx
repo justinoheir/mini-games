@@ -17,6 +17,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import ScorePopEffect, { useScorePop } from '@/components/ScorePopEffect';
 import StreakBadge from '@/components/StreakBadge';
 import { CATEGORY_THEMES } from '@/lib/theme';
+import SwipeInstructions from '@/components/SwipeInstructions';
 
 const CATEGORY_ACCENT = CATEGORY_THEMES.breath.primaryAccent;
 
@@ -95,6 +96,7 @@ export default function PulseSphere() {
     dataArray: null as Uint8Array<ArrayBuffer> | null,
   });
   const [gameState, setGameState] = useState<GameState>('start');
+  const [showInstructions, setShowInstructions] = useState(true);
   const [timeLeft, setTimeLeft] = useState(60);
   const [behavior, setBehavior] = useState<BehaviorData | null>(null);
   const [joystickEnabled, setJoystickEnabled] = useState(false);
@@ -461,6 +463,13 @@ export default function PulseSphere() {
 
   return (
     <GameShell title="Pulse Sphere" emoji="🔮" accentColor={accent} theme={theme}>
+      {showInstructions && (
+        <SwipeInstructions
+          gameId="pulse-sphere"
+          steps={[{ icon: "👆", title: "Tap the sphere", body: "Tap in rhythm with the pulse to score." }, { icon: "🎵", title: "Feel the beat", body: "The sphere glows on every beat." }, { icon: "🔥", title: "Build combos", body: "Perfect timing builds your streak multiplier." }]}
+          onDone={() => setShowInstructions(false)}
+        />
+      )}
       <div ref={mountRef} style={{ width:'100%', height:'100%', display: gameState==='playing' ? 'block' : 'none', position:'relative', zIndex:1, touchAction:'none' }} />
 
       {gameState==='playing' && (

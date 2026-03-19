@@ -25,6 +25,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import ScorePopEffect, { useScorePop } from '@/components/ScorePopEffect';
 import StreakBadge from '@/components/StreakBadge';
 import { CATEGORY_THEMES } from '@/lib/theme';
+import SwipeInstructions from '@/components/SwipeInstructions';
 
 const CATEGORY_ACCENT = CATEGORY_THEMES.cognitive.primaryAccent;
 
@@ -201,6 +202,7 @@ export default function SteadyHandGame() {
 
   // React state — only these drive re-renders
   const [phase, setPhase]               = useState<Phase>('start');
+  const [showInstructions, setShowInstructions] = useState(true);
   const [timeLeft, setTimeLeft]         = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);  // on-target %
   const [streakDisplay, setStreakDisplay] = useState(0); // current streak
@@ -855,6 +857,13 @@ export default function SteadyHandGame() {
 
   return (
     <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accent}>
+      {showInstructions && (
+        <SwipeInstructions
+          gameId="steady-hand"
+          steps={[{ icon: "✋", title: "Hold still", body: "Keep your device as still as possible." }, { icon: "⏱️", title: "Steady wins", body: "The less you move, the higher you score." }, { icon: "🏆", title: "Beat your best", body: "Try to beat your personal steadiness record." }]}
+          onDone={() => setShowInstructions(false)}
+        />
+      )}
 
       {/* ── Start Screen ──────────────────────────────────────────────────── */}
       {phase === 'start' && (

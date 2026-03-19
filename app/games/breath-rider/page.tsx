@@ -15,6 +15,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import ScorePopEffect, { useScorePop } from '@/components/ScorePopEffect';
 import StreakBadge from '@/components/StreakBadge';
 import { CATEGORY_THEMES } from '@/lib/theme';
+import SwipeInstructions from '@/components/SwipeInstructions';
 
 const CATEGORY_ACCENT = CATEGORY_THEMES.breath.primaryAccent;
 
@@ -80,6 +81,7 @@ export default function BreathRider() {
   const nearMissTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [gameState, setGameState] = useState<GameState>('start');
+  const [showInstructions, setShowInstructions] = useState(true);
   const [timeLeft, setTimeLeft] = useState(45);
   const [score, setScore] = useState(0);
   const [behavior, setBehavior] = useState<BehaviorData | null>(null);
@@ -456,6 +458,13 @@ export default function BreathRider() {
 
   return (
     <GameShell title="Breath Rider" emoji="🌬️" accentColor={accent} theme={theme}>
+      {showInstructions && (
+        <SwipeInstructions
+          gameId="breath-rider"
+          steps={[{ icon: "🌬️", title: "Breathe in", body: "Inhale slowly to rise. Exhale to descend." }, { icon: "🚀", title: "Navigate", body: "Guide your rider through the gaps." }, { icon: "💨", title: "Stay smooth", body: "Calm, steady breaths = better control." }]}
+          onDone={() => setShowInstructions(false)}
+        />
+      )}
       <canvas
         ref={canvasRef}
         style={{

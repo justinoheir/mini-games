@@ -13,6 +13,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import ScorePopEffect, { useScorePop } from '@/components/ScorePopEffect';
 import StreakBadge from '@/components/StreakBadge';
 import { CATEGORY_THEMES } from '@/lib/theme';
+import SwipeInstructions from '@/components/SwipeInstructions';
 
 const CATEGORY_ACCENT = CATEGORY_THEMES.breath.primaryAccent;
 
@@ -77,6 +78,7 @@ export default function WhisperBomb() {
 
   // ── React state ────────────────────────────────────────────────────────────
   const [gameState, setGameState]       = useState<GameState>('start');
+  const [showInstructions, setShowInstructions] = useState(true);
   const [displayTime, setDisplayTime]   = useState(30);
   const [behavior, setBehavior]         = useState<BehaviorData | null>(null);
   const [micError, setMicError]         = useState(false);
@@ -399,6 +401,13 @@ export default function WhisperBomb() {
 
   return (
     <GameShell title="Whisper Bomb" emoji="💣" accentColor={accent} theme={theme}>
+      {showInstructions && (
+        <SwipeInstructions
+          gameId="whisper-bomb"
+          steps={[{ icon: "🎤", title: "Blow softly", body: "Use your mic to breathe into the bomb fuse." }, { icon: "💣", title: "Control the fuse", body: "Too loud = fuse burns fast. Too quiet = nothing happens." }, { icon: "🏆", title: "Last longest", body: "Survive longer than your personal best." }]}
+          onDone={() => setShowInstructions(false)}
+        />
+      )}
       {/* Flash overlay */}
       <div
         ref={flashRef}

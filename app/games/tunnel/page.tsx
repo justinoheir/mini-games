@@ -18,6 +18,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import ScorePopEffect, { useScorePop } from '@/components/ScorePopEffect';
 import StreakBadge from '@/components/StreakBadge';
 import { CATEGORY_THEMES } from '@/lib/theme';
+import SwipeInstructions from '@/components/SwipeInstructions';
 
 const CATEGORY_ACCENT = CATEGORY_THEMES.sports.primaryAccent;
 
@@ -254,6 +255,7 @@ export default function TunnelGame() {
     survivedTime: 0,
   });
   const [gameState, setGameState] = useState<GameState>('start');
+  const [showInstructions, setShowInstructions] = useState(true);
   const [timeLeft, setTimeLeft] = useState(60);
   const [behavior, setBehavior] = useState<BehaviorData | null>(null);
   const [joystickEnabled, setJoystickEnabled] = useState(false);
@@ -644,6 +646,13 @@ export default function TunnelGame() {
 
   return (
     <GameShell title="Infinite Tunnel" emoji="🚀" accentColor={accent} theme={theme}>
+      {showInstructions && (
+        <SwipeInstructions
+          gameId="tunnel"
+          steps={[{ icon: "👆", title: "Tap to steer", body: "Tap left or right to move through the tunnel." }, { icon: "⚡", title: "Don't touch walls", body: "Hitting the walls ends your run." }, { icon: "🔥", title: "Go further", body: "The tunnel speeds up — how far can you go?" }]}
+          onDone={() => setShowInstructions(false)}
+        />
+      )}
       <div ref={mountRef} style={{ width: '100%', height: '100%', display: gameState === 'playing' ? 'block' : 'none', position: 'relative', zIndex: 1, touchAction: 'none' }} />
 
       {/* Near-miss edge glow — appears via DOM ref, fades out */}
