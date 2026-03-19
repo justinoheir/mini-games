@@ -949,14 +949,15 @@ export default function CupidShot() {
   const accent = theme.colors.accent ?? ACCENT;
 
   return (
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accent}>
-      {showInstructions && (
+    <>
+      {gamePhase === 'start' && showInstructions && (
         <SwipeInstructions
           gameId="cupid-shot"
           steps={[{ icon: "💘", title: "Aim with Cupid", body: "Tilt or swipe to aim Cupid's arrow." }, { icon: "❤️", title: "Hit the hearts", body: "Shoot your arrow to hit floating hearts." }, { icon: "🔥", title: "Chain shots", body: "Hit multiple hearts in a row for a combo bonus." }]}
           onDone={() => setShowInstructions(false)}
         />
       )}
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accent}>
 
       {/* ── Start Screen ─────────────────────────────────────────────────── */}
       {gamePhase === 'start' && (
@@ -1059,6 +1060,7 @@ export default function CupidShot() {
         </>
       )}
     </GameShell>
+    </>
   );
 }
 

@@ -725,14 +725,15 @@ export default function TurkeyTrotGame() {
   const accent = theme.colors.accent ?? ACCENT;
 
   return (
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accent}>
-      {showInstructions && (
+    <>
+      {phase === 'start' && showInstructions && (
         <SwipeInstructions
           gameId="turkey-trot"
           steps={[{ icon: "🦃", title: "Help the turkey run", body: "Tap left or right to dodge obstacles." }, { icon: "🌽", title: "Collect corn", body: "Grab corn for bonus points as you run." }, { icon: "🏃", title: "Don't get caught", body: "Avoid the farmer — how far can you run?" }]}
           onDone={() => setShowInstructions(false)}
         />
       )}
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accent}>
       {/* ── Start Screen ──────────────────────────────────────────────────── */}
       {phase === 'start' && (
         <GameStartScreen
@@ -827,6 +828,7 @@ export default function TurkeyTrotGame() {
         </>
       )}
     </GameShell>
+    </>
   );
 }
 

@@ -972,14 +972,15 @@ export default function FireworkLaunchGame() {
 
   // ─── RENDER ───────────────────────────────────────────────────────────────
   return (
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
-      {showInstructions && (
+    <>
+      {phase === 'start' && showInstructions && (
         <SwipeInstructions
           gameId="firework-launch"
           steps={[{ icon: "👆", title: "Tap to launch", body: "Tap and hold to aim, release to fire." }, { icon: "🎆", title: "Hit the targets", body: "Launch fireworks to hit the glowing targets." }, { icon: "🔥", title: "Chain explosions", body: "Hitting multiple targets with one burst multiplies your score." }]}
           onDone={() => setShowInstructions(false)}
         />
       )}
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
 
       {/* ── Start Screen ──────────────────────────────────────────────────── */}
       {phase === 'start' && (
@@ -1081,6 +1082,7 @@ export default function FireworkLaunchGame() {
         </>
       )}
     </GameShell>
+    </>
   );
 }
 

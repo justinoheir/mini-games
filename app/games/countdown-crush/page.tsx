@@ -812,14 +812,15 @@ export default function CountdownCrushGame() {
   const accent = theme.colors.accent ?? ACCENT;
 
   return (
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accent}>
-      {showInstructions && (
+    <>
+      {phase === 'start' && showInstructions && (
         <SwipeInstructions
           gameId="countdown-crush"
           steps={[{ icon: "🔢", title: "Find the number", body: "Tap numbers in order from lowest to highest." }, { icon: "⏱️", title: "Race the clock", body: "You have limited time — move fast." }, { icon: "🔥", title: "Clear the board", body: "Clear all numbers before time runs out to win." }]}
           onDone={() => setShowInstructions(false)}
         />
       )}
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accent}>
 
       {/* ── Start Screen ─────────────────────────────────────────────────── */}
       {phase === 'start' && (
@@ -1018,6 +1019,7 @@ export default function CountdownCrushGame() {
         </>
       )}
     </GameShell>
+    </>
   );
 }
 
