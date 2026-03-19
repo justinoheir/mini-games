@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import * as THREE from 'three';
 import GameShell from '@/components/GameShell';
 import GameHUD from '@/components/GameHUD';
@@ -7,6 +8,8 @@ import GameStartScreen from '@/components/GameStartScreen';
 import Countdown from '@/components/Countdown';
 import EndScreen from '@/components/EndScreen';
 import { initAudio, sfx, haptic, startMusic, increaseMusicTempo } from '@/lib/audio';
+import { playScoreHit, playVictoryFanfare, playNearMiss } from '@/lib/audio';
+import { hapticScore, hapticFail, hapticVictory } from '@/lib/haptics';
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
 import { createTiltController } from '@/lib/tilt';
@@ -14,6 +17,7 @@ import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
 import PlayerNameInput from '@/components/PlayerNameInput';
 
 const GAME_ID = 'tunnel';
+const PB_KEY  = 'pb_tunnel';
 
 type GameState = 'start' | 'countdown' | 'playing' | 'done';
 type ObstacleType = 'ring' | 'cross' | 'blade' | 'asteroid';
@@ -253,6 +257,11 @@ export default function TunnelGame() {
   const [playerName, setPlayerName]   = useState('');
   const [playerAvatar, setPlayerAvatar] = useState('🎮');
   const playerSessionRef              = useRef<PlayerSession | null>(null);
+  const [scorePop, setScorePop]       = useState<string | null>(null);
+  const [nearMissVisible, setNearMissVisible] = useState(false);
+  const [isNewBest, setIsNewBest]     = useState(false);
+  const nearMissUITimeoutRef          = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastMilestoneRef              = useRef(0);
 
   const endGame = useCallback((capturedTheme: typeof theme) => {
     const s = stateRef.current;
@@ -261,7 +270,7 @@ export default function TunnelGame() {
     if (s.intervalId) clearInterval(s.intervalId);
     tiltControllerRef.current?.stop();
     // End-game sound — survival is always a win (timer always ends the game)
-    sfx.success(); haptic([300]);
+    sfx.success(); hapticVictory(); playVictoryFanfare();
     if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
     // Dispose Three.js scene objects (geometries + materials) to prevent GPU memory leaks
     // across play-again cycles. renderer.dispose() alone does NOT free scene GPU resources.
@@ -281,6 +290,14 @@ export default function TunnelGame() {
     if (handler) { window.removeEventListener('resize', handler); (s as typeof s & { _resizeHandler?: () => void })._resizeHandler = undefined; }
     const avgTilt = s.tiltMagnitudes.length > 0 ? s.tiltMagnitudes.reduce((a, b) => a + b, 0) / s.tiltMagnitudes.length : 0;
     const bData: BehaviorData = { collisions: s.collisions, avgTiltMagnitude: Math.round(avgTilt * 100) / 100, distance: Math.round(s.distance), nearMisses: s.nearMissCount };
+    // Personal best tracking
+    try {
+      const prev = parseInt(localStorage.getItem(PB_KEY) || '0', 10);
+      if (bData.distance > prev) {
+        localStorage.setItem(PB_KEY, String(bData.distance));
+        setIsNewBest(true);
+      }
+    } catch { /* ignore */ }
     setBehavior(bData);
     setGameState('done');
     postWebhook(capturedTheme, 'tunnel', { score: `${Math.round(s.distance)}m`, personality: getProfile(bData), signals: { collisions: bData.collisions, avgTiltMagnitude: bData.avgTiltMagnitude, distance: bData.distance, nearMisses: bData.nearMisses } }, playerSessionRef.current);
@@ -294,6 +311,8 @@ export default function TunnelGame() {
     s.nearMissCount = 0;
     s.trailPositions = []; s.survivedTime = 0;
     setTimeLeft(60); setGameState('playing'); setSurvivedDisplay(0);
+    setScorePop(null); setNearMissVisible(false); setIsNewBest(false);
+    lastMilestoneRef.current = 0;
     stopMusicRef.current = startMusic('drive');
     const capturedTheme = theme;
 
@@ -400,8 +419,25 @@ export default function TunnelGame() {
       if (!s.running) return;
       s.timeLeft--;
       s.survivedTime = 60 - s.timeLeft;
-      setSurvivedDisplay(60 - s.timeLeft);
+      const survived = 60 - s.timeLeft;
+      setSurvivedDisplay(survived);
       setTimeLeft(s.timeLeft);
+      // Score pop on 10s milestones
+      if (survived > 0 && survived % 10 === 0 && survived !== lastMilestoneRef.current) {
+        lastMilestoneRef.current = survived;
+        hapticScore();
+        playScoreHit('default', survived);
+        setScorePop(`⚡ ${survived}s`);
+        setTimeout(() => setScorePop(null), 1500);
+      }
+      // Near-miss alert: within last 5s of a milestone
+      const nextMilestone = Math.ceil(survived / 10) * 10;
+      if (nextMilestone - survived === 1 && survived > 0 && survived !== lastMilestoneRef.current) {
+        playNearMiss();
+        setNearMissVisible(true);
+        if (nearMissUITimeoutRef.current) clearTimeout(nearMissUITimeoutRef.current);
+        nearMissUITimeoutRef.current = setTimeout(() => setNearMissVisible(false), 1500);
+      }
       s.speed = Math.min(0.26, s.speed + 0.003);
       if (s.timeLeft === 30) {
         increaseMusicTempo(162);
@@ -492,7 +528,7 @@ export default function TunnelGame() {
         if (checkObstacleCollision(camera.position.x, camera.position.y, camera.position.z, obs)) {
           s.collisions++;
           s.invincibleFrames = 60;
-          sfx.collision(); haptic([200]);
+          sfx.collision(); hapticFail();
           // Flash scene red
           if (scene) {
             scene.background = new THREE.Color(0xff0000);
@@ -639,39 +675,119 @@ export default function TunnelGame() {
         </div>
       )}
 
-      {gameState === 'countdown' && <Countdown onComplete={startLoop} accentColor={accent} />}
-
-      {gameState === 'start' && (
-        <GameStartScreen
-          emoji="🚀"
-          title="Infinite Tunnel"
-          description="Tilt to steer. Dodge rings, crosses, blades and asteroid fields. Survive 60 seconds."
-          sensorNote="Uses motion sensors"
-          ctaLabel="Enable Motion & Launch →"
-          accentColor={accent}
-          ctaTextColor="#000"
-          onStart={handleStart}
-        />
+      {/* Score pop overlay */}
+      {scorePop && (
+        <div style={{
+          position: 'fixed', top: '30%', left: '50%', transform: 'translateX(-50%)',
+          zIndex: 80, pointerEvents: 'none',
+          animation: 'tunnelScorePop 1.5s ease-out forwards',
+          fontSize: 44, fontWeight: 900, color: accent,
+          textShadow: `0 0 20px ${accent}88`,
+          whiteSpace: 'nowrap',
+        }}>
+          {scorePop}
+        </div>
       )}
 
-      {gameState === 'done' && behavior && (
-        <EndScreen
-          gameId={GAME_ID}
-          title={getProfile(behavior)}
-          emoji="🚀"
-          score={`${behavior.distance}m`}
-          personality={getProfile(behavior)}
-          insights={[
-            { label: 'Distance', value: `${behavior.distance}m`, color: accent },
-            { label: 'Collisions', value: behavior.collisions === 0 ? '0 — flawless!' : `${behavior.collisions} hit${behavior.collisions > 1 ? 's' : ''}`, color: behavior.collisions > 5 ? '#ef4444' : '#00ff88' },
-            { label: 'Control Style', value: behavior.avgTiltMagnitude > 0.7 ? 'Aggressive' : behavior.avgTiltMagnitude < 0.3 ? 'Surgical' : 'Balanced', color: accent },
-            { label: 'Near Misses', value: behavior.nearMisses === 0 ? '0 — wide clearance' : `${behavior.nearMisses} — edge hugger`, color: behavior.nearMisses > 4 ? '#facc15' : '#a855f7' },
-          ]}
-          accentColor={accent}
-          onPlayAgain={handlePlayAgain}
-          didWin={behavior.collisions === 0}
-        />
-      )}
+      {/* Near-miss message */}
+      <AnimatePresence>
+        {nearMissVisible && (
+          <motion.div
+            key="near-miss"
+            initial={{ opacity: 0, scale: 0.7 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, y: -20 }}
+            transition={{ duration: 0.3 }}
+            style={{
+              position: 'fixed', top: '22%', left: '50%', transform: 'translateX(-50%)',
+              zIndex: 80, pointerEvents: 'none',
+              fontSize: 22, fontWeight: 800, color: '#fbbf24',
+              textShadow: '0 0 12px #fbbf2488',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            So close! 🎯
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* New best banner */}
+      <AnimatePresence>
+        {isNewBest && gameState === 'done' && (
+          <motion.div
+            key="new-best"
+            initial={{ opacity: 0, y: -20, scale: 0.8 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -20 }}
+            transition={{ duration: 0.4, delay: 0.5 }}
+            style={{
+              position: 'fixed', top: '10%', left: '50%', transform: 'translateX(-50%)',
+              zIndex: 90, pointerEvents: 'none',
+              background: 'linear-gradient(135deg, #fbbf24, #f59e0b)',
+              borderRadius: 20,
+              padding: '8px 20px',
+              fontSize: 20,
+              fontWeight: 900,
+              color: '#000',
+              whiteSpace: 'nowrap',
+              boxShadow: '0 4px 20px rgba(251,191,36,0.5)',
+            }}
+          >
+            🏆 New Best!
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence mode="wait">
+        {gameState === 'countdown' && (
+          <motion.div key="countdown" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+            <Countdown onComplete={startLoop} accentColor={accent} />
+          </motion.div>
+        )}
+        {gameState === 'start' && (
+          <motion.div key="start" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} style={{ height: '100%' }}>
+            <GameStartScreen
+              emoji="🚀"
+              title="Infinite Tunnel"
+              description="Tilt to steer. Dodge rings, crosses, blades and asteroid fields. Survive 60 seconds."
+              sensorNote="Uses motion sensors"
+              ctaLabel="Enable Motion & Launch →"
+              accentColor={accent}
+              ctaTextColor="#000"
+              onStart={handleStart}
+            />
+          </motion.div>
+        )}
+        {gameState === 'done' && behavior && (
+          <motion.div key="done" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} style={{ height: '100%' }}>
+            <EndScreen
+              gameId={GAME_ID}
+              title={getProfile(behavior)}
+              emoji="🚀"
+              score={`${behavior.distance}m`}
+              personality={getProfile(behavior)}
+              insights={[
+                { label: 'Distance', value: `${behavior.distance}m`, color: accent },
+                { label: 'Collisions', value: behavior.collisions === 0 ? '0 — flawless!' : `${behavior.collisions} hit${behavior.collisions > 1 ? 's' : ''}`, color: behavior.collisions > 5 ? '#ef4444' : '#00ff88' },
+                { label: 'Control Style', value: behavior.avgTiltMagnitude > 0.7 ? 'Aggressive' : behavior.avgTiltMagnitude < 0.3 ? 'Surgical' : 'Balanced', color: accent },
+                { label: 'Near Misses', value: behavior.nearMisses === 0 ? '0 — wide clearance' : `${behavior.nearMisses} — edge hugger`, color: behavior.nearMisses > 4 ? '#facc15' : '#a855f7' },
+              ]}
+              accentColor={accent}
+              onPlayAgain={handlePlayAgain}
+              didWin={behavior.collisions === 0}
+            />
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <style>{`
+        @keyframes tunnelScorePop {
+          0%   { opacity: 0; transform: translateX(-50%) scale(0.6); }
+          15%  { opacity: 1; transform: translateX(-50%) scale(1.5); }
+          60%  { opacity: 1; transform: translateX(-50%) scale(1.2); }
+          100% { opacity: 0; transform: translateX(-50%) scale(0.9) translateY(-40px); }
+        }
+      `}</style>
     </GameShell>
   );
 }
