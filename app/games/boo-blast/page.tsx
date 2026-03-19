@@ -218,8 +218,8 @@ export default function BooBlastGame() {
     const margin = t.size;
     s.ghosts.push({
       id:        s.nextGhostId++,
-      x:         margin + Math.random() * (canvas.width  - margin * 2),
-      y:         margin + Math.random() * (canvas.height - margin * 2),
+      x:         margin + Math.random() * (canvas.offsetWidth  - margin * 2),
+      y:         margin + Math.random() * (canvas.offsetHeight - margin * 2),
       size:      t.size,
       points:    t.points,
       spawnTime: Date.now(),
@@ -325,8 +325,8 @@ export default function BooBlastGame() {
 
     const loop = () => {
       if (!s.running) return;
-      const W   = canvas.width;
-      const H   = canvas.height;
+      const W   = canvas.offsetWidth;
+      const H   = canvas.offsetHeight;
       const now = Date.now();
 
       // ── Background: near-black with purple fog radial gradient ─────────────
@@ -555,8 +555,13 @@ export default function BooBlastGame() {
     if (!canvas) return;
 
     const resize = () => {
-      canvas.width  = canvas.offsetWidth;
-      canvas.height = canvas.offsetHeight;
+      const dpr = window.devicePixelRatio || 1;
+      const w = canvas.offsetWidth;
+      const h = canvas.offsetHeight;
+      canvas.width  = w * dpr;
+      canvas.height = h * dpr;
+      const ctx2 = canvas.getContext('2d');
+      if (ctx2) ctx2.setTransform(dpr, 0, 0, dpr, 0, 0);
     };
     resize();
     window.addEventListener('resize', resize);
