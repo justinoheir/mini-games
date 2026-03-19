@@ -7,7 +7,8 @@ import GameHUD from '@/components/GameHUD';
 import GameStartScreen from '@/components/GameStartScreen';
 import Countdown from '@/components/Countdown';
 import EndScreen from '@/components/EndScreen';
-import { initAudio, sfx, haptic, startMusic } from '@/lib/audio';
+import { initAudio, sfx, startMusic } from '@/lib/audio';
+import { hapticImpact, hapticVictory, hapticFail } from '@/lib/haptics';
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
@@ -505,7 +506,7 @@ export default function CauldronBubble() {
         s.brewHigh          = ZONE_BREW_HIGH_CURSE;
         setChaosLabel("Witch's Curse 🧙");
         sfx.boom();         // dramatic ominous sound for the curse arriving
-        haptic([50, 30, 50]);
+        hapticImpact();
         setTimeout(() => setChaosLabel(''), 3000);
       }
 
@@ -539,7 +540,7 @@ export default function CauldronBubble() {
 
       if (s.timeLeft <= 0) {
         sfx.success();  // game survived 45s = success, not failure
-        haptic([30, 20, 80]);
+        hapticVictory();
         endGame();
       }
     }, 1000);
@@ -571,7 +572,7 @@ export default function CauldronBubble() {
           s.flashFrames      = 14;
           s.flashColor       = '#ff2200';
           sfx.collision();
-          haptic([200]);
+          hapticFail();
         }
       }
       s.prevZone = newZone;

@@ -1,11 +1,13 @@
 'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import GameShell from '@/components/GameShell';
 import GameHUD from '@/components/GameHUD';
 import GameStartScreen from '@/components/GameStartScreen';
 import Countdown from '@/components/Countdown';
 import EndScreen from '@/components/EndScreen';
-import { initAudio, sfx, haptic, startMusic } from '@/lib/audio';
+import { initAudio, sfx, startMusic } from '@/lib/audio';
+import { hapticScore, hapticFail, hapticVictory, hapticImpact } from '@/lib/haptics';
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
 import { createTiltController } from '@/lib/tilt';
@@ -103,6 +105,11 @@ export default function TiltMaze() {
   const [playerName, setPlayerName]   = useState('');
   const [playerAvatar, setPlayerAvatar] = useState('🎮');
   const playerSessionRef              = useRef<PlayerSession | null>(null);
+  const [scorePop, setScorePop]       = useState<string | null>(null);
+  const [nearMissMsg, setNearMissMsg] = useState(false);
+  const [milestoneMsg, setMilestoneMsg] = useState<string | null>(null);
+  const lastNearMissTimeRef           = useRef(0);
+  const halfTimeFiredRef              = useRef(false);
 
   useEffect(() => { stateRef.current.accentColor = theme.colors.accent; }, [theme]);
 
@@ -168,7 +175,7 @@ export default function TiltMaze() {
       // Throttle sound+haptic to 150ms — prevents 60fps audio buzz when ball is pressed against wall
       if (now - s.lastCollisionTime > 150) {
         sfx.collision();
-        if (hapticsEnabled) haptic([200]);
+        if (hapticsEnabled) hapticImpact();
       }
       if (s.lastCollisionTime) s.behavior.correctionTimes.push(now - s.lastCollisionTime);
       s.lastCollisionTime = now;
@@ -200,6 +207,7 @@ export default function TiltMaze() {
     s.timeLeft = 60; s.velX = 0; s.velY = 0; s.running = true;
     s.ballTrail = []; s.wallFlashUntil = 0; s.joystickX = 0; s.joystickY = 0; s.celebrateUntil = 0;
     s.maze = generateMaze(GRID);
+    halfTimeFiredRef.current = false;
     setGameState('playing'); setTimeLeft(60);
     stopMusicRef.current = startMusic('tense');
     const capturedTheme = theme;
@@ -207,9 +215,14 @@ export default function TiltMaze() {
     timerRef.current = setInterval(() => {
       s.timeLeft--;
       setTimeLeft(s.timeLeft);
-      if (s.timeLeft === 10) sfx.warning();
-      else if (s.timeLeft > 0) sfx.tick(); // guard: don't tick at 0 — sfx.fail fires instead
-      if (s.timeLeft <= 0) { s.behavior.timedOut = true; sfx.fail(); if (hapticsEnabled) haptic([300]); endGame(capturedTheme); }
+      if (s.timeLeft === 30 && !halfTimeFiredRef.current) {
+        halfTimeFiredRef.current = true;
+        setMilestoneMsg('Halfway! Keep going! ⏱️');
+        setTimeout(() => setMilestoneMsg(null), 1800);
+      }
+      if (s.timeLeft === 10) { sfx.warning(); if (hapticsEnabled) hapticScore(); }
+      else if (s.timeLeft > 0) sfx.tick();
+      if (s.timeLeft <= 0) { s.behavior.timedOut = true; sfx.fail(); if (hapticsEnabled) hapticFail(); endGame(capturedTheme); }
     }, 1000);
 
     const canvas = canvasRef.current;
@@ -302,9 +315,25 @@ export default function TiltMaze() {
       ctx2d.strokeStyle = '#00ff88'; ctx2d.lineWidth = 3; ctx2d.stroke();
       ctx2d.restore();
 
-      if (s.celebrateUntil === 0 && Math.abs(s.ballX - exitX) < cs * 0.42 && Math.abs(s.ballY - exitY) < cs * 0.42) {
+      // Near-miss: ball within 1.8x cell-size but not touching exit
+      const distToExit = Math.sqrt((s.ballX - exitX)**2 + (s.ballY - exitY)**2);
+      const nearMissDist = cs * 0.9;
+      const exitReach = cs * 0.42;
+      if (s.celebrateUntil === 0 && distToExit < nearMissDist && distToExit >= exitReach) {
+        const now2 = Date.now();
+        if (now2 - lastNearMissTimeRef.current > 3000) {
+          lastNearMissTimeRef.current = now2;
+          setNearMissMsg(true);
+          setTimeout(() => setNearMissMsg(false), 1500);
+        }
+      }
+      if (s.celebrateUntil === 0 && distToExit < exitReach) {
         s.behavior.completionTime = Date.now() - s.startTime;
-        sfx.success(); if (hapticsEnabled) haptic([30, 50, 100]);
+        sfx.success();
+        if (hapticsEnabled) hapticVictory();
+        const timeStr = `${(s.behavior.completionTime / 1000).toFixed(1)}s`;
+        setScorePop(timeStr);
+        setTimeout(() => setScorePop(null), 1800);
         s.celebrateUntil = Date.now() + 900;
         s.animId = requestAnimationFrame(loop); return;
       }
@@ -323,7 +352,7 @@ export default function TiltMaze() {
     tiltControllerRef.current = controller;
     const success = await controller.start();
     if (!success) {
-      if (hapticsEnabled) haptic([10]);
+      if (hapticsEnabled) hapticScore();
       setJoystickEnabled(true);
     } else {
       // Auto-fallback if no events fire within 1500ms
@@ -425,6 +454,69 @@ export default function TiltMaze() {
           }} />
         </div>
       )}
+      {/* Score pop overlay */}
+      {scorePop && (
+        <div style={{
+          position: 'fixed', top: '30%', left: '50%', transform: 'translateX(-50%)',
+          zIndex: 80, pointerEvents: 'none',
+          animation: 'scorePop 1.8s ease-out forwards',
+          fontSize: 52, fontWeight: 900, color: '#00ff88',
+          textShadow: '0 0 24px #00ff8888',
+          letterSpacing: '-1px',
+        }}>
+          {scorePop} 🏁
+        </div>
+      )}
+      {/* Near-miss message */}
+      <AnimatePresence>
+        {nearMissMsg && (
+          <motion.div
+            key="near-miss"
+            initial={{ opacity: 0, scale: 0.7, y: 0 }}
+            animate={{ opacity: 1, scale: 1, y: -10 }}
+            exit={{ opacity: 0, scale: 0.8, y: -30 }}
+            transition={{ duration: 0.3 }}
+            style={{
+              position: 'fixed', top: '20%', left: '50%', transform: 'translateX(-50%)',
+              zIndex: 80, pointerEvents: 'none',
+              fontSize: 24, fontWeight: 800, color: '#fbbf24',
+              textShadow: '0 0 12px #fbbf2488',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            So close! 🎯
+          </motion.div>
+        )}
+      </AnimatePresence>
+      {/* Milestone message */}
+      <AnimatePresence>
+        {milestoneMsg && (
+          <motion.div
+            key="milestone"
+            initial={{ opacity: 0, scale: 0.7 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, y: -20 }}
+            transition={{ duration: 0.4 }}
+            style={{
+              position: 'fixed', top: '15%', left: '50%', transform: 'translateX(-50%)',
+              zIndex: 80, pointerEvents: 'none',
+              fontSize: 20, fontWeight: 800, color: '#a855f7',
+              textShadow: '0 0 12px #a855f788',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {milestoneMsg}
+          </motion.div>
+        )}
+      </AnimatePresence>
+      <style>{`
+        @keyframes scorePop {
+          0%   { opacity: 0; transform: translateX(-50%) scale(0.6); }
+          15%  { opacity: 1; transform: translateX(-50%) scale(1.15); }
+          60%  { opacity: 1; transform: translateX(-50%) scale(1); }
+          100% { opacity: 0; transform: translateX(-50%) scale(0.9) translateY(-30px); }
+        }
+      `}</style>
       {gameState==='countdown' && <Countdown onComplete={startLoop} accentColor={accent} />}
       {gameState==='start' && (
         <GameStartScreen

@@ -11,6 +11,8 @@ import { postWebhook } from '@/lib/webhook';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
 import { Particle, spawnBurst, updateAndDrawParticles } from '@/lib/particles';
 import { ShakeState, triggerShake, applyShake } from '@/lib/screenShake';
+import StreakBadge from '@/components/StreakBadge';
+import ScorePopEffect, { useScorePop } from '@/components/ScorePopEffect';
 
 // ─── SPEC CONSTANTS ───────────────────────────────────────────────────────────
 
@@ -115,6 +117,10 @@ export default function ReactionChain() {
   const [phase, setPhase]               = useState<Phase>('start');
   const [timeLeft, setTimeLeft]         = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
+  const [streakDisplay, setStreakDisplay] = useState(0);
+  const { pops, triggerPop } = useScorePop();
+  const triggerPopRef = useRef(triggerPop);
+  triggerPopRef.current = triggerPop;
   const [finalSig, setFinalSig]         = useState<Signals | null>(null);
   const [playerName, setPlayerName]     = useState('');
   const [playerAvatar, setPlayerAvatar] = useState('🎮');
@@ -239,6 +245,7 @@ export default function ReactionChain() {
           s.sig.chainBreaks++;
           s.chainBreakFlash   = 1;
           s.lastChainDisplayed = 0;
+          setStreakDisplay(0);
           triggerShake(s.shake, 5, 8);
           sfx.collision();
           haptic([80]);
@@ -345,7 +352,23 @@ export default function ReactionChain() {
       if (s.lastChainDisplayed !== s.sig.currentChain) {
         s.lastChainDisplayed = s.sig.currentChain;
         setScoreDisplay(s.sig.currentChain);
+        setStreakDisplay(s.sig.currentChain);
       }
+
+      // Score pop overlay at tap position
+      const popCanvas = canvasRef.current;
+      if (popCanvas) {
+        const rect = popCanvas.getBoundingClientRect();
+        const popX = (s.nodeX / popCanvas.width) * rect.width;
+        const popY = (s.nodeY / popCanvas.height) * rect.height;
+        const isCombo = s.sig.currentChain >= 5;
+        triggerPopRef.current(
+          reactionMs < 300 ? '+6' : '+1',
+          popX, popY,
+          { milestone: isCombo, huge: s.sig.currentChain >= 10 },
+        );
+      }
+
       sfx.collect();
       haptic([20]);
 
@@ -410,6 +433,7 @@ export default function ReactionChain() {
   const handlePlayAgain = useCallback(() => {
     setPhase('start');
     setScoreDisplay(0);
+    setStreakDisplay(0);
     setTimeLeft(DURATION);
     setFinalSig(null);
   }, []);
@@ -490,13 +514,23 @@ export default function ReactionChain() {
             }}
           />
           {phase === 'playing' && (
-            <GameHUD
-              accentColor={theme.colors.accent ?? ACCENT}
-              items={[
-                { label: 'TIME', value: timeLeft, danger: timeLeft <= 10 },
-                { label: 'CHAIN', value: scoreDisplay },
-              ]}
-            />
+            <>
+              <GameHUD
+                accentColor={theme.colors.accent ?? ACCENT}
+                items={[
+                  { label: 'TIME', value: timeLeft, danger: timeLeft <= 10 },
+                  { label: 'CHAIN', value: scoreDisplay },
+                ]}
+              />
+              {/* Streak badge — fires at 3+ consecutive taps */}
+              <StreakBadge
+                streak={streakDisplay}
+                accentColor={theme.colors.accent ?? ACCENT}
+                position="bottom-center"
+              />
+              {/* Score pop overlay */}
+              <ScorePopEffect pops={pops} accentColor={theme.colors.accent ?? ACCENT} />
+            </>
           )}
         </>
       )}

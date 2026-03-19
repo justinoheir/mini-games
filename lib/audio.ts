@@ -379,7 +379,7 @@ export const sfx = {
 })
 
 // ─── Music Patterns ───────────────────────────────────────────────────────────
-export type MusicPattern = 'tense' | 'calm' | 'pulse' | 'drive' | 'ambient' | 'minimal'
+export type MusicPattern = 'tense' | 'calm' | 'pulse' | 'drive' | 'ambient' | 'minimal' | 'sports' | 'holiday'
 
 export function startMusic(pattern: MusicPattern): () => void {
   if (!initialized || muted || !Tone) return () => {}
@@ -396,6 +396,8 @@ export function startMusic(pattern: MusicPattern): () => void {
       case 'drive':   return startDriveMusic()
       case 'ambient': return startAmbientMusic()
       case 'minimal': return startMinimalMusic()
+      case 'sports':  return startDriveMusic()   // alias until sports track is implemented
+      case 'holiday': return startAmbientMusic()  // alias until holiday track is implemented
       default:        return () => {}
     }
   } catch {
