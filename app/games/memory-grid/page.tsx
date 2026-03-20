@@ -784,6 +784,30 @@ export default function MemoryGridGame() {
               ]}
             />
           )}
+          {/* ── Phase banner — unmissable watch/recall indicator ──────────── */}
+          {phase === 'playing' && (
+            <AnimatePresence mode="wait">
+              <motion.div
+                key={stateRef.current.subPhase}
+                initial={{ opacity: 0, scale: 0.85 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 1.1 }}
+                transition={{ duration: 0.18 }}
+                style={{
+                  position: 'absolute',
+                  bottom: 32,
+                  left: 0,
+                  right: 0,
+                  display: 'flex',
+                  justifyContent: 'center',
+                  pointerEvents: 'none',
+                  zIndex: 20,
+                }}
+              >
+                <SubphaseBanner subPhase={stateRef.current.subPhase} accentColor={accentColor} />
+              </motion.div>
+            </AnimatePresence>
+          )}
         </>
       )}
       {/* New best banner */}
@@ -845,6 +869,48 @@ export default function MemoryGridGame() {
     </GameShell>
     </>
   );
+}
+
+// ─── SUBPHASE BANNER ──────────────────────────────────────────────────────────
+
+function SubphaseBanner({ subPhase, accentColor }: { subPhase: SubPhase; accentColor: string }) {
+  if (subPhase === 'watch') {
+    return (
+      <div style={{
+        background: 'rgba(0,0,0,0.75)',
+        border: '1px solid rgba(255,255,255,0.15)',
+        borderRadius: 40,
+        padding: '10px 24px',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+      }}>
+        <span style={{ fontSize: 18 }}>👁️</span>
+        <span style={{ color: 'rgba(255,255,255,0.9)', fontWeight: 700, fontSize: 15, letterSpacing: '0.05em' }}>
+          MEMORIZE THE PATTERN
+        </span>
+      </div>
+    );
+  }
+  if (subPhase === 'recall') {
+    return (
+      <div style={{
+        background: accentColor,
+        borderRadius: 40,
+        padding: '10px 24px',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+        boxShadow: `0 0 24px ${accentColor}88`,
+      }}>
+        <span style={{ fontSize: 18 }}>👆</span>
+        <span style={{ color: '#fff', fontWeight: 800, fontSize: 15, letterSpacing: '0.05em' }}>
+          TAP THE SEQUENCE
+        </span>
+      </div>
+    );
+  }
+  return null;
 }
 
 // ─── WEBHOOK EMITTER ─────────────────────────────────────────────────────────
