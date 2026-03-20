@@ -12,6 +12,7 @@ import { postWebhook } from '@/lib/webhook';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
 import { Particle, spawnBurst, updateAndDrawParticles } from '@/lib/particles';
 import { ShakeState, triggerShake, applyShake } from '@/lib/screenShake';
+import SwipeInstructions from '@/components/SwipeInstructions';
 
 const ACCENT = '#f97316';
 const GAME_ID = 'hoop-shot';
@@ -54,6 +55,7 @@ export default function HoopShot() {
   const animRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [phase, setPhase] = useState<Phase>('start');
+  const [showInstructions, setShowInstructions] = useState(true);
   const [timeLeft, setTimeLeft] = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
   const [streakDisplay, setStreakDisplay] = useState(0);
@@ -492,6 +494,14 @@ export default function HoopShot() {
   const acc = totalShots > 0 ? Math.round((makes / totalShots) * 100) : 0;
 
   return (
+    <>
+      {phase === 'start' && showInstructions && (
+        <SwipeInstructions
+          gameId="hoop-shot"
+          steps={[{ icon: "👆", title: "Swipe UP to shoot", body: "Flick your finger upward on the screen to launch the ball." }, { icon: "🏀", title: "Aim for the hoop", body: "Start your swipe from the ball — the angle matters." }, { icon: "⏱️", title: "60 seconds on the clock", body: "Score as many baskets as you can before time runs out." }]}
+          onDone={() => setShowInstructions(false)}
+        />
+      )}
     <GameShell title="Hoop Shot" emoji="🏀" accentColor={ACCENT} theme={theme}>
       <canvas
         ref={canvasRef}
@@ -541,5 +551,6 @@ export default function HoopShot() {
         />
       )}
     </GameShell>
+    </>
   );
 }

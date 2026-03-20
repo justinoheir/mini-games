@@ -1038,6 +1038,7 @@ export default function CrowdRoarGame() {
           emoji={GAME_EMOJI}
           title={GAME_TITLE}
           description={GAME_TAGLINE}
+          sensorNote="🎤 Microphone — roar into your phone"
           ctaLabel="Allow Mic & Start"
           accentColor={theme.colors.accent ?? ACCENT}
           onStart={handleStart}

@@ -12,6 +12,7 @@ import { hapticImpact, hapticVictory, hapticFail } from '@/lib/haptics';
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
+import SwipeInstructions from '@/components/SwipeInstructions';
 
 // ─── SPEC CONSTANTS ──────────────────────────────────────────────────────────
 
@@ -373,6 +374,7 @@ export default function CauldronBubble() {
   });
 
   const [phase, setPhase]                 = useState<Phase>('start');
+  const [showInstructions, setShowInstructions] = useState(true);
   const [timeLeft, setTimeLeft]           = useState(DURATION);
   const [scoreDisplay, setScoreDisplay]   = useState(0);
   const [volumeDisplay, setVolumeDisplay] = useState(0);
@@ -836,6 +838,14 @@ export default function CauldronBubble() {
   // ── Render ──────────────────────────────────────────────────────────────────
 
   return (
+    <>
+      {phase === 'start' && showInstructions && (
+        <SwipeInstructions
+          gameId="cauldron-bubble"
+          steps={[{ icon: "🎤", title: "Blow or hum into the mic", body: "Your breath controls the cauldron — blow to fill it, stop to let it settle." }, { icon: "✨", title: "Stay in the brew zone", body: "Too quiet = dead. Too loud = explosion. Find the sweet spot." }, { icon: "🧙", title: "Survive 45 seconds", body: "A witch's curse narrows your zone at 22 seconds. Stay focused!" }]}
+          onDone={() => setShowInstructions(false)}
+        />
+      )}
     <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accent}>
 
       {/* ── Start Screen ──────────────────────────────────────────────────── */}
@@ -960,6 +970,7 @@ export default function CauldronBubble() {
         />
       )}
     </GameShell>
+    </>
   );
 }
 

@@ -480,11 +480,12 @@ export default function LoveNoteGame() {
       {outerPhase === 'start' && showInstructions && (
         <SwipeInstructions
           gameId="love-note"
-          steps={[{ icon: "🎵", title: "Tap in rhythm", body: "Tap along with the falling music notes." }, { icon: "❤️", title: "Hit on the beat", body: "Perfect timing scores the most points." }, { icon: "🔥", title: "Build combos", body: "Consecutive perfect taps multiply your score." }]}
+          steps={[{ icon: "👀", title: "Watch the sequence", body: "Hearts light up in order — memorize which ones and when." }, { icon: "💕", title: "Repeat it back", body: "Tap the same hearts in the exact same order." }, { icon: "📝", title: "Sequences get longer", body: "Each round adds one more heart. Don't lose your lives!" }]}
           onDone={() => setShowInstructions(false)}
         />
       )}
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accentColor}>
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accentColor}>
+
 
       {/* ── CSS Keyframes ─────────────────────────────────────────────────── */}
       <style dangerouslySetInnerHTML={{ __html: `

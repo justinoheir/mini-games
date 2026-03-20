@@ -15,6 +15,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import ScorePopEffect, { useScorePop } from '@/components/ScorePopEffect';
 import StreakBadge from '@/components/StreakBadge';
 import { CATEGORY_THEMES } from '@/lib/theme';
+import SwipeInstructions from '@/components/SwipeInstructions';
 
 const CATEGORY_ACCENT = CATEGORY_THEMES.cognitive.primaryAccent;
 
@@ -103,6 +104,7 @@ export default function TiltMaze() {
     exitX: 0, exitY: 0,
   });
   const [gameState, setGameState] = useState<GameState>('start');
+  const [showInstructions, setShowInstructions] = useState(true);
   const [timeLeft, setTimeLeft] = useState(60);
   const [behavior, setBehavior] = useState<BehaviorData | null>(null);
   const [joystickEnabled, setJoystickEnabled] = useState(false);
@@ -436,6 +438,14 @@ export default function TiltMaze() {
   const accent = theme.colors.accent;
 
   return (
+    <>
+      {gameState === 'start' && showInstructions && (
+        <SwipeInstructions
+          gameId="tilt-maze"
+          steps={[{ icon: "📱", title: "Tilt your phone", body: "Tilt left, right, forward, and back to roll the ball." }, { icon: "🌀", title: "Navigate the maze", body: "Guide the ball through the paths to reach the glowing exit." }, { icon: "⏱️", title: "Beat the clock", body: "Reach the exit before time runs out. Fewer wall hits = better score." }]}
+          onDone={() => setShowInstructions(false)}
+        />
+      )}
     <GameShell title="Tilt Maze" emoji="🌀" accentColor={accent} theme={theme}>
       <canvas ref={canvasRef} style={{ display: gameState==='playing' ? 'block' : 'none', position: 'absolute', top:0, left:0, touchAction: 'none' }} />
       {gameState==='playing' && (
@@ -569,5 +579,6 @@ export default function TiltMaze() {
         </>
       )}
     </GameShell>
+    </>
   );
 }

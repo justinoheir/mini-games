@@ -10,6 +10,7 @@ import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
 import { Particle, spawnBurst, updateAndDrawParticles } from '@/lib/particles';
+import SwipeInstructions from '@/components/SwipeInstructions';
 import { ShakeState, triggerShake, applyShake } from '@/lib/screenShake';
 import StreakBadge from '@/components/StreakBadge';
 import ScorePopEffect, { useScorePop } from '@/components/ScorePopEffect';
@@ -115,6 +116,7 @@ export default function ReactionChain() {
   });
 
   const [phase, setPhase]               = useState<Phase>('start');
+  const [showInstructions, setShowInstructions] = useState(true);
   const [timeLeft, setTimeLeft]         = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
   const [streakDisplay, setStreakDisplay] = useState(0);
@@ -482,6 +484,14 @@ export default function ReactionChain() {
   // ─── RENDER ─────────────────────────────────────────────────────────────────
 
   return (
+    <>
+      {phase === 'start' && showInstructions && (
+        <SwipeInstructions
+          gameId="reaction-chain"
+          steps={[{ icon: "⚡", title: "Tap the nodes", body: "Chain nodes appear on screen — tap each one before it disappears." }, { icon: "🔗", title: "Keep the chain alive", body: "Missing a node resets your chain. Build the longest streak." }, { icon: "💨", title: "They get faster", body: "Nodes vanish quicker as time goes on. Stay sharp." }]}
+          onDone={() => setShowInstructions(false)}
+        />
+      )}
     <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
       {/* ── Start Screen ──────────────────────────────────────────────────── */}
       {phase === 'start' && (
@@ -561,6 +571,7 @@ export default function ReactionChain() {
         />
       )}
     </GameShell>
+    </>
   );
 }
 

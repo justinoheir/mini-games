@@ -22,6 +22,7 @@ import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
 import { spawnBurst, updateAndDrawParticles, type Particle } from '@/lib/particles';
+import SwipeInstructions from '@/components/SwipeInstructions';
 
 // ─── SPEC CONSTANTS ────────────────────────────────────────────────────────────
 const GAME_ID      = 'path-trace';
@@ -240,6 +241,7 @@ export default function PathTraceGame() {
   });
 
   const [phase, setPhase]               = useState<Phase>('start');
+  const [showInstructions, setShowInstructions] = useState(true);
   const [timeLeft, setTimeLeft]         = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
   const [scorePopKey, setScorePopKey]   = useState(0);
@@ -812,6 +814,14 @@ export default function PathTraceGame() {
 
   // ─── RENDER ──────────────────────────────────────────────────────────────────
   return (
+    <>
+      {phase === 'start' && showInstructions && (
+        <SwipeInstructions
+          gameId="path-trace"
+          steps={[{ icon: "🟢", title: "Find the green dot", body: "Press and hold the green start dot to begin tracing." }, { icon: "✏️", title: "Drag along the path", body: "Keep your finger on the glowing line all the way to the end." }, { icon: "⚡", title: "Don't stray!", body: "Lift your finger or leave the path and you lose the round." }]}
+          onDone={() => setShowInstructions(false)}
+        />
+      )}
     <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
 
       {/* ── Start Screen ──────────────────────────────────────────────────── */}
@@ -923,6 +933,7 @@ export default function PathTraceGame() {
         />
       )}
     </GameShell>
+    </>
   );
 }
 
