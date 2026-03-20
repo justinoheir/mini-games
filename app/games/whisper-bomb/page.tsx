@@ -404,7 +404,7 @@ export default function WhisperBomb() {
       {gameState === 'start' && showInstructions && (
         <SwipeInstructions
           gameId="whisper-bomb"
-          steps={[{ icon: "🎤", title: "Blow softly", body: "Use your mic to breathe into the bomb fuse." }, { icon: "💣", title: "Control the fuse", body: "Too loud = fuse burns fast. Too quiet = nothing happens." }, { icon: "🏆", title: "Last longest", body: "Survive longer than your personal best." }]}
+          steps={[{ icon: "🤫", title: "Stay silent", body: "The fuse burns on its own — silence slows it down." }, { icon: "💣", title: "Loud = danger", body: "Any noise makes the fuse burn faster. Hold your breath." }, { icon: "🎯", title: "Defuse at the end", body: "Hold completely silent for 5 seconds at the end to defuse the bomb!" }]}
           onDone={() => setShowInstructions(false)}
         />
       )}
