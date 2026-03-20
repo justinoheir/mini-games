@@ -981,7 +981,7 @@ export default function FireworkLaunchGame() {
       {phase === 'start' && showInstructions && (
         <SwipeInstructions
           gameId="firework-launch"
-          steps={[{ icon: "👆", title: "Tap to launch", body: "Tap and hold to aim, release to fire." }, { icon: "🎆", title: "Hit the targets", body: "Launch fireworks to hit the glowing targets." }, { icon: "🔥", title: "Chain explosions", body: "Hitting multiple targets with one burst multiplies your score." }]}
+          steps={[{ icon: "☝️", title: "Swipe UP to launch", body: "Swipe upward from the bottom of the screen to fire a rocket." }, { icon: "💥", title: "Tap to detonate", body: "Tap anywhere while the rocket is in the air to explode it." }, { icon: "🎯", title: "Peak = more points", body: "Detonate at the top of the arc for a PERFECT score and streak bonus." }]}
           onDone={() => setShowInstructions(false)}
         />
       )}

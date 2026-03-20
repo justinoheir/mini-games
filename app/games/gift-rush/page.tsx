@@ -457,7 +457,7 @@ export default function GiftRushGame() {
       {phase === 'start' && showInstructions && (
         <SwipeInstructions
           gameId="gift-rush"
-          steps={[{ icon: "🎁", title: "Catch the gifts", body: "Tap falling gifts before they hit the ground." }, { icon: "⭐", title: "Gold gifts = bonus", body: "Golden gifts are worth extra points — prioritize them." }, { icon: "💨", title: "Speed increases", body: "Gifts fall faster as time goes on. Keep up!" }]}
+          steps={[{ icon: "👈👉", title: "Swipe to sort", body: "A gift appears — swipe LEFT or RIGHT to send it to the right pile." }, { icon: "🎁", title: "Sort correctly", body: "Match the gift to Santa's list. Wrong swipe = no points." }, { icon: "⚡", title: "Go faster", body: "Speed up — the pressure builds as Santa watches. Don't slow down." }]}
           onDone={() => setShowInstructions(false)}
         />
       )}
