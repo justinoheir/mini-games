@@ -19,12 +19,22 @@ import GameStartScreen from '@/components/GameStartScreen';
 import Countdown from '@/components/Countdown';
 import EndScreen from '@/components/EndScreen';
 import { initAudio, sfx, haptic, startMusic } from '@/lib/audio';
+import { playScoreHit, playVictoryFanfare, playNearMiss } from '@/lib/audio';
+import { hapticScore, hapticFail, hapticVictory } from '@/lib/haptics';
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
+import { motion, AnimatePresence } from 'framer-motion';
+import ScorePopEffect, { useScorePop } from '@/components/ScorePopEffect';
+import StreakBadge from '@/components/StreakBadge';
+import { CATEGORY_THEMES } from '@/lib/theme';
+import SwipeInstructions from '@/components/SwipeInstructions';
+
+const CATEGORY_ACCENT = CATEGORY_THEMES.holiday.primaryAccent;
 
 // ─── SPEC CONSTANTS ───────────────────────────────────────────────────────────
 const GAME_ID      = 'firework-launch';
+const PB_KEY       = 'pb_firework-launch';
 const ACCENT       = '#f59e0b';
 const DURATION     = 45;
 const GAME_EMOJI   = '🎆';
@@ -249,12 +259,28 @@ export default function FireworkLaunchGame() {
   });
 
   const [phase, setPhase]               = useState<Phase>('start');
+  const [showInstructions, setShowInstructions] = useState(true);
   const [timeLeft, setTimeLeft]         = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
   const [streakDisplay, setStreakDisplay] = useState(0);
   const [finalSig, setFinalSig]         = useState<Signals | null>(null);
   const [playerName, setPlayerName]     = useState('');
   const [playerAvatar, setPlayerAvatar] = useState('🎆');
+  const { pops, triggerPop } = useScorePop();
+  const [streak, setStreak] = useState(0);
+  const [isNewBest, setIsNewBest] = useState(false);
+  const prevScoreRef = useRef(0);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const numScore = typeof scoreDisplay === 'number' ? scoreDisplay : 0;
+    if (numScore > prevScoreRef.current) {
+      triggerPop(`+${numScore - prevScoreRef.current}`, window.innerWidth / 2, 200);
+      hapticScore();
+      playScoreHit('default', numScore - prevScoreRef.current);
+      setStreak(Math.floor(numScore / 5));
+    }
+    prevScoreRef.current = numScore;
+  }, [scoreDisplay]); // triggerPop is stable
   const playerSessionRef                = useRef<PlayerSession | null>(null);
   const phaseRef                        = useRef<Phase>('start');
 
@@ -372,8 +398,8 @@ export default function FireworkLaunchGame() {
     if (!canvas) return;
     const s = stateRef.current;
     const rect = canvas.getBoundingClientRect();
-    const scaleX = canvas.width  / rect.width;
-    const scaleY = canvas.height / rect.height;
+    const scaleX = canvas.offsetWidth  / rect.width;
+    const scaleY = canvas.offsetHeight / rect.height;
 
     const startCX = (clientX  - rect.left) * scaleX;
     const startCY = (clientY  - rect.top)  * scaleY;
@@ -478,6 +504,17 @@ export default function FireworkLaunchGame() {
     cancelAnimationFrame(animRef.current);
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
     if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
+    // Personal best tracking
+    try {
+      const _pbPrev = parseInt(localStorage.getItem(PB_KEY) || '0', 10);
+      const _pbVal = parseFloat(String(s.sig?.score ?? 0));
+      if (!isNaN(_pbVal) && _pbVal > _pbPrev) {
+        localStorage.setItem(PB_KEY, String(Math.round(_pbVal)));
+        setIsNewBest(true);
+      }
+    } catch { /* ignore */ }
+
+
     setFinalSig({ ...s.sig });
     phaseRef.current = 'done';
     setPhase('done');
@@ -507,8 +544,8 @@ export default function FireworkLaunchGame() {
     s.screenFlashTime    = 0;
     s.streakResetPending = false;
     s.lastAutoLaunchTime = 0;
-    s.buildings          = generateBuildings(canvas.width, canvas.height);
-    s.stars              = generateStars(canvas.width, canvas.height);
+    s.buildings          = generateBuildings(canvas.offsetWidth, canvas.offsetHeight);
+    s.stars              = generateStars(canvas.offsetWidth, canvas.offsetHeight);
 
     setScoreDisplay(0);
     setStreakDisplay(0);
@@ -531,8 +568,8 @@ export default function FireworkLaunchGame() {
 
     const loop = () => {
       if (!s.running) return;
-      const W = canvas.width;
-      const H = canvas.height;
+      const W = canvas.offsetWidth;
+      const H = canvas.offsetHeight;
       const now = Date.now();
 
       // ── Background ───────────────────────────────────────────────────────
@@ -811,13 +848,18 @@ export default function FireworkLaunchGame() {
     if (!canvas) return;
 
     const resize = () => {
-      canvas.width  = canvas.offsetWidth;
-      canvas.height = canvas.offsetHeight;
+      const dpr = window.devicePixelRatio || 1;
+      const w = canvas.offsetWidth;
+      const h = canvas.offsetHeight;
+      canvas.width  = w * dpr;
+      canvas.height = h * dpr;
+      const ctx2 = canvas.getContext('2d');
+      if (ctx2) ctx2.setTransform(dpr, 0, 0, dpr, 0, 0);
       // Regenerate skyline on resize
       const s = stateRef.current;
-      if (s.buildings.length === 0 || canvas.width !== s.buildings[s.buildings.length - 1].x) {
-        s.buildings = generateBuildings(canvas.width, canvas.height);
-        s.stars     = generateStars(canvas.width, canvas.height);
+      if (s.buildings.length === 0 || canvas.offsetWidth !== s.buildings[s.buildings.length - 1].x) {
+        s.buildings = generateBuildings(canvas.offsetWidth, canvas.offsetHeight);
+        s.stars     = generateStars(canvas.offsetWidth, canvas.offsetHeight);
       }
     };
     resize();
@@ -935,6 +977,14 @@ export default function FireworkLaunchGame() {
 
   // ─── RENDER ───────────────────────────────────────────────────────────────
   return (
+    <>
+      {phase === 'start' && showInstructions && (
+        <SwipeInstructions
+          gameId="firework-launch"
+          steps={[{ icon: "☝️", title: "Swipe UP to launch", body: "Swipe upward from the bottom of the screen to fire a rocket." }, { icon: "💥", title: "Tap to detonate", body: "Tap anywhere while the rocket is in the air to explode it." }, { icon: "🎯", title: "Peak = more points", body: "Detonate at the top of the arc for a PERFECT score and streak bonus." }]}
+          onDone={() => setShowInstructions(false)}
+        />
+      )}
     <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
 
       {/* ── Start Screen ──────────────────────────────────────────────────── */}
@@ -980,6 +1030,30 @@ export default function FireworkLaunchGame() {
           )}
         </>
       )}
+      {/* New best banner */}
+      <AnimatePresence>
+        {isNewBest && (
+          <motion.div
+            key="new-best"
+            initial={{ opacity: 0, y: -20, scale: 0.8 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -20 }}
+            transition={{ duration: 0.4, delay: 0.5 }}
+            style={{
+              position: 'fixed', top: '10%', left: '50%', transform: 'translateX(-50%)',
+              zIndex: 90, pointerEvents: 'none',
+              background: 'linear-gradient(135deg, #fbbf24, #f59e0b)',
+              borderRadius: 20, padding: '8px 20px', fontSize: 20,
+              fontWeight: 900, color: '#000', whiteSpace: 'nowrap',
+              boxShadow: '0 4px 20px rgba(251,191,36,0.5)',
+            }}
+          >
+            🏆 New Best!
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+
 
       {/* ── End Screen ────────────────────────────────────────────────────── */}
       {phase === 'done' && finalSig && (
@@ -1006,7 +1080,14 @@ export default function FireworkLaunchGame() {
           player={playerSessionRef.current}
         />
       )}
+      {phase === 'playing' && (
+        <>
+          <ScorePopEffect pops={pops} accentColor={CATEGORY_ACCENT} />
+          <StreakBadge streak={streakDisplay} accentColor={CATEGORY_ACCENT} />
+        </>
+      )}
     </GameShell>
+    </>
   );
 }
 

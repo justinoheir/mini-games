@@ -15,14 +15,24 @@ import GameStartScreen from '@/components/GameStartScreen';
 import Countdown from '@/components/Countdown';
 import EndScreen from '@/components/EndScreen';
 import { initAudio, sfx, haptic, startMusic } from '@/lib/audio';
+import { playScoreHit, playVictoryFanfare, playNearMiss } from '@/lib/audio';
+import { hapticScore, hapticFail, hapticVictory } from '@/lib/haptics';
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
 import { Sun, Moon } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
+import ScorePopEffect, { useScorePop } from '@/components/ScorePopEffect';
+import StreakBadge from '@/components/StreakBadge';
+import { CATEGORY_THEMES } from '@/lib/theme';
+import SwipeInstructions from '@/components/SwipeInstructions';
+
+const CATEGORY_ACCENT = CATEGORY_THEMES.cognitive.primaryAccent;
 
 // ─── SPEC CONSTANTS ──────────────────────────────────────────────────────────
 
 const GAME_ID      = 'steady-hand';
+const PB_KEY       = 'pb_steady-hand';
 
 // Haptics toggle — respect ?haptics=off URL param (accessibility: B-M3)
 function getHapticsEnabled(): boolean {
@@ -192,6 +202,7 @@ export default function SteadyHandGame() {
 
   // React state — only these drive re-renders
   const [phase, setPhase]               = useState<Phase>('start');
+  const [showInstructions, setShowInstructions] = useState(true);
   const [timeLeft, setTimeLeft]         = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);  // on-target %
   const [streakDisplay, setStreakDisplay] = useState(0); // current streak
@@ -199,7 +210,21 @@ export default function SteadyHandGame() {
   const [usingFallback, setUsingFallback] = useState(false);
   const [playerName, setPlayerName]     = useState('');
   const [playerAvatar, setPlayerAvatar] = useState('🎮');
+  const { pops, triggerPop } = useScorePop();
+  const prevScoreRef = useRef(0);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const numScore = typeof scoreDisplay === 'number' ? scoreDisplay : 0;
+    if (numScore > prevScoreRef.current) {
+      triggerPop(`+${numScore - prevScoreRef.current}`, window.innerWidth / 2, 200);
+    }
+    prevScoreRef.current = numScore;
+  }, [scoreDisplay]); // triggerPop is stable
   const playerSessionRef                = useRef<PlayerSession | null>(null);
+  const [scorePop, setScorePop]         = useState<string | null>(null);
+  const [nearMissMsg, setNearMissMsg]   = useState(false);
+  const [isNewBest, setIsNewBest]       = useState(false);
+  const nearMissTimeoutRef              = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Local dark/light theme (game-specific, stored in localStorage)
   const [isDark, setIsDark] = useState(() => {
@@ -279,11 +304,21 @@ export default function SteadyHandGame() {
     // End-game audio: success if ≥60% on-target, else nearMiss
     if (sig.timeOnTarget >= 60) {
       sfx.success();
-      if (hapticsEnabled.current) haptic([30, 50, 30, 50, 100]);
+      hapticVictory();
+      playVictoryFanfare();
     } else {
       sfx.nearMiss();
-      if (hapticsEnabled.current) haptic([100]);
+      hapticFail();
     }
+
+    // Personal best tracking
+    try {
+      const prev = parseInt(localStorage.getItem(PB_KEY) || '0', 10);
+      if (sig.score > prev) {
+        localStorage.setItem(PB_KEY, String(sig.score));
+        setIsNewBest(true);
+      }
+    } catch { /* ignore */ }
 
     setFinalSig({ ...sig });
     setPhase('done');
@@ -347,6 +382,19 @@ export default function SteadyHandGame() {
             s.sig.maxStreak = s.sig.streakCurrent;
             s.streakFlashAt = Date.now();
             sfx.collect();
+            hapticScore();
+            playScoreHit('default', 10);
+            setScorePop(`🔥 ${s.sig.streakCurrent}s`);
+            setTimeout(() => setScorePop(null), 1500);
+          }
+          // Near-miss: streak within 10% of next milestone (every 5s)
+          const nextMilestone = Math.ceil(s.sig.streakCurrent / 5) * 5;
+          const distTo = nextMilestone - s.sig.streakCurrent;
+          if (distTo === 1 && s.sig.streakCurrent > 0) {
+            playNearMiss();
+            setNearMissMsg(true);
+            if (nearMissTimeoutRef.current) clearTimeout(nearMissTimeoutRef.current);
+            nearMissTimeoutRef.current = setTimeout(() => setNearMissMsg(false), 1500);
           }
         } else {
           s.sig.streakCurrent = 0;
@@ -371,8 +419,8 @@ export default function SteadyHandGame() {
     // ── rAF loop ────────────────────────────────────────────────────────────
     const loop = (timestamp: number) => {
       if (!s.running) return;
-      const W = canvas.width;
-      const H = canvas.height;
+      const W = canvas.offsetWidth;
+      const H = canvas.offsetHeight;
       const cx = W / 2;
       const cy = H / 2;
       const elapsed = Date.now() - s.gameStartTime;
@@ -667,8 +715,13 @@ export default function SteadyHandGame() {
     if (!canvas) return;
 
     const resize = () => {
-      canvas.width  = canvas.offsetWidth;
-      canvas.height = canvas.offsetHeight;
+      const dpr = window.devicePixelRatio || 1;
+      const w = canvas.offsetWidth;
+      const h = canvas.offsetHeight;
+      canvas.width  = w * dpr;
+      canvas.height = h * dpr;
+      const ctx2 = canvas.getContext('2d');
+      if (ctx2) ctx2.setTransform(dpr, 0, 0, dpr, 0, 0);
     };
     resize();
     window.addEventListener('resize', resize);
@@ -808,6 +861,14 @@ export default function SteadyHandGame() {
   // ─── RENDER ──────────────────────────────────────────────────────────────
 
   return (
+    <>
+      {phase === 'start' && showInstructions && (
+        <SwipeInstructions
+          gameId="steady-hand"
+          steps={[{ icon: "✋", title: "Hold still", body: "Keep your device as still as possible." }, { icon: "⏱️", title: "Steady wins", body: "The less you move, the higher you score." }, { icon: "🏆", title: "Beat your best", body: "Try to beat your personal steadiness record." }]}
+          onDone={() => setShowInstructions(false)}
+        />
+      )}
     <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accent}>
 
       {/* ── Start Screen ──────────────────────────────────────────────────── */}
@@ -907,20 +968,96 @@ export default function SteadyHandGame() {
         </>
       )}
 
-      {/* ── End Screen ────────────────────────────────────────────────────── */}
-      {phase === 'done' && finalSig && (
-        <EndScreen
-          gameId={GAME_ID}
-          title={getPersonality(finalSig)}
-          emoji={GAME_EMOJI}
-          score={String(finalSig.score)}
-          personality={getPersonality(finalSig)}
-          insights={buildInsights(finalSig)}
-          accentColor={accent}
-          onPlayAgain={handlePlayAgain}
-          didWin={finalSig.timeOnTarget >= 60}
-        />
+      {/* Score pop overlay */}
+      {scorePop && (
+        <div style={{
+          position: 'fixed', top: '30%', left: '50%', transform: 'translateX(-50%)',
+          zIndex: 80, pointerEvents: 'none',
+          animation: 'scorePop 1.5s ease-out forwards',
+          fontSize: 44, fontWeight: 900, color: accent,
+          textShadow: `0 0 20px ${accent}88`,
+          whiteSpace: 'nowrap',
+        }}>
+          {scorePop}
+        </div>
       )}
+
+      {/* Near-miss message */}
+      <AnimatePresence>
+        {nearMissMsg && (
+          <motion.div
+            key="near-miss"
+            initial={{ opacity: 0, scale: 0.7 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, y: -20 }}
+            transition={{ duration: 0.3 }}
+            style={{
+              position: 'fixed', top: '22%', left: '50%', transform: 'translateX(-50%)',
+              zIndex: 80, pointerEvents: 'none',
+              fontSize: 22, fontWeight: 800, color: '#fbbf24',
+              textShadow: '0 0 12px #fbbf2488',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            So close! 🎯
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* New best banner */}
+      <AnimatePresence>
+        {isNewBest && phase === 'done' && (
+          <motion.div
+            key="new-best"
+            initial={{ opacity: 0, y: -20, scale: 0.8 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -20 }}
+            transition={{ duration: 0.4, delay: 0.5 }}
+            style={{
+              position: 'fixed', top: '10%', left: '50%', transform: 'translateX(-50%)',
+              zIndex: 90, pointerEvents: 'none',
+              background: 'linear-gradient(135deg, #fbbf24, #f59e0b)',
+              borderRadius: 20,
+              padding: '8px 20px',
+              fontSize: 20,
+              fontWeight: 900,
+              color: '#000',
+              whiteSpace: 'nowrap',
+              boxShadow: '0 4px 20px rgba(251,191,36,0.5)',
+            }}
+          >
+            🏆 New Best!
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ── End Screen ────────────────────────────────────────────────────── */}
+      <AnimatePresence>
+        {phase === 'done' && finalSig && (
+          <motion.div key="done" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} style={{ height: '100%' }}>
+            <EndScreen
+              gameId={GAME_ID}
+              title={getPersonality(finalSig)}
+              emoji={GAME_EMOJI}
+              score={String(finalSig.score)}
+              personality={getPersonality(finalSig)}
+              insights={buildInsights(finalSig)}
+              accentColor={accent}
+              onPlayAgain={handlePlayAgain}
+              didWin={finalSig.timeOnTarget >= 60}
+            />
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <style>{`
+        @keyframes scorePop {
+          0%   { opacity: 0; transform: translateX(-50%) scale(0.6); }
+          15%  { opacity: 1; transform: translateX(-50%) scale(1.5); }
+          60%  { opacity: 1; transform: translateX(-50%) scale(1.2); }
+          100% { opacity: 0; transform: translateX(-50%) scale(0.9) translateY(-40px); }
+        }
+      `}</style>
 
       {/* ── Webhook ───────────────────────────────────────────────────────── */}
       {phase === 'done' && finalSig && (
@@ -932,7 +1069,14 @@ export default function SteadyHandGame() {
         />
       )}
 
+      {phase === 'playing' && (
+        <>
+          <ScorePopEffect pops={pops} accentColor={CATEGORY_ACCENT} />
+          <StreakBadge streak={streakDisplay} accentColor={CATEGORY_ACCENT} />
+        </>
+      )}
     </GameShell>
+    </>
   );
 }
 

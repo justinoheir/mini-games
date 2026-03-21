@@ -6,13 +6,23 @@ import GameStartScreen from '@/components/GameStartScreen';
 import Countdown from '@/components/Countdown';
 import EndScreen from '@/components/EndScreen';
 import { initAudio, sfx, haptic, startMusic } from '@/lib/audio';
+import { playScoreHit, playVictoryFanfare, playNearMiss } from '@/lib/audio';
+import { hapticScore, hapticFail, hapticVictory } from '@/lib/haptics';
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
 import { createTiltController } from '@/lib/tilt';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
+import { motion, AnimatePresence } from 'framer-motion';
+import ScorePopEffect, { useScorePop } from '@/components/ScorePopEffect';
+import StreakBadge from '@/components/StreakBadge';
+import { CATEGORY_THEMES } from '@/lib/theme';
+import SwipeInstructions from '@/components/SwipeInstructions';
+
+const CATEGORY_ACCENT = CATEGORY_THEMES.sports.primaryAccent;
 
 const ACCENT = '#86efac';
 const GAME_ID = 'precision-putt';
+const PB_KEY       = 'pb_precision-putt';
 const MAX_HOLES = 8;
 
 interface FloatText { x: number; y: number; text: string; color: string; alpha: number; vy: number; }
@@ -58,11 +68,27 @@ export default function PrecisionPutt() {
   const chargeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isDraggingRef = useRef(false);
   const [phase, setPhase] = useState<Phase>('start');
+  const [showInstructions, setShowInstructions] = useState(true);
   const [timeLeft, setTimeLeft] = useState(60);
   const [holeDisplay, setHoleDisplay] = useState(1);
   const [finalSig, setFinalSig] = useState<Signals | null>(null);
   const [playerName, setPlayerName]   = useState('');
   const [playerAvatar, setPlayerAvatar] = useState('🎮');
+  const { pops, triggerPop } = useScorePop();
+  const [streak, setStreak] = useState(0);
+  const [isNewBest, setIsNewBest] = useState(false);
+  const prevScoreRef = useRef(0);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const numScore = typeof holeDisplay === 'number' ? holeDisplay : 0;
+    if (numScore > prevScoreRef.current) {
+      triggerPop(`+${numScore - prevScoreRef.current}`, window.innerWidth / 2, 200);
+      hapticScore();
+      playScoreHit('default', numScore - prevScoreRef.current);
+      setStreak(Math.floor(numScore / 5));
+    }
+    prevScoreRef.current = numScore;
+  }, [holeDisplay]);
   const playerSessionRef              = useRef<PlayerSession | null>(null);
 
   const stateRef = useRef({
@@ -124,7 +150,7 @@ export default function PrecisionPutt() {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const s = stateRef.current;
-    const W = canvas.width, H = canvas.height;
+    const W = window.innerWidth, H = window.innerHeight;
     s.hole = generateHole(W, H, s.holeIndex);
     s.ballX = W / 2; s.ballY = H * 0.82;
     s.ballVX = 0; s.ballVY = 0; s.ballMoving = false;
@@ -141,7 +167,7 @@ export default function PrecisionPutt() {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
     const s = stateRef.current;
-    const W = canvas.width, H = canvas.height;
+    const W = window.innerWidth, H = window.innerHeight;
 
     s.running = true; s.timeLeft = 60; s.holeIndex = 0;
     s.sig = { holes:0, totalStrokes:0, holesInOne:0, pars:0, bogeys:0,
@@ -236,9 +262,9 @@ export default function PrecisionPutt() {
 
         // Bounce off walls
         if (s.ballX < s.ballRadius) { s.ballX = s.ballRadius; s.ballVX = Math.abs(s.ballVX)*0.6; }
-        if (s.ballX > canvas.width - s.ballRadius) { s.ballX = canvas.width - s.ballRadius; s.ballVX = -Math.abs(s.ballVX)*0.6; }
+        if (s.ballX > window.innerWidth - s.ballRadius) { s.ballX = window.innerWidth - s.ballRadius; s.ballVX = -Math.abs(s.ballVX)*0.6; }
         if (s.ballY < s.ballRadius) { s.ballY = s.ballRadius; s.ballVY = Math.abs(s.ballVY)*0.6; }
-        if (s.ballY > canvas.height - s.ballRadius) { s.ballY = canvas.height - s.ballRadius; s.ballVY = -Math.abs(s.ballVY)*0.6; }
+        if (s.ballY > window.innerHeight - s.ballRadius) { s.ballY = window.innerHeight - s.ballRadius; s.ballVY = -Math.abs(s.ballVY)*0.6; }
 
         // Check hole
         if (s.hole && !s.holeComplete) {
@@ -399,8 +425,22 @@ export default function PrecisionPutt() {
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    canvas.width = window.innerWidth; canvas.height = window.innerHeight;
-    const onResize = () => { canvas.width = window.innerWidth; canvas.height = window.innerHeight; };
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width  = window.innerWidth  * dpr;
+    canvas.height = window.innerHeight * dpr;
+    canvas.style.width  = window.innerWidth  + 'px';
+    canvas.style.height = window.innerHeight + 'px';
+    const ctx2 = canvas.getContext('2d');
+    if (ctx2) ctx2.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const onResize = () => {
+      const d = window.devicePixelRatio || 1;
+      canvas.width  = window.innerWidth  * d;
+      canvas.height = window.innerHeight * d;
+      canvas.style.width  = window.innerWidth  + 'px';
+      canvas.style.height = window.innerHeight + 'px';
+      const c2 = canvas.getContext('2d');
+      if (c2) c2.setTransform(d, 0, 0, d, 0, 0);
+    };
     const onForceEnd = () => { if (stateRef.current.running) endGameRef.current?.(); };
     window.addEventListener('resize', onResize);
     window.addEventListener('game:force-end', onForceEnd);
@@ -443,6 +483,14 @@ export default function PrecisionPutt() {
   const parTotal = sig ? sig.pars + sig.holesInOne : 0;
 
   return (
+    <>
+      {phase === 'start' && showInstructions && (
+        <SwipeInstructions
+          gameId="precision-putt"
+          steps={[{ icon: "👆", title: "Swipe to putt", body: "Swipe to aim and set the power of your putt." }, { icon: "⛳", title: "Read the green", body: "Adjust for distance and angle to the hole." }, { icon: "🏆", title: "Fewer strokes", body: "Get the ball in with as few shots as possible." }]}
+          onDone={() => setShowInstructions(false)}
+        />
+      )}
     <GameShell title="Precision Putt" emoji="🏌️" accentColor={ACCENT} theme={theme}>
       <canvas
         ref={canvasRef}
@@ -472,6 +520,29 @@ export default function PrecisionPutt() {
           onStart={handleStart}
         />
       )}
+      {/* New best banner */}
+      <AnimatePresence>
+        {isNewBest && (
+          <motion.div
+            key="new-best"
+            initial={{ opacity: 0, y: -20, scale: 0.8 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -20 }}
+            transition={{ duration: 0.4, delay: 0.5 }}
+            style={{
+              position: 'fixed', top: '10%', left: '50%', transform: 'translateX(-50%)',
+              zIndex: 90, pointerEvents: 'none',
+              background: 'linear-gradient(135deg, #fbbf24, #f59e0b)',
+              borderRadius: 20, padding: '8px 20px', fontSize: 20,
+              fontWeight: 900, color: '#000', whiteSpace: 'nowrap',
+              boxShadow: '0 4px 20px rgba(251,191,36,0.5)',
+            }}
+          >
+            🏆 New Best!
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {phase === 'done' && sig && (
         <EndScreen
           gameId={GAME_ID}
@@ -490,6 +561,13 @@ export default function PrecisionPutt() {
           didWin={sig.holesInOne > 0}
         />
       )}
+      {phase === 'playing' && (
+        <>
+          <ScorePopEffect pops={pops} accentColor={CATEGORY_ACCENT} />
+          <StreakBadge streak={streak} accentColor={CATEGORY_ACCENT} />
+        </>
+      )}
     </GameShell>
+    </>
   );
 }

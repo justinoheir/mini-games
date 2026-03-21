@@ -6,15 +6,25 @@ import GameStartScreen from '@/components/GameStartScreen';
 import Countdown from '@/components/Countdown';
 import EndScreen from '@/components/EndScreen';
 import { initAudio, sfx, haptic, startMusic } from '@/lib/audio';
+import { playScoreHit, playVictoryFanfare, playNearMiss } from '@/lib/audio';
+import { hapticScore, hapticFail, hapticVictory } from '@/lib/haptics';
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
 import { createTiltController } from '@/lib/tilt';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
 import { Particle, spawnBurst, updateAndDrawParticles } from '@/lib/particles';
 import { ShakeState, triggerShake, applyShake } from '@/lib/screenShake';
+import { motion, AnimatePresence } from 'framer-motion';
+import ScorePopEffect, { useScorePop } from '@/components/ScorePopEffect';
+import StreakBadge from '@/components/StreakBadge';
+import { CATEGORY_THEMES } from '@/lib/theme';
+import SwipeInstructions from '@/components/SwipeInstructions';
+
+const CATEGORY_ACCENT = CATEGORY_THEMES.sports.primaryAccent;
 
 const ACCENT = '#22c55e';
 const GAME_ID = 'penalty-kick';
+const PB_KEY       = 'pb_penalty-kick';
 const MAX_SHOTS = 10;
 
 interface FloatText { x: number; y: number; text: string; color: string; alpha: number; vy: number; }
@@ -44,11 +54,27 @@ export default function PenaltyKick() {
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const tiltRef = useRef<ReturnType<typeof createTiltController> | null>(null);
   const [phase, setPhase] = useState<Phase>('start');
+  const [showInstructions, setShowInstructions] = useState(true);
   const [shotsState, setShotsState] = useState(0);
   const [goalsDisplay, setGoalsDisplay] = useState(0);
   const [finalSig, setFinalSig] = useState<Signals | null>(null);
   const [playerName, setPlayerName]   = useState('');
   const [playerAvatar, setPlayerAvatar] = useState('🎮');
+  const { pops, triggerPop } = useScorePop();
+  const [streak, setStreak] = useState(0);
+  const [isNewBest, setIsNewBest] = useState(false);
+  const prevScoreRef = useRef(0);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const numScore = typeof goalsDisplay === 'number' ? goalsDisplay : 0;
+    if (numScore > prevScoreRef.current) {
+      triggerPop(`+${numScore - prevScoreRef.current}`, window.innerWidth / 2, 200);
+      hapticScore();
+      playScoreHit('default', numScore - prevScoreRef.current);
+      setStreak(Math.floor(numScore / 5));
+    }
+    prevScoreRef.current = numScore;
+  }, [goalsDisplay]); // triggerPop is stable
   const playerSessionRef              = useRef<PlayerSession | null>(null);
 
   const stateRef = useRef({
@@ -104,7 +130,7 @@ export default function PenaltyKick() {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const s = stateRef.current;
-    const W = canvas.width, H = canvas.height;
+    const W = window.innerWidth, H = window.innerHeight;
     s.ballX = W / 2; s.ballY = H * 0.75;
     s.ballVX = 0; s.ballVY = 0; s.ballInFlight = false;
     s.keeperX = W / 2; s.keeperDiving = false; s.keeperVX = 0;
@@ -121,7 +147,7 @@ export default function PenaltyKick() {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
     const s = stateRef.current;
-    const W = canvas.width, H = canvas.height;
+    const W = window.innerWidth, H = window.innerHeight;
 
     s.running = true;
     s.shots = 0; s.goals = 0;
@@ -240,7 +266,7 @@ export default function PenaltyKick() {
 
           if (saved) {
             s.sig.lastSavedResult = true;
-            sfx.collision(); haptic([200]);
+            sfx.collision(); hapticFail();
             triggerShake(s.shake, 6, 10);
             spawnBurst(s.particles, s.ballX, s.ballY, '#ef4444', 14, 5);
             s.resultText = 'SAVED!'; s.resultColor = '#ef4444';
@@ -393,8 +419,22 @@ export default function PenaltyKick() {
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    canvas.width = window.innerWidth; canvas.height = window.innerHeight;
-    const onResize = () => { canvas.width = window.innerWidth; canvas.height = window.innerHeight; };
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width  = window.innerWidth  * dpr;
+    canvas.height = window.innerHeight * dpr;
+    canvas.style.width  = window.innerWidth  + 'px';
+    canvas.style.height = window.innerHeight + 'px';
+    const ctx2 = canvas.getContext('2d');
+    if (ctx2) ctx2.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const onResize = () => {
+      const d = window.devicePixelRatio || 1;
+      canvas.width  = window.innerWidth  * d;
+      canvas.height = window.innerHeight * d;
+      canvas.style.width  = window.innerWidth  + 'px';
+      canvas.style.height = window.innerHeight + 'px';
+      const c2 = canvas.getContext('2d');
+      if (c2) c2.setTransform(d, 0, 0, d, 0, 0);
+    };
     const onForceEnd = () => { if (stateRef.current.running) endGame(); };
     window.addEventListener('resize', onResize);
     window.addEventListener('game:force-end', onForceEnd);
@@ -431,6 +471,14 @@ export default function PenaltyKick() {
   const goals = sig?.goals ?? 0;
 
   return (
+    <>
+      {phase === 'start' && showInstructions && (
+        <SwipeInstructions
+          gameId="penalty-kick"
+          steps={[{ icon: "👆", title: "Swipe to kick", body: "Swipe in the direction you want to shoot." }, { icon: "⚽", title: "Aim for gaps", body: "The goalkeeper moves — find the open corner." }, { icon: "🥅", title: "Score goals", body: "You have 5 shots. Score as many as possible." }]}
+          onDone={() => setShowInstructions(false)}
+        />
+      )}
     <GameShell title="Penalty Kick" emoji="⚽" accentColor={ACCENT} theme={theme}>
       <canvas
         ref={canvasRef}
@@ -460,6 +508,29 @@ export default function PenaltyKick() {
           onStart={handleStart}
         />
       )}
+      {/* New best banner */}
+      <AnimatePresence>
+        {isNewBest && (
+          <motion.div
+            key="new-best"
+            initial={{ opacity: 0, y: -20, scale: 0.8 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -20 }}
+            transition={{ duration: 0.4, delay: 0.5 }}
+            style={{
+              position: 'fixed', top: '10%', left: '50%', transform: 'translateX(-50%)',
+              zIndex: 90, pointerEvents: 'none',
+              background: 'linear-gradient(135deg, #fbbf24, #f59e0b)',
+              borderRadius: 20, padding: '8px 20px', fontSize: 20,
+              fontWeight: 900, color: '#000', whiteSpace: 'nowrap',
+              boxShadow: '0 4px 20px rgba(251,191,36,0.5)',
+            }}
+          >
+            🏆 New Best!
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {phase === 'done' && sig && (
         <EndScreen
           gameId={GAME_ID}
@@ -478,6 +549,13 @@ export default function PenaltyKick() {
           didWin={goals >= 5}
         />
       )}
+      {phase === 'playing' && (
+        <>
+          <ScorePopEffect pops={pops} accentColor={CATEGORY_ACCENT} />
+          <StreakBadge streak={streak} accentColor={CATEGORY_ACCENT} />
+        </>
+      )}
     </GameShell>
+    </>
   );
 }

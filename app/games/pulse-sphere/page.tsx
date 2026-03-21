@@ -7,12 +7,22 @@ import GameStartScreen from '@/components/GameStartScreen';
 import Countdown from '@/components/Countdown';
 import EndScreen from '@/components/EndScreen';
 import { initAudio, sfx, haptic, startMusic } from '@/lib/audio';
+import { playScoreHit, playVictoryFanfare, playNearMiss } from '@/lib/audio';
+import { hapticScore, hapticFail, hapticVictory } from '@/lib/haptics';
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
 import { createTiltController } from '@/lib/tilt';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
+import { motion, AnimatePresence } from 'framer-motion';
+import ScorePopEffect, { useScorePop } from '@/components/ScorePopEffect';
+import StreakBadge from '@/components/StreakBadge';
+import { CATEGORY_THEMES } from '@/lib/theme';
+import SwipeInstructions from '@/components/SwipeInstructions';
+
+const CATEGORY_ACCENT = CATEGORY_THEMES.breath.primaryAccent;
 
 const GAME_ID = 'pulse-sphere';
+const PB_KEY  = 'pb_pulse-sphere';
 
 type GameState = 'start' | 'permissions' | 'countdown' | 'playing' | 'done';
 
@@ -86,6 +96,7 @@ export default function PulseSphere() {
     dataArray: null as Uint8Array<ArrayBuffer> | null,
   });
   const [gameState, setGameState] = useState<GameState>('start');
+  const [showInstructions, setShowInstructions] = useState(true);
   const [timeLeft, setTimeLeft] = useState(60);
   const [behavior, setBehavior] = useState<BehaviorData | null>(null);
   const [joystickEnabled, setJoystickEnabled] = useState(false);
@@ -94,7 +105,14 @@ export default function PulseSphere() {
   const micFallbackRef = useRef(false);
   const [playerName, setPlayerName]   = useState('');
   const [playerAvatar, setPlayerAvatar] = useState('🎮');
+  const { pops, triggerPop } = useScorePop();
   const playerSessionRef              = useRef<PlayerSession | null>(null);
+  const [streak, setStreak]           = useState(0);
+  const [nearMissMsg, setNearMissMsg] = useState(false);
+  const [isNewBest, setIsNewBest]     = useState(false);
+  const streakRef                     = useRef(0);
+  const lastMilestoneRef              = useRef(0);
+  const nearMissTimeoutRef            = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Verified: uses getByteFrequencyData, RMS formula correct, smoothingTimeConstant=0.3 ✓
   const getVolume = useCallback((): number => {
@@ -128,6 +146,15 @@ export default function PulseSphere() {
     const moveScore = Math.min(100, Math.round(avgTilt * 100));
     const touchScore = Math.min(100, Math.round((s.touchCount / 30) * 100));
     const bData: BehaviorData = { avgVolume: voiceScore, avgTilt: moveScore, touchCount: touchScore };
+    // PB tracking — use combined engagement score
+    const engagementScore = Math.round((voiceScore + moveScore + touchScore) / 3);
+    try {
+      const prev = parseInt(localStorage.getItem(PB_KEY) || '0', 10);
+      if (engagementScore > prev) {
+        localStorage.setItem(PB_KEY, String(engagementScore));
+        setIsNewBest(true);
+      }
+    } catch { /* ignore */ }
     setBehavior(bData);
     setGameState('done');
     postWebhook(capturedTheme, 'pulse-sphere', { score: getPersonality(voiceScore, moveScore, touchScore), personality: getPersonality(voiceScore, moveScore, touchScore), signals: bData }, playerSessionRef.current);
@@ -138,6 +165,8 @@ export default function PulseSphere() {
     s.volumeSamples = []; s.tiltMagnitudes = []; s.touchCount = 0;
     s.timeLeft = 60; s.running = true; s.hue = 280;
     s.joystickX = 0; s.joystickY = 0;
+    streakRef.current = 0; lastMilestoneRef.current = 0;
+    setStreak(0); setNearMissMsg(false); setIsNewBest(false);
     setTimeLeft(60); setGameState('playing');
     stopMusicRef.current = startMusic('ambient');
     const capturedTheme = theme;
@@ -221,8 +250,25 @@ export default function PulseSphere() {
       else if (s.timeLeft <= 5 && s.timeLeft > 0) sfx.tick();
       if (s.timeLeft <= 0) {
         sfx.success();
-        haptic([30, 50, 30, 50, 100]);
+        hapticVictory();
+        playVictoryFanfare();
         endGame(capturedTheme);
+      }
+      // Milestone score pops every 10s
+      const survived = 60 - s.timeLeft;
+      if (survived > 0 && survived % 10 === 0 && survived !== lastMilestoneRef.current) {
+        lastMilestoneRef.current = survived;
+        hapticScore();
+        playScoreHit('default', survived);
+        triggerPop(`⚡ ${survived}s`, window.innerWidth / 2, 200);
+      }
+      // Near-miss: 1s before milestone
+      const nextMilestone = Math.ceil(survived / 10) * 10;
+      if (nextMilestone - survived === 1 && survived > 0 && survived !== lastMilestoneRef.current) {
+        playNearMiss();
+        setNearMissMsg(true);
+        if (nearMissTimeoutRef.current) clearTimeout(nearMissTimeoutRef.current);
+        nearMissTimeoutRef.current = setTimeout(() => setNearMissMsg(false), 1500);
       }
     }, 1000);
 
@@ -244,6 +290,17 @@ export default function PulseSphere() {
       if (tiltMag > 0.6) {
         const now = Date.now();
         if (now - s.lastWhooshTime > 600) { sfx.whoosh(); s.lastWhooshTime = now; }
+      }
+
+      // Streak: increment every 3s of high activity (vol > 30)
+      if (vol > 30) {
+        const newLevel = Math.floor((s.volumeSamples.filter(v => v > 30).length / 60) / 3);
+        if (newLevel > streakRef.current) {
+          streakRef.current = newLevel;
+          setStreak(newLevel);
+          hapticScore();
+          triggerPop(`🔥 x${newLevel}`, window.innerWidth / 2, 250);
+        }
       }
 
       // Sphere scale from mic (0.8 → 2.5x)
@@ -405,6 +462,14 @@ export default function PulseSphere() {
   const accent = theme.colors.accent;
 
   return (
+    <>
+      {gameState === 'start' && showInstructions && (
+        <SwipeInstructions
+          gameId="pulse-sphere"
+          steps={[{ icon: "👆", title: "Tap the sphere", body: "Tap in rhythm with the pulse to score." }, { icon: "🎵", title: "Feel the beat", body: "The sphere glows on every beat." }, { icon: "🔥", title: "Build combos", body: "Perfect timing builds your streak multiplier." }]}
+          onDone={() => setShowInstructions(false)}
+        />
+      )}
     <GameShell title="Pulse Sphere" emoji="🔮" accentColor={accent} theme={theme}>
       <div ref={mountRef} style={{ width:'100%', height:'100%', display: gameState==='playing' ? 'block' : 'none', position:'relative', zIndex:1, touchAction:'none' }} />
 
@@ -497,6 +562,60 @@ export default function PulseSphere() {
           </EndScreen>
         );
       })()}
+      {gameState === 'playing' && (
+        <>
+          <ScorePopEffect pops={pops} accentColor={CATEGORY_ACCENT} />
+          <StreakBadge streak={streak} accentColor={CATEGORY_ACCENT} />
+          <AnimatePresence>
+            {nearMissMsg && (
+              <motion.div
+                key="near-miss"
+                initial={{ opacity: 0, scale: 0.7 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, y: -20 }}
+                transition={{ duration: 0.3 }}
+                style={{
+                  position: 'fixed', top: '22%', left: '50%', transform: 'translateX(-50%)',
+                  zIndex: 80, pointerEvents: 'none',
+                  fontSize: 22, fontWeight: 800, color: '#fbbf24',
+                  textShadow: '0 0 12px #fbbf2488',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                So close! 🎯
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </>
+      )}
+
+      {/* New best banner */}
+      <AnimatePresence>
+        {isNewBest && gameState === 'done' && (
+          <motion.div
+            key="new-best"
+            initial={{ opacity: 0, y: -20, scale: 0.8 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -20 }}
+            transition={{ duration: 0.4, delay: 0.5 }}
+            style={{
+              position: 'fixed', top: '10%', left: '50%', transform: 'translateX(-50%)',
+              zIndex: 90, pointerEvents: 'none',
+              background: 'linear-gradient(135deg, #fbbf24, #f59e0b)',
+              borderRadius: 20,
+              padding: '8px 20px',
+              fontSize: 20,
+              fontWeight: 900,
+              color: '#000',
+              whiteSpace: 'nowrap',
+              boxShadow: '0 4px 20px rgba(251,191,36,0.5)',
+            }}
+          >
+            🏆 New Best!
+          </motion.div>
+        )}
+      </AnimatePresence>
     </GameShell>
+    </>
   );
 }

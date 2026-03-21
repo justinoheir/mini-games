@@ -19,14 +19,24 @@ import GameStartScreen from '@/components/GameStartScreen';
 import Countdown from '@/components/Countdown';
 import EndScreen from '@/components/EndScreen';
 import { initAudio, sfx, haptic, startMusic } from '@/lib/audio';
+import { playScoreHit, playVictoryFanfare, playNearMiss } from '@/lib/audio';
+import { hapticScore, hapticFail, hapticVictory } from '@/lib/haptics';
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
 import { Particle, spawnBurst, updateAndDrawParticles } from '@/lib/particles';
+import { motion, AnimatePresence } from 'framer-motion';
+import ScorePopEffect, { useScorePop } from '@/components/ScorePopEffect';
+import StreakBadge from '@/components/StreakBadge';
+import { CATEGORY_THEMES } from '@/lib/theme';
+import SwipeInstructions from '@/components/SwipeInstructions';
+
+const CATEGORY_ACCENT = CATEGORY_THEMES.sports.primaryAccent;
 
 // ─── SPEC CONSTANTS ──────────────────────────────────────────────────────────
 
 const GAME_ID      = 'crowd-roar';
+const PB_KEY       = 'pb_crowd-roar';
 const ACCENT       = '#ef4444';
 const DURATION     = 45;
 const GAME_EMOJI   = '📢';
@@ -174,6 +184,7 @@ export default function CrowdRoarGame() {
   });
 
   const [phase, setPhase]             = useState<Phase>('start');
+  const [showInstructions, setShowInstructions] = useState(true);
   const [timeLeft, setTimeLeft]       = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
   const [finalSig, setFinalSig]       = useState<Signals | null>(null);
@@ -181,6 +192,21 @@ export default function CrowdRoarGame() {
 
   const [playerName, setPlayerName]   = useState('');
   const [playerAvatar, setPlayerAvatar] = useState('🎮');
+  const { pops, triggerPop } = useScorePop();
+  const [streak, setStreak] = useState(0);
+  const [isNewBest, setIsNewBest] = useState(false);
+  const prevScoreRef = useRef(0);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const numScore = typeof scoreDisplay === 'number' ? scoreDisplay : 0;
+    if (numScore > prevScoreRef.current) {
+      triggerPop(`+${numScore - prevScoreRef.current}`, window.innerWidth / 2, 200);
+      hapticScore();
+      playScoreHit('default', numScore - prevScoreRef.current);
+      setStreak(Math.floor(numScore / 5));
+    }
+    prevScoreRef.current = numScore;
+  }, [scoreDisplay]); // triggerPop is stable
   const playerSessionRef              = useRef<PlayerSession | null>(null);
 
   // Sync theme accent color into state
@@ -246,7 +272,8 @@ export default function CrowdRoarGame() {
     if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
 
     sfx.success();
-    haptic([30, 50, 30, 50, 100]);
+    hapticVictory();
+    playVictoryFanfare();
 
     // Trigger stadium explosion: all crowd members go max excitement
     for (const m of s.crowd) {
@@ -263,6 +290,17 @@ export default function CrowdRoarGame() {
       if (micStreamRef.current) { micStreamRef.current.getTracks().forEach(t => t.stop()); micStreamRef.current = null; }
       analyserRef.current = null;
       dataArrayRef.current = null;
+    // Personal best tracking
+    try {
+      const _pbPrev = parseInt(localStorage.getItem(PB_KEY) || '0', 10);
+      const _pbVal = parseFloat(String(s.sig?.score ?? 0));
+      if (!isNaN(_pbVal) && _pbVal > _pbPrev) {
+        localStorage.setItem(PB_KEY, String(Math.round(_pbVal)));
+        setIsNewBest(true);
+      }
+    } catch { /* ignore */ }
+
+
 
       setFinalSig({ ...s.sig });
       setPhase('done');
@@ -294,18 +332,28 @@ export default function CrowdRoarGame() {
     const s = stateRef.current;
 
     // ── FIX: Size canvas to viewport before any drawing ─────────────────
-    canvas.width  = canvas.offsetWidth  || window.innerWidth;
-    canvas.height = canvas.offsetHeight || window.innerHeight;
+    const dpr = window.devicePixelRatio || 1;
+    const w = canvas.offsetWidth;
+    const h = canvas.offsetHeight;
+    canvas.width  = w * dpr;
+    canvas.height = h * dpr;
+    const ctx2 = canvas.getContext('2d');
+    if (ctx2) ctx2.setTransform(dpr, 0, 0, dpr, 0, 0);
 
     // Re-init crowd for current canvas size
-    initCrowd(canvas.width, canvas.height);
+    initCrowd(canvas.offsetWidth, canvas.offsetHeight);
 
     // ── FIX: Add resize listener here (canvas wasn't mounted during useEffect)
     const onResize = () => {
-      canvas.width  = canvas.offsetWidth  || window.innerWidth;
-      canvas.height = canvas.offsetHeight || window.innerHeight;
+      const dpr = window.devicePixelRatio || 1;
+      const w = canvas.offsetWidth;
+      const h = canvas.offsetHeight;
+      canvas.width  = w * dpr;
+      canvas.height = h * dpr;
+      const ctx2 = canvas.getContext('2d');
+      if (ctx2) ctx2.setTransform(dpr, 0, 0, dpr, 0, 0);
       if (stateRef.current.running || stateRef.current.finaleActive) {
-        initCrowd(canvas.width, canvas.height);
+        initCrowd(canvas.offsetWidth, canvas.offsetHeight);
       }
     };
     window.addEventListener('resize', onResize);
@@ -398,8 +446,8 @@ export default function CrowdRoarGame() {
     const loop = () => {
       // ── FIX: Allow loop to continue during finale for stadium explosion ─
       if (!s.running && !s.finaleActive) return;
-      const W   = canvas.width;
-      const H   = canvas.height;
+      const W   = canvas.offsetWidth;
+      const H   = canvas.offsetHeight;
       const now = Date.now();
 
       // ── During finale: skip game logic, just render the crowd explosion ─
@@ -846,10 +894,15 @@ export default function CrowdRoarGame() {
     if (!canvas) return;
 
     const resize = () => {
-      canvas.width  = canvas.offsetWidth  || window.innerWidth;
-      canvas.height = canvas.offsetHeight || window.innerHeight;
+      const dpr = window.devicePixelRatio || 1;
+      const w = canvas.offsetWidth;
+      const h = canvas.offsetHeight;
+      canvas.width  = w * dpr;
+      canvas.height = h * dpr;
+      const ctx2 = canvas.getContext('2d');
+      if (ctx2) ctx2.setTransform(dpr, 0, 0, dpr, 0, 0);
       if (stateRef.current.running) {
-        initCrowd(canvas.width, canvas.height);
+        initCrowd(canvas.offsetWidth, canvas.offsetHeight);
       }
     };
     resize();
@@ -969,6 +1022,14 @@ export default function CrowdRoarGame() {
   // ─── RENDER ──────────────────────────────────────────────────────────────
 
   return (
+    <>
+      {phase === 'start' && showInstructions && (
+        <SwipeInstructions
+          gameId="crowd-roar"
+          steps={[{ icon: "📣", title: "Make noise", body: "Shout, clap, or cheer into your mic." }, { icon: "🔊", title: "Hit the meter", body: "Fill the volume meter to energize the crowd." }, { icon: "🏟️", title: "Keep it up", body: "Don't let the crowd go quiet — sustain the roar!" }]}
+          onDone={() => setShowInstructions(false)}
+        />
+      )}
     <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
 
       {/* ── Start Screen ───────────────────────────────────────────────────── */}
@@ -977,6 +1038,7 @@ export default function CrowdRoarGame() {
           emoji={GAME_EMOJI}
           title={GAME_TITLE}
           description={GAME_TAGLINE}
+          sensorNote="🎤 Microphone — roar into your phone"
           ctaLabel="Allow Mic & Start"
           accentColor={theme.colors.accent ?? ACCENT}
           onStart={handleStart}
@@ -1130,6 +1192,30 @@ export default function CrowdRoarGame() {
           )}
         </>
       )}
+      {/* New best banner */}
+      <AnimatePresence>
+        {isNewBest && (
+          <motion.div
+            key="new-best"
+            initial={{ opacity: 0, y: -20, scale: 0.8 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -20 }}
+            transition={{ duration: 0.4, delay: 0.5 }}
+            style={{
+              position: 'fixed', top: '10%', left: '50%', transform: 'translateX(-50%)',
+              zIndex: 90, pointerEvents: 'none',
+              background: 'linear-gradient(135deg, #fbbf24, #f59e0b)',
+              borderRadius: 20, padding: '8px 20px', fontSize: 20,
+              fontWeight: 900, color: '#000', whiteSpace: 'nowrap',
+              boxShadow: '0 4px 20px rgba(251,191,36,0.5)',
+            }}
+          >
+            🏆 New Best!
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+
 
       {/* ── End Screen ────────────────────────────────────────────────────── */}
       {phase === 'done' && finalSig && (
@@ -1156,7 +1242,14 @@ export default function CrowdRoarGame() {
           player={playerSessionRef.current}
         />
       )}
+      {phase === 'playing' && (
+        <>
+          <ScorePopEffect pops={pops} accentColor={CATEGORY_ACCENT} />
+          <StreakBadge streak={streak} accentColor={CATEGORY_ACCENT} />
+        </>
+      )}
     </GameShell>
+    </>
   );
 }
 

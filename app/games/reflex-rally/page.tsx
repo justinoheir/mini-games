@@ -6,14 +6,24 @@ import GameStartScreen from '@/components/GameStartScreen';
 import Countdown from '@/components/Countdown';
 import EndScreen from '@/components/EndScreen';
 import { initAudio, sfx, haptic, startMusic, increaseMusicTempo } from '@/lib/audio';
+import { playScoreHit, playVictoryFanfare, playNearMiss } from '@/lib/audio';
+import { hapticScore, hapticFail, hapticVictory } from '@/lib/haptics';
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
 import { Particle, spawnBurst, updateAndDrawParticles } from '@/lib/particles';
 import { ShakeState, triggerShake, applyShake } from '@/lib/screenShake';
+import { motion, AnimatePresence } from 'framer-motion';
+import ScorePopEffect, { useScorePop } from '@/components/ScorePopEffect';
+import StreakBadge from '@/components/StreakBadge';
+import { CATEGORY_THEMES } from '@/lib/theme';
+import SwipeInstructions from '@/components/SwipeInstructions';
+
+const CATEGORY_ACCENT = CATEGORY_THEMES.sports.primaryAccent;
 
 const ACCENT = '#84cc16';
 const GAME_ID = 'reflex-rally';
+const PB_KEY       = 'pb_reflex-rally';
 const DURATION = 60;
 const MAX_LIVES = 5;
 
@@ -43,6 +53,7 @@ export default function ReflexRally() {
   const animRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [phase, setPhase] = useState<Phase>('start');
+  const [showInstructions, setShowInstructions] = useState(true);
   const [timeLeft, setTimeLeft] = useState(DURATION);
   const [lives, setLives] = useState(MAX_LIVES);
   const [scoreDisplay, setScoreDisplay] = useState(0);
@@ -50,6 +61,21 @@ export default function ReflexRally() {
   const [finalSig, setFinalSig] = useState<Signals | null>(null);
   const [playerName, setPlayerName]   = useState('');
   const [playerAvatar, setPlayerAvatar] = useState('🎮');
+  const { pops, triggerPop } = useScorePop();
+  const [streak, setStreak] = useState(0);
+  const [isNewBest, setIsNewBest] = useState(false);
+  const prevScoreRef = useRef(0);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const numScore = typeof scoreDisplay === 'number' ? scoreDisplay : 0;
+    if (numScore > prevScoreRef.current) {
+      triggerPop(`+${numScore - prevScoreRef.current}`, window.innerWidth / 2, 200);
+      hapticScore();
+      playScoreHit('default', numScore - prevScoreRef.current);
+      setStreak(Math.floor(numScore / 5));
+    }
+    prevScoreRef.current = numScore;
+  }, [scoreDisplay]); // triggerPop is stable
   const playerSessionRef              = useRef<PlayerSession | null>(null);
 
   const stateRef = useRef({
@@ -101,10 +127,10 @@ export default function ReflexRally() {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const s = stateRef.current;
-    const H = canvas.height;
+    const H = window.innerHeight;
     const mid = (s.courtTop + s.courtBottom) / 2;
     const range = (s.courtBottom - s.courtTop) * 0.35;
-    s.ballX = canvas.width + s.ballRadius;
+    s.ballX = window.innerWidth + s.ballRadius;
     s.ballY = mid + (Math.random() - 0.5) * range * 2;
     s.ballVX = -(s.speed + Math.random() * 2);
     s.ballVY = (Math.random() - 0.5) * 2;
@@ -118,7 +144,7 @@ export default function ReflexRally() {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
     const s = stateRef.current;
-    const W = canvas.width, H = canvas.height;
+    const W = window.innerWidth, H = window.innerHeight;
 
     s.running = true; s.timeLeft = DURATION; s.lives = MAX_LIVES;
     s.sig = { returns:0, misses:0, forehands:0, backhands:0, reactionTimes:[], score:0, streakMax:0, streakCurrent:0 };
@@ -236,7 +262,7 @@ export default function ReflexRally() {
           s.sig.streakCurrent = 0;
           setLives(s.lives);
           setStreakDisplay(0);
-          sfx.collision(); haptic([300]);
+          sfx.collision(); hapticFail();
           triggerShake(s.shake, 7, 10);
           spawnBurst(s.particles, W*0.1, s.ballY, '#ef4444', 12, 5);
           s.floats.push({ x: W*0.15, y: (ct+cb)/2, text:'MISS!', color:'#ef4444', alpha:1, vy:-1.5 });
@@ -343,8 +369,22 @@ export default function ReflexRally() {
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    canvas.width = window.innerWidth; canvas.height = window.innerHeight;
-    const onResize = () => { canvas.width = window.innerWidth; canvas.height = window.innerHeight; };
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width  = window.innerWidth  * dpr;
+    canvas.height = window.innerHeight * dpr;
+    canvas.style.width  = window.innerWidth  + 'px';
+    canvas.style.height = window.innerHeight + 'px';
+    const ctx2 = canvas.getContext('2d');
+    if (ctx2) ctx2.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const onResize = () => {
+      const d = window.devicePixelRatio || 1;
+      canvas.width  = window.innerWidth  * d;
+      canvas.height = window.innerHeight * d;
+      canvas.style.width  = window.innerWidth  + 'px';
+      canvas.style.height = window.innerHeight + 'px';
+      const c2 = canvas.getContext('2d');
+      if (c2) c2.setTransform(d, 0, 0, d, 0, 0);
+    };
     const onForceEnd = () => { if (stateRef.current.running) endGame(); };
     window.addEventListener('resize', onResize);
     window.addEventListener('game:force-end', onForceEnd);
@@ -379,6 +419,14 @@ export default function ReflexRally() {
     ? Math.round(sig.reactionTimes.reduce((a,b)=>a+b,0)/sig.reactionTimes.length) : 0;
 
   return (
+    <>
+      {phase === 'start' && showInstructions && (
+        <SwipeInstructions
+          gameId="reflex-rally"
+          steps={[{ icon: "👆", title: "Tap to return", body: "Tap when the ball reaches your side." }, { icon: "⚡", title: "Time it right", body: "Tap too early or too late and you miss." }, { icon: "🔥", title: "Speed up", body: "Each rally gets faster — how long can you keep it going?" }]}
+          onDone={() => setShowInstructions(false)}
+        />
+      )}
     <GameShell title="Reflex Rally" emoji="🎾" accentColor={ACCENT} theme={theme}>
       <canvas
         ref={canvasRef}
@@ -409,6 +457,30 @@ export default function ReflexRally() {
           onStart={handleStart}
         />
       )}
+            {/* New best banner */}
+      <AnimatePresence>
+        {isNewBest && (
+          <motion.div
+            key="new-best"
+            initial={{ opacity: 0, y: -20, scale: 0.8 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -20 }}
+            transition={{ duration: 0.4, delay: 0.5 }}
+            style={{
+              position: 'fixed', top: '10%', left: '50%', transform: 'translateX(-50%)',
+              zIndex: 90, pointerEvents: 'none',
+              background: 'linear-gradient(135deg, #fbbf24, #f59e0b)',
+              borderRadius: 20, padding: '8px 20px', fontSize: 20,
+              fontWeight: 900, color: '#000', whiteSpace: 'nowrap',
+              boxShadow: '0 4px 20px rgba(251,191,36,0.5)',
+            }}
+          >
+            🏆 New Best!
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+
       {phase === 'done' && sig && (
         <EndScreen
           gameId={GAME_ID}
@@ -427,6 +499,13 @@ export default function ReflexRally() {
           didWin={sig.returns > 15}
         />
       )}
+      {phase === 'playing' && (
+        <>
+          <ScorePopEffect pops={pops} accentColor={CATEGORY_ACCENT} />
+          <StreakBadge streak={streakDisplay} accentColor={CATEGORY_ACCENT} />
+        </>
+      )}
     </GameShell>
+    </>
   );
 }

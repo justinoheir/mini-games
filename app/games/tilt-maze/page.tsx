@@ -1,6 +1,5 @@
 'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
 import GameShell from '@/components/GameShell';
 import GameHUD from '@/components/GameHUD';
 import GameStartScreen from '@/components/GameStartScreen';
@@ -12,6 +11,13 @@ import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
 import { createTiltController } from '@/lib/tilt';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
+import { motion, AnimatePresence } from 'framer-motion';
+import ScorePopEffect, { useScorePop } from '@/components/ScorePopEffect';
+import StreakBadge from '@/components/StreakBadge';
+import { CATEGORY_THEMES } from '@/lib/theme';
+import SwipeInstructions from '@/components/SwipeInstructions';
+
+const CATEGORY_ACCENT = CATEGORY_THEMES.cognitive.primaryAccent;
 
 type MazeCell = { top: number; right: number; bottom: number; left: number };
 const GRID = 5;
@@ -98,12 +104,23 @@ export default function TiltMaze() {
     exitX: 0, exitY: 0,
   });
   const [gameState, setGameState] = useState<GameState>('start');
+  const [showInstructions, setShowInstructions] = useState(true);
   const [timeLeft, setTimeLeft] = useState(60);
   const [behavior, setBehavior] = useState<BehaviorData | null>(null);
   const [joystickEnabled, setJoystickEnabled] = useState(false);
   const [joystickThumb, setJoystickThumb] = useState({ x: 0, y: 0 });
   const [playerName, setPlayerName]   = useState('');
   const [playerAvatar, setPlayerAvatar] = useState('🎮');
+  const { pops, triggerPop } = useScorePop();
+  const prevScoreRef = useRef(0);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const numScore = typeof 0 === 'number' ? 0 : 0;
+    if (numScore > prevScoreRef.current) {
+      triggerPop(`+${numScore - prevScoreRef.current}`, window.innerWidth / 2, 200);
+    }
+    prevScoreRef.current = numScore;
+  }, [0]); // triggerPop is stable
   const playerSessionRef              = useRef<PlayerSession | null>(null);
   const [scorePop, setScorePop]       = useState<string | null>(null);
   const [nearMissMsg, setNearMissMsg] = useState(false);
@@ -421,6 +438,14 @@ export default function TiltMaze() {
   const accent = theme.colors.accent;
 
   return (
+    <>
+      {gameState === 'start' && showInstructions && (
+        <SwipeInstructions
+          gameId="tilt-maze"
+          steps={[{ icon: "📱", title: "Tilt your phone", body: "Tilt left, right, forward, and back to roll the ball." }, { icon: "🌀", title: "Navigate the maze", body: "Guide the ball through the paths to reach the glowing exit." }, { icon: "⏱️", title: "Beat the clock", body: "Reach the exit before time runs out. Fewer wall hits = better score." }]}
+          onDone={() => setShowInstructions(false)}
+        />
+      )}
     <GameShell title="Tilt Maze" emoji="🌀" accentColor={accent} theme={theme}>
       <canvas ref={canvasRef} style={{ display: gameState==='playing' ? 'block' : 'none', position: 'absolute', top:0, left:0, touchAction: 'none' }} />
       {gameState==='playing' && (
@@ -547,6 +572,13 @@ export default function TiltMaze() {
           didWin={!!b.completionTime}
         />
       )}
+      {gameState === 'playing' && (
+        <>
+          <ScorePopEffect pops={pops} accentColor={CATEGORY_ACCENT} />
+          <StreakBadge streak={0} accentColor={CATEGORY_ACCENT} />
+        </>
+      )}
     </GameShell>
+    </>
   );
 }

@@ -7,14 +7,24 @@ import GameStartScreen from '@/components/GameStartScreen';
 import Countdown from '@/components/Countdown';
 import EndScreen from '@/components/EndScreen';
 import { initAudio, sfx, haptic, startMusic } from '@/lib/audio';
+import { playScoreHit, playVictoryFanfare, playNearMiss } from '@/lib/audio';
+import { hapticScore, hapticFail, hapticVictory } from '@/lib/haptics';
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
 import confetti from 'canvas-confetti';
+import { motion, AnimatePresence } from 'framer-motion';
+import ScorePopEffect, { useScorePop } from '@/components/ScorePopEffect';
+import StreakBadge from '@/components/StreakBadge';
+import { CATEGORY_THEMES } from '@/lib/theme';
+import SwipeInstructions from '@/components/SwipeInstructions';
+
+const CATEGORY_ACCENT = CATEGORY_THEMES.cognitive.primaryAccent;
 
 // ─── CONSTANTS ───────────────────────────────────────────────────────────────
 
 const GAME_ID        = 'countdown-crush';
+const PB_KEY       = 'pb_countdown-crush';
 const ACCENT         = '#fbbf24';
 const GAME_EMOJI     = '🥂';
 const GAME_TITLE     = 'Countdown Crush';
@@ -186,6 +196,7 @@ export default function CountdownCrushGame() {
 
   // React state — only for re-renders
   const [phase, setPhase]               = useState<Phase>('start');
+  const [showInstructions, setShowInstructions] = useState(true);
   const [scoreDisplay, setScoreDisplay] = useState(0);
   const [currentCount, setCurrentCount] = useState(10);
   const [subPhaseUI, setSubPhaseUI]     = useState<SubPhase>('slamming');
@@ -193,6 +204,21 @@ export default function CountdownCrushGame() {
   const [finalSig, setFinalSig]         = useState<Signals | null>(null);
   const [playerName, setPlayerName]     = useState('');
   const [playerAvatar, setPlayerAvatar] = useState('🎮');
+  const { pops, triggerPop } = useScorePop();
+  const [streak, setStreak] = useState(0);
+  const [isNewBest, setIsNewBest] = useState(false);
+  const prevScoreRef = useRef(0);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const numScore = typeof scoreDisplay === 'number' ? scoreDisplay : 0;
+    if (numScore > prevScoreRef.current) {
+      triggerPop(`+${numScore - prevScoreRef.current}`, window.innerWidth / 2, 200);
+      hapticScore();
+      playScoreHit('default', numScore - prevScoreRef.current);
+      setStreak(Math.floor(numScore / 5));
+    }
+    prevScoreRef.current = numScore;
+  }, [scoreDisplay]); // triggerPop is stable
   const playerSessionRef                = useRef<PlayerSession | null>(null);
 
   useEffect(() => {
@@ -256,6 +282,17 @@ export default function CountdownCrushGame() {
       }, 0);
       s.sig.avgWindowPct = Math.round((sum / total) * 100);
     }
+    // Personal best tracking
+    try {
+      const _pbPrev = parseInt(localStorage.getItem(PB_KEY) || '0', 10);
+      const _pbVal = parseFloat(String(s.sig?.score ?? 0));
+      if (!isNaN(_pbVal) && _pbVal > _pbPrev) {
+        localStorage.setItem(PB_KEY, String(Math.round(_pbVal)));
+        setIsNewBest(true);
+      }
+    } catch { /* ignore */ }
+
+
 
     setFinalSig({ ...s.sig });
     setPhase('done');
@@ -271,8 +308,8 @@ export default function CountdownCrushGame() {
     if (s.subPhase !== 'scoring' && s.subPhase !== 'midnight') return;
 
     const rect = canvas.getBoundingClientRect();
-    const x = (clientX - rect.left) * (canvas.width  / rect.width);
-    const y = (clientY - rect.top)  * (canvas.height / rect.height);
+    const x = (clientX - rect.left) * (canvas.offsetWidth  / rect.width);
+    const y = (clientY - rect.top)  * (canvas.offsetHeight / rect.height);
 
     const win = WINDOWS[Math.min(s.countIndex, WINDOWS.length - 1)];
     const mult = s.subPhase === 'midnight' ? 5 : win.multiplier;
@@ -348,7 +385,7 @@ export default function CountdownCrushGame() {
     s.countIndex               = 0;
     s.phaseStart               = now;
     s.slamScale                = 1.5;
-    s.ripples                  = [{ radius: 5, maxRadius: Math.max(canvas.width, canvas.height), alpha: 0.5, cx: canvas.width / 2, cy: canvas.height / 2 }];
+    s.ripples                  = [{ radius: 5, maxRadius: Math.max(canvas.offsetWidth, canvas.offsetHeight), alpha: 0.5, cx: canvas.offsetWidth / 2, cy: canvas.offsetHeight / 2 }];
     s.ballY                    = 0;
     s.bubbles                  = [];
     s.nextBubbleId             = 0;
@@ -377,8 +414,8 @@ export default function CountdownCrushGame() {
     const loop = () => {
       if (!s.running) return;
 
-      const W       = canvas.width;
-      const H       = canvas.height;
+      const W       = canvas.offsetWidth;
+      const H       = canvas.offsetHeight;
       const nowT    = Date.now();
       const elapsed = nowT - s.phaseStart;
       const win     = WINDOWS[s.countIndex] ?? WINDOWS[WINDOWS.length - 1];
@@ -683,8 +720,13 @@ export default function CountdownCrushGame() {
     if (!canvas) return;
 
     const resize = () => {
-      canvas.width  = canvas.offsetWidth;
-      canvas.height = canvas.offsetHeight;
+      const dpr = window.devicePixelRatio || 1;
+      const w = canvas.offsetWidth;
+      const h = canvas.offsetHeight;
+      canvas.width  = w * dpr;
+      canvas.height = h * dpr;
+      const ctx2 = canvas.getContext('2d');
+      if (ctx2) ctx2.setTransform(dpr, 0, 0, dpr, 0, 0);
     };
     resize();
     window.addEventListener('resize', resize);
@@ -775,6 +817,14 @@ export default function CountdownCrushGame() {
   const accent = theme.colors.accent ?? ACCENT;
 
   return (
+    <>
+      {phase === 'start' && showInstructions && (
+        <SwipeInstructions
+          gameId="countdown-crush"
+          steps={[{ icon: "🔢", title: "Find the number", body: "Tap numbers in order from lowest to highest." }, { icon: "⏱️", title: "Race the clock", body: "You have limited time — move fast." }, { icon: "🔥", title: "Clear the board", body: "Clear all numbers before time runs out to win." }]}
+          onDone={() => setShowInstructions(false)}
+        />
+      )}
     <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accent}>
 
       {/* ── Start Screen ─────────────────────────────────────────────────── */}
@@ -919,6 +969,30 @@ export default function CountdownCrushGame() {
           )}
         </>
       )}
+      {/* New best banner */}
+      <AnimatePresence>
+        {isNewBest && (
+          <motion.div
+            key="new-best"
+            initial={{ opacity: 0, y: -20, scale: 0.8 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -20 }}
+            transition={{ duration: 0.4, delay: 0.5 }}
+            style={{
+              position: 'fixed', top: '10%', left: '50%', transform: 'translateX(-50%)',
+              zIndex: 90, pointerEvents: 'none',
+              background: 'linear-gradient(135deg, #fbbf24, #f59e0b)',
+              borderRadius: 20, padding: '8px 20px', fontSize: 20,
+              fontWeight: 900, color: '#000', whiteSpace: 'nowrap',
+              boxShadow: '0 4px 20px rgba(251,191,36,0.5)',
+            }}
+          >
+            🏆 New Best!
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+
 
       {/* ── End Screen ───────────────────────────────────────────────────── */}
       {phase === 'done' && finalSig && (
@@ -943,7 +1017,14 @@ export default function CountdownCrushGame() {
           />
         </>
       )}
+      {phase === 'playing' && (
+        <>
+          <ScorePopEffect pops={pops} accentColor={CATEGORY_ACCENT} />
+          <StreakBadge streak={streak} accentColor={CATEGORY_ACCENT} />
+        </>
+      )}
     </GameShell>
+    </>
   );
 }
 

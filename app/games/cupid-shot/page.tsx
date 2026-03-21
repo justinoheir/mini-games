@@ -15,13 +15,23 @@ import GameStartScreen from '@/components/GameStartScreen';
 import Countdown from '@/components/Countdown';
 import EndScreen from '@/components/EndScreen';
 import { initAudio, sfx, haptic, startMusic } from '@/lib/audio';
+import { playScoreHit, playVictoryFanfare, playNearMiss } from '@/lib/audio';
+import { hapticScore, hapticFail, hapticVictory } from '@/lib/haptics';
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
+import { motion, AnimatePresence } from 'framer-motion';
+import ScorePopEffect, { useScorePop } from '@/components/ScorePopEffect';
+import StreakBadge from '@/components/StreakBadge';
+import { CATEGORY_THEMES } from '@/lib/theme';
+import SwipeInstructions from '@/components/SwipeInstructions';
+
+const CATEGORY_ACCENT = CATEGORY_THEMES.holiday.primaryAccent;
 
 // ─── SPEC CONSTANTS ───────────────────────────────────────────────────────────
 
 const GAME_ID      = 'cupid-shot';
+const PB_KEY       = 'pb_cupid-shot';
 const ACCENT       = '#f43f5e';
 const DURATION     = 45;
 const GAME_EMOJI   = '💘';
@@ -298,6 +308,7 @@ export default function CupidShot() {
 
   // Only React state values that drive re-renders
   const [gamePhase, setGamePhase]       = useState<GamePhase>('start');
+  const [showInstructions, setShowInstructions] = useState(true);
   const [timeLeft, setTimeLeft]         = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
   const [finalSig, setFinalSig]         = useState<Signals | null>(null);
@@ -306,6 +317,21 @@ export default function CupidShot() {
 
   const [playerName, setPlayerName]     = useState('');
   const [playerAvatar, setPlayerAvatar] = useState('🎮');
+  const { pops, triggerPop } = useScorePop();
+  const [streak, setStreak] = useState(0);
+  const [isNewBest, setIsNewBest] = useState(false);
+  const prevScoreRef = useRef(0);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const numScore = typeof scoreDisplay === 'number' ? scoreDisplay : 0;
+    if (numScore > prevScoreRef.current) {
+      triggerPop(`+${numScore - prevScoreRef.current}`, window.innerWidth / 2, 200);
+      hapticScore();
+      playScoreHit('default', numScore - prevScoreRef.current);
+      setStreak(Math.floor(numScore / 5));
+    }
+    prevScoreRef.current = numScore;
+  }, [scoreDisplay]);
   const playerSessionRef                = useRef<PlayerSession | null>(null);
   const warningFiredRef                 = useRef(false);
 
@@ -337,6 +363,17 @@ export default function CupidShot() {
     cancelAnimationFrame(animRef.current);
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
     if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
+    // Personal best tracking
+    try {
+      const _pbPrev = parseInt(localStorage.getItem(PB_KEY) || '0', 10);
+      const _pbVal = parseFloat(String(s.sig?.score ?? 0));
+      if (!isNaN(_pbVal) && _pbVal > _pbPrev) {
+        localStorage.setItem(PB_KEY, String(Math.round(_pbVal)));
+        setIsNewBest(true);
+      }
+    } catch { /* ignore */ }
+
+
     setFinalSig({ ...s.sig });
     setGamePhase('done');
   }, []);
@@ -399,8 +436,8 @@ export default function CupidShot() {
       s.lastTs     = ts;
       s.elapsedMs += dt;
 
-      const W           = canvas.width;
-      const H           = canvas.height;
+      const W           = canvas.offsetWidth;
+      const H           = canvas.offsetHeight;
       const elapsedSec  = s.elapsedMs / 1000;
       const bullseyeX   = W / 2;
       const bullseyeY   = H * 0.42;
@@ -700,8 +737,8 @@ export default function CupidShot() {
     const s = stateRef.current;
     if (!s.running) return;
 
-    const W          = canvas.width;
-    const H          = canvas.height;
+    const W          = canvas.offsetWidth;
+    const H          = canvas.offsetHeight;
     const bullseyeX  = W / 2;
     const now        = Date.now();
 
@@ -805,7 +842,8 @@ export default function CupidShot() {
     } else if (bestTierIdx === 0) {
       // Bullseye — best shot
       sfx.success();
-      haptic([30, 50, 30, 50, 100]);
+    hapticVictory();
+    playVictoryFanfare();
     } else if (bestTierIdx <= 2) {
       // Partial hit
       sfx.collect();
@@ -824,8 +862,13 @@ export default function CupidShot() {
     if (!canvas) return;
 
     const resize = () => {
-      canvas.width  = canvas.offsetWidth;
-      canvas.height = canvas.offsetHeight;
+      const dpr = window.devicePixelRatio || 1;
+      const w = canvas.offsetWidth;
+      const h = canvas.offsetHeight;
+      canvas.width  = w * dpr;
+      canvas.height = h * dpr;
+      const ctx2 = canvas.getContext('2d');
+      if (ctx2) ctx2.setTransform(dpr, 0, 0, dpr, 0, 0);
     };
     resize();
     window.addEventListener('resize', resize);
@@ -911,6 +954,14 @@ export default function CupidShot() {
   const accent = theme.colors.accent ?? ACCENT;
 
   return (
+    <>
+      {gamePhase === 'start' && showInstructions && (
+        <SwipeInstructions
+          gameId="cupid-shot"
+          steps={[{ icon: "💘", title: "Aim with Cupid", body: "Tilt or swipe to aim Cupid's arrow." }, { icon: "❤️", title: "Hit the hearts", body: "Shoot your arrow to hit floating hearts." }, { icon: "🔥", title: "Chain shots", body: "Hit multiple hearts in a row for a combo bonus." }]}
+          onDone={() => setShowInstructions(false)}
+        />
+      )}
     <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accent}>
 
       {/* ── Start Screen ─────────────────────────────────────────────────── */}
@@ -956,6 +1007,30 @@ export default function CupidShot() {
           )}
         </>
       )}
+      {/* New best banner */}
+      <AnimatePresence>
+        {isNewBest && (
+          <motion.div
+            key="new-best"
+            initial={{ opacity: 0, y: -20, scale: 0.8 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -20 }}
+            transition={{ duration: 0.4, delay: 0.5 }}
+            style={{
+              position: 'fixed', top: '10%', left: '50%', transform: 'translateX(-50%)',
+              zIndex: 90, pointerEvents: 'none',
+              background: 'linear-gradient(135deg, #fbbf24, #f59e0b)',
+              borderRadius: 20, padding: '8px 20px', fontSize: 20,
+              fontWeight: 900, color: '#000', whiteSpace: 'nowrap',
+              boxShadow: '0 4px 20px rgba(251,191,36,0.5)',
+            }}
+          >
+            🏆 New Best!
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+
 
       {/* ── End Screen ───────────────────────────────────────────────────── */}
       {gamePhase === 'done' && finalSig && (
@@ -983,7 +1058,14 @@ export default function CupidShot() {
         />
       )}
 
+      {gamePhase === 'playing' && (
+        <>
+          <ScorePopEffect pops={pops} accentColor={CATEGORY_ACCENT} />
+          <StreakBadge streak={streak} accentColor={CATEGORY_ACCENT} />
+        </>
+      )}
     </GameShell>
+    </>
   );
 }
 

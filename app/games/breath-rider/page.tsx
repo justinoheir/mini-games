@@ -6,16 +6,22 @@ import GameStartScreen from '@/components/GameStartScreen';
 import Countdown from '@/components/Countdown';
 import EndScreen from '@/components/EndScreen';
 import { initAudio, sfx, haptic, startMusic } from '@/lib/audio';
+import { playScoreHit, playVictoryFanfare, playNearMiss } from '@/lib/audio';
+import { hapticScore, hapticFail, hapticVictory } from '@/lib/haptics';
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
+import { motion, AnimatePresence } from 'framer-motion';
+import ScorePopEffect, { useScorePop } from '@/components/ScorePopEffect';
+import StreakBadge from '@/components/StreakBadge';
+import { CATEGORY_THEMES } from '@/lib/theme';
+import SwipeInstructions from '@/components/SwipeInstructions';
+
+const CATEGORY_ACCENT = CATEGORY_THEMES.breath.primaryAccent;
 
 const GAME_ID = 'breath-rider';
-const SCROLL_SPEED = 2.2; // px per frame at 60fps ≈ 132px/s
-// Haptics toggle: pass ?haptics=off in URL to disable
-const hapticsEnabled = typeof window !== 'undefined'
-  ? new URLSearchParams(window.location.search).get('haptics') !== 'off'
-  : true;
+const PB_KEY = 'pb_breath-rider';
+const SCROLL_SPEED = 2.2;
 
 type GameState = 'start' | 'requesting' | 'countdown' | 'playing' | 'done';
 interface BehaviorData { breathVariance: number; avgAltitude: number; coinsCollected: number; spikeCollisions: number; }
@@ -25,7 +31,6 @@ interface FloatText { x: number; y: number; t: number; }
 interface PulseRing { t: number; maxR: number; }
 interface CoinParticle { x: number; y: number; vx: number; vy: number; t: number; }
 
-/** Convert a 6-digit hex color to an "R,G,B" string for rgba() usage on canvas */
 function hexToRgbStr(hex: string): string {
   const c = hex.replace('#', '');
   const r = parseInt(c.substring(0, 2), 16);
@@ -62,18 +67,39 @@ export default function BreathRider() {
     usingTouchFallback: false,
     touchVolume: 0,
     touchCleanup: null as (() => void) | null,
-    spikeFlashUntil: 0, // timestamp until which to show red flash overlay
+    spikeFlashUntil: 0,
     pulseRings: [] as PulseRing[],
     coinParticles: [] as CoinParticle[],
     lastBreathVol: 0,
+    streak: 0,
+    lastNearMissScore: -1,
   });
+
+  // DOM refs for performance-critical overlays
+  const scorePopRef = useRef<HTMLDivElement>(null);
+  const streakBadgeRef = useRef<HTMLDivElement>(null);
+  const nearMissTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const [gameState, setGameState] = useState<GameState>('start');
+  const [showInstructions, setShowInstructions] = useState(true);
   const [timeLeft, setTimeLeft] = useState(45);
   const [score, setScore] = useState(0);
   const [behavior, setBehavior] = useState<BehaviorData | null>(null);
   const [playerName, setPlayerName]   = useState('');
   const [playerAvatar, setPlayerAvatar] = useState('🎮');
-  const playerSessionRef              = useRef<PlayerSession | null>(null);
+  const { pops, triggerPop } = useScorePop();
+  const prevScoreRef = useRef(0);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const numScore = typeof score === 'number' ? score : 0;
+    if (numScore > prevScoreRef.current) {
+      triggerPop(`+${numScore - prevScoreRef.current}`, window.innerWidth / 2, 200);
+    }
+    prevScoreRef.current = numScore;
+  }, [score]); // triggerPop is stable
+  const playerSessionRef = useRef<PlayerSession | null>(null);
+  const [nearMissMsg, setNearMissMsg] = useState(false);
+  const [isNewBest, setIsNewBest] = useState(false);
 
   const getVolume = useCallback((): number => {
     const s = stateRef.current;
@@ -85,6 +111,20 @@ export default function BreathRider() {
     return Math.min(100, (Math.sqrt(sumSq / data.length) / 128) * 100);
   }, []);
 
+  const showScorePop = useCallback((text: string) => {
+    if (!scorePopRef.current) return;
+    const el = scorePopRef.current;
+    el.textContent = text;
+    el.style.opacity = '1';
+    el.style.transform = 'translateX(-50%) scale(1.5)';
+    el.style.transition = 'none';
+    setTimeout(() => {
+      el.style.transition = 'opacity 0.8s ease-out, transform 0.8s ease-out';
+      el.style.opacity = '0';
+      el.style.transform = 'translateX(-50%) scale(0.9) translateY(-40px)';
+    }, 50);
+  }, []);
+
   const endGame = useCallback((capturedTheme: typeof theme) => {
     const s = stateRef.current;
     s.running = false;
@@ -94,8 +134,9 @@ export default function BreathRider() {
     if (s.audioCtx) s.audioCtx.close().catch(() => {/* ignore */});
     if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
     if (s.touchCleanup) { s.touchCleanup(); s.touchCleanup = null; }
-    // End-of-game completion sound
     sfx.success();
+    hapticVictory();
+    playVictoryFanfare();
     const volAvg = s.volumeSamples.length > 0 ? s.volumeSamples.reduce((a,b)=>a+b,0)/s.volumeSamples.length : 0;
     const variance = s.volumeSamples.length > 0
       ? Math.sqrt(s.volumeSamples.reduce((a,v)=>a+(v-volAvg)**2,0)/s.volumeSamples.length) : 0;
@@ -106,6 +147,14 @@ export default function BreathRider() {
       coinsCollected: s.coinsCollected,
       spikeCollisions: s.spikeCollisions,
     };
+    // Personal best
+    try {
+      const prev = parseInt(localStorage.getItem(PB_KEY) || '0', 10);
+      if (bData.coinsCollected > prev) {
+        localStorage.setItem(PB_KEY, String(bData.coinsCollected));
+        setIsNewBest(true);
+      }
+    } catch { /* ignore */ }
     setBehavior(bData);
     setGameState('done');
     postWebhook(capturedTheme, 'breath-rider', { score: String(bData.coinsCollected), personality: getProfile(bData), signals: bData }, playerSessionRef.current);
@@ -116,18 +165,18 @@ export default function BreathRider() {
     s.altitudeSamples = []; s.volumeSamples = []; s.coinsCollected = 0; s.spikeCollisions = 0;
     s.timeLeft = 45; s.running = true; s.trail = []; s.floatTexts = [];
     s.pulseRings = []; s.coinParticles = []; s.lastBreathVol = 0;
-    setTimeLeft(45); setScore(0); setGameState('playing');
+    s.streak = 0; s.lastNearMissScore = -1;
+    setTimeLeft(45); setScore(0); setNearMissMsg(false); setIsNewBest(false);
+    setGameState('playing');
     stopMusicRef.current = startMusic('calm');
     const capturedTheme = theme;
 
     const canvas = canvasRef.current; if (!canvas) return;
     const ctx = canvas.getContext('2d'); if (!ctx) return;
-    const W = canvas.width, H = canvas.height;
+    const W = window.innerWidth, H = window.innerHeight;
     s.canvasW = W; s.canvasH = H;
-    // Character fixed on left side — elements scroll past
     s.charX = W * 0.18; s.charY = H * 0.5;
 
-    // Touch fallback: hold to breathe
     if (s.usingTouchFallback) {
       const onDown = () => { s.touchVolume = 60; };
       const onUp   = () => { s.touchVolume = 0; };
@@ -141,19 +190,20 @@ export default function BreathRider() {
       };
     }
 
-    // Coins: start off-screen right, spaced out so they scroll past the character
     s.coins = Array.from({ length: 10 }, (_, i) => ({
       x: W + 80 + i * (W * 0.12 + 20),
       y: H * 0.15 + Math.random() * H * 0.7,
       collected: false, floatY: 0, floatT: Math.random() * Math.PI * 2,
       spawnX: W + 80 + i * (W * 0.12 + 20),
     }));
-    // Spikes: interleaved with coins, also scrolling right→left
     s.spikes = Array.from({ length: 8 }, (_, i) => ({
       x: W + 120 + i * (W * 0.15 + 25),
       top: Math.random() > 0.5,
     }));
     s.spikeLastHit = new Array(8).fill(0);
+
+    // Reset streak badge
+    if (streakBadgeRef.current) streakBadgeRef.current.style.display = 'none';
 
     s.timerIntervalId = setInterval(() => {
       if (!s.running) return;
@@ -169,19 +219,16 @@ export default function BreathRider() {
       const vol = getVolume();
       s.volumeSamples.push(vol);
 
-      // Breath pulse rings — spawn when volume crosses onset threshold
       if (vol > 28 && s.lastBreathVol <= 28) {
         s.pulseRings.push({ t: Date.now(), maxR: 22 + vol * 0.9 });
       }
       s.lastBreathVol = vol;
 
-      // Physics: blow up, fall down
       const targetY = s.charY - (vol / 100) * H * 0.07 + H * 0.018;
       s.charY += (targetY - s.charY) * 0.14;
       s.charY = Math.max(H * 0.07, Math.min(H * 0.93, s.charY));
       s.altitudeSamples.push(s.charY);
 
-      // Sky/altitude atmosphere
       const bgGrad = ctx.createLinearGradient(0, 0, 0, H);
       bgGrad.addColorStop(0, '#071528');
       bgGrad.addColorStop(0.5, '#0d1a22');
@@ -189,21 +236,16 @@ export default function BreathRider() {
       ctx.fillStyle = bgGrad;
       ctx.fillRect(0, 0, W, H);
 
-      // Danger zone bands
       ctx.fillStyle = 'rgba(255,68,68,0.12)';
       ctx.fillRect(0, 0, W, H * 0.07);
       ctx.fillRect(0, H * 0.93, W, H * 0.07);
 
-      // ── Scroll spikes ──────────────────────────────────────────────────────
       s.spikes.forEach((spike, si) => {
-        // Scroll left
         spike.x -= SCROLL_SPEED;
-        // Recycle when off-screen left
         if (spike.x < -20) {
           spike.x = W + 20 + Math.random() * W * 0.5;
           spike.top = Math.random() > 0.5;
         }
-
         ctx.save();
         ctx.shadowBlur = 8; ctx.shadowColor = '#ef4444';
         ctx.fillStyle = '#ef4444';
@@ -218,37 +260,32 @@ export default function BreathRider() {
         if (dist < 32 && now - s.spikeLastHit[si] > 1000) {
           s.spikeCollisions++; s.spikeLastHit[si] = now;
           s.charY = H * 0.5; sfx.collision();
-          if (hapticsEnabled) haptic([50, 30, 50]);
-          s.spikeFlashUntil = now + 180; // red flash for 180ms
+          hapticFail();
+          s.streak = 0;
+          if (streakBadgeRef.current) streakBadgeRef.current.style.display = 'none';
+          s.spikeFlashUntil = now + 180;
         }
       });
 
-      // ── Scroll coins ────────────────────────────────────────────────────────
       s.coins.forEach((coin, ci) => {
-        // Scroll left
         coin.x -= SCROLL_SPEED;
-
-        // Recycle off-screen coins (whether collected or passed)
         if (coin.x < -30) {
           coin.x = W + 30 + Math.random() * W * 0.6;
           coin.y = H * 0.15 + Math.random() * H * 0.7;
           coin.collected = false;
           coin.floatT = Math.random() * Math.PI * 2;
         }
-
         if (coin.collected) return;
 
         coin.floatT += 0.05;
         coin.floatY = Math.sin(coin.floatT) * 5;
         const cy2 = coin.y + coin.floatY;
 
-        // Sparkle ring
         ctx.save();
         ctx.beginPath();
         ctx.arc(coin.x, cy2, 16 + Math.sin(coin.floatT * 2) * 3, 0, Math.PI * 2);
         ctx.strokeStyle = `rgba(255,204,0,${0.3 + Math.sin(coin.floatT*3)*0.2})`;
         ctx.lineWidth = 2; ctx.stroke(); ctx.restore();
-        // Coin body
         ctx.beginPath(); ctx.arc(coin.x, cy2, 12, 0, Math.PI * 2);
         ctx.fillStyle = '#fbbf24'; ctx.fill();
         ctx.strokeStyle = '#f59e0b'; ctx.lineWidth = 2; ctx.stroke();
@@ -257,19 +294,39 @@ export default function BreathRider() {
         if (dist < 28) {
           s.coins[ci].collected = true; s.coinsCollected++;
           sfx.collect();
-          if (hapticsEnabled) haptic([15]);
+          hapticScore();
+          playScoreHit('default', 10);
           s.floatTexts.push({ x: coin.x, y: cy2, t: Date.now() });
-          // Burst 8 particles outward from collect point
           for (let pi = 0; pi < 8; pi++) {
             const angle = (Math.PI * 2 * pi) / 8 + Math.random() * 0.4;
             const speed = 1.8 + Math.random() * 2.5;
             s.coinParticles.push({ x: coin.x, y: cy2, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed, t: Date.now() });
           }
           setScore(s.coinsCollected);
+          showScorePop('+1 🪙');
+
+          // Streak tracking
+          s.streak++;
+          if (streakBadgeRef.current && s.streak >= 3) {
+            streakBadgeRef.current.style.display = 'flex';
+            streakBadgeRef.current.textContent = `🔥 x${s.streak}`;
+            const sz = Math.min(1 + s.streak * 0.04, 1.5);
+            streakBadgeRef.current.style.transform = `scale(${sz})`;
+          }
+
+          // Near-miss: score is within 10% of next milestone (every 5 coins)
+          const nextMilestone = Math.ceil(s.coinsCollected / 5) * 5;
+          const distToMilestone = nextMilestone - s.coinsCollected;
+          if (distToMilestone === 1 && s.lastNearMissScore !== s.coinsCollected) {
+            s.lastNearMissScore = s.coinsCollected;
+            playNearMiss();
+            setNearMissMsg(true);
+            if (nearMissTimeoutRef.current) clearTimeout(nearMissTimeoutRef.current);
+            nearMissTimeoutRef.current = setTimeout(() => setNearMissMsg(false), 1500);
+          }
         }
       });
 
-      // Float texts "+1"
       s.floatTexts = s.floatTexts.filter(ft => Date.now() - ft.t < 700);
       s.floatTexts.forEach(ft => {
         const age = (Date.now() - ft.t) / 700;
@@ -280,7 +337,6 @@ export default function BreathRider() {
         ctx.globalAlpha = 1;
       });
 
-      // Red flash overlay on spike collision
       if (Date.now() < s.spikeFlashUntil) {
         const flashAlpha = 0.22 * (1 - (Date.now() - (s.spikeFlashUntil - 180)) / 180);
         ctx.save();
@@ -289,7 +345,6 @@ export default function BreathRider() {
         ctx.restore();
       }
 
-      // ── Breath pulse rings ──────────────────────────────────────────────────
       s.pulseRings = s.pulseRings.filter(ring => Date.now() - ring.t < 600);
       s.pulseRings.forEach(ring => {
         const age = (Date.now() - ring.t) / 600;
@@ -302,13 +357,12 @@ export default function BreathRider() {
         ctx.stroke();
       });
 
-      // ── Coin collect particles ───────────────────────────────────────────────
       s.coinParticles = s.coinParticles.filter(p => Date.now() - p.t < 420);
       s.coinParticles.forEach(p => {
         const age = (Date.now() - p.t) / 420;
         p.x += p.vx;
         p.y += p.vy;
-        p.vy += 0.12; // gentle gravity
+        p.vy += 0.12;
         const r = 4 * (1 - age);
         ctx.beginPath();
         ctx.arc(p.x, p.y, Math.max(0.5, r), 0, Math.PI * 2);
@@ -316,7 +370,6 @@ export default function BreathRider() {
         ctx.fill();
       });
 
-      // Trail
       s.trail.push({ x: s.charX, y: s.charY });
       if (s.trail.length > 6) s.trail.shift();
       s.trail.forEach((pos, i) => {
@@ -324,18 +377,15 @@ export default function BreathRider() {
         ctx.fillStyle = `rgba(${s.accentRgb},${(i/6)*0.4})`; ctx.fill();
       });
 
-      // Character glow
       ctx.save();
       ctx.shadowBlur = 20; ctx.shadowColor = s.accentColor;
       ctx.beginPath(); ctx.arc(s.charX, s.charY, 18, 0, Math.PI * 2);
       ctx.fillStyle = s.accentColor; ctx.fill();
       ctx.strokeStyle = `rgba(${s.accentRgb},0.6)`; ctx.lineWidth = 2; ctx.stroke();
-      // Breath aura
       ctx.beginPath(); ctx.arc(s.charX, s.charY, 18 + vol * 0.25, 0, Math.PI * 2);
       ctx.fillStyle = `rgba(${s.accentRgb},${vol/400})`; ctx.fill();
       ctx.restore();
 
-      // Touch fallback hint
       if (s.usingTouchFallback) {
         ctx.save();
         ctx.globalAlpha = 0.45;
@@ -350,7 +400,7 @@ export default function BreathRider() {
       s.animId = requestAnimationFrame(loop);
     };
     s.animId = requestAnimationFrame(loop);
-  }, [getVolume, endGame, theme]);
+  }, [getVolume, endGame, showScorePop, theme]);
 
   const handleStart = useCallback(async (name: string, avatar: string) => {
     setPlayerName(name);
@@ -370,7 +420,6 @@ export default function BreathRider() {
       s.usingTouchFallback = false;
       setGameState('countdown');
     } catch {
-      // Mic denied — activate touch fallback (hold-to-breathe)
       const s = stateRef.current;
       s.stream = null; s.analyser = null; s.audioCtx = null;
       s.usingTouchFallback = true;
@@ -386,8 +435,22 @@ export default function BreathRider() {
 
   useEffect(() => {
     const canvas = canvasRef.current; if (!canvas) return;
-    canvas.width = window.innerWidth; canvas.height = window.innerHeight;
-    const onResize = () => { canvas.width = window.innerWidth; canvas.height = window.innerHeight; };
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width  = window.innerWidth  * dpr;
+    canvas.height = window.innerHeight * dpr;
+    canvas.style.width  = window.innerWidth  + 'px';
+    canvas.style.height = window.innerHeight + 'px';
+    const ctx2 = canvas.getContext('2d');
+    if (ctx2) ctx2.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const onResize = () => {
+      const d = window.devicePixelRatio || 1;
+      canvas.width  = window.innerWidth  * d;
+      canvas.height = window.innerHeight * d;
+      canvas.style.width  = window.innerWidth  + 'px';
+      canvas.style.height = window.innerHeight + 'px';
+      const c2 = canvas.getContext('2d');
+      if (c2) c2.setTransform(d, 0, 0, d, 0, 0);
+    };
     window.addEventListener('resize', onResize);
     return () => {
       window.removeEventListener('resize', onResize);
@@ -408,6 +471,14 @@ export default function BreathRider() {
   const accent = theme.colors.accent;
 
   return (
+    <>
+      {gameState === 'start' && showInstructions && (
+        <SwipeInstructions
+          gameId="breath-rider"
+          steps={[{ icon: "🌬️", title: "Breathe in", body: "Inhale slowly to rise. Exhale to descend." }, { icon: "🚀", title: "Navigate", body: "Guide your rider through the gaps." }, { icon: "💨", title: "Stay smooth", body: "Calm, steady breaths = better control." }]}
+          onDone={() => setShowInstructions(false)}
+        />
+      )}
     <GameShell title="Breath Rider" emoji="🌬️" accentColor={accent} theme={theme}>
       <canvas
         ref={canvasRef}
@@ -417,48 +488,159 @@ export default function BreathRider() {
           touchAction: 'none',
         }}
       />
+
       {gameState==='playing' && (
-        <GameHUD
-          items={[
-            { label: 'COINS', value: String(score) },
-            { label: 'TIME', value: `${timeLeft}s`, danger: timeLeft <= 10 },
-          ]}
-          accentColor={accent}
-        />
+        <>
+          <GameHUD
+            items={[
+              { label: 'COINS', value: String(score) },
+              { label: 'TIME', value: `${timeLeft}s`, danger: timeLeft <= 10 },
+            ]}
+            accentColor={accent}
+          />
+
+          {/* Score pop DOM ref overlay */}
+          <div
+            ref={scorePopRef}
+            style={{
+              position: 'fixed', top: '35%', left: '50%',
+              transform: 'translateX(-50%) scale(1)',
+              zIndex: 80, pointerEvents: 'none',
+              opacity: 0,
+              fontSize: 42, fontWeight: 900, color: '#fbbf24',
+              textShadow: '0 0 20px #fbbf2488',
+              whiteSpace: 'nowrap',
+            }}
+          />
+
+          {/* Streak badge DOM ref */}
+          <div
+            ref={streakBadgeRef}
+            style={{
+              display: 'none',
+              position: 'fixed',
+              top: 60,
+              left: 20,
+              alignItems: 'center',
+              justifyContent: 'center',
+              background: 'rgba(255,170,0,0.15)',
+              border: '1px solid rgba(255,170,0,0.5)',
+              borderRadius: 20,
+              padding: '4px 12px',
+              fontSize: 18,
+              fontWeight: 800,
+              color: '#ffaa00',
+              zIndex: 60,
+              transition: 'transform 0.2s',
+            }}
+          >
+            🔥 x3
+          </div>
+
+          {/* Near-miss message */}
+          <AnimatePresence>
+            {nearMissMsg && (
+              <motion.div
+                key="near-miss"
+                initial={{ opacity: 0, scale: 0.7 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.8, y: -20 }}
+                transition={{ duration: 0.3 }}
+                style={{
+                  position: 'fixed', top: '22%', left: '50%', transform: 'translateX(-50%)',
+                  zIndex: 80, pointerEvents: 'none',
+                  fontSize: 22, fontWeight: 800, color: '#fbbf24',
+                  textShadow: '0 0 12px #fbbf2488',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                So close! 🎯
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </>
       )}
-      {gameState==='countdown' && <Countdown onComplete={startLoop} accentColor={accent} />}
-      {gameState==='start' && (
-        <GameStartScreen
-          emoji="🌬️"
-          title="Breath Rider"
-          description="Blow into the mic to make the rider climb. Collect coins and avoid spikes."
-          sensorNote="Uses microphone"
-          ctaLabel="Allow Mic & Fly →"
-          accentColor={accent}
-          onStart={handleStart}
-        />
-      )}
-      {gameState==='requesting' && (
-        <div style={{ display:'flex', alignItems:'center', justifyContent:'center', height:'100%', color:'var(--color-text-secondary)' }}>Requesting microphone…</div>
-      )}
-      {gameState==='done' && behavior && (
-        <EndScreen
-          gameId="breath-rider"
-          title={getProfile(behavior)}
-          emoji="🌬️"
-          score={String(behavior.coinsCollected)}
-          personality={getProfile(behavior)}
-          insights={[
-            { label:`Breath control`, value: behavior.breathVariance < 15 ? 'Smooth & steady' : behavior.breathVariance > 35 ? 'Wild & free' : 'Well-focused', color:accent },
-            { label:`Avg altitude`, value:`${behavior.avgAltitude}% — You flew ${behavior.avgAltitude > 60 ? 'high' : behavior.avgAltitude < 40 ? 'low' : 'mid-range'}`, color:'#93c5fd' },
-            { label:`Spike hits`, value:`${behavior.spikeCollisions} — ${behavior.spikeCollisions === 0 ? 'Flawless!' : behavior.spikeCollisions <= 2 ? 'Quick recovery' : 'Adventurous path'}`, color:'#ef4444' },
-            { label:`Coins`, value:`${behavior.coinsCollected} collected`, color:'#fbbf24' },
-          ]}
-          accentColor={accent}
-          onPlayAgain={handlePlayAgain}
-          didWin={behavior.coinsCollected >= 7}
-        />
+
+      {/* New best banner */}
+      <AnimatePresence>
+        {isNewBest && gameState === 'done' && (
+          <motion.div
+            key="new-best"
+            initial={{ opacity: 0, y: -20, scale: 0.8 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -20 }}
+            transition={{ duration: 0.4, delay: 0.5 }}
+            style={{
+              position: 'fixed', top: '10%', left: '50%', transform: 'translateX(-50%)',
+              zIndex: 90, pointerEvents: 'none',
+              background: 'linear-gradient(135deg, #fbbf24, #f59e0b)',
+              borderRadius: 20,
+              padding: '8px 20px',
+              fontSize: 20,
+              fontWeight: 900,
+              color: '#000',
+              whiteSpace: 'nowrap',
+              boxShadow: '0 4px 20px rgba(251,191,36,0.5)',
+            }}
+          >
+            🏆 New Best!
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence mode="wait">
+        {gameState==='countdown' && (
+          <motion.div key="countdown" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+            <Countdown onComplete={startLoop} accentColor={accent} />
+          </motion.div>
+        )}
+        {gameState==='start' && (
+          <motion.div key="start" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} style={{ height: '100%' }}>
+            <GameStartScreen
+              emoji="🌬️"
+              title="Breath Rider"
+              description="Blow into the mic to make the rider climb. Collect coins and avoid spikes."
+              sensorNote="Uses microphone"
+              ctaLabel="Allow Mic & Fly →"
+              accentColor={accent}
+              onStart={handleStart}
+            />
+          </motion.div>
+        )}
+        {gameState==='requesting' && (
+          <motion.div key="requesting" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            style={{ display:'flex', alignItems:'center', justifyContent:'center', height:'100%', color:'var(--color-text-secondary)' }}>
+            Requesting microphone…
+          </motion.div>
+        )}
+        {gameState==='done' && behavior && (
+          <motion.div key="done" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} style={{ height: '100%' }}>
+            <EndScreen
+              gameId="breath-rider"
+              title={getProfile(behavior)}
+              emoji="🌬️"
+              score={String(behavior.coinsCollected)}
+              personality={getProfile(behavior)}
+              insights={[
+                { label:`Breath control`, value: behavior.breathVariance < 15 ? 'Smooth & steady' : behavior.breathVariance > 35 ? 'Wild & free' : 'Well-focused', color:accent },
+                { label:`Avg altitude`, value:`${behavior.avgAltitude}% — You flew ${behavior.avgAltitude > 60 ? 'high' : behavior.avgAltitude < 40 ? 'low' : 'mid-range'}`, color:'#93c5fd' },
+                { label:`Spike hits`, value:`${behavior.spikeCollisions} — ${behavior.spikeCollisions === 0 ? 'Flawless!' : behavior.spikeCollisions <= 2 ? 'Quick recovery' : 'Adventurous path'}`, color:'#ef4444' },
+                { label:`Coins`, value:`${behavior.coinsCollected} collected`, color:'#fbbf24' },
+              ]}
+              accentColor={accent}
+              onPlayAgain={handlePlayAgain}
+              didWin={behavior.coinsCollected >= 7}
+            />
+          </motion.div>
+        )}
+      </AnimatePresence>
+      {gameState === 'playing' && (
+        <>
+          <ScorePopEffect pops={pops} accentColor={CATEGORY_ACCENT} />
+          <StreakBadge streak={0} accentColor={CATEGORY_ACCENT} />
+        </>
       )}
     </GameShell>
+    </>
   );
 }

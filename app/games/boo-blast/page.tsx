@@ -6,12 +6,22 @@ import GameStartScreen from '@/components/GameStartScreen';
 import Countdown from '@/components/Countdown';
 import EndScreen from '@/components/EndScreen';
 import { initAudio, sfx, haptic, startMusic } from '@/lib/audio';
+import { playScoreHit, playVictoryFanfare, playNearMiss } from '@/lib/audio';
+import { hapticScore, hapticFail, hapticVictory, hapticCelebration, hapticCombo } from '@/lib/haptics';
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
+import { motion, AnimatePresence } from 'framer-motion';
+import ScorePopEffect, { useScorePop } from '@/components/ScorePopEffect';
+import StreakBadge from '@/components/StreakBadge';
+import { CATEGORY_THEMES } from '@/lib/theme';
+import SwipeInstructions from '@/components/SwipeInstructions';
+
+const CATEGORY_ACCENT = CATEGORY_THEMES.holiday.primaryAccent;
 
 // ─── SPEC CONSTANTS ──────────────────────────────────────────────────────────
 const GAME_ID      = 'boo-blast';
+const PB_KEY       = 'pb_boo-blast';
 const ACCENT       = '#a855f7';
 const DURATION     = 30;
 const GAME_EMOJI   = '👻';
@@ -165,12 +175,28 @@ export default function BooBlastGame() {
 
   // Only these drive re-renders
   const [phase, setPhase]               = useState<Phase>('start');
+  const [showInstructions, setShowInstructions] = useState(true);
   const [timeLeft, setTimeLeft]         = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
   const [hauntingLevel, setHauntingLevel] = useState(0);
   const [finalSig, setFinalSig]         = useState<Signals | null>(null);
   const [playerName, setPlayerName]     = useState('');
   const [playerAvatar, setPlayerAvatar] = useState('🎮');
+  const { pops, triggerPop } = useScorePop();
+  const [streak, setStreak] = useState(0);
+  const [isNewBest, setIsNewBest] = useState(false);
+  const prevScoreRef = useRef(0);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const numScore = typeof scoreDisplay === 'number' ? scoreDisplay : 0;
+    if (numScore > prevScoreRef.current) {
+      triggerPop(`+${numScore - prevScoreRef.current}`, window.innerWidth / 2, 200);
+      hapticScore();
+      playScoreHit('default', numScore - prevScoreRef.current);
+      setStreak(Math.floor(numScore / 5));
+    }
+    prevScoreRef.current = numScore;
+  }, [scoreDisplay]); // triggerPop is stable
   const playerSessionRef                = useRef<PlayerSession | null>(null);
 
   // Sync brand theme accent into state for rAF loop
@@ -192,8 +218,8 @@ export default function BooBlastGame() {
     const margin = t.size;
     s.ghosts.push({
       id:        s.nextGhostId++,
-      x:         margin + Math.random() * (canvas.width  - margin * 2),
-      y:         margin + Math.random() * (canvas.height - margin * 2),
+      x:         margin + Math.random() * (canvas.offsetWidth  - margin * 2),
+      y:         margin + Math.random() * (canvas.offsetHeight - margin * 2),
       size:      t.size,
       points:    t.points,
       spawnTime: Date.now(),
@@ -278,6 +304,17 @@ export default function BooBlastGame() {
         if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
         sfx.fail();
         haptic([300]);
+    // Personal best tracking
+    try {
+      const _pbPrev = parseInt(localStorage.getItem(PB_KEY) || '0', 10);
+      const _pbVal = parseFloat(String(s.sig?.score ?? 0));
+      if (!isNaN(_pbVal) && _pbVal > _pbPrev) {
+        localStorage.setItem(PB_KEY, String(Math.round(_pbVal)));
+        setIsNewBest(true);
+      }
+    } catch { /* ignore */ }
+
+
         setFinalSig({ ...s.sig });
         setPhase('done');
       }
@@ -288,8 +325,8 @@ export default function BooBlastGame() {
 
     const loop = () => {
       if (!s.running) return;
-      const W   = canvas.width;
-      const H   = canvas.height;
+      const W   = canvas.offsetWidth;
+      const H   = canvas.offsetHeight;
       const now = Date.now();
 
       // ── Background: near-black with purple fog radial gradient ─────────────
@@ -336,7 +373,7 @@ export default function BooBlastGame() {
             setHauntingLevel(s.sig.hauntingLevel);
           }
           sfx.warning(); // spec: missSound = "warning" — ominous low sawtooth
-          haptic([40]);
+          hapticFail();
           if (s.sig.hauntingLevel >= 5) {
             s.running = false; // early game over — handled below
           }
@@ -349,7 +386,7 @@ export default function BooBlastGame() {
         ctx.globalAlpha  = ghost.opacity;
         ctx.shadowBlur   = isBoss ? 50 : 22;
         ctx.shadowColor  = isBoss ? '#ff44ff' : s.accentColor;
-        ctx.font         = `${ghost.size}px serif`;
+        ctx.font         = `${ghost.size}px "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif`;
         ctx.textAlign    = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText(ghost.emoji, ghost.x, ghost.y);
@@ -370,7 +407,7 @@ export default function BooBlastGame() {
         if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
         if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
         sfx.fail();
-        haptic([500]);
+        hapticFail();
         setFinalSig({ ...s.sig });
         setPhase('done');
         return;
@@ -498,7 +535,14 @@ export default function BooBlastGame() {
         s.ghosts.splice(i, 1);
         setScoreDisplay(s.sig.score);
         sfx.boom(); // spec: hitSound = "boom" — satisfying ghost-blast explosion
-        haptic([30]);
+        // Duolingo-level haptics: boss = celebration, streak milestone, normal = score punch
+        if (ghost.typeId === 'boss_ghost') {
+          hapticCelebration();
+        } else if (s.sig.streakCurrent > 0 && s.sig.streakCurrent % 5 === 0) {
+          hapticCombo(s.sig.streakCurrent);
+        } else {
+          hapticScore();
+        }
         break; // only one ghost per tap
       }
     }
@@ -511,8 +555,13 @@ export default function BooBlastGame() {
     if (!canvas) return;
 
     const resize = () => {
-      canvas.width  = canvas.offsetWidth;
-      canvas.height = canvas.offsetHeight;
+      const dpr = window.devicePixelRatio || 1;
+      const w = canvas.offsetWidth;
+      const h = canvas.offsetHeight;
+      canvas.width  = w * dpr;
+      canvas.height = h * dpr;
+      const ctx2 = canvas.getContext('2d');
+      if (ctx2) ctx2.setTransform(dpr, 0, 0, dpr, 0, 0);
     };
     resize();
     window.addEventListener('resize', resize);
@@ -590,6 +639,19 @@ export default function BooBlastGame() {
   const accent = theme.colors.accent ?? ACCENT;
 
   return (
+    <>
+    {/* ── Instructions — portal to body, renders above everything ─────────── */}
+    {phase === 'start' && showInstructions && (
+      <SwipeInstructions
+        gameId="boo-blast"
+        steps={[
+          { icon: "👆", title: "Tap the ghosts", body: "Tap them before they disappear — each ghost is worth points." },
+          { icon: "👻", title: "Don't let them escape", body: "5 escaped ghosts ends the game early. Stay sharp." },
+          { icon: "💀", title: "Boss ghosts = 5pts", body: "The skull ghost is rare and worth 5x. Prioritize it." },
+        ]}
+        onDone={() => setShowInstructions(false)}
+      />
+    )}
     <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accent}>
 
       {/* ── Start Screen ────────────────────────────────────────────────────── */}
@@ -685,6 +747,30 @@ export default function BooBlastGame() {
           )}
         </>
       )}
+      {/* New best banner */}
+      <AnimatePresence>
+        {isNewBest && (
+          <motion.div
+            key="new-best"
+            initial={{ opacity: 0, y: -20, scale: 0.8 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -20 }}
+            transition={{ duration: 0.4, delay: 0.5 }}
+            style={{
+              position: 'fixed', top: '10%', left: '50%', transform: 'translateX(-50%)',
+              zIndex: 90, pointerEvents: 'none',
+              background: 'linear-gradient(135deg, #fbbf24, #f59e0b)',
+              borderRadius: 20, padding: '8px 20px', fontSize: 20,
+              fontWeight: 900, color: '#000', whiteSpace: 'nowrap',
+              boxShadow: '0 4px 20px rgba(251,191,36,0.5)',
+            }}
+          >
+            🏆 New Best!
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+
 
       {/* ── End Screen ──────────────────────────────────────────────────────── */}
       {phase === 'done' && finalSig && (
@@ -711,7 +797,14 @@ export default function BooBlastGame() {
           player={playerSessionRef.current}
         />
       )}
+      {phase === 'playing' && (
+        <>
+          <ScorePopEffect pops={pops} accentColor={CATEGORY_ACCENT} />
+          <StreakBadge streak={streak} accentColor={CATEGORY_ACCENT} />
+        </>
+      )}
     </GameShell>
+    </>
   );
 }
 

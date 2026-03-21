@@ -16,13 +16,23 @@ import GameStartScreen from '@/components/GameStartScreen';
 import Countdown from '@/components/Countdown';
 import EndScreen from '@/components/EndScreen';
 import { initAudio, sfx, haptic, startMusic } from '@/lib/audio';
+import { playScoreHit, playVictoryFanfare, playNearMiss } from '@/lib/audio';
+import { hapticScore, hapticFail, hapticVictory } from '@/lib/haptics';
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
 import { createTiltController } from '@/lib/tilt';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
+import { motion, AnimatePresence } from 'framer-motion';
+import ScorePopEffect, { useScorePop } from '@/components/ScorePopEffect';
+import StreakBadge from '@/components/StreakBadge';
+import { CATEGORY_THEMES } from '@/lib/theme';
+import SwipeInstructions from '@/components/SwipeInstructions';
+
+const CATEGORY_ACCENT = CATEGORY_THEMES.holiday.primaryAccent;
 
 // ─── SPEC CONSTANTS ──────────────────────────────────────────────────────────
 const GAME_ID        = 'harvest-catch';
+const PB_KEY       = 'pb_harvest-catch';
 const ACCENT         = '#d97706';
 const DURATION       = 45;
 const GAME_EMOJI     = '🍁';
@@ -314,12 +324,28 @@ export default function HarvestCatch() {
 
   const phaseRef                        = useRef<Phase>('start');
   const [phase, setPhase]               = useState<Phase>('start');
+  const [showInstructions, setShowInstructions] = useState(true);
   const [timeLeft, setTimeLeft]         = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
   const [streakDisplay, setStreakDisplay] = useState(0);
   const [finalSig, setFinalSig]         = useState<Signals | null>(null);
   const [playerName, setPlayerName]     = useState('');
   const [playerAvatar, setPlayerAvatar] = useState('🎮');
+  const { pops, triggerPop } = useScorePop();
+  const [streak, setStreak] = useState(0);
+  const [isNewBest, setIsNewBest] = useState(false);
+  const prevScoreRef = useRef(0);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const numScore = typeof scoreDisplay === 'number' ? scoreDisplay : 0;
+    if (numScore > prevScoreRef.current) {
+      triggerPop(`+${numScore - prevScoreRef.current}`, window.innerWidth / 2, 200);
+      hapticScore();
+      playScoreHit('default', numScore - prevScoreRef.current);
+      setStreak(Math.floor(numScore / 5));
+    }
+    prevScoreRef.current = numScore;
+  }, [scoreDisplay]); // triggerPop is stable
   const [touchFallback, setTouchFallback] = useState(false);
   const playerSessionRef = useRef<PlayerSession | null>(null);
 
@@ -341,7 +367,7 @@ export default function HarvestCatch() {
       points: def.points,
       label: def.label,
       good: def.good,
-      x: margin + Math.random() * (canvas.width - margin * 2),
+      x: margin + Math.random() * (canvas.offsetWidth - margin * 2),
       y: -35,
       speed: def.baseSpeed * (0.8 + Math.random() * 0.4),
       rotation: Math.random() * Math.PI * 2,
@@ -362,6 +388,17 @@ export default function HarvestCatch() {
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
     if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
     if (tiltRef.current) { tiltRef.current.stop(); tiltRef.current = null; }
+    // Personal best tracking
+    try {
+      const _pbPrev = parseInt(localStorage.getItem(PB_KEY) || '0', 10);
+      const _pbVal = parseFloat(String(s.sig?.score ?? 0));
+      if (!isNaN(_pbVal) && _pbVal > _pbPrev) {
+        localStorage.setItem(PB_KEY, String(Math.round(_pbVal)));
+        setIsNewBest(true);
+      }
+    } catch { /* ignore */ }
+
+
     setFinalSig({ ...s.sig });
     phaseRef.current = 'done';
     setPhase('done');
@@ -376,8 +413,13 @@ export default function HarvestCatch() {
     // ⚠️ Critical: size canvas to actual DOM dimensions.
     // The canvas resize useEffect may have run before the canvas was in the DOM (phase='start'),
     // so we must size it here when the canvas is guaranteed to be present.
-    canvas.width  = canvas.offsetWidth;
-    canvas.height = canvas.offsetHeight;
+    const dpr = window.devicePixelRatio || 1;
+    const w = canvas.offsetWidth;
+    const h = canvas.offsetHeight;
+    canvas.width  = w * dpr;
+    canvas.height = h * dpr;
+    const ctx2 = canvas.getContext('2d');
+    if (ctx2) ctx2.setTransform(dpr, 0, 0, dpr, 0, 0);
 
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
@@ -390,12 +432,12 @@ export default function HarvestCatch() {
       score: 0, turkeyCaught: 0, negativeItemsCaught: 0,
       goldenTurkeyCaught: 0, maxStreak: 0, streakCurrent: 0, cornucopiaTriggers: 0,
     };
-    s.basketX = canvas.width / 2;
+    s.basketX = canvas.offsetWidth / 2;
     s.tiltX = 0;
     s.items = [];
     s.particles = [];
     s.scoreFloats = [];
-    s.bgLeaves = makeBgLeaves(18, canvas.height);
+    s.bgLeaves = makeBgLeaves(18, canvas.offsetHeight);
     s.spawnTimer = 0;
     s.spawnInterval = 70;
     s.redFlashUntil = 0;
@@ -429,8 +471,8 @@ export default function HarvestCatch() {
 
     const loop = () => {
       if (!s.running) return;
-      const W = canvas.width;
-      const H = canvas.height;
+      const W = canvas.offsetWidth;
+      const H = canvas.offsetHeight;
       const now = Date.now();
 
       // ── Move basket ─────────────────────────────────────────────────────────
@@ -712,10 +754,15 @@ export default function HarvestCatch() {
     const handleResize = () => {
       const canvas = canvasRef.current;
       if (!canvas) return;
-      canvas.width  = canvas.offsetWidth;
-      canvas.height = canvas.offsetHeight;
+      const dpr = window.devicePixelRatio || 1;
+      const w = canvas.offsetWidth;
+      const h = canvas.offsetHeight;
+      canvas.width  = w * dpr;
+      canvas.height = h * dpr;
+      const ctx2 = canvas.getContext('2d');
+      if (ctx2) ctx2.setTransform(dpr, 0, 0, dpr, 0, 0);
       if (stateRef.current.running) {
-        stateRef.current.bgLeaves = makeBgLeaves(18, canvas.height);
+        stateRef.current.bgLeaves = makeBgLeaves(18, canvas.offsetHeight);
       }
     };
     window.addEventListener('resize', handleResize);
@@ -839,6 +886,14 @@ export default function HarvestCatch() {
   // ─── RENDER ───────────────────────────────────────────────────────────────
 
   return (
+    <>
+      {phase === 'start' && showInstructions && (
+        <SwipeInstructions
+          gameId="harvest-catch"
+          steps={[{ icon: "🍎", title: "Catch the harvest", body: "Tilt your device to move the basket." }, { icon: "⭐", title: "Rare items = more", body: "Golden items are worth extra — don't miss them." }, { icon: "🚫", title: "Avoid rocks", body: "Catching rocks costs you a life." }]}
+          onDone={() => setShowInstructions(false)}
+        />
+      )}
     <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
 
       {/* ── Start Screen ─────────────────────────────────────────────────── */}
@@ -904,6 +959,30 @@ export default function HarvestCatch() {
           )}
         </>
       )}
+      {/* New best banner */}
+      <AnimatePresence>
+        {isNewBest && (
+          <motion.div
+            key="new-best"
+            initial={{ opacity: 0, y: -20, scale: 0.8 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -20 }}
+            transition={{ duration: 0.4, delay: 0.5 }}
+            style={{
+              position: 'fixed', top: '10%', left: '50%', transform: 'translateX(-50%)',
+              zIndex: 90, pointerEvents: 'none',
+              background: 'linear-gradient(135deg, #fbbf24, #f59e0b)',
+              borderRadius: 20, padding: '8px 20px', fontSize: 20,
+              fontWeight: 900, color: '#000', whiteSpace: 'nowrap',
+              boxShadow: '0 4px 20px rgba(251,191,36,0.5)',
+            }}
+          >
+            🏆 New Best!
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+
 
       {/* ── End Screen ──────────────────────────────────────────────────── */}
       {phase === 'done' && finalSig && (
@@ -927,7 +1006,14 @@ export default function HarvestCatch() {
           />
         </>
       )}
+      {phase === 'playing' && (
+        <>
+          <ScorePopEffect pops={pops} accentColor={CATEGORY_ACCENT} />
+          <StreakBadge streak={streakDisplay} accentColor={CATEGORY_ACCENT} />
+        </>
+      )}
     </GameShell>
+    </>
   );
 }
 

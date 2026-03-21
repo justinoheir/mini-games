@@ -6,13 +6,23 @@ import GameStartScreen from '@/components/GameStartScreen';
 import Countdown from '@/components/Countdown';
 import EndScreen from '@/components/EndScreen';
 import { initAudio, sfx, haptic, startMusic } from '@/lib/audio';
+import { playScoreHit, playVictoryFanfare, playNearMiss } from '@/lib/audio';
+import { hapticScore, hapticFail, hapticVictory } from '@/lib/haptics';
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
+import { motion, AnimatePresence } from 'framer-motion';
+import ScorePopEffect, { useScorePop } from '@/components/ScorePopEffect';
+import StreakBadge from '@/components/StreakBadge';
+import { CATEGORY_THEMES } from '@/lib/theme';
+import SwipeInstructions from '@/components/SwipeInstructions';
+
+const CATEGORY_ACCENT = CATEGORY_THEMES.holiday.primaryAccent;
 
 // ─── SPEC CONSTANTS ──────────────────────────────────────────────────────────
 
 const GAME_ID      = 'love-note';
+const PB_KEY       = 'pb_love-note';
 const ACCENT       = '#ec4899';
 const GAME_EMOJI   = '💌';
 const GAME_TITLE   = 'Love Note';
@@ -124,6 +134,7 @@ export default function LoveNoteGame() {
   // ── Display state (drives re-renders) ──────────────────────────────────────
   const [gamePhase,   setGamePhase]   = useState<GamePhase>('showing');
   const [sequence,    setSequence]    = useState<HeartId[]>([]);
+  const [showInstructions, setShowInstructions] = useState(true);
   const [lives,       setLives]       = useState(MAX_LIVES);
   const [round,       setRound]       = useState(1);
   const [activeHeart, setActiveHeart] = useState<HeartId | null>(null);
@@ -147,6 +158,21 @@ export default function LoveNoteGame() {
   // ── Player session ─────────────────────────────────────────────────────────
   const [playerName,   setPlayerName]   = useState('');
   const [playerAvatar, setPlayerAvatar] = useState('🎮');
+  const { pops, triggerPop } = useScorePop();
+  const [streak, setStreak] = useState(0);
+  const [isNewBest, setIsNewBest] = useState(false);
+  const prevScoreRef = useRef(0);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const numScore = 0;
+    if (numScore > prevScoreRef.current) {
+      triggerPop(`+${numScore - prevScoreRef.current}`, window.innerWidth / 2, 200);
+      hapticScore();
+      playScoreHit('default', numScore - prevScoreRef.current);
+      setStreak(Math.floor(numScore / 5));
+    }
+    prevScoreRef.current = numScore;
+  }, [0]);
   const playerSessionRef = useRef<PlayerSession | null>(null);
 
   // ─── TIMEOUT HELPERS ───────────────────────────────────────────────────────
@@ -166,6 +192,17 @@ export default function LoveNoteGame() {
   const endGame = useCallback(() => {
     clearAllTimeouts();
     if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
+    // Personal best tracking
+    try {
+      const _pbPrev = parseInt(localStorage.getItem(PB_KEY) || '0', 10);
+      const _pbVal = parseFloat(String(sigRef.current?.longestSequence ?? 0));
+      if (!isNaN(_pbVal) && _pbVal > _pbPrev) {
+        localStorage.setItem(PB_KEY, String(Math.round(_pbVal)));
+        setIsNewBest(true);
+      }
+    } catch { /* ignore */ }
+
+
     setFinalSig({ ...sigRef.current });
     setOuterPhase('done');
   }, [clearAllTimeouts]);
@@ -439,7 +476,16 @@ export default function LoveNoteGame() {
   // ─── RENDER ───────────────────────────────────────────────────────────────
 
   return (
+    <>
+      {outerPhase === 'start' && showInstructions && (
+        <SwipeInstructions
+          gameId="love-note"
+          steps={[{ icon: "👀", title: "Watch the sequence", body: "Hearts light up in order — memorize which ones and when." }, { icon: "💕", title: "Repeat it back", body: "Tap the same hearts in the exact same order." }, { icon: "📝", title: "Sequences get longer", body: "Each round adds one more heart. Don't lose your lives!" }]}
+          onDone={() => setShowInstructions(false)}
+        />
+      )}
     <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accentColor}>
+
 
       {/* ── CSS Keyframes ─────────────────────────────────────────────────── */}
       <style dangerouslySetInnerHTML={{ __html: `
@@ -590,6 +636,30 @@ export default function LoveNoteGame() {
           </div>
         </div>
       )}
+      {/* New best banner */}
+      <AnimatePresence>
+        {isNewBest && (
+          <motion.div
+            key="new-best"
+            initial={{ opacity: 0, y: -20, scale: 0.8 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -20 }}
+            transition={{ duration: 0.4, delay: 0.5 }}
+            style={{
+              position: 'fixed', top: '10%', left: '50%', transform: 'translateX(-50%)',
+              zIndex: 90, pointerEvents: 'none',
+              background: 'linear-gradient(135deg, #fbbf24, #f59e0b)',
+              borderRadius: 20, padding: '8px 20px', fontSize: 20,
+              fontWeight: 900, color: '#000', whiteSpace: 'nowrap',
+              boxShadow: '0 4px 20px rgba(251,191,36,0.5)',
+            }}
+          >
+            🏆 New Best!
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+
 
       {/* ── End Screen ────────────────────────────────────────────────────── */}
       {outerPhase === 'done' && finalSig && (
@@ -616,7 +686,14 @@ export default function LoveNoteGame() {
         />
       )}
 
+      {outerPhase === 'playing' && (
+        <>
+          <ScorePopEffect pops={pops} accentColor={CATEGORY_ACCENT} />
+          <StreakBadge streak={streak} accentColor={CATEGORY_ACCENT} />
+        </>
+      )}
     </GameShell>
+    </>
   );
 }
 

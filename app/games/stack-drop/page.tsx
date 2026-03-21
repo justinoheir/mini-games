@@ -6,11 +6,21 @@ import GameStartScreen from '@/components/GameStartScreen';
 import Countdown from '@/components/Countdown';
 import EndScreen from '@/components/EndScreen';
 import { initAudio, sfx, haptic, startMusic } from '@/lib/audio';
+import { playScoreHit, playVictoryFanfare, playNearMiss } from '@/lib/audio';
+import { hapticScore, hapticFail, hapticVictory } from '@/lib/haptics';
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
+import { motion, AnimatePresence } from 'framer-motion';
+import ScorePopEffect, { useScorePop } from '@/components/ScorePopEffect';
+import StreakBadge from '@/components/StreakBadge';
+import { CATEGORY_THEMES } from '@/lib/theme';
+import SwipeInstructions from '@/components/SwipeInstructions';
+
+const CATEGORY_ACCENT = CATEGORY_THEMES.cognitive.primaryAccent;
 
 const GAME_ID      = 'stack-drop';
+const PB_KEY       = 'pb_stack-drop';
 const ACCENT       = '#f97316';
 const DURATION     = 60;
 const GAME_EMOJI   = '🧱';
@@ -108,6 +118,7 @@ export default function StackDropGame() {
   const phaseRef     = useRef<Phase>('start');
 
   const [phase, setPhase]             = useState<Phase>('start');
+  const [showInstructions, setShowInstructions] = useState(true);
   const [timeLeft, setTimeLeft]       = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
   // ⚡ heightDisplay tracks actual block count — HUD label is 'HEIGHT', not 'SCORE'
@@ -115,6 +126,21 @@ export default function StackDropGame() {
   const [finalSig, setFinalSig]       = useState<Signals | null>(null);
   const [playerName, setPlayerName]   = useState('');
   const [playerAvatar, setPlayerAvatar] = useState('🎮');
+  const { pops, triggerPop } = useScorePop();
+  const [streak, setStreak] = useState(0);
+  const [isNewBest, setIsNewBest] = useState(false);
+  const prevScoreRef = useRef(0);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const numScore = typeof scoreDisplay === 'number' ? scoreDisplay : 0;
+    if (numScore > prevScoreRef.current) {
+      triggerPop(`+${numScore - prevScoreRef.current}`, window.innerWidth / 2, 200);
+      hapticScore();
+      playScoreHit('default', numScore - prevScoreRef.current);
+      setStreak(Math.floor(numScore / 5));
+    }
+    prevScoreRef.current = numScore;
+  }, [scoreDisplay]); // triggerPop is stable
   const playerSessionRef              = useRef<PlayerSession | null>(null);
 
   useEffect(() => { stateRef.current.accentColor = theme.colors.accent ?? ACCENT; }, [theme]);
@@ -123,9 +149,9 @@ export default function StackDropGame() {
 
   const initStack = useCallback((canvas: HTMLCanvasElement) => {
     const s = stateRef.current;
-    const baseWidth = canvas.width * INITIAL_WIDTH;
-    const baseX = (canvas.width - baseWidth) / 2;
-    const baseY = canvas.height - BLOCK_HEIGHT - 20; // near bottom
+    const baseWidth = canvas.offsetWidth * INITIAL_WIDTH;
+    const baseX = (canvas.offsetWidth - baseWidth) / 2;
+    const baseY = canvas.offsetHeight - BLOCK_HEIGHT - 20; // near bottom
 
     s.stack = [{
       x: baseX,
@@ -255,8 +281,8 @@ export default function StackDropGame() {
     // Camera: scroll up if stack is getting tall
     if (canvas) {
       const stackTopInCanvas = newY - s.cameraY;
-      if (stackTopInCanvas < canvas.height * 0.35) {
-        s.cameraY -= (canvas.height * 0.35 - stackTopInCanvas);
+      if (stackTopInCanvas < canvas.offsetHeight * 0.35) {
+        s.cameraY -= (canvas.offsetHeight * 0.35 - stackTopInCanvas);
       }
     }
 
@@ -300,7 +326,19 @@ export default function StackDropGame() {
         stopMusicRef.current?.();
         // ⚡ End sound + celebratory haptic
         sfx.success();
-        haptic([30, 50, 30, 50, 100]);
+    hapticVictory();
+    playVictoryFanfare();
+    // Personal best tracking
+    try {
+      const _pbPrev = parseInt(localStorage.getItem(PB_KEY) || '0', 10);
+      const _pbVal = parseFloat(String(st.sig?.maxHeight ?? 0));
+      if (!isNaN(_pbVal) && _pbVal > _pbPrev) {
+        localStorage.setItem(PB_KEY, String(Math.round(_pbVal)));
+        setIsNewBest(true);
+      }
+    } catch { /* ignore */ }
+
+
         setFinalSig({ ...st.sig });
         setPhase('done');
         phaseRef.current = 'done';
@@ -426,8 +464,13 @@ export default function StackDropGame() {
     if (!canvas) return;
 
     const resize = () => {
-      canvas.width  = canvas.offsetWidth;
-      canvas.height = canvas.offsetHeight;
+      const dpr = window.devicePixelRatio || 1;
+      const w = canvas.offsetWidth;
+      const h = canvas.offsetHeight;
+      canvas.width  = w * dpr;
+      canvas.height = h * dpr;
+      const ctx2 = canvas.getContext('2d');
+      if (ctx2) ctx2.setTransform(dpr, 0, 0, dpr, 0, 0);
     };
     resize();
     window.addEventListener('resize', resize);
@@ -493,7 +536,15 @@ export default function StackDropGame() {
   // ─── RENDER ──────────────────────────────────────────────────────────────
 
   return (
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
+    <>
+      {phase === 'start' && showInstructions && (
+        <SwipeInstructions
+          gameId="stack-drop"
+          steps={[{ icon: "👆", title: "Tap to drop", body: "Tap the screen to drop the block onto the stack." }, { icon: "⬜", title: "Stack perfectly", body: "Align blocks precisely — overhanging parts fall off." }, { icon: "🏆", title: "Stack higher", body: "How tall can you build before it falls?" }]}
+          onDone={() => setShowInstructions(false)}
+        />
+      )}
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
       {phase === 'start' && (
         <GameStartScreen
           emoji={GAME_EMOJI}
@@ -527,7 +578,31 @@ export default function StackDropGame() {
         </>
       )}
 
-      {phase === 'done' && finalSig && (
+      
+      {/* New best banner */}
+      <AnimatePresence>
+        {isNewBest && (
+          <motion.div
+            key="new-best"
+            initial={{ opacity: 0, y: -20, scale: 0.8 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -20 }}
+            transition={{ duration: 0.4, delay: 0.5 }}
+            style={{
+              position: 'fixed', top: '10%', left: '50%', transform: 'translateX(-50%)',
+              zIndex: 90, pointerEvents: 'none',
+              background: 'linear-gradient(135deg, #fbbf24, #f59e0b)',
+              borderRadius: 20, padding: '8px 20px', fontSize: 20,
+              fontWeight: 900, color: '#000', whiteSpace: 'nowrap',
+              boxShadow: '0 4px 20px rgba(251,191,36,0.5)',
+            }}
+          >
+            🏆 New Best!
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+{phase === 'done' && finalSig && (
         <EndScreen
           gameId={GAME_ID}
           title={getPersonality(finalSig)}
@@ -544,7 +619,14 @@ export default function StackDropGame() {
       {phase === 'done' && finalSig && (
         <StackWebhookEmitter theme={theme} sig={finalSig} player={playerSessionRef.current} />
       )}
+      {phase === 'playing' && (
+        <>
+          <ScorePopEffect pops={pops} accentColor={CATEGORY_ACCENT} />
+          <StreakBadge streak={streak} accentColor={CATEGORY_ACCENT} />
+        </>
+      )}
     </GameShell>
+    </>
   );
 }
 

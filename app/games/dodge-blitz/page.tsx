@@ -14,16 +14,26 @@ import GameStartScreen from '@/components/GameStartScreen';
 import Countdown from '@/components/Countdown';
 import EndScreen from '@/components/EndScreen';
 import { initAudio, sfx, haptic, startMusic, increaseMusicTempo } from '@/lib/audio';
+import { playScoreHit, playVictoryFanfare, playNearMiss } from '@/lib/audio';
+import { hapticScore, hapticFail, hapticVictory } from '@/lib/haptics';
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
 import { createTiltController } from '@/lib/tilt';
 import { Particle, spawnBurst, updateAndDrawParticles } from '@/lib/particles';
 import { ShakeState, triggerShake, applyShake } from '@/lib/screenShake';
+import { motion, AnimatePresence } from 'framer-motion';
+import ScorePopEffect, { useScorePop } from '@/components/ScorePopEffect';
+import StreakBadge from '@/components/StreakBadge';
+import { CATEGORY_THEMES } from '@/lib/theme';
+import SwipeInstructions from '@/components/SwipeInstructions';
+
+const CATEGORY_ACCENT = CATEGORY_THEMES.sports.primaryAccent;
 
 // ─── SPEC CONSTANTS ──────────────────────────────────────────────────────────
 
 const GAME_ID      = 'dodge-blitz';
+const PB_KEY       = 'pb_dodge-blitz';
 const ACCENT       = '#06b6d4';
 const DURATION     = 45;
 const GAME_EMOJI   = '💨';
@@ -188,12 +198,28 @@ export default function DodgeBlitzGame() {
   });
 
   const [phase, setPhase]               = useState<Phase>('start');
+  const [showInstructions, setShowInstructions] = useState(true);
   const [timeLeft, setTimeLeft]         = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
   const [finalSig, setFinalSig]         = useState<Signals | null>(null);
 
   const [playerName, setPlayerName]     = useState('');
   const [playerAvatar, setPlayerAvatar] = useState('💨');
+  const { pops, triggerPop } = useScorePop();
+  const prevScoreRef = useRef(0);
+  const [streak, setStreak] = useState(0);
+  const [isNewBest, setIsNewBest] = useState(false);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const numScore = typeof scoreDisplay === 'number' ? scoreDisplay : 0;
+    if (numScore > prevScoreRef.current) {
+      triggerPop(`+${numScore - prevScoreRef.current}`, window.innerWidth / 2, 200);
+      hapticScore();
+      playScoreHit('default', numScore - prevScoreRef.current);
+      setStreak(Math.floor(numScore / 5));
+    }
+    prevScoreRef.current = numScore;
+  }, [scoreDisplay]); // triggerPop is stable
   const playerSessionRef                = useRef<PlayerSession | null>(null);
 
   // Sync theme accent into state ref (rAF reads from stateRef to avoid stale closure)
@@ -221,7 +247,17 @@ export default function DodgeBlitzGame() {
     }
 
     sfx.success();
-    haptic([30, 50, 30, 50, 100]);
+    hapticVictory();
+    playVictoryFanfare();
+
+    // Personal best tracking
+    try {
+      const prev = parseInt(localStorage.getItem(PB_KEY) || '0', 10);
+      if (s.sig.obstaclesAvoided > prev) {
+        localStorage.setItem(PB_KEY, String(s.sig.obstaclesAvoided));
+        setIsNewBest(true);
+      }
+    } catch { /* ignore */ }
 
     if (forcedEnd) setTimeLeft(0);
     setFinalSig({ ...s.sig });
@@ -255,10 +291,10 @@ export default function DodgeBlitzGame() {
     for (let i = 0; i < count; i++) {
       let x: number;
       if (count === 1) {
-        x = margin + Math.random() * (canvas.width - margin * 2);
+        x = margin + Math.random() * (canvas.offsetWidth - margin * 2);
       } else {
         // Spread across segments so multiple obstacles are always passable
-        const segment = canvas.width / count;
+        const segment = canvas.offsetWidth / count;
         x = segment * i + margin + Math.random() * Math.max(0, segment - margin * 2);
       }
 
@@ -342,8 +378,8 @@ export default function DodgeBlitzGame() {
     const loop = () => {
       if (!s.running) return;
 
-      const W = canvas.width;
-      const H = canvas.height;
+      const W = canvas.offsetWidth;
+      const H = canvas.offsetHeight;
       const elapsed = (Date.now() - s.gameStartTime) / 1000;
 
       s.tiltSampleFrame++;
@@ -587,8 +623,13 @@ export default function DodgeBlitzGame() {
     if (!canvas) return;
 
     const resize = () => {
-      canvas.width  = canvas.offsetWidth;
-      canvas.height = canvas.offsetHeight;
+      const dpr = window.devicePixelRatio || 1;
+      const w = canvas.offsetWidth;
+      const h = canvas.offsetHeight;
+      canvas.width  = w * dpr;
+      canvas.height = h * dpr;
+      const ctx2 = canvas.getContext('2d');
+      if (ctx2) ctx2.setTransform(dpr, 0, 0, dpr, 0, 0);
     };
     resize();
     window.addEventListener('resize', resize);
@@ -733,6 +774,14 @@ export default function DodgeBlitzGame() {
   // ─── RENDER ───────────────────────────────────────────────────────────────
 
   return (
+    <>
+      {phase === 'start' && showInstructions && (
+        <SwipeInstructions
+          gameId="dodge-blitz"
+          steps={[{ icon: "👆", title: "Tap to dodge", body: "Tap anywhere to jump or dodge incoming obstacles." }, { icon: "⚡", title: "React fast", body: "Obstacles speed up as your score grows." }, { icon: "🔥", title: "Survive", body: "How long can you last?" }]}
+          onDone={() => setShowInstructions(false)}
+        />
+      )}
     <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
 
       {/* ── Start Screen ──────────────────────────────────────────────────── */}
@@ -783,6 +832,29 @@ export default function DodgeBlitzGame() {
         </>
       )}
 
+      {/* New best banner */}
+      <AnimatePresence>
+        {isNewBest && phase === 'done' && (
+          <motion.div
+            key="new-best"
+            initial={{ opacity: 0, y: -20, scale: 0.8 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -20 }}
+            transition={{ duration: 0.4, delay: 0.5 }}
+            style={{
+              position: 'fixed', top: '10%', left: '50%', transform: 'translateX(-50%)',
+              zIndex: 90, pointerEvents: 'none',
+              background: 'linear-gradient(135deg, #fbbf24, #f59e0b)',
+              borderRadius: 20, padding: '8px 20px', fontSize: 20,
+              fontWeight: 900, color: '#000', whiteSpace: 'nowrap',
+              boxShadow: '0 4px 20px rgba(251,191,36,0.5)',
+            }}
+          >
+            🏆 New Best!
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* ── End Screen ────────────────────────────────────────────────────── */}
       {phase === 'done' && finalSig && (
         <EndScreen
@@ -809,7 +881,14 @@ export default function DodgeBlitzGame() {
         />
       )}
 
+      {phase === 'playing' && (
+        <>
+          <ScorePopEffect pops={pops} accentColor={CATEGORY_ACCENT} />
+          <StreakBadge streak={streak} accentColor={CATEGORY_ACCENT} />
+        </>
+      )}
     </GameShell>
+    </>
   );
 }
 
