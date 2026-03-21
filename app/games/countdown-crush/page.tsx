@@ -841,6 +841,7 @@ export default function CountdownCrushGame() {
           accentColor={accent}
           ctaTextColor="#000"
           onStart={handleStart}
+          gradient="radial-gradient(ellipse 80% 70% at 50% 30%, #12100a 0%, #0a0905 55%, #040403 100%)"
         />
       )}
 

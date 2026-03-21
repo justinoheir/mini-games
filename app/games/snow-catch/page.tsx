@@ -842,6 +842,7 @@ export default function SnowCatchGame() {
           sensorNote="Tilt your phone left/right to move the basket"
           accentColor={theme.colors.accent ?? ACCENT}
           onStart={handleStart}
+          gradient="radial-gradient(ellipse 80% 70% at 50% 30%, #041220 0%, #020a14 55%, #010408 100%)"
         />
       )}
 

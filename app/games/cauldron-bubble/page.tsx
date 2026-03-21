@@ -861,6 +861,7 @@ export default function CauldronBubble() {
           ctaLabel="Allow Mic & Start"
           accentColor={accent}
           onStart={handleStart}
+          gradient="radial-gradient(ellipse 80% 70% at 50% 30%, #0a1a0a 0%, #060e06 55%, #030803 100%)"
         />
       )}
 

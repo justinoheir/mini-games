@@ -439,6 +439,7 @@ export default function WhisperBomb() {
               accentColor={accent}
               ctaTextColor="#fff"
               onStart={handleStart}
+              gradient="radial-gradient(ellipse 80% 70% at 50% 30%, #1a0303 0%, #0e0202 55%, #060101 100%)"
             >
               {micError && (
                 <div style={{
