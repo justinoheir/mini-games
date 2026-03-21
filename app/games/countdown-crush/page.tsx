@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import { useEffect, useRef, useState, useCallback } from 'react';
 import GameShell from '@/components/GameShell';
@@ -414,8 +414,8 @@ export default function CountdownCrushGame() {
     const loop = () => {
       if (!s.running) return;
 
-      const W       = canvas.offsetWidth;
-      const H       = canvas.offsetHeight;
+      const W       = window.innerWidth;
+      const H       = window.innerHeight;
       const nowT    = Date.now();
       const elapsed = nowT - s.phaseStart;
       const win     = WINDOWS[s.countIndex] ?? WINDOWS[WINDOWS.length - 1];
@@ -731,8 +731,10 @@ export default function CountdownCrushGame() {
 
     const resize = () => {
       const dpr = window.devicePixelRatio || 1;
-      const w = canvas.offsetWidth;
-      const h = canvas.offsetHeight;
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      canvas.style.width  = w + 'px';
+      canvas.style.height = h + 'px';
       canvas.width  = w * dpr;
       canvas.height = h * dpr;
       const ctx2 = canvas.getContext('2d');

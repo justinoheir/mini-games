@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -490,7 +490,7 @@ export default function CauldronBubble() {
     setChaosLabel('');
 
     stopMusicRef.current = startMusic('ambient');
-    spawnBats(canvas.offsetWidth, canvas.offsetHeight);
+    spawnBats(window.innerWidth, window.innerHeight);
 
     // 1-second interval for score + zone accounting
     timerRef.current = setInterval(() => {
@@ -550,8 +550,8 @@ export default function CauldronBubble() {
     // rAF render + input loop
     const loop = () => {
       if (!s.running) return;
-      const W = canvas.offsetWidth;
-      const H = canvas.offsetHeight;
+      const W = window.innerWidth;
+      const H = window.innerHeight;
 
       // Read volume — write to ref only; display updated in 1s timer
       const vol = getVolumePct();
@@ -728,13 +728,17 @@ export default function CauldronBubble() {
 
     const resize = () => {
       const dpr = window.devicePixelRatio || 1;
-      canvas.width  = canvas.offsetWidth  * dpr;
-      canvas.height = canvas.offsetHeight * dpr;
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      canvas.style.width  = w + 'px';
+      canvas.style.height = h + 'px';
+      canvas.width  = w * dpr;
+      canvas.height = h * dpr;
       const ctx2 = canvas.getContext('2d');
       if (ctx2) ctx2.setTransform(dpr, 0, 0, dpr, 0, 0);
       // Re-spawn bats to fit new dimensions (use CSS pixels)
       if (stateRef.current.running) {
-        spawnBats(canvas.offsetWidth, canvas.offsetHeight);
+        spawnBats(window.innerWidth, window.innerHeight);
       }
     };
     resize();

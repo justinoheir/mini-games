@@ -333,27 +333,31 @@ export default function CrowdRoarGame() {
 
     // ── FIX: Size canvas to viewport before any drawing ─────────────────
     const dpr = window.devicePixelRatio || 1;
-    const w = canvas.offsetWidth;
-    const h = canvas.offsetHeight;
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    canvas.style.width  = w + 'px';
+    canvas.style.height = h + 'px';
     canvas.width  = w * dpr;
     canvas.height = h * dpr;
     const ctx2 = canvas.getContext('2d');
     if (ctx2) ctx2.setTransform(dpr, 0, 0, dpr, 0, 0);
 
     // Re-init crowd for current canvas size
-    initCrowd(canvas.offsetWidth, canvas.offsetHeight);
+    initCrowd(window.innerWidth, window.innerHeight);
 
     // ── FIX: Add resize listener here (canvas wasn't mounted during useEffect)
     const onResize = () => {
       const dpr = window.devicePixelRatio || 1;
-      const w = canvas.offsetWidth;
-      const h = canvas.offsetHeight;
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      canvas.style.width  = w + 'px';
+      canvas.style.height = h + 'px';
       canvas.width  = w * dpr;
       canvas.height = h * dpr;
       const ctx2 = canvas.getContext('2d');
       if (ctx2) ctx2.setTransform(dpr, 0, 0, dpr, 0, 0);
       if (stateRef.current.running || stateRef.current.finaleActive) {
-        initCrowd(canvas.offsetWidth, canvas.offsetHeight);
+        initCrowd(window.innerWidth, window.innerHeight);
       }
     };
     window.addEventListener('resize', onResize);
@@ -446,8 +450,8 @@ export default function CrowdRoarGame() {
     const loop = () => {
       // ── FIX: Allow loop to continue during finale for stadium explosion ─
       if (!s.running && !s.finaleActive) return;
-      const W   = canvas.offsetWidth;
-      const H   = canvas.offsetHeight;
+      const W   = window.innerWidth;
+      const H   = window.innerHeight;
       const now = Date.now();
 
       // ── During finale: skip game logic, just render the crowd explosion ─
@@ -908,14 +912,16 @@ export default function CrowdRoarGame() {
 
     const resize = () => {
       const dpr = window.devicePixelRatio || 1;
-      const w = canvas.offsetWidth;
-      const h = canvas.offsetHeight;
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      canvas.style.width  = w + 'px';
+      canvas.style.height = h + 'px';
       canvas.width  = w * dpr;
       canvas.height = h * dpr;
       const ctx2 = canvas.getContext('2d');
       if (ctx2) ctx2.setTransform(dpr, 0, 0, dpr, 0, 0);
       if (stateRef.current.running) {
-        initCrowd(canvas.offsetWidth, canvas.offsetHeight);
+        initCrowd(window.innerWidth, window.innerHeight);
       }
     };
     resize();

@@ -1,4 +1,4 @@
-/**
+﻿/**
  * ══════════════════════════════════════════════════════════════════
  *  BALANCE BEAM — Ether Mini-Game
  *  Tilt your phone to balance a ball on a beam for 60 seconds.
@@ -362,8 +362,8 @@ export default function BalanceBeamGame() {
       s.lastFrameTime   = timestamp;
       s.gameElapsedMs  += deltaMs;
 
-      const W        = canvas.offsetWidth;
-      const H        = canvas.offsetHeight;
+      const W        = window.innerWidth;
+      const H        = window.innerHeight;
       const beamHalfLen = W * (BEAM_FRAC / 2);
       const beamCX   = W / 2;
       const beamCY   = H * BEAM_Y_FRAC;
@@ -634,8 +634,10 @@ export default function BalanceBeamGame() {
 
     const resize = () => {
       const dpr = window.devicePixelRatio || 1;
-      const w = canvas.offsetWidth;
-      const h = canvas.offsetHeight;
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      canvas.style.width  = w + 'px';
+      canvas.style.height = h + 'px';
       canvas.width  = w * dpr;
       canvas.height = h * dpr;
       const ctx2 = canvas.getContext('2d');

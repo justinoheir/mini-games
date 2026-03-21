@@ -1,4 +1,4 @@
-/**
+﻿/**
  * ══════════════════════════════════════════════════════════════════
  *  COLOR CASCADE — Ether Mini-Game
  *  Match the falling color drops to the target color.
@@ -209,7 +209,7 @@ export default function ColorCascadeGame() {
                        : s.elapsedSeconds < 30 ? 1800
                        : 1200;
     const margin     = DROP_RADIUS + 10;
-    const x          = margin + Math.random() * (canvas.offsetWidth - margin * 2);
+    const x          = margin + Math.random() * (window.innerWidth - margin * 2);
     const colorIndex = Math.floor(Math.random() * COLORS.length);
 
     s.drops.push({
@@ -317,8 +317,8 @@ export default function ColorCascadeGame() {
         fpsWindowStart = rafTs;
       }
 
-      const W   = canvas.offsetWidth;
-      const H   = canvas.offsetHeight;
+      const W   = window.innerWidth;
+      const H   = window.innerHeight;
       const now = Date.now();
 
       // ── Background — deep rose/magenta radial gradient ─────────────────────
@@ -520,7 +520,7 @@ export default function ColorCascadeGame() {
     const rect = canvas.getBoundingClientRect();
     const x    = (clientX - rect.left) * (canvas.offsetWidth  / rect.width);
     const y    = (clientY - rect.top)  * (canvas.offsetHeight / rect.height);
-    const H    = canvas.offsetHeight;
+    const H    = window.innerHeight;
     const now  = Date.now();
 
     // Find closest untapped drop within tap radius
@@ -591,8 +591,10 @@ export default function ColorCascadeGame() {
 
     const resize = () => {
       const dpr = window.devicePixelRatio || 1;
-      const w = canvas.offsetWidth;
-      const h = canvas.offsetHeight;
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      canvas.style.width  = w + 'px';
+      canvas.style.height = h + 'px';
       canvas.width  = w * dpr;
       canvas.height = h * dpr;
       const ctx2 = canvas.getContext('2d');
