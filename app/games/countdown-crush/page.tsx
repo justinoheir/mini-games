@@ -564,9 +564,12 @@ export default function CountdownCrushGame() {
         return r.alpha > 0;
       });
 
-      // ── DRAW ───────────────────────────────────────────────────────────────
-
-      ctx.fillStyle = BG;
+      // ── DRAW — deep champagne/celebration gradient ─────────────────────────
+      const ccCrBg = ctx.createRadialGradient(W * 0.5, H * 0.35, 0, W * 0.5, H * 0.65, Math.max(W, H) * 0.9);
+      ccCrBg.addColorStop(0,   '#120f04');
+      ccCrBg.addColorStop(0.55, '#0a0902');
+      ccCrBg.addColorStop(1,   '#050401');
+      ctx.fillStyle = ccCrBg;
       ctx.fillRect(0, 0, W, H);
 
       // Starfield

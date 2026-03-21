@@ -634,8 +634,12 @@ export default function CauldronBubble() {
         s.shakeFrames--;
       }
 
-      // Background
-      ctx.fillStyle = '#050a05';
+      // Background — dark emerald/witch gradient
+      const cbBg = ctx.createRadialGradient(W * 0.5, H * 0.35, 0, W * 0.5, H * 0.65, Math.max(W, H) * 0.9);
+      cbBg.addColorStop(0,   '#0a1a08');
+      cbBg.addColorStop(0.55, '#060e05');
+      cbBg.addColorStop(1,   '#020602');
+      ctx.fillStyle = cbBg;
       ctx.fillRect(0, 0, W, H);
 
       // Subtle star dots

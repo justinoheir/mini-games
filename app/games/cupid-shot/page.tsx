@@ -524,8 +524,12 @@ export default function CupidShot() {
 
       ctx.imageSmoothingEnabled = true;
 
-      // ── Background ────────────────────────────────────────────────────
-      ctx.fillStyle = '#0f0508';
+      // ── Background — deep rose/valentine gradient ─────────────────────
+      const csBg = ctx.createRadialGradient(W * 0.5, H * 0.35, 0, W * 0.5, H * 0.65, Math.max(W, H) * 0.9);
+      csBg.addColorStop(0,   '#1a0814');
+      csBg.addColorStop(0.55, '#0e0409');
+      csBg.addColorStop(1,   '#060205');
+      ctx.fillStyle = csBg;
       ctx.fillRect(0, 0, W, H);
 
       // Pink radial glow centered at bullseye

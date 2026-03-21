@@ -572,8 +572,12 @@ export default function FireworkLaunchGame() {
       const H = canvas.offsetHeight;
       const now = Date.now();
 
-      // ── Background ───────────────────────────────────────────────────────
-      ctx.fillStyle = BG_COLOR;
+      // ── Background — deep midnight celebration gradient ───────────────────
+      const fwBg = ctx.createRadialGradient(W * 0.5, H * 0.3, 0, W * 0.5, H * 0.65, Math.max(W, H) * 0.9);
+      fwBg.addColorStop(0,   '#0a0818');
+      fwBg.addColorStop(0.5, '#060510');
+      fwBg.addColorStop(1,   '#02010a');
+      ctx.fillStyle = fwBg;
       ctx.fillRect(0, 0, W, H);
 
       // ── Stars ────────────────────────────────────────────────────────────

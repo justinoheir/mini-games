@@ -585,8 +585,12 @@ export default function SnowCatchGame() {
       ctx.save();
       applyShake(ctx, s.shake);
 
-      // Background
-      ctx.fillStyle = '#0d1b2a';
+      // Background — deep winter night gradient
+      const scBg = ctx.createRadialGradient(W * 0.5, 0, 0, W * 0.5, H * 0.5, Math.max(W, H) * 0.9);
+      scBg.addColorStop(0,   '#0a1825');
+      scBg.addColorStop(0.5, '#060f1a');
+      scBg.addColorStop(1,   '#020810');
+      ctx.fillStyle = scBg;
       ctx.fillRect(0, 0, W, H);
 
       // Twinkling stars

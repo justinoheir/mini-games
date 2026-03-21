@@ -521,7 +521,7 @@ export default function GiftRushGame() {
             position: 'absolute',
             inset: 0,
             top: 56,
-            background: '#0a0a1a',
+            background: 'radial-gradient(ellipse 80% 70% at 50% 30%, #0a1200 0%, #060900 55%, #030500 100%)',
             overflow: 'hidden',
             display: 'flex',
             flexDirection: 'column',

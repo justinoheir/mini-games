@@ -176,7 +176,7 @@ export default function PulseSphere() {
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
     renderer.setSize(W, H);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    renderer.setClearColor(0x0a0818);
+    renderer.setClearColor(0x060410);
     if (mountRef.current) { mountRef.current.innerHTML = ''; mountRef.current.appendChild(renderer.domElement); }
 
     const scene = new THREE.Scene();

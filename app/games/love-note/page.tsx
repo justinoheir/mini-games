@@ -27,7 +27,7 @@ const ACCENT       = '#ec4899';
 const GAME_EMOJI   = '💌';
 const GAME_TITLE   = 'Love Note';
 const GAME_TAGLINE = 'Remember the sequence. Tap it back. From the heart.';
-const GAME_BG      = '#0a0308';
+const GAME_BG      = 'radial-gradient(ellipse 80% 70% at 50% 30%, #1a0510 0%, #0e030a 60%, #050108 100%)';
 const MAX_LIVES    = 3;
 
 // ─── HEART DEFINITIONS ───────────────────────────────────────────────────────

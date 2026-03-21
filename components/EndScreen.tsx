@@ -219,7 +219,7 @@ export default function EndScreen({
       style={{
         position: 'absolute',
         inset: 0,
-        background: `radial-gradient(ellipse 80% 60% at 50% 0%, ${accentColor}18 0%, #08090f 60%)`,
+        background: `radial-gradient(ellipse 100% 70% at 50% -10%, ${accentColor}28 0%, ${accentColor}08 40%, #060810 100%)`,
         display: 'flex',
         flexDirection: 'column',
         zIndex: 90,
@@ -434,19 +434,21 @@ export default function EndScreen({
         style={{
           flexShrink: 0,
           padding: '12px 20px 20px',
-          background: 'linear-gradient(transparent, #08090f 30%)',
+          background: `linear-gradient(transparent, ${accentColor}12 0%, #08090f 40%)`,
           backgroundColor: '#08090f',
         }}
       >
-        <button
+        <motion.button
           onClick={onPlayAgain}
+          whileTap={{ scale: 0.93 }}
+          whileHover={{ scale: 1.03 }}
+          transition={{ type: 'spring', stiffness: 500, damping: 22 }}
           style={{
             backgroundColor: accentColor,
             color: ctaTextColor,
             border: 'none',
             borderRadius: 12,
-            height: 52,
-            /* 20px = 15pt bold → WCAG "large text" → 3:1 contrast threshold */
+            height: 56,
             fontSize: 20,
             fontWeight: 800,
             cursor: 'pointer',
@@ -455,10 +457,11 @@ export default function EndScreen({
             display: 'block',
             margin: '0 auto',
             letterSpacing: '-0.2px',
+            boxShadow: `0 4px 28px ${accentColor}55`,
           }}
         >
-          Play Again
-        </button>
+          Play Again ↺
+        </motion.button>
       </motion.div>
     </motion.div>
   );
