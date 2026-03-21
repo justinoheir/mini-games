@@ -218,8 +218,9 @@ export default function BooBlastGame() {
     const margin = t.size;
     s.ghosts.push({
       id:        s.nextGhostId++,
-      x:         margin + Math.random() * (canvas.offsetWidth  - margin * 2),
-      y:         margin + Math.random() * (canvas.offsetHeight - margin * 2),
+      x:         margin + Math.random() * (window.innerWidth  - margin * 2),
+      // Keep ghosts below the HUD (top ~140px) and above bottom safe area (bottom ~30px)
+      y:         140 + margin + Math.random() * (window.innerHeight - 140 - 30 - margin * 2),
       size:      t.size,
       points:    t.points,
       spawnTime: Date.now(),
@@ -568,8 +569,11 @@ export default function BooBlastGame() {
 
     const resize = () => {
       const dpr = window.devicePixelRatio || 1;
-      const w = canvas.offsetWidth;
-      const h = canvas.offsetHeight;
+      // Use innerWidth/Height — avoids 100vh overscroll bug on Chrome Android/iOS Safari
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      canvas.style.width  = w + 'px';
+      canvas.style.height = h + 'px';
       canvas.width  = w * dpr;
       canvas.height = h * dpr;
       const ctx2 = canvas.getContext('2d');
