@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { useEffect, useRef, useState, useCallback } from 'react';
 import GameShell from '@/components/GameShell';
@@ -385,7 +385,7 @@ export default function CountdownCrushGame() {
     s.countIndex               = 0;
     s.phaseStart               = now;
     s.slamScale                = 1.5;
-    s.ripples                  = [{ radius: 5, maxRadius: Math.max(canvas.offsetWidth, canvas.offsetHeight), alpha: 0.5, cx: canvas.offsetWidth / 2, cy: canvas.offsetHeight / 2 }];
+    s.ripples                  = [{ radius: 5, maxRadius: Math.max(window.innerWidth, window.innerHeight), alpha: 0.5, cx: window.innerWidth / 2, cy: window.innerHeight / 2 }];
     s.ballY                    = 0;
     s.bubbles                  = [];
     s.nextBubbleId             = 0;
