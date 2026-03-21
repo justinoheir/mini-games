@@ -618,6 +618,13 @@ export default function CrowdRoarGame() {
       ctx.fillStyle = crBg;
       ctx.fillRect(0, 0, W, H);
 
+      // Vignette
+      const crVig = ctx.createRadialGradient(W * 0.5, H * 0.5, H * 0.15, W * 0.5, H * 0.5, H * 0.8);
+      crVig.addColorStop(0, 'rgba(0,0,0,0)');
+      crVig.addColorStop(1, 'rgba(0,0,0,0.55)');
+      ctx.fillStyle = crVig;
+      ctx.fillRect(0, 0, W, H);
+
       // ── Edge glow (scales with volume) ──────────────────────────────────
       if (vol > 0.05) {
         const glowA = Math.floor(vol * 160).toString(16).padStart(2, '0');

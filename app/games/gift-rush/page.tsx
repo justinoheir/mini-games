@@ -527,6 +527,7 @@ export default function GiftRushGame() {
             flexDirection: 'column',
             alignItems: 'center',
             justifyContent: 'center',
+            boxShadow: 'inset 0 0 80px rgba(0,0,0,0.5)',
           }}
         >
           {/* Snowflake particles — Lucide Snowflake icons (no emoji) */}

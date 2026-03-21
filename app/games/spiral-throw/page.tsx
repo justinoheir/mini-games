@@ -197,6 +197,13 @@ export default function SpiralThrow() {
       ctx.fillStyle = bg;
       ctx.fillRect(0, 0, W, H);
 
+      // Vignette
+      const stVig2 = ctx.createRadialGradient(W * 0.5, H * 0.5, H * 0.2, W * 0.5, H * 0.5, H * 0.85);
+      stVig2.addColorStop(0, 'rgba(0,0,0,0)');
+      stVig2.addColorStop(1, 'rgba(0,0,0,0.45)');
+      ctx.fillStyle = stVig2;
+      ctx.fillRect(0, 0, W, H);
+
       // Yard lines
       ctx.strokeStyle = 'rgba(255,255,255,0.12)'; ctx.lineWidth = 1;
       for (let i = 1; i < 8; i++) {

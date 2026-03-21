@@ -580,6 +580,13 @@ export default function FireworkLaunchGame() {
       ctx.fillStyle = fwBg;
       ctx.fillRect(0, 0, W, H);
 
+      // Vignette
+      const fwVig = ctx.createRadialGradient(W * 0.5, H * 0.5, H * 0.2, W * 0.5, H * 0.5, H * 0.85);
+      fwVig.addColorStop(0, 'rgba(0,0,0,0)');
+      fwVig.addColorStop(1, 'rgba(0,0,0,0.55)');
+      ctx.fillStyle = fwVig;
+      ctx.fillRect(0, 0, W, H);
+
       // ── Stars ────────────────────────────────────────────────────────────
       s.stars.forEach(star => {
         ctx.beginPath();

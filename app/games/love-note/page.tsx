@@ -545,6 +545,7 @@ export default function LoveNoteGame() {
             paddingTop: 80,   // clear the floating HUD
             paddingBottom: 24,
             overflow: 'hidden',
+            boxShadow: 'inset 0 0 80px rgba(0,0,0,0.5)',
             animation: roundFlash ? 'roundGlow 0.7s ease-out' : 'none',
           }}
         >

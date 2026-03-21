@@ -642,6 +642,13 @@ export default function CauldronBubble() {
       ctx.fillStyle = cbBg;
       ctx.fillRect(0, 0, W, H);
 
+      // Vignette
+      const cbVig = ctx.createRadialGradient(W * 0.5, H * 0.5, H * 0.2, W * 0.5, H * 0.5, H * 0.85);
+      cbVig.addColorStop(0, 'rgba(0,0,0,0)');
+      cbVig.addColorStop(1, 'rgba(0,0,0,0.55)');
+      ctx.fillStyle = cbVig;
+      ctx.fillRect(0, 0, W, H);
+
       // Subtle star dots
       ctx.fillStyle = 'rgba(255,255,255,0.06)';
       // static cheap stars — seeded by index so they don't flicker

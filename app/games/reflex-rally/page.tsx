@@ -194,6 +194,13 @@ export default function ReflexRally() {
       ctx.fillStyle = bg;
       ctx.fillRect(0, 0, W, H);
 
+      // Vignette
+      const rrVig = ctx.createRadialGradient(W * 0.5, H * 0.5, H * 0.2, W * 0.5, H * 0.5, H * 0.85);
+      rrVig.addColorStop(0, 'rgba(0,0,0,0)');
+      rrVig.addColorStop(1, 'rgba(0,0,0,0.45)');
+      ctx.fillStyle = rrVig;
+      ctx.fillRect(0, 0, W, H);
+
       const ct = s.courtTop, cb = s.courtBottom;
 
       // Court outline

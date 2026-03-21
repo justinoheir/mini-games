@@ -195,6 +195,13 @@ export default function PrecisionPutt() {
       ctx.fillStyle = bg;
       ctx.fillRect(0, 0, W, H);
 
+      // Vignette
+      const ppVig = ctx.createRadialGradient(W * 0.5, H * 0.5, H * 0.2, W * 0.5, H * 0.5, H * 0.85);
+      ppVig.addColorStop(0, 'rgba(0,0,0,0)');
+      ppVig.addColorStop(1, 'rgba(0,0,0,0.45)');
+      ctx.fillStyle = ppVig;
+      ctx.fillRect(0, 0, W, H);
+
       // Grass contour circles
       for (let i = 0; i < 6; i++) {
         const cx2 = W * 0.2 + W * 0.6 * (i / 5);

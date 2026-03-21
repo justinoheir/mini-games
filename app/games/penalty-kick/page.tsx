@@ -180,6 +180,13 @@ export default function PenaltyKick() {
       ctx.fillStyle = bg;
       ctx.fillRect(0, 0, W, H);
 
+      // Vignette
+      const pkVig = ctx.createRadialGradient(W * 0.5, H * 0.5, H * 0.2, W * 0.5, H * 0.5, H * 0.85);
+      pkVig.addColorStop(0, 'rgba(0,0,0,0)');
+      pkVig.addColorStop(1, 'rgba(0,0,0,0.45)');
+      ctx.fillStyle = pkVig;
+      ctx.fillRect(0, 0, W, H);
+
       // Grass lines
       ctx.strokeStyle = 'rgba(255,255,255,0.06)';
       ctx.lineWidth = 1;

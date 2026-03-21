@@ -532,6 +532,13 @@ export default function CupidShot() {
       ctx.fillStyle = csBg;
       ctx.fillRect(0, 0, W, H);
 
+      // Vignette
+      const csVig = ctx.createRadialGradient(W * 0.5, H * 0.5, H * 0.2, W * 0.5, H * 0.5, H * 0.85);
+      csVig.addColorStop(0, 'rgba(0,0,0,0)');
+      csVig.addColorStop(1, 'rgba(0,0,0,0.5)');
+      ctx.fillStyle = csVig;
+      ctx.fillRect(0, 0, W, H);
+
       // Pink radial glow centered at bullseye
       const glow = ctx.createRadialGradient(bullseyeX, bullseyeY, 0, bullseyeX, bullseyeY, W * 0.65);
       glow.addColorStop(0,   'rgba(244, 63, 94, 0.13)');

@@ -593,6 +593,13 @@ export default function SnowCatchGame() {
       ctx.fillStyle = scBg;
       ctx.fillRect(0, 0, W, H);
 
+      // Vignette — subtle for snow-catch
+      const scVig = ctx.createRadialGradient(W * 0.5, H * 0.5, H * 0.2, W * 0.5, H * 0.5, H * 0.85);
+      scVig.addColorStop(0, 'rgba(0,0,0,0)');
+      scVig.addColorStop(1, 'rgba(0,0,10,0.45)');
+      ctx.fillStyle = scVig;
+      ctx.fillRect(0, 0, W, H);
+
       // Twinkling stars
       for (let j = 0; j < 48; j++) {
         const sx = (j * 137.508 + 23) % W;

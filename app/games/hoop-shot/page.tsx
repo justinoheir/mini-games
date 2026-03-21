@@ -195,6 +195,14 @@ export default function HoopShot() {
       bg.addColorStop(1,   '#080500');
       ctx.fillStyle = bg;
       ctx.fillRect(0, 0, W, H);
+
+      // Vignette
+      const hsVig = ctx.createRadialGradient(W * 0.5, H * 0.5, H * 0.2, W * 0.5, H * 0.5, H * 0.85);
+      hsVig.addColorStop(0, 'rgba(0,0,0,0)');
+      hsVig.addColorStop(1, 'rgba(0,0,0,0.45)');
+      ctx.fillStyle = hsVig;
+      ctx.fillRect(0, 0, W, H);
+
       // Hardwood grain lines
       ctx.strokeStyle = 'rgba(200,130,40,0.04)'; ctx.lineWidth = 1;
       for (let gy = 56; gy < H; gy += 14) { ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(W, gy); ctx.stroke(); }

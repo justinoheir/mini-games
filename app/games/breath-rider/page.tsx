@@ -236,6 +236,13 @@ export default function BreathRider() {
       ctx.fillStyle = bgGrad;
       ctx.fillRect(0, 0, W, H);
 
+      // Vignette
+      const brVig = ctx.createRadialGradient(W * 0.5, H * 0.5, H * 0.2, W * 0.5, H * 0.5, H * 0.85);
+      brVig.addColorStop(0, 'rgba(0,0,0,0)');
+      brVig.addColorStop(1, 'rgba(0,0,0,0.5)');
+      ctx.fillStyle = brVig;
+      ctx.fillRect(0, 0, W, H);
+
       ctx.fillStyle = 'rgba(255,68,68,0.12)';
       ctx.fillRect(0, 0, W, H * 0.07);
       ctx.fillRect(0, H * 0.93, W, H * 0.07);

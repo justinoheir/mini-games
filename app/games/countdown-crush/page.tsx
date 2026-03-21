@@ -572,6 +572,13 @@ export default function CountdownCrushGame() {
       ctx.fillStyle = ccCrBg;
       ctx.fillRect(0, 0, W, H);
 
+      // Vignette
+      const ccVig2 = ctx.createRadialGradient(W * 0.5, H * 0.5, H * 0.2, W * 0.5, H * 0.5, H * 0.85);
+      ccVig2.addColorStop(0, 'rgba(0,0,0,0)');
+      ccVig2.addColorStop(1, 'rgba(0,0,0,0.5)');
+      ctx.fillStyle = ccVig2;
+      ctx.fillRect(0, 0, W, H);
+
       // Starfield
       ctx.fillStyle = 'rgba(255,255,255,0.45)';
       for (let i = 0; i < 60; i++) {

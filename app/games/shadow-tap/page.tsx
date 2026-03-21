@@ -371,6 +371,13 @@ export default function ShadowTapGame() {
       ctx.fillStyle = stBg;
       ctx.fillRect(0, 0, W, H);
 
+      // Vignette
+      const stVig = ctx.createRadialGradient(W * 0.5, H * 0.5, H * 0.2, W * 0.5, H * 0.5, H * 0.85);
+      stVig.addColorStop(0, 'rgba(0,0,0,0)');
+      stVig.addColorStop(1, 'rgba(0,0,0,0.55)');
+      ctx.fillStyle = stVig;
+      ctx.fillRect(0, 0, W, H);
+
       // ── Miss flash effect (red burst at miss/wrong-tap position) ────────────
       if (s.missFlashTime > 0) {
         const mAge = now - s.missFlashTime;
