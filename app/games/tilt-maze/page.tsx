@@ -235,7 +235,7 @@ export default function TiltMaze() {
     if (!canvas) return;
     const ctx2d = canvas.getContext('2d');
     if (!ctx2d) return;
-    const W = canvas.offsetWidth, H = canvas.offsetHeight;
+    const W = window.innerWidth, H = window.innerHeight;
     const cs = Math.min(W, H) * 0.14;
     const ox = (W - GRID * cs) / 2, oy = (H - GRID * cs) / 2;
     s.ballX = ox + cs * 0.5; s.ballY = oy + cs * 0.5;

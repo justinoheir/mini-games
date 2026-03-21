@@ -387,7 +387,7 @@ export default function SnowCatchGame() {
     const vx = (Math.random() - 0.5) * 1.5;
 
     stateRef.current.flakes.push({
-      x:             size + Math.random() * (canvas.offsetWidth - size * 2),
+      x:             size + Math.random() * (window.innerWidth - size * 2),
       y:             -size * 2,
       vx,
       vy,
@@ -440,7 +440,7 @@ export default function SnowCatchGame() {
     s.sig                  = { score: 0, goldenCaught: 0, iciclesHit: 0, maxStreak: 0, blizzardSurvived: false, totalMissed: 0, streakCurrent: 0 };
     s.flakes               = [];
     s.particles            = [];
-    s.basketX              = canvas.offsetWidth / 2;
+    s.basketX              = window.innerWidth / 2;
     s.lastSpawnTime        = performance.now();
     s.shake                = { intensity: 0, duration: 0 };
     s.blizzardActive       = false;
@@ -497,8 +497,8 @@ export default function SnowCatchGame() {
 
     const loop = (now: number) => {
       if (!s.running) return;
-      const W = canvas.offsetWidth;
-      const H = canvas.offsetHeight;
+      const W = window.innerWidth;
+      const H = window.innerHeight;
 
       // ── Basket movement ────────────────────────────────────────────────
       const tilt = tiltRef.current;
@@ -721,8 +721,10 @@ export default function SnowCatchGame() {
     if (!canvas) return;
     const resize = () => {
       const dpr = window.devicePixelRatio || 1;
-      const w = canvas.offsetWidth;
-      const h = canvas.offsetHeight;
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      canvas.style.width  = w + 'px';
+      canvas.style.height = h + 'px';
       canvas.width  = w * dpr;
       canvas.height = h * dpr;
       const ctx2 = canvas.getContext('2d');
@@ -730,7 +732,7 @@ export default function SnowCatchGame() {
       if (stateRef.current.running) {
         stateRef.current.basketX = Math.min(
           Math.max(stateRef.current.basketX, BASKET_WIDTH / 2),
-          canvas.offsetWidth - BASKET_WIDTH / 2,
+          window.innerWidth - BASKET_WIDTH / 2,
         );
       }
     };

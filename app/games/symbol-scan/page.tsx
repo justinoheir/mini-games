@@ -347,8 +347,8 @@ export default function SymbolScanGame() {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const s   = stateRef.current;
-    const W   = canvas.offsetWidth;
-    const H   = canvas.offsetHeight;
+    const W   = window.innerWidth;
+    const H   = window.innerHeight;
     // HUD sits at top:64 with height ~80px; leave 150px clear at top of canvas
     // so the target-symbol area renders below the HUD overlay.
     const TOP = 150;
@@ -448,8 +448,8 @@ export default function SymbolScanGame() {
       if (!s.running) return;
 
       const now = Date.now();
-      const W   = canvas.offsetWidth;
-      const H   = canvas.offsetHeight;
+      const W   = window.innerWidth;
+      const H   = window.innerHeight;
       const { cellSize, gridX, gridY, targetAreaH, targetAreaTop, accentColor } = s;
 
       // ── Background — deep indigo gradient for cognitive vibe ───────────────
@@ -731,8 +731,10 @@ export default function SymbolScanGame() {
 
     const resize = () => {
       const dpr = window.devicePixelRatio || 1;
-      const w = canvas.offsetWidth;
-      const h = canvas.offsetHeight;
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      canvas.style.width  = w + 'px';
+      canvas.style.height = h + 'px';
       canvas.width  = w * dpr;
       canvas.height = h * dpr;
       const ctx2 = canvas.getContext('2d');
