@@ -72,8 +72,8 @@ export default function Countdown({ onComplete, accentColor, gameName }: Countdo
         alignItems: 'center',
         justifyContent: 'center',
         zIndex: 200,
-        background: 'rgba(8, 9, 15, 0.96)',
-        backdropFilter: 'blur(4px)',
+        background: `radial-gradient(ellipse 60% 60% at 50% 50%, ${accentColor}14 0%, rgba(8,9,15,0.98) 70%)`,
+        backdropFilter: 'blur(6px)',
       }}
     >
       <AnimatePresence mode="wait">
