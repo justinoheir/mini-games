@@ -159,7 +159,7 @@ export default function GameStartScreen({
             lineHeight: 1.1,
             position: 'relative',
             zIndex: 1,
-            textShadow: '0 2px 16px rgba(0,0,0,0.5)',
+            textShadow: `0 2px 20px rgba(0,0,0,0.6), 0 0 40px ${orbColor}22`,
           }}
         >
           {title}

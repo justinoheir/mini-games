@@ -229,10 +229,10 @@ export default function BreathRider() {
       s.charY = Math.max(H * 0.07, Math.min(H * 0.93, s.charY));
       s.altitudeSamples.push(s.charY);
 
-      const bgGrad = ctx.createLinearGradient(0, 0, 0, H);
-      bgGrad.addColorStop(0, '#071528');
-      bgGrad.addColorStop(0.5, '#0d1a22');
-      bgGrad.addColorStop(1, '#060c14');
+      const bgGrad = ctx.createRadialGradient(W * 0.5, H * 0.3, 0, W * 0.5, H * 0.7, Math.max(W, H) * 0.9);
+      bgGrad.addColorStop(0, '#071e3a');
+      bgGrad.addColorStop(0.5, '#0a1428');
+      bgGrad.addColorStop(1, '#040810');
       ctx.fillStyle = bgGrad;
       ctx.fillRect(0, 0, W, H);
 
