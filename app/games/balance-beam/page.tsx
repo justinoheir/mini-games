@@ -434,11 +434,15 @@ export default function BalanceBeamGame() {
 
       // ══ DRAW ═════════════════════════════════════════════════════════════
 
-      // Background
-      ctx.fillStyle = '#08090f';
+      // Background — rich navy/indigo radial gradient
+      const bgGrad = ctx.createRadialGradient(W * 0.5, H * 0.3, 0, W * 0.5, H * 0.6, Math.max(W, H) * 0.9);
+      bgGrad.addColorStop(0, '#0f1a3a');
+      bgGrad.addColorStop(0.55, '#080e1f');
+      bgGrad.addColorStop(1, '#04060f');
+      ctx.fillStyle = bgGrad;
       ctx.fillRect(0, 0, W, H);
 
-      // Subtle radial vignette
+      // Vignette
       const vig = ctx.createRadialGradient(W * 0.5, H * 0.5, H * 0.15, W * 0.5, H * 0.5, H * 0.75);
       vig.addColorStop(0, 'rgba(0,0,0,0)');
       vig.addColorStop(1, 'rgba(0,0,0,0.55)');
@@ -717,6 +721,10 @@ export default function BalanceBeamGame() {
     setScoreDisplay(0);
     setTimeLeft(DURATION);
     setFinalSig(null);
+  
+    setIsNewBest(false);
+    setStreak(0);
+    prevScoreRef.current = 0;
   }, []);
 
   // ─── END SCREEN INSIGHTS ─────────────────────────────────────────────────
@@ -771,6 +779,7 @@ export default function BalanceBeamGame() {
           ctaTextColor="#000"
           onStart={handleStart}
           sensorNote="Tilt to balance · touch controls if motion is denied"
+          gradient="radial-gradient(ellipse 80% 70% at 50% 30%, #0f1a3a 0%, #080e1f 55%, #04060f 100%)"
         >
         </GameStartScreen>
       )}

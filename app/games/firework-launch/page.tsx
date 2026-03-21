@@ -937,6 +937,10 @@ export default function FireworkLaunchGame() {
     setStreakDisplay(0);
     setTimeLeft(DURATION);
     setFinalSig(null);
+  
+    setIsNewBest(false);
+    setStreak(0);
+    prevScoreRef.current = 0;
   }, []);
 
   // ─── END SCREEN INSIGHTS ─────────────────────────────────────────────────

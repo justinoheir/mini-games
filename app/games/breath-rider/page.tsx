@@ -442,6 +442,8 @@ export default function BreathRider() {
       s.touchVolume = 0;
       setGameState('countdown');
     }
+  
+    prevScoreRef.current = 0;
   }, []);
 
   useEffect(() => {

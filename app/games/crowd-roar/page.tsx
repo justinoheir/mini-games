@@ -471,7 +471,9 @@ export default function CrowdRoarGame() {
 
         // Render finale frame (simplified)
         ctx.imageSmoothingEnabled = true;
-        ctx.fillStyle = '#08090f';
+        const crFinBg = ctx.createRadialGradient(W * 0.5, H * 0.4, 0, W * 0.5, H * 0.6, Math.max(W, H) * 0.9);
+        crFinBg.addColorStop(0, '#1a1000'); crFinBg.addColorStop(1, '#060400');
+        ctx.fillStyle = crFinBg;
         ctx.fillRect(0, 0, W, H);
 
         if (s.flashAlpha > 0) {
@@ -608,8 +610,12 @@ export default function CrowdRoarGame() {
 
       ctx.imageSmoothingEnabled = true;
 
-      // Background
-      ctx.fillStyle = '#08090f';
+      // Background — dark stadium amber/brown gradient
+      const crBg = ctx.createRadialGradient(W * 0.5, H * 0.4, 0, W * 0.5, H * 0.7, Math.max(W, H) * 0.9);
+      crBg.addColorStop(0,   '#1a1000');
+      crBg.addColorStop(0.5, '#0d0900');
+      crBg.addColorStop(1,   '#060400');
+      ctx.fillStyle = crBg;
       ctx.fillRect(0, 0, W, H);
 
       // ── Edge glow (scales with volume) ──────────────────────────────────
@@ -986,6 +992,10 @@ export default function CrowdRoarGame() {
     setTimeLeft(DURATION);
     setFinalSig(null);
     setPermError('');
+  
+    setIsNewBest(false);
+    setStreak(0);
+    prevScoreRef.current = 0;
   }, []);
 
   // ─── END SCREEN INSIGHTS ────────────────────────────────────────────────
@@ -1042,6 +1052,7 @@ export default function CrowdRoarGame() {
           ctaLabel="Allow Mic & Start"
           accentColor={theme.colors.accent ?? ACCENT}
           onStart={handleStart}
+          gradient="radial-gradient(ellipse 80% 70% at 50% 30%, #1a1000 0%, #0d0900 55%, #060400 100%)"
         />
       )}
 

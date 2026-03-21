@@ -208,8 +208,12 @@ function drawFrame(
   const { cellSize, gap, startX, startY, totalH } = getGridLayout(W, H);
   const cornerR = Math.max(8, cellSize * 0.12);
 
-  // ── Background ────────────────────────────────────────────────────────────
-  ctx.fillStyle = '#08090f';
+  // ── Background — deep indigo/purple cognitive gradient ───────────────────
+  const mgBg = ctx.createRadialGradient(W * 0.5, H * 0.35, 0, W * 0.5, H * 0.6, Math.max(W, H) * 0.9);
+  mgBg.addColorStop(0,   '#0f0820');
+  mgBg.addColorStop(0.55, '#080514');
+  mgBg.addColorStop(1,   '#040208');
+  ctx.fillStyle = mgBg;
   ctx.fillRect(0, 0, W, H);
 
   // Subtle vignette
@@ -685,6 +689,10 @@ export default function MemoryGridGame() {
     setFinalSig(null);
     phaseRef.current = 'countdown';
     setPhase('countdown');
+  
+    setIsNewBest(false);
+    setStreak(0);
+    prevScoreRef.current = 0;
   }, []);
 
   // ─── END SCREEN INSIGHTS ─────────────────────────────────────────────────

@@ -412,6 +412,10 @@ export default function ReflexRally() {
     if (timerRef.current) clearInterval(timerRef.current);
     setStreakDisplay(0);
     setPhase('start');
+  
+    setIsNewBest(false);
+    setStreak(0);
+    prevScoreRef.current = 0;
   }, []);
 
   const sig = finalSig;

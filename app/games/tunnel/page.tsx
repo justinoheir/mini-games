@@ -601,6 +601,8 @@ export default function TunnelGame() {
     setJoystickEnabled(false);
     setJoystickThumb({ x: 0, y: 0 });
     setGameState('start');
+  
+    prevScoreRef.current = 0;
   }, []);
 
   const handleJoystickTouch = useCallback((e: React.TouchEvent<HTMLDivElement>) => {

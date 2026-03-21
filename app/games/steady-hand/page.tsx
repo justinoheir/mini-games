@@ -828,6 +828,9 @@ export default function SteadyHandGame() {
     stateRef.current.usingTouchFallback = false;
     stateRef.current.smoothedAccX = 0;
     stateRef.current.smoothedAccY = 0;
+  
+    setIsNewBest(false);
+    prevScoreRef.current = 0;
   }, []);
 
   // ─── END SCREEN INSIGHTS ─────────────────────────────────────────────────

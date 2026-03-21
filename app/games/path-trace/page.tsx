@@ -131,9 +131,10 @@ function generatePath(W: number, H: number, round: number): PathData {
 
 function getCanvasCoords(clientX: number, clientY: number, canvas: HTMLCanvasElement): Pt {
   const rect = canvas.getBoundingClientRect();
+  // Path points generated in CSS-pixel space (canvas.offsetWidth); return CSS pixels for consistency
   return {
-    x: (clientX - rect.left) * (canvas.width  / rect.width),
-    y: (clientY - rect.top)  * (canvas.height / rect.height),
+    x: clientX - rect.left,
+    y: clientY - rect.top,
   };
 }
 
@@ -360,8 +361,12 @@ export default function PathTraceGame() {
       const H = canvas.height;
       ctx.imageSmoothingEnabled = true;
 
-      // ── Background ─────────────────────────────────────────────────────────
-      ctx.fillStyle = '#08090f';
+      // ── Background — dark teal/cyan gradient for puzzle vibe ───────────────
+      const ptBg = ctx.createRadialGradient(W * 0.5, H * 0.35, 0, W * 0.5, H * 0.65, Math.max(W, H) * 0.9);
+      ptBg.addColorStop(0,   '#001818');
+      ptBg.addColorStop(0.55, '#000e0e');
+      ptBg.addColorStop(1,   '#000606');
+      ctx.fillStyle = ptBg;
       ctx.fillRect(0, 0, W, H);
 
       // Subtle dot-grid

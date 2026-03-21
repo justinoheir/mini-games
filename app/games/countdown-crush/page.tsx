@@ -778,6 +778,10 @@ export default function CountdownCrushGame() {
     setSubPhaseUI('slamming');
     setMultiplierUI(1);
     setFinalSig(null);
+  
+    setIsNewBest(false);
+    setStreak(0);
+    prevScoreRef.current = 0;
   }, []);
 
   // ─── END SCREEN INSIGHTS ─────────────────────────────────────────────────

@@ -372,8 +372,12 @@ export default function StackDropGame() {
         }
       } // end miss-pause guard
 
-      // Clear
-      ctx.fillStyle = '#08090f';
+      // Background — dark slate/purple gradient
+      const sdBg = ctx.createRadialGradient(W * 0.5, H * 0.35, 0, W * 0.5, H * 0.65, Math.max(W, H) * 0.9);
+      sdBg.addColorStop(0,   '#0f0820');
+      sdBg.addColorStop(0.55, '#080514');
+      sdBg.addColorStop(1,   '#030208');
+      ctx.fillStyle = sdBg;
       ctx.fillRect(0, 0, W, H);
 
       // Camera transform
@@ -543,6 +547,10 @@ export default function StackDropGame() {
     setHeightDisplay(0);
     setTimeLeft(DURATION);
     setFinalSig(null);
+  
+    setIsNewBest(false);
+    setStreak(0);
+    prevScoreRef.current = 0;
   }, []);
 
   // ─── INSIGHTS ────────────────────────────────────────────────────────────

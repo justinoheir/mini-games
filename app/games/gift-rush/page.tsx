@@ -400,6 +400,10 @@ export default function GiftRushGame() {
     setTimeLeft(DURATION);
     setFinalSig(null);
     setCurrentCard(null);
+  
+    setIsNewBest(false);
+    setStreak(0);
+    prevScoreRef.current = 0;
   }, []);
 
   // ─── CLEANUP ───────────────────────────────────────────────────────────────

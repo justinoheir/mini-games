@@ -536,8 +536,12 @@ export default function PitchMatchGame() {
       // ── 5. RENDER ──────────────────────────────────────────────────────
       // ─────────────────────────────────────────────────────────────────────
 
-      // Layer 1: Background
-      ctx.fillStyle = '#08090f';
+      // Layer 1: Background — deep violet/studio gradient
+      const pmBg = ctx.createRadialGradient(W * 0.5, H * 0.35, 0, W * 0.5, H * 0.65, Math.max(W, H) * 0.9);
+      pmBg.addColorStop(0,   '#100820');
+      pmBg.addColorStop(0.55, '#080514');
+      pmBg.addColorStop(1,   '#030208');
+      ctx.fillStyle = pmBg;
       ctx.fillRect(0, 0, W, H);
 
       // Layer 2: Subtle oscilloscope waveform (studio monitor aesthetic)
@@ -841,6 +845,10 @@ export default function PitchMatchGame() {
     setTimeLeft(DURATION);
     setFinalSig(null);
     setMicError(false);
+  
+    setIsNewBest(false);
+    setStreak(0);
+    prevScoreRef.current = 0;
   }, []);
 
   // ─── END SCREEN INSIGHTS ─────────────────────────────────────────────────

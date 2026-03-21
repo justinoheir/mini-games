@@ -382,6 +382,10 @@ export default function LoveNoteGame() {
   const handlePlayAgain = useCallback(() => {
     setOuterPhase('start');
     setFinalSig(null);
+  
+    setIsNewBest(false);
+    setStreak(0);
+    prevScoreRef.current = 0;
   }, []);
 
   // ─── CLEANUP ON UNMOUNT ───────────────────────────────────────────────────

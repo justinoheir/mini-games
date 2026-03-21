@@ -363,8 +363,12 @@ export default function ShadowTapGame() {
       const W    = canvas.offsetWidth;
       const H    = canvas.offsetHeight;
 
-      // ── Background ──────────────────────────────────────────────────────────
-      ctx.fillStyle = BG_COLOR;
+      // ── Background — deep blue-gray stealth gradient ───────────────────────
+      const stBg = ctx.createRadialGradient(W * 0.5, H * 0.35, 0, W * 0.5, H * 0.65, Math.max(W, H) * 0.9);
+      stBg.addColorStop(0,   '#0a0d18');
+      stBg.addColorStop(0.55, '#060810');
+      stBg.addColorStop(1,   '#020308');
+      ctx.fillStyle = stBg;
       ctx.fillRect(0, 0, W, H);
 
       // ── Miss flash effect (red burst at miss/wrong-tap position) ────────────
@@ -631,6 +635,10 @@ export default function ShadowTapGame() {
     setScoreDisplay(0);
     setTimeLeft(DURATION);
     setFinalSig(null);
+  
+    setIsNewBest(false);
+    setStreak(0);
+    prevScoreRef.current = 0;
   }, []);
 
   // ─── END SCREEN INSIGHTS ─────────────────────────────────────────────────────

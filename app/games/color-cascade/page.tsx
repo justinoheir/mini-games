@@ -321,8 +321,12 @@ export default function ColorCascadeGame() {
       const H   = canvas.offsetHeight;
       const now = Date.now();
 
-      // ── Background ──────────────────────────────────────────────────────────
-      ctx.fillStyle = '#08090f';
+      // ── Background — deep rose/magenta radial gradient ─────────────────────
+      const ccBg = ctx.createRadialGradient(W * 0.5, H * 0.4, 0, W * 0.5, H * 0.6, Math.max(W, H) * 0.9);
+      ccBg.addColorStop(0,   '#1a0510');
+      ccBg.addColorStop(0.5, '#0e030a');
+      ccBg.addColorStop(1,   '#060106');
+      ctx.fillStyle = ccBg;
       ctx.fillRect(0, 0, W, H);
 
       // Ambient glow tinted toward target color
@@ -631,6 +635,10 @@ export default function ColorCascadeGame() {
     setScoreDisplay(0);
     setTimeLeft(DURATION);
     setFinalSig(null);
+  
+    setIsNewBest(false);
+    setStreak(0);
+    prevScoreRef.current = 0;
   }, []);
 
   // ─── END SCREEN INSIGHTS ─────────────────────────────────────────────────
@@ -689,6 +697,7 @@ export default function ColorCascadeGame() {
           ctaLabel="Start"
           accentColor={theme.colors.accent ?? ACCENT}
           onStart={handleStart}
+          gradient="radial-gradient(ellipse 80% 70% at 50% 30%, #1a0510 0%, #0e030a 55%, #060106 100%)"
         />
       )}
 

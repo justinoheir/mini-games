@@ -437,6 +437,10 @@ export default function SpiralThrow() {
     tiltRef.current?.stop();
     setStreakDisplay(0);
     setPhase('start');
+  
+    setIsNewBest(false);
+    setStreak(0);
+    prevScoreRef.current = 0;
   }, []);
 
   const sig = finalSig;

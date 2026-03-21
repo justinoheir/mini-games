@@ -434,9 +434,13 @@ export default function DodgeBlitzGame() {
       ctx.save();
       applyShake(ctx, s.shakeState);
 
-      // Background
+      // Background — dark cobalt/cyan gradient for speed vibe
       ctx.imageSmoothingEnabled = true;
-      ctx.fillStyle = '#08090f';
+      const dbBg = ctx.createRadialGradient(W * 0.5, H * 0.3, 0, W * 0.5, H * 0.6, Math.max(W, H) * 0.9);
+      dbBg.addColorStop(0,   '#001525');
+      dbBg.addColorStop(0.55, '#000d18');
+      dbBg.addColorStop(1,   '#00060e');
+      ctx.fillStyle = dbBg;
       ctx.fillRect(0, 0, W, H);
 
       // Speed lines
@@ -734,6 +738,10 @@ export default function DodgeBlitzGame() {
     }
 
     setPhase('countdown');
+  
+    setIsNewBest(false);
+    setStreak(0);
+    prevScoreRef.current = 0;
   }, []);
 
   // ─── END SCREEN INSIGHTS ─────────────────────────────────────────────────
@@ -792,6 +800,7 @@ export default function DodgeBlitzGame() {
           accentColor={theme.colors.accent ?? ACCENT}
           ctaTextColor="#000"
           onStart={handleStart}
+          gradient="radial-gradient(ellipse 80% 70% at 50% 30%, #001525 0%, #000d18 55%, #00060e 100%)"
         >
           {/* ⚠️ Player name capture — required in every game */}
         </GameStartScreen>

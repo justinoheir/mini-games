@@ -143,8 +143,9 @@ export default function ReactionChain() {
     const s       = stateRef.current;
     const elapsed = DURATION - s.timeLeft;
     s.nodeWindowMs  = getWindowMs(elapsed);
-    s.nodeX         = EDGE_MARGIN + Math.random() * (canvas.width  - EDGE_MARGIN * 2);
-    s.nodeY         = EDGE_MARGIN + Math.random() * (canvas.height - EDGE_MARGIN * 2);
+    // Use CSS-pixel dimensions so positions stay consistent with setTransform(dpr,...) context
+    s.nodeX         = EDGE_MARGIN + Math.random() * (canvas.offsetWidth  - EDGE_MARGIN * 2);
+    s.nodeY         = EDGE_MARGIN + Math.random() * (canvas.offsetHeight - EDGE_MARGIN * 2);
     s.nodeSpawnTime = Date.now();
     s.nodeAlive     = true;
     s.sig.totalNodes++;
@@ -219,8 +220,12 @@ export default function ReactionChain() {
       const W = canvas.width;
       const H = canvas.height;
 
-      // ── Background ──────────────────────────────────────────────────────────
-      ctx.fillStyle = '#08090f';
+      // ── Background — dark amber/orange cognitive gradient ────────────────────
+      const rcBg = ctx.createRadialGradient(W * 0.5, H * 0.35, 0, W * 0.5, H * 0.6, Math.max(W, H) * 0.9);
+      rcBg.addColorStop(0,   '#1a0e00');
+      rcBg.addColorStop(0.55, '#0d0700');
+      rcBg.addColorStop(1,   '#060300');
+      ctx.fillStyle = rcBg;
       ctx.fillRect(0, 0, W, H);
 
       // ── Chain-break red flash overlay ───────────────────────────────────────
@@ -332,8 +337,9 @@ export default function ReactionChain() {
       if (!s.running || !s.nodeAlive) return;
 
       const rect = canvas.getBoundingClientRect();
-      const x    = (clientX - rect.left) * (canvas.width  / rect.width);
-      const y    = (clientY - rect.top)  * (canvas.height / rect.height);
+      // Nodes are positioned in CSS pixels; use CSS pixels for hit detection
+      const x    = clientX - rect.left;
+      const y    = clientY - rect.top;
       const dx   = x - s.nodeX;
       const dy   = y - s.nodeY;
 
@@ -361,8 +367,9 @@ export default function ReactionChain() {
       const popCanvas = canvasRef.current;
       if (popCanvas) {
         const rect = popCanvas.getBoundingClientRect();
-        const popX = (s.nodeX / popCanvas.width) * rect.width;
-        const popY = (s.nodeY / popCanvas.height) * rect.height;
+        // nodeX/nodeY are in CSS pixels; popX/popY for ScorePopEffect are also CSS pixels
+        const popX = s.nodeX;
+        const popY = s.nodeY;
         const isCombo = s.sig.currentChain >= 5;
         triggerPopRef.current(
           reactionMs < 300 ? '+6' : '+1',

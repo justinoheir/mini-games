@@ -477,6 +477,10 @@ export default function PrecisionPutt() {
     if (timerRef.current) clearInterval(timerRef.current);
     tiltRef.current?.stop();
     setPhase('start');
+  
+    setIsNewBest(false);
+    setStreak(0);
+    prevScoreRef.current = 0;
   }, []);
 
   const sig = finalSig;

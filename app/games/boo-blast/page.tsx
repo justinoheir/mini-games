@@ -329,13 +329,17 @@ export default function BooBlastGame() {
       const H   = canvas.offsetHeight;
       const now = Date.now();
 
-      // ── Background: near-black with purple fog radial gradient ─────────────
-      ctx.fillStyle = '#0a0005';
+      // ── Background: deep haunted purple radial gradient ────────────────────
+      const bbBg = ctx.createRadialGradient(W * 0.5, H * 0.35, 0, W * 0.5, H * 0.6, Math.max(W, H) * 0.9);
+      bbBg.addColorStop(0,   '#1a0a2e');
+      bbBg.addColorStop(0.5, '#0e0518');
+      bbBg.addColorStop(1,   '#060208');
+      ctx.fillStyle = bbBg;
       ctx.fillRect(0, 0, W, H);
 
       const fog = ctx.createRadialGradient(W * 0.5, H * 0.4, 0, W * 0.5, H * 0.4, Math.max(W, H) * 0.75);
-      fog.addColorStop(0,   'rgba(168, 85, 247, 0.10)');
-      fog.addColorStop(0.5, 'rgba(100, 40, 200, 0.05)');
+      fog.addColorStop(0,   'rgba(168, 85, 247, 0.14)');
+      fog.addColorStop(0.5, 'rgba(100, 40, 200, 0.07)');
       fog.addColorStop(1,   'rgba(0,   0,   0,  0)');
       ctx.fillStyle = fog;
       ctx.fillRect(0, 0, W, H);
@@ -482,8 +486,9 @@ export default function BooBlastGame() {
     if (!s.running) return;
 
     const rect = canvas.getBoundingClientRect();
-    const x = (clientX - rect.left) * (canvas.width  / rect.width);
-    const y = (clientY - rect.top)  * (canvas.height / rect.height);
+    // Ghost positions are in CSS pixels (canvas.offsetWidth); use CSS pixels for hit detection
+    const x = clientX - rect.left;
+    const y = clientY - rect.top;
 
     // Check ghosts in reverse (topmost / last spawned first)
     for (let i = s.ghosts.length - 1; i >= 0; i--) {
@@ -606,6 +611,10 @@ export default function BooBlastGame() {
     setTimeLeft(DURATION);
     setHauntingLevel(0);
     setFinalSig(null);
+  
+    setIsNewBest(false);
+    setStreak(0);
+    prevScoreRef.current = 0;
   }, []);
 
   // ─── END SCREEN INSIGHTS ───────────────────────────────────────────────────
@@ -663,6 +672,7 @@ export default function BooBlastGame() {
           ctaLabel="Blast Em'"
           accentColor={accent}
           onStart={handleStart}
+          gradient="radial-gradient(ellipse 80% 70% at 50% 30%, #1a0a2e 0%, #0e0518 55%, #060208 100%)"
         >
           {/* ⚠️ Per-game name capture — required in every game */}
         </GameStartScreen>

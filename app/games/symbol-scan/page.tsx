@@ -452,8 +452,12 @@ export default function SymbolScanGame() {
       const H   = canvas.offsetHeight;
       const { cellSize, gridX, gridY, targetAreaH, targetAreaTop, accentColor } = s;
 
-      // ── Background ─────────────────────────────────────────────────────────
-      ctx.fillStyle = '#08090f';
+      // ── Background — deep indigo gradient for cognitive vibe ───────────────
+      const ssBg = ctx.createRadialGradient(W * 0.5, H * 0.35, 0, W * 0.5, H * 0.65, Math.max(W, H) * 0.9);
+      ssBg.addColorStop(0,   '#080f20');
+      ssBg.addColorStop(0.55, '#050a14');
+      ssBg.addColorStop(1,   '#020508');
+      ctx.fillStyle = ssBg;
       ctx.fillRect(0, 0, W, H);
 
       // Subtle dot-grid background texture
@@ -774,6 +778,10 @@ export default function SymbolScanGame() {
     setScoreDisplay(0);
     setTimeLeft(DURATION);
     setFinalSig(null);
+  
+    setIsNewBest(false);
+    setStreak(0);
+    prevScoreRef.current = 0;
   }, []);
 
   // ─── END SCREEN INSIGHTS ─────────────────────────────────────────────────

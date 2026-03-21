@@ -465,6 +465,10 @@ export default function PenaltyKick() {
     cancelAnimationFrame(animRef.current);
     tiltRef.current?.stop();
     setPhase('start');
+  
+    setIsNewBest(false);
+    setStreak(0);
+    prevScoreRef.current = 0;
   }, []);
 
   const sig = finalSig;
