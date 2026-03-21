@@ -387,8 +387,8 @@ export default function PitchMatchGame() {
     const loop = () => {
       if (!s.running) return;
       const now = Date.now();
-      const W = canvas.offsetWidth;
-      const H = canvas.offsetHeight;
+      const W = window.innerWidth;
+      const H = window.innerHeight;
 
       // ── 1. Pitch Detection (throttled to every PITCH_DETECT_MS) ─────────
       if (
@@ -760,8 +760,10 @@ export default function PitchMatchGame() {
 
     const resize = () => {
       const dpr = window.devicePixelRatio || 1;
-      const w = canvas.offsetWidth;
-      const h = canvas.offsetHeight;
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      canvas.style.width  = w + 'px';
+      canvas.style.height = h + 'px';
       canvas.width  = w * dpr;
       canvas.height = h * dpr;
       const ctx2 = canvas.getContext('2d');

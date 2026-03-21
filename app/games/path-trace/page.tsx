@@ -265,7 +265,7 @@ export default function PathTraceGame() {
     if (!canvas) return;
     const s = stateRef.current;
     s.pathRound++;
-    s.currentPath        = generatePath(canvas.offsetWidth, canvas.offsetHeight, s.pathRound);
+    s.currentPath        = generatePath(window.innerWidth, window.innerHeight, s.pathRound);
     s.isTracing          = false;
     s.tracePoints        = [];
     s.activePointerId    = null;
@@ -357,8 +357,8 @@ export default function PathTraceGame() {
       if (!s.running) return;
       s.frame++;
 
-      const W = canvas.offsetWidth;
-      const H = canvas.offsetHeight;
+      const W = window.innerWidth;
+      const H = window.innerHeight;
       ctx.imageSmoothingEnabled = true;
 
       // ── Background — dark teal/cyan gradient for puzzle vibe ───────────────
@@ -563,8 +563,12 @@ export default function PathTraceGame() {
 
     const resize = () => {
       const dpr = window.devicePixelRatio || 1;
-      canvas.width  = canvas.offsetWidth  * dpr;
-      canvas.height = canvas.offsetHeight * dpr;
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      canvas.style.width  = w + 'px';
+      canvas.style.height = h + 'px';
+      canvas.width  = w * dpr;
+      canvas.height = h * dpr;
       const ctx2 = canvas.getContext('2d');
       if (ctx2) ctx2.setTransform(dpr, 0, 0, dpr, 0, 0);
     };

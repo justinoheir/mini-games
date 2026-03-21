@@ -287,8 +287,8 @@ export default function ShadowTapGame() {
     const s = stateRef.current;
     const elapsed = (DURATION - s.timeLeft) * 1000;
     s.shapeType       = randomShapeType();
-    s.shapeX          = SHAPE_MARGIN + Math.random() * (canvas.offsetWidth  - SHAPE_MARGIN * 2);
-    s.shapeY          = SHAPE_MARGIN + Math.random() * (canvas.offsetHeight - SHAPE_MARGIN * 2);
+    s.shapeX          = SHAPE_MARGIN + Math.random() * (window.innerWidth  - SHAPE_MARGIN * 2);
+    s.shapeY          = 140 + SHAPE_MARGIN + Math.random() * (window.innerHeight - 140 - 30 - SHAPE_MARGIN * 2);
     s.shapeSize       = 28 + Math.random() * 16; // 28–44px
     s.shapeWindowMs   = getShapeWindowMs(elapsed);
     s.shapeSpawnTime  = Date.now();
@@ -360,8 +360,8 @@ export default function ShadowTapGame() {
     const loop = () => {
       if (!s.running) return;
       const now  = Date.now();
-      const W    = canvas.offsetWidth;
-      const H    = canvas.offsetHeight;
+      const W    = window.innerWidth;
+      const H    = window.innerHeight;
 
       // ── Background — deep blue-gray stealth gradient ───────────────────────
       const stBg = ctx.createRadialGradient(W * 0.5, H * 0.35, 0, W * 0.5, H * 0.65, Math.max(W, H) * 0.9);
@@ -592,8 +592,10 @@ export default function ShadowTapGame() {
 
     const resize = () => {
       const dpr = window.devicePixelRatio || 1;
-      const w = canvas.offsetWidth;
-      const h = canvas.offsetHeight;
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      canvas.style.width  = w + 'px';
+      canvas.style.height = h + 'px';
       canvas.width  = w * dpr;
       canvas.height = h * dpr;
       const ctx2 = canvas.getContext('2d');

@@ -144,8 +144,8 @@ export default function ReactionChain() {
     const elapsed = DURATION - s.timeLeft;
     s.nodeWindowMs  = getWindowMs(elapsed);
     // Use CSS-pixel dimensions so positions stay consistent with setTransform(dpr,...) context
-    s.nodeX         = EDGE_MARGIN + Math.random() * (canvas.offsetWidth  - EDGE_MARGIN * 2);
-    s.nodeY         = EDGE_MARGIN + Math.random() * (canvas.offsetHeight - EDGE_MARGIN * 2);
+    s.nodeX         = EDGE_MARGIN + Math.random() * (window.innerWidth  - EDGE_MARGIN * 2);
+    s.nodeY         = 140 + EDGE_MARGIN + Math.random() * (window.innerHeight - 140 - 30 - EDGE_MARGIN * 2);
     s.nodeSpawnTime = Date.now();
     s.nodeAlive     = true;
     s.sig.totalNodes++;
@@ -402,8 +402,15 @@ export default function ReactionChain() {
     if (!canvas) return;
 
     const resize = () => {
-      canvas.width  = canvas.offsetWidth;
-      canvas.height = canvas.offsetHeight;
+      const dpr = window.devicePixelRatio || 1;
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      canvas.style.width  = w + 'px';
+      canvas.style.height = h + 'px';
+      canvas.width  = w * dpr;
+      canvas.height = h * dpr;
+      const ctx2 = canvas.getContext('2d');
+      if (ctx2) ctx2.setTransform(dpr, 0, 0, dpr, 0, 0);
     };
     resize();
     window.addEventListener('resize', resize);

@@ -493,8 +493,8 @@ export default function MemoryGridGame() {
 
     // Size canvas
     const dpr = window.devicePixelRatio || 1;
-    const w = canvas.offsetWidth;
-    const h = canvas.offsetHeight;
+    const w = window.innerWidth;
+    const h = window.innerHeight;
     canvas.width  = w * dpr;
     canvas.height = h * dpr;
     const ctx2 = canvas.getContext('2d');
@@ -506,8 +506,8 @@ export default function MemoryGridGame() {
     const loop = (now: number) => {
       if (!s.running) return;
 
-      const W = canvas.offsetWidth;
-      const H = canvas.offsetHeight;
+      const W = window.innerWidth;
+      const H = window.innerHeight;
 
       // ── Watch phase advancement ─────────────────────────────────────────
       if (s.subPhase === 'watch') {
@@ -558,7 +558,7 @@ export default function MemoryGridGame() {
     const x = (clientX - rect.left) * (canvas.offsetWidth  / rect.width);
     const y = (clientY - rect.top)  * (canvas.offsetHeight / rect.height);
 
-    const cellIdx = getCellFromCoords(x, y, canvas.offsetWidth, canvas.offsetHeight);
+    const cellIdx = getCellFromCoords(x, y, window.innerWidth, window.innerHeight);
     if (cellIdx < 0) return;
 
     const expected = s.sequence[s.recallIdx];
@@ -634,8 +634,10 @@ export default function MemoryGridGame() {
 
     const resize = () => {
       const dpr = window.devicePixelRatio || 1;
-      const w = canvas.offsetWidth;
-      const h = canvas.offsetHeight;
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      canvas.style.width  = w + 'px';
+      canvas.style.height = h + 'px';
       canvas.width  = w * dpr;
       canvas.height = h * dpr;
       const ctx2 = canvas.getContext('2d');
