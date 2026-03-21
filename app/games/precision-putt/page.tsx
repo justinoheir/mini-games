@@ -522,6 +522,7 @@ export default function PrecisionPutt() {
           ctaLabel="Start Putting →"
           accentColor={ACCENT}
           onStart={handleStart}
+          gradient="radial-gradient(ellipse 80% 70% at 50% 30%, #001a0a 0%, #000e05 55%, #000603 100%)"
         />
       )}
       {/* New best banner */}

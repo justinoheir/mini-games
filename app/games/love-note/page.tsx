@@ -520,6 +520,7 @@ export default function LoveNoteGame() {
           ctaLabel="Play 💌"
           accentColor={accentColor}
           onStart={handleStart}
+          gradient="radial-gradient(ellipse 80% 70% at 50% 30%, #1a0510 0%, #0e030a 55%, #060206 100%)"
         />
       )}
 

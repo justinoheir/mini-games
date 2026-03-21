@@ -505,6 +505,7 @@ export default function GiftRushGame() {
           accentColor={accentColor}
           ctaTextColor="#000"
           onStart={handleStart}
+          gradient="radial-gradient(ellipse 80% 70% at 50% 30%, #0a1200 0%, #060900 55%, #030500 100%)"
         />
       )}
 

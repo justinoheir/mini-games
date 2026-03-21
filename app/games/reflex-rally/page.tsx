@@ -459,6 +459,7 @@ export default function ReflexRally() {
           ctaLabel="Start Game →"
           accentColor={ACCENT}
           onStart={handleStart}
+          gradient="radial-gradient(ellipse 80% 70% at 50% 30%, #1a0505 0%, #0e0303 55%, #060101 100%)"
         />
       )}
             {/* New best banner */}

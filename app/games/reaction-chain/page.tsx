@@ -509,6 +509,7 @@ export default function ReactionChain() {
           ctaLabel="Start"
           accentColor={theme.colors.accent ?? ACCENT}
           onStart={handleStart}
+          gradient="radial-gradient(ellipse 80% 70% at 50% 30%, #1a0e00 0%, #0d0700 55%, #060300 100%)"
         />
       )}
 

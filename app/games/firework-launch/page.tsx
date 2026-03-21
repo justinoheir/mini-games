@@ -1001,6 +1001,7 @@ export default function FireworkLaunchGame() {
           accentColor={theme.colors.accent ?? ACCENT}
           ctaTextColor="#000"
           onStart={handleStart}
+          gradient="radial-gradient(ellipse 80% 70% at 50% 30%, #0a0818 0%, #060510 55%, #020208 100%)"
         />
       )}
 

@@ -853,6 +853,7 @@ export default function SymbolScanGame() {
           accentColor={accent}
           onStart={handleStart}
           iconNode={<Search size={72} color={accent} strokeWidth={1.5} />}
+          gradient="radial-gradient(ellipse 80% 70% at 50% 30%, #080f20 0%, #050a14 55%, #020508 100%)"
         />
       )}
 

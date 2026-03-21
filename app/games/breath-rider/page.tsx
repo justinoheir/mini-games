@@ -586,6 +586,7 @@ export default function BreathRider() {
               ctaLabel="Allow Mic & Play →"
               accentColor={accent}
               onStart={handleStart}
+              gradient="radial-gradient(ellipse 80% 70% at 50% 30%, #061525 0%, #030c18 55%, #010508 100%)"
             />
           </motion.div>
         )}

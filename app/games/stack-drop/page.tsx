@@ -588,6 +588,7 @@ export default function StackDropGame() {
           ctaLabel="Drop In"
           accentColor={theme.colors.accent ?? ACCENT}
           onStart={handleStart}
+          gradient="radial-gradient(ellipse 80% 70% at 50% 30%, #0f0820 0%, #080514 55%, #030208 100%)"
         />
       )}
 

@@ -710,6 +710,7 @@ export default function ShadowTapGame() {
           ctaLabel="Start"
           accentColor={theme.colors.accent ?? ACCENT}
           onStart={handleStart}
+          gradient="radial-gradient(ellipse 80% 70% at 50% 30%, #0a0d18 0%, #060810 55%, #020308 100%)"
         />
       )}
 

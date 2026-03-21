@@ -535,6 +535,7 @@ export default function PulseSphere() {
           accentColor={accent}
           ctaTextColor="#fff"
           onStart={handleStart}
+          gradient="radial-gradient(ellipse 80% 70% at 50% 30%, #001520 0%, #000d14 55%, #000508 100%)"
         />
       )}
 

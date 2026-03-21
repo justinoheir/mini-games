@@ -905,6 +905,7 @@ export default function PitchMatchGame() {
           ctaLabel={micError ? 'Retry Microphone' : 'Enable Microphone'}
           accentColor={theme.colors.accent ?? ACCENT}
           onStart={handleStart}
+          gradient="radial-gradient(ellipse 80% 70% at 50% 30%, #100820 0%, #080514 55%, #030208 100%)"
         >
           {/* ⚠️ Per-game player name capture — required in every game */}
 

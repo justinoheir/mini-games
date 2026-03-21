@@ -924,6 +924,7 @@ export default function SteadyHandGame() {
             sensorNote="Uses motion sensor — hold still to score"
             accentColor={accent}
             onStart={handleStart}
+            gradient="radial-gradient(ellipse 80% 70% at 50% 30%, #001510 0%, #000d08 55%, #000603 100%)"
           >
             {usingFallback && (
               <p style={{

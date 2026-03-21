@@ -235,7 +235,7 @@ export default function TiltMaze() {
     if (!canvas) return;
     const ctx2d = canvas.getContext('2d');
     if (!ctx2d) return;
-    const W = canvas.width, H = canvas.height;
+    const W = canvas.offsetWidth, H = canvas.offsetHeight;
     const cs = Math.min(W, H) * 0.14;
     const ox = (W - GRID * cs) / 2, oy = (H - GRID * cs) / 2;
     s.ballX = ox + cs * 0.5; s.ballY = oy + cs * 0.5;
@@ -410,8 +410,15 @@ export default function TiltMaze() {
 
   useEffect(() => {
     const canvas = canvasRef.current; if (!canvas) return;
-    canvas.width = window.innerWidth; canvas.height = window.innerHeight;
-    const onResize = () => { canvas.width = window.innerWidth; canvas.height = window.innerHeight; };
+    const applySize = () => {
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width  = window.innerWidth  * dpr;
+      canvas.height = window.innerHeight * dpr;
+      const ctx2 = canvas.getContext('2d');
+      if (ctx2) ctx2.setTransform(dpr, 0, 0, dpr, 0, 0);
+    };
+    applySize();
+    const onResize = applySize;
     window.addEventListener('resize', onResize);
     return () => {
       window.removeEventListener('resize', onResize);
@@ -542,6 +549,7 @@ export default function TiltMaze() {
           ctaLabel="Enable Motion & Start →"
           accentColor={accent}
           onStart={handleStart}
+          gradient="radial-gradient(ellipse 80% 70% at 50% 30%, #0a0f1a 0%, #060810 55%, #020308 100%)"
         />
       )}
       {gameState==='done' && b && (

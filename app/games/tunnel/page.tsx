@@ -781,6 +781,7 @@ export default function TunnelGame() {
               accentColor={accent}
               ctaTextColor="#000"
               onStart={handleStart}
+              gradient="radial-gradient(ellipse 80% 70% at 50% 30%, #001a10 0%, #000e08 55%, #000604 100%)"
             />
           </motion.div>
         )}

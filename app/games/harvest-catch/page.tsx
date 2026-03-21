@@ -911,6 +911,7 @@ export default function HarvestCatch() {
           sensorNote="Tilt your phone left/right to steer the basket"
           accentColor={theme.colors.accent ?? ACCENT}
           onStart={handleStart}
+          gradient="radial-gradient(ellipse 80% 70% at 50% 30%, #1a0d00 0%, #0e0700 55%, #060400 100%)"
         />
       )}
 

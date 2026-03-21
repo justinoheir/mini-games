@@ -483,6 +483,7 @@ export default function SpiralThrow() {
           accentColor={ACCENT}
           ctaTextColor="#000"
           onStart={handleStart}
+          gradient="radial-gradient(ellipse 80% 70% at 50% 30%, #1a0e00 0%, #0e0700 55%, #060400 100%)"
         />
       )}
             {/* New best banner */}

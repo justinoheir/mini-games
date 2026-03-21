@@ -977,6 +977,7 @@ export default function CupidShot() {
           ctaLabel="Shoot Your Shot 🏹"
           accentColor={accent}
           onStart={handleStart}
+          gradient="radial-gradient(ellipse 80% 70% at 50% 30%, #1a0814 0%, #0e0409 55%, #060206 100%)"
         />
       )}
 

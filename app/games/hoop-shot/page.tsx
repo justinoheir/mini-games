@@ -132,8 +132,8 @@ export default function HoopShot() {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const s = stateRef.current;
-    s.ballX = canvas.width / 2;
-    s.ballY = canvas.height - 80;
+    s.ballX = canvas.offsetWidth / 2;
+    s.ballY = canvas.offsetHeight - 80;
     s.ballVX = 0; s.ballVY = 0;
     s.ballInFlight = false;
     s.ballVisible = true;
@@ -146,7 +146,7 @@ export default function HoopShot() {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
     const s = stateRef.current;
-    const W = canvas.width, H = canvas.height;
+    const W = canvas.offsetWidth, H = canvas.offsetHeight;
 
     s.running = true;
     s.timeLeft = DURATION;
@@ -451,12 +451,15 @@ export default function HoopShot() {
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    canvas.width = window.innerWidth;
-    canvas.height = window.innerHeight;
-    const onResize = () => {
-      canvas.width = window.innerWidth;
-      canvas.height = window.innerHeight;
+    const applySize = () => {
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width  = window.innerWidth  * dpr;
+      canvas.height = window.innerHeight * dpr;
+      const ctx2 = canvas.getContext('2d');
+      if (ctx2) ctx2.setTransform(dpr, 0, 0, dpr, 0, 0);
     };
+    applySize();
+    const onResize = applySize;
     const onForceEnd = () => { if (stateRef.current.running) endGame(); };
     window.addEventListener('resize', onResize);
     window.addEventListener('game:force-end', onForceEnd);
@@ -529,6 +532,7 @@ export default function HoopShot() {
           ctaLabel="Start Game →"
           accentColor={ACCENT}
           onStart={handleStart}
+          gradient="radial-gradient(ellipse 80% 70% at 50% 30%, #1a0c00 0%, #0e0700 55%, #060400 100%)"
         />
       )}
       {phase === 'done' && sig && (

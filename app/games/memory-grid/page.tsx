@@ -771,6 +771,7 @@ export default function MemoryGridGame() {
           accentColor={accentColor}
           onStart={handleStart}
           iconNode={<Brain size={80} color={accentColor} strokeWidth={1.5} />}
+          gradient="radial-gradient(ellipse 80% 70% at 50% 30%, #0f0820 0%, #080514 55%, #040208 100%)"
         />
       )}
 

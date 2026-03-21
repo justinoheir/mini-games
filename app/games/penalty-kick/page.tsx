@@ -510,6 +510,7 @@ export default function PenaltyKick() {
           ctaLabel="Start Kicking →"
           accentColor={ACCENT}
           onStart={handleStart}
+          gradient="radial-gradient(ellipse 80% 70% at 50% 30%, #001a08 0%, #000e04 55%, #000602 100%)"
         />
       )}
       {/* New best banner */}
