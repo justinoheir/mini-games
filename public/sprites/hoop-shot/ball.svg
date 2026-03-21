@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <!-- Basketball -->
+  <circle cx="50" cy="50" r="44" fill="#e97316"/>
+  <!-- Seam lines -->
+  <path d="M50 6 Q70 30 70 50 Q70 70 50 94" fill="none" stroke="#7c2d12" stroke-width="3"/>
+  <path d="M50 6 Q30 30 30 50 Q30 70 50 94" fill="none" stroke="#7c2d12" stroke-width="3"/>
+  <path d="M6 50 Q30 35 50 35 Q70 35 94 50" fill="none" stroke="#7c2d12" stroke-width="3"/>
+  <path d="M6 50 Q30 65 50 65 Q70 65 94 50" fill="none" stroke="#7c2d12" stroke-width="3"/>
+  <!-- Shine -->
+  <ellipse cx="36" cy="30" rx="10" ry="7" fill="white" opacity="0.25" transform="rotate(-30 36 30)"/>
+</svg>

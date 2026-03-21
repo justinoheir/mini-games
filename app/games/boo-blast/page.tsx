@@ -142,6 +142,21 @@ interface GameState {
 
 type Phase = 'start' | 'countdown' | 'playing' | 'done';
 
+// ─── SPRITE CACHE ─────────────────────────────────────────────────────────────
+const _spriteCache = new Map<string, HTMLImageElement>();
+function loadSprite(src: string): HTMLImageElement {
+  if (_spriteCache.has(src)) return _spriteCache.get(src)!;
+  const img = new Image();
+  img.src = src;
+  _spriteCache.set(src, img);
+  return img;
+}
+// Pre-warm sprites
+if (typeof window !== 'undefined') {
+  loadSprite('/sprites/boo-blast/ghost.svg');
+  loadSprite('/sprites/boo-blast/boss.svg');
+}
+
 // ─── COMPONENT ────────────────────────────────────────────────────────────────
 export default function BooBlastGame() {
   const theme        = useBrandTheme();
@@ -394,21 +409,31 @@ export default function BooBlastGame() {
 
         // ── Draw ghost ─────────────────────────────────────────────────────
         const isBoss = ghost.typeId === 'boss_ghost';
+        const ghostSprite = loadSprite(isBoss ? '/sprites/boo-blast/boss.svg' : '/sprites/boo-blast/ghost.svg');
+        const half = ghost.size / 2;
         ctx.save();
         ctx.globalAlpha  = ghost.opacity;
         ctx.shadowBlur   = isBoss ? 50 : 22;
         ctx.shadowColor  = isBoss ? '#ff44ff' : s.accentColor;
-        ctx.font         = `${ghost.size}px "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif`;
-        ctx.textAlign    = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(ghost.emoji, ghost.x, ghost.y);
+        if (ghostSprite.complete && ghostSprite.naturalWidth > 0) {
+          ctx.drawImage(ghostSprite, ghost.x - half, ghost.y - half, ghost.size, ghost.size);
+        } else {
+          ctx.font         = `${ghost.size}px "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif`;
+          ctx.textAlign    = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(ghost.emoji, ghost.x, ghost.y);
+        }
 
         // Extra outer glow pass for boss
         if (isBoss) {
           ctx.shadowBlur  = 80;
           ctx.shadowColor = '#ff00ff';
           ctx.globalAlpha = ghost.opacity * 0.5;
-          ctx.fillText(ghost.emoji, ghost.x, ghost.y);
+          if (ghostSprite.complete && ghostSprite.naturalWidth > 0) {
+            ctx.drawImage(ghostSprite, ghost.x - half, ghost.y - half, ghost.size, ghost.size);
+          } else {
+            ctx.fillText(ghost.emoji, ghost.x, ghost.y);
+          }
         }
         ctx.restore();
       }

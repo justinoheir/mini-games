@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <!-- Frisbee / disc shape -->
+  <!-- Main disc body -->
+  <ellipse cx="50" cy="52" rx="44" ry="12" fill="#22c55e"/>
+  <!-- Dome top -->
+  <ellipse cx="50" cy="48" rx="44" ry="10" fill="#4ade80"/>
+  <!-- Center dome -->
+  <ellipse cx="50" cy="44" rx="20" ry="8" fill="#86efac"/>
+  <!-- Rim highlight -->
+  <ellipse cx="50" cy="52" rx="44" ry="12" fill="none" stroke="#166534" stroke-width="2"/>
+  <!-- Top shine -->
+  <ellipse cx="38" cy="41" rx="8" ry="4" fill="white" opacity="0.3" transform="rotate(-15 38 41)"/>
+</svg>

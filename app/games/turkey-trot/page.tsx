@@ -115,6 +115,19 @@ interface GameState {
 
 type Phase = 'start' | 'countdown' | 'playing' | 'done';
 
+// ─── SPRITE CACHE ─────────────────────────────────────────────────────────────
+const _ttSpriteCache = new Map<string, HTMLImageElement>();
+function ttLoadSprite(src: string): HTMLImageElement {
+  if (_ttSpriteCache.has(src)) return _ttSpriteCache.get(src)!;
+  const img = new Image();
+  img.src = src;
+  _ttSpriteCache.set(src, img);
+  return img;
+}
+if (typeof window !== 'undefined') {
+  ttLoadSprite('/sprites/turkey-trot/turkey.png');
+}
+
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
 function getQuadrant(x: number, y: number, W: number, H: number): number {
   return (y >= H / 2 ? 2 : 0) + (x >= W / 2 ? 1 : 0);
@@ -399,14 +412,20 @@ export default function TurkeyTrotGame() {
         if (leaf.y > H + 30)  { leaf.y = -20; leaf.x = Math.random() * W; }
         if (leaf.x < -30)     { leaf.x = W + 20; }
         if (leaf.x > W + 30)  { leaf.x = -20; }
+        const _leafSprite = ttLoadSprite('/sprites/harvest-catch/leaf.svg');
         ctx.save();
         ctx.globalAlpha  = leaf.alpha;
         ctx.translate(leaf.x, leaf.y);
         ctx.rotate(leaf.rotation);
-        ctx.font         = `${leaf.size}px serif`;
-        ctx.textAlign    = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(leaf.emoji, 0, 0);
+        if (_leafSprite.complete && _leafSprite.naturalWidth > 0) {
+          const _lh = leaf.size;
+          ctx.drawImage(_leafSprite, -_lh / 2, -_lh / 2, _lh, _lh);
+        } else {
+          ctx.font         = `${leaf.size}px serif`;
+          ctx.textAlign    = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(leaf.emoji, 0, 0);
+        }
         ctx.restore();
       }
 
@@ -470,10 +489,16 @@ export default function TurkeyTrotGame() {
       }
       ctx.translate(t.x, t.y);
       if (t.vx < 0) ctx.scale(-1, 1);
-      ctx.font         = `${TURKEY_SIZE}px serif`;
-      ctx.textAlign    = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText('🦃', 0, 0);
+      const _turkeySprite = ttLoadSprite('/sprites/turkey-trot/turkey.png');
+      if (_turkeySprite.complete && _turkeySprite.naturalWidth > 0) {
+        const _th = TURKEY_SIZE;
+        ctx.drawImage(_turkeySprite, -_th / 2, -_th / 2, _th, _th);
+      } else {
+        ctx.font         = `${TURKEY_SIZE}px serif`;
+        ctx.textAlign    = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('🦃', 0, 0);
+      }
       ctx.restore();
 
       // ── Golden turkey ─────────────────────────────────────────────────────
@@ -511,10 +536,16 @@ export default function TurkeyTrotGame() {
           ctx.globalAlpha  = Math.min(1, lifeRatio * 1.6);
           ctx.translate(g.x, g.y);
           if (g.vx < 0) ctx.scale(-1, 1);
-          ctx.font         = `${TURKEY_SIZE}px serif`;
-          ctx.textAlign    = 'center';
-          ctx.textBaseline = 'middle';
-          ctx.fillText('🦃', 0, 0);
+          const _gtSprite = ttLoadSprite('/sprites/turkey-trot/turkey.png');
+          if (_gtSprite.complete && _gtSprite.naturalWidth > 0) {
+            const _gth = TURKEY_SIZE;
+            ctx.drawImage(_gtSprite, -_gth / 2, -_gth / 2, _gth, _gth);
+          } else {
+            ctx.font         = `${TURKEY_SIZE}px serif`;
+            ctx.textAlign    = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('🦃', 0, 0);
+          }
           ctx.restore();
         }
       }

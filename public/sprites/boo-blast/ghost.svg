@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 110">
+  <!-- Ghost body: rounded top, wavy bottom -->
+  <path d="M50 8 C24 8 14 28 14 50 L14 82
+    Q14 88 18 88 Q22 88 24 82 Q26 76 28 82 Q30 88 34 88 Q38 88 40 82 Q42 76 44 82 Q46 88 50 88
+    Q54 88 56 82 Q58 76 60 82 Q62 88 66 88 Q70 88 72 82 Q74 76 76 82 Q78 88 82 88 Q86 88 86 82
+    L86 50 C86 28 76 8 50 8 Z"
+    fill="white" opacity="0.92" />
+  <!-- Left eye -->
+  <ellipse cx="36" cy="46" rx="10" ry="10" fill="#7c3aed"/>
+  <ellipse cx="38" cy="44" rx="4" ry="4" fill="white"/>
+  <!-- Right eye -->
+  <ellipse cx="64" cy="46" rx="10" ry="10" fill="#7c3aed"/>
+  <ellipse cx="66" cy="44" rx="4" ry="4" fill="white"/>
+  <!-- Mouth -->
+  <path d="M40 62 Q50 70 60 62" stroke="#7c3aed" stroke-width="3" fill="none" stroke-linecap="round"/>
+</svg>

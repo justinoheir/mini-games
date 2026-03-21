@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <!-- Skull cranium -->
+  <ellipse cx="50" cy="38" rx="32" ry="30" fill="#f0e6ff"/>
+  <!-- Jaw -->
+  <rect x="24" y="62" width="52" height="22" rx="4" fill="#f0e6ff"/>
+  <!-- Eye sockets -->
+  <ellipse cx="35" cy="36" rx="11" ry="12" fill="#1e1b4b"/>
+  <ellipse cx="65" cy="36" rx="11" ry="12" fill="#1e1b4b"/>
+  <!-- Nose cavity -->
+  <path d="M45 53 L55 53 L50 60 Z" fill="#1e1b4b"/>
+  <!-- Teeth separators -->
+  <line x1="37" y1="63" x2="37" y2="82" stroke="#1e1b4b" stroke-width="3"/>
+  <line x1="50" y1="63" x2="50" y2="82" stroke="#1e1b4b" stroke-width="3"/>
+  <line x1="63" y1="63" x2="63" y2="82" stroke="#1e1b4b" stroke-width="3"/>
+  <!-- Outline -->
+  <ellipse cx="50" cy="38" rx="32" ry="30" fill="none" stroke="#9333ea" stroke-width="2" opacity="0.5"/>
+  <rect x="24" y="62" width="52" height="22" rx="4" fill="none" stroke="#9333ea" stroke-width="2" opacity="0.5"/>
+</svg>

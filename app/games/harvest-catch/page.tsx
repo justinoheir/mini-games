@@ -146,6 +146,34 @@ interface BgLeaf {
 
 type Phase = 'start' | 'countdown' | 'playing' | 'done';
 
+// ─── SPRITE CACHE ─────────────────────────────────────────────────────────────
+const _hcSpriteCache = new Map<string, HTMLImageElement>();
+function hcLoadSprite(src: string): HTMLImageElement {
+  if (_hcSpriteCache.has(src)) return _hcSpriteCache.get(src)!;
+  const img = new Image();
+  img.src = src;
+  _hcSpriteCache.set(src, img);
+  return img;
+}
+
+// Map item defId → sprite path
+const HC_SPRITES: Record<string, string> = {
+  turkey:        '/sprites/harvest-catch/turkey.png',
+  golden_turkey: '/sprites/harvest-catch/turkey.png',
+  corn:          '/sprites/harvest-catch/corn.png',
+  cranberry:     '/sprites/harvest-catch/cranberry.png',
+  leaf:          '/sprites/harvest-catch/leaf.svg',
+  brussels:      '/sprites/harvest-catch/brussels.png',
+  fruitcake:     '/sprites/harvest-catch/fruitcake.png',
+  bone:          '/sprites/harvest-catch/bone.svg',
+  pumpkin:       '/sprites/harvest-catch/pumpkin.png',
+};
+
+// Pre-warm sprites
+if (typeof window !== 'undefined') {
+  Object.values(HC_SPRITES).forEach(hcLoadSprite);
+}
+
 interface GameState {
   running: boolean;
   timeLeft: number;
@@ -635,12 +663,19 @@ export default function HarvestCatch() {
         ctx.save();
         ctx.translate(item.x, item.y);
         ctx.rotate(item.rotation);
-        ctx.font = `${item.size}px serif`;
         if (item.defId === 'golden_turkey') {
           ctx.shadowBlur = 22;
           ctx.shadowColor = '#fbbf24';
         }
-        ctx.fillText(item.emoji, 0, 0);
+        const spriteSrc = HC_SPRITES[item.defId];
+        const spriteImg = spriteSrc ? hcLoadSprite(spriteSrc) : null;
+        if (spriteImg && spriteImg.complete && spriteImg.naturalWidth > 0) {
+          const half = item.size / 2;
+          ctx.drawImage(spriteImg, -half, -half, item.size, item.size);
+        } else {
+          ctx.font = `${item.size}px serif`;
+          ctx.fillText(item.emoji, 0, 0);
+        }
         ctx.shadowBlur = 0;
         ctx.restore();
       }
