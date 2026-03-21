@@ -29,6 +29,19 @@ import SwipeInstructions from '@/components/SwipeInstructions';
 
 const CATEGORY = CATEGORY_THEMES.sports;
 
+// ─── SPRITE CACHE ─────────────────────────────────────────────────────────────
+const _spriteCache = new Map<string, HTMLImageElement>();
+function _loadSprite(src: string): HTMLImageElement {
+  if (_spriteCache.has(src)) return _spriteCache.get(src)!;
+  const img = new Image();
+  img.src = src;
+  _spriteCache.set(src, img);
+  return img;
+}
+if (typeof window !== 'undefined') {
+  _loadSprite('/sprites/balance-beam/ball.svg');
+}
+
 // ─── SPEC CONSTANTS ────────────────────────────────────────────────────────────
 const GAME_ID      = 'balance-beam';
 const PB_KEY       = 'pb_balance-beam';
@@ -564,24 +577,26 @@ export default function BalanceBeamGame() {
         ctx.fill();
         ctx.restore();
 
-        // Ball glow
+        // Ball sprite
         ctx.save();
         ctx.shadowBlur  = 18;
         ctx.shadowColor = 'rgba(255, 255, 255, 0.55)';
-
-        // Radial gradient for sphere look
-        const ballGrad = ctx.createRadialGradient(
-          ballSX - BALL_RADIUS * 0.3, ballSY - BALL_RADIUS * 0.35, 0,
-          ballSX, ballSY, BALL_RADIUS,
-        );
-        ballGrad.addColorStop(0,   '#ffffff');
-        ballGrad.addColorStop(0.4, '#e2e8f0');
-        ballGrad.addColorStop(1,   '#94a3b8');
-
-        ctx.fillStyle = ballGrad;
-        ctx.beginPath();
-        ctx.arc(ballSX, ballSY, BALL_RADIUS, 0, Math.PI * 2);
-        ctx.fill();
+        const _bbBall = _loadSprite('/sprites/balance-beam/ball.svg');
+        if (_bbBall.complete && _bbBall.naturalWidth > 0) {
+          ctx.drawImage(_bbBall, ballSX - BALL_RADIUS, ballSY - BALL_RADIUS, BALL_RADIUS * 2, BALL_RADIUS * 2);
+        } else {
+          const ballGrad = ctx.createRadialGradient(
+            ballSX - BALL_RADIUS * 0.3, ballSY - BALL_RADIUS * 0.35, 0,
+            ballSX, ballSY, BALL_RADIUS,
+          );
+          ballGrad.addColorStop(0,   '#ffffff');
+          ballGrad.addColorStop(0.4, '#e2e8f0');
+          ballGrad.addColorStop(1,   '#94a3b8');
+          ctx.fillStyle = ballGrad;
+          ctx.beginPath();
+          ctx.arc(ballSX, ballSY, BALL_RADIUS, 0, Math.PI * 2);
+          ctx.fill();
+        }
         ctx.shadowBlur = 0;
         ctx.restore();
       }

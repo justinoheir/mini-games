@@ -21,6 +21,20 @@ const GAME_ID = 'breath-rider';
 const PB_KEY = 'pb_breath-rider';
 const SCROLL_SPEED = 2.2;
 
+// ─── SPRITE CACHE ─────────────────────────────────────────────────────────────
+const _spriteCache = new Map<string, HTMLImageElement>();
+function _loadSprite(src: string): HTMLImageElement {
+  if (_spriteCache.has(src)) return _spriteCache.get(src)!;
+  const img = new Image();
+  img.src = src;
+  _spriteCache.set(src, img);
+  return img;
+}
+if (typeof window !== 'undefined') {
+  _loadSprite('/sprites/breath-rider/bird.svg');
+  _loadSprite('/sprites/breath-rider/pipe.svg');
+}
+
 type GameState = 'start' | 'requesting' | 'countdown' | 'playing' | 'done';
 interface BehaviorData { breathVariance: number; avgAltitude: number; coinsCollected: number; spikeCollisions: number; }
 interface Coin { x: number; y: number; collected: boolean; floatY: number; floatT: number; spawnX: number; }
@@ -377,11 +391,18 @@ export default function BreathRider() {
 
       ctx.save();
       ctx.shadowBlur = 20; ctx.shadowColor = s.accentColor;
-      ctx.beginPath(); ctx.arc(s.charX, s.charY, 18, 0, Math.PI * 2);
-      ctx.fillStyle = s.accentColor; ctx.fill();
-      ctx.strokeStyle = `rgba(${s.accentRgb},0.6)`; ctx.lineWidth = 2; ctx.stroke();
+      // Volume pulse ring
       ctx.beginPath(); ctx.arc(s.charX, s.charY, 18 + vol * 0.25, 0, Math.PI * 2);
       ctx.fillStyle = `rgba(${s.accentRgb},${vol/400})`; ctx.fill();
+      // Bird sprite
+      const _brBird = _loadSprite('/sprites/breath-rider/bird.svg');
+      if (_brBird.complete && _brBird.naturalWidth > 0) {
+        ctx.drawImage(_brBird, s.charX - 28, s.charY - 22, 56, 44);
+      } else {
+        ctx.beginPath(); ctx.arc(s.charX, s.charY, 18, 0, Math.PI * 2);
+        ctx.fillStyle = s.accentColor; ctx.fill();
+        ctx.strokeStyle = `rgba(${s.accentRgb},0.6)`; ctx.lineWidth = 2; ctx.stroke();
+      }
       ctx.restore();
 
       if (s.usingTouchFallback) {

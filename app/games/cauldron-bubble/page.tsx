@@ -14,6 +14,20 @@ import { postWebhook } from '@/lib/webhook';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
 import SwipeInstructions from '@/components/SwipeInstructions';
 
+// ─── SPRITE CACHE ─────────────────────────────────────────────────────────────
+const _spriteCache = new Map<string, HTMLImageElement>();
+function _loadSprite(src: string): HTMLImageElement {
+  if (_spriteCache.has(src)) return _spriteCache.get(src)!;
+  const img = new Image();
+  img.src = src;
+  _spriteCache.set(src, img);
+  return img;
+}
+if (typeof window !== 'undefined') {
+  _loadSprite('/sprites/cauldron-bubble/bubble.svg');
+  _loadSprite('/sprites/cauldron-bubble/cauldron.svg');
+}
+
 // ─── SPEC CONSTANTS ──────────────────────────────────────────────────────────
 
 const GAME_ID      = 'cauldron-bubble';

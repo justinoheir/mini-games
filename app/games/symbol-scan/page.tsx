@@ -29,6 +29,23 @@ import { Search, Eye, Hand, Flame, Trophy } from 'lucide-react';
 
 const CATEGORY_ACCENT = CATEGORY_THEMES.cognitive.primaryAccent;
 
+// ─── SPRITE CACHE ─────────────────────────────────────────────────────────────
+const _spriteCache = new Map<string, HTMLImageElement>();
+function _loadSprite(src: string): HTMLImageElement {
+  if (_spriteCache.has(src)) return _spriteCache.get(src)!;
+  const img = new Image();
+  img.src = src;
+  _spriteCache.set(src, img);
+  return img;
+}
+if (typeof window !== 'undefined') {
+  _loadSprite('/sprites/symbol-scan/star.svg');
+  _loadSprite('/sprites/symbol-scan/circle.svg');
+  _loadSprite('/sprites/symbol-scan/triangle.svg');
+  _loadSprite('/sprites/symbol-scan/diamond.svg');
+  _loadSprite('/sprites/symbol-scan/heart.svg');
+}
+
 // ─── SPEC CONSTANTS ──────────────────────────────────────────────────────────
 
 const GAME_ID      = 'symbol-scan';
