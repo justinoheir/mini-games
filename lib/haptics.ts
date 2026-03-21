@@ -8,6 +8,9 @@
 function vibrate(pattern: number | number[]): void {
   try {
     if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
+      // Respect ?haptics=off URL param for accessibility (B-M3)
+      if (typeof window !== 'undefined' &&
+          new URLSearchParams(window.location.search).get('haptics') === 'off') return;
       navigator.vibrate(pattern);
     }
   } catch {

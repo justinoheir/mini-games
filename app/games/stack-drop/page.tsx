@@ -135,8 +135,8 @@ export default function StackDropGame() {
     const numScore = typeof scoreDisplay === 'number' ? scoreDisplay : 0;
     if (numScore > prevScoreRef.current) {
       triggerPop(`+${numScore - prevScoreRef.current}`, window.innerWidth / 2, 200);
-      hapticScore();
-      playScoreHit('default', numScore - prevScoreRef.current);
+      // Note: sfx.collect() already fires synchronously in dropBlock().
+      // Do NOT call playScoreHit / hapticScore here — would cause double audio + haptic.
       setStreak(Math.floor(numScore / 5));
     }
     prevScoreRef.current = numScore;
@@ -360,15 +360,17 @@ export default function StackDropGame() {
       const W = cvs.width;
       const H = cvs.height;
 
-      // Move slider
-      s.sliderX += s.sliderDir * s.sliderSpeed * (dt / 16.67);
-      if (s.sliderX + s.sliderWidth >= W) {
-        s.sliderX  = W - s.sliderWidth;
-        s.sliderDir = -1;
-      } else if (s.sliderX <= 0) {
-        s.sliderX  = 0;
-        s.sliderDir = 1;
-      }
+      // Move slider — pause during the 1-second miss window
+      if (performance.now() > s.missUntilTs) {
+        s.sliderX += s.sliderDir * s.sliderSpeed * (dt / 16.67);
+        if (s.sliderX + s.sliderWidth >= W) {
+          s.sliderX  = W - s.sliderWidth;
+          s.sliderDir = -1;
+        } else if (s.sliderX <= 0) {
+          s.sliderX  = 0;
+          s.sliderDir = 1;
+        }
+      } // end miss-pause guard
 
       // Clear
       ctx.fillStyle = '#08090f';
@@ -427,6 +429,26 @@ export default function StackDropGame() {
 
       ctx.restore();
 
+      // ⚡ Overhang debris particles — update physics + draw
+      if (s.particles.length > 0) {
+        ctx.save();
+        ctx.translate(0, -s.cameraY);
+        for (let pi = s.particles.length - 1; pi >= 0; pi--) {
+          const p = s.particles[pi];
+          p.x  += p.vx;
+          p.y  += p.vy;
+          p.vy += 0.15;   // gravity
+          p.life -= 0.03;
+          p.alpha = Math.max(0, p.life * 0.85);
+          if (p.life <= 0) { s.particles.splice(pi, 1); continue; }
+          ctx.globalAlpha = p.alpha;
+          ctx.fillStyle   = p.color;
+          ctx.fillRect(p.x, p.y, p.w, p.h);
+        }
+        ctx.globalAlpha = 1;
+        ctx.restore();
+      }
+
       // ⚡ Miss shake + MISS! text flash (600ms)
       if (s.missActive) {
         if (s.missStartTs === 0) s.missStartTs = ts;
@@ -458,8 +480,12 @@ export default function StackDropGame() {
   }, [initStack]);
 
   // ─── CANVAS SETUP ────────────────────────────────────────────────────────
+  // NOTE: canvas only mounts when phase is 'countdown' or 'playing', so we
+  // must include 'phase' in deps to guarantee this effect re-runs once the
+  // canvas element is actually in the DOM.
 
   useEffect(() => {
+    if (phase !== 'playing' && phase !== 'countdown') return;
     const canvas = canvasRef.current;
     if (!canvas) return;
 
@@ -485,7 +511,7 @@ export default function StackDropGame() {
       window.removeEventListener('resize', resize);
       canvas.removeEventListener('pointerdown', onPointerDown);
     };
-  }, [dropBlock]);
+  }, [dropBlock, phase]);
 
   // ─── CLEANUP ─────────────────────────────────────────────────────────────
 
@@ -544,7 +570,8 @@ export default function StackDropGame() {
           onDone={() => setShowInstructions(false)}
         />
       )}
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
+
       {phase === 'start' && (
         <GameStartScreen
           emoji={GAME_EMOJI}
@@ -564,6 +591,8 @@ export default function StackDropGame() {
         <>
           <canvas
             ref={canvasRef}
+            role="application"
+            aria-label="Stack Drop game canvas — tap to drop blocks"
             style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none' }}
           />
           {phase === 'playing' && (

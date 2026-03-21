@@ -42,14 +42,14 @@ const GAME_TAGLINE = 'Tilt to survive. Don\'t stop moving.';
 
 const MAX_LIVES     = 5;   // increased from 3 for casual-player accessibility
 const PLAYER_RADIUS = 18;
-const MAX_PARTICLES = 150;
+const MAX_PARTICLES = 50;
 
 // ─── SPEED STAGES (pure function — no stale closure risk) ────────────────────
 
 function getSpeedParams(elapsed: number): { speed: number; spawnMs: number } {
-  if (elapsed < 15) return { speed: 2.8, spawnMs: 2200 };  // stage 1: gentler for casual players
-  if (elapsed < 30) return { speed: 5.8, spawnMs: 1200 };
-  return { speed: 8.0, spawnMs: 900 };
+  if (elapsed < 15) return { speed: 1.8, spawnMs: 2800 };  // stage 1: very accessible — ~4.5s per obstacle
+  if (elapsed < 30) return { speed: 5.8, spawnMs: 1200 };  // stage 2: medium challenge
+  return { speed: 8.0, spawnMs: 900 };                     // stage 3: fast and intense
 }
 
 // ─── BEHAVIORAL SIGNALS ──────────────────────────────────────────────────────
@@ -411,7 +411,7 @@ export default function DodgeBlitzGame() {
 
       // ── Ghost trail ─────────────────────────────────────────────────────
       s.playerTrail.unshift({ x: playerPx, y: playerPy, alpha: 0.5 });
-      if (s.playerTrail.length > 14) s.playerTrail.length = 14;
+      if (s.playerTrail.length > 10) s.playerTrail.length = 10;
       for (let ti = 0; ti < s.playerTrail.length; ti++) {
         s.playerTrail[ti].alpha = (1 - ti / s.playerTrail.length) * 0.42;
       }
@@ -456,19 +456,16 @@ export default function DodgeBlitzGame() {
         }
       }
 
-      // Player trail
+      // Player trail — no shadowBlur here (perf: saves 10 shadow ops/frame)
       ctx.save();
+      ctx.fillStyle = s.accentColor;
       for (const tp of s.playerTrail) {
         ctx.globalAlpha = tp.alpha;
-        ctx.shadowBlur = 10;
-        ctx.shadowColor = s.accentColor;
-        ctx.fillStyle = s.accentColor;
         ctx.beginPath();
         ctx.arc(tp.x, tp.y, PLAYER_RADIUS * 0.52, 0, Math.PI * 2);
         ctx.fill();
       }
       ctx.globalAlpha = 1;
-      ctx.shadowBlur = 0;
       ctx.restore();
 
       // Player orb
@@ -778,7 +775,7 @@ export default function DodgeBlitzGame() {
       {phase === 'start' && showInstructions && (
         <SwipeInstructions
           gameId="dodge-blitz"
-          steps={[{ icon: "👆", title: "Tap to dodge", body: "Tap anywhere to jump or dodge incoming obstacles." }, { icon: "⚡", title: "React fast", body: "Obstacles speed up as your score grows." }, { icon: "🔥", title: "Survive", body: "How long can you last?" }]}
+          steps={[{ icon: "📱", title: "Tilt to dodge", body: "Tilt your phone left and right to dodge incoming obstacles. On desktop? Hold left/right side of the screen." }, { icon: "⚡", title: "React fast", body: "Obstacles speed up as your score grows." }, { icon: "🔥", title: "Survive", body: "How long can you last?" }]}
           onDone={() => setShowInstructions(false)}
         />
       )}

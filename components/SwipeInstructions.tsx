@@ -1,10 +1,10 @@
 'use client';
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 
 interface Step {
-  icon: string;
+  icon: React.ReactNode | string;
   title: string;
   body: string;
 }
@@ -100,7 +100,9 @@ export default function SwipeInstructions({ gameId, steps, onDone }: Props) {
             cursor: 'grab',
           }}
         >
-          <div style={{ fontSize: 64, lineHeight: 1, marginBottom: 20 }}>{step.icon}</div>
+          <div style={{ lineHeight: 1, marginBottom: 20, display: 'flex', justifyContent: 'center', alignItems: 'center', height: 64 }}>
+            {typeof step.icon === 'string' ? <span style={{ fontSize: 64 }}>{step.icon}</span> : step.icon}
+          </div>
           <h2 style={{
             color: '#fff',
             fontSize: 22,

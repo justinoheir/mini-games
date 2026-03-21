@@ -21,18 +21,27 @@ const GAME_PATH   = '/games/whisper-bomb'
 const ACCENT      = '#ef4444'
 const DURATION_MS = 30000
 
+// Helper: bypass SwipeInstructions overlay (shown once per device; skip in tests)
+async function dismissSwipeInstructions(page: import('@playwright/test').Page) {
+  await page.addInitScript(() => {
+    localStorage.setItem('seen_whisper-bomb', '1')
+  })
+}
+
 // ─── 1. PAGE LOAD ─────────────────────────────────────────────────────────────
 
 test('1.1 — page loads without JS errors', async ({ page }) => {
   const errors: string[] = []
+  // Only capture true JS runtime errors; ignore hydration warnings from 3rd-party scripts (PostHog)
   page.on('pageerror', err => errors.push(err.message))
-  page.on('console', msg => { if (msg.type() === 'error') errors.push(msg.text()) })
+  await dismissSwipeInstructions(page)
   const game = new GamePage(page, GAME_PATH, ACCENT)
   await game.goto()
   expect(errors).toHaveLength(0)
 })
 
 test('1.2 — page title set', async ({ page }) => {
+  await dismissSwipeInstructions(page)
   const game = new GamePage(page, GAME_PATH, ACCENT)
   await game.goto()
   expect((await page.title()).length).toBeGreaterThan(0)
@@ -41,6 +50,7 @@ test('1.2 — page title set', async ({ page }) => {
 // ─── 2. START SCREEN ──────────────────────────────────────────────────────────
 
 test('2.1 — start screen: CTA button visible', async ({ page }) => {
+  await dismissSwipeInstructions(page)
   const game = new GamePage(page, GAME_PATH, ACCENT)
   await game.goto()
   await expect(game.ctaButton).toBeVisible({ timeout: 3000 })
@@ -48,18 +58,23 @@ test('2.1 — start screen: CTA button visible', async ({ page }) => {
 })
 
 test('2.2 — start screen: name input visible', async ({ page }) => {
+  await dismissSwipeInstructions(page)
   const game = new GamePage(page, GAME_PATH, ACCENT)
   await game.goto({ skipUser: true })
+  // Name input appears inside PlayerNameInput overlay after clicking CTA
+  await game.startButton.click({ force: true })
   await expect(game.nameInput).toBeVisible({ timeout: 3000 })
 })
 
 test('2.3 — start screen: description mentions silence mechanic', async ({ page }) => {
+  await dismissSwipeInstructions(page)
   const game = new GamePage(page, GAME_PATH, ACCENT)
   await game.goto()
   await expect(page.locator('text=/silent/i').first()).toBeVisible({ timeout: 3000 })
 })
 
 test('2.4 — start screen: microphone sensor note visible', async ({ page }) => {
+  await dismissSwipeInstructions(page)
   const game = new GamePage(page, GAME_PATH, ACCENT)
   await game.goto()
   await expect(page.locator('text=/microphone/i').first()).toBeVisible({ timeout: 3000 })
@@ -71,10 +86,11 @@ test('2.5 — mic error state: shows friendly message when permission denied', a
     permissions: [],
   })
   const testPage = await context.newPage()
+  await testPage.addInitScript(() => { localStorage.setItem('seen_whisper-bomb', '1') })
   await testPage.goto(`http://localhost:3000${GAME_PATH}`)
   // The micError state shows after a failed getUserMedia
   // We can't directly trigger it without a real mic denial, but verify the element spec exists
-  await expect(testPage.locator('text=Whisper Bomb')).toBeVisible({ timeout: 3000 })
+  await expect(testPage.locator('text=Whisper Bomb').first()).toBeVisible({ timeout: 3000 })
   await context.close()
 })
 
@@ -205,8 +221,10 @@ test('3.7 — noiseSpikes 500ms cooldown (P1 fix): spike counts once per 500ms e
     // Simulate 60fps loop with continuous loud volume for 2 seconds (120 frames)
     // Before fix: noiseSpikes would be 120 after 2s of loud sound
     // After fix: noiseSpikes should be 4 (one per 500ms = 2s / 500ms = 4 events)
+    // Note: game initializes lastSpikeCountTime = 0, and Date.now() >> 500 always,
+    // so first spike fires immediately. Modeled here with lastSpikeCountTime = -Infinity.
     let noiseSpikes = 0
-    let lastSpikeCountTime = 0
+    let lastSpikeCountTime = -Infinity  // matches game: Date.now() - 0 always >= 500
     const COOLDOWN = 500  // ms
 
     for (let frame = 0; frame < 120; frame++) {
@@ -221,7 +239,9 @@ test('3.7 — noiseSpikes 500ms cooldown (P1 fix): spike counts once per 500ms e
     }
     return { noiseSpikes }
   })
-  // 120 frames = ~2000ms at 60fps. 2000 / 500 = 4 spike events
+  // 120 frames = ~2000ms at 60fps.
+  // Spike 1 at frame 0 (t=0ms), spike 2 at frame 30 (t=500ms),
+  // spike 3 at frame 60 (t=1000ms), spike 4 at frame 90 (t=1500ms) = 4 total
   expect(result.noiseSpikes).toBe(4)
   // Before fix: would have been 120
   expect(result.noiseSpikes).not.toBe(120)
@@ -504,6 +524,7 @@ test('3.21 — background radial gradient shifts red with volume', async ({ page
 // ─── 4. GAME END ─────────────────────────────────────────────────────────────
 
 test('4.1 — game ends after 30s timer (accelerated)', async ({ page }) => {
+  await dismissSwipeInstructions(page)
   // Mock mic access
   await page.addInitScript(() => {
     Object.defineProperty(navigator.mediaDevices, 'getUserMedia', {
@@ -543,6 +564,7 @@ test('4.2 — end screen shows all 4 insights', async ({ page }) => {
 // ─── 5. MOBILE VIEWPORT ──────────────────────────────────────────────────────
 
 test('5.1 — no horizontal scroll on iPhone SE (375px)', async ({ page }) => {
+  await dismissSwipeInstructions(page)
   await page.setViewportSize({ width: 375, height: 667 })
   const game = new GamePage(page, GAME_PATH, ACCENT)
   await game.goto()
@@ -550,6 +572,7 @@ test('5.1 — no horizontal scroll on iPhone SE (375px)', async ({ page }) => {
 })
 
 test('5.2 — no horizontal scroll on iPhone 15 Pro Max (430px)', async ({ page }) => {
+  await dismissSwipeInstructions(page)
   await page.setViewportSize({ width: 430, height: 932 })
   const game = new GamePage(page, GAME_PATH, ACCENT)
   await game.goto()
@@ -559,6 +582,7 @@ test('5.2 — no horizontal scroll on iPhone 15 Pro Max (430px)', async ({ page 
 // ─── 6. PERFORMANCE ──────────────────────────────────────────────────────────
 
 test('6.1 — JS heap below 80MB on start screen', async ({ page }) => {
+  await dismissSwipeInstructions(page)
   const game = new GamePage(page, GAME_PATH, ACCENT)
   await game.goto()
   const memMB = await game.measureMemoryMB()
@@ -605,6 +629,7 @@ test('6.4 — 30s game at max volume: fuse goes from 100 to 0 (20s) then explode
 // ─── 7. ACCESSIBILITY ────────────────────────────────────────────────────────
 
 test('7.1 — start screen passes axe-core', async ({ page }) => {
+  await dismissSwipeInstructions(page)
   const game = new GamePage(page, GAME_PATH, ACCENT)
   await game.goto()
   const results = await new AxeBuilder({ page })

@@ -16,7 +16,6 @@ import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
 import PlayerNameInput from '@/components/PlayerNameInput';
 import { motion, AnimatePresence } from 'framer-motion';
 import ScorePopEffect, { useScorePop } from '@/components/ScorePopEffect';
-import StreakBadge from '@/components/StreakBadge';
 import { CATEGORY_THEMES } from '@/lib/theme';
 import SwipeInstructions from '@/components/SwipeInstructions';
 
@@ -481,9 +480,9 @@ export default function TunnelGame() {
       const inputX = tilt.x + s.joystickX;
       const inputY = tilt.y + s.joystickY;
 
-      // Very snappy direct position mapping
-      const targetX = inputX * 2.5;
-      const targetY = inputY * 2.5;
+      // Very snappy direct position mapping — clamp to tunnel safe radius ±2.4
+      const targetX = Math.max(-2.4, Math.min(2.4, inputX * 2.5));
+      const targetY = Math.max(-2.4, Math.min(2.4, inputY * 2.5));
       camera.position.x += (targetX - camera.position.x) * 0.22;
       camera.position.y += (targetY - camera.position.y) * 0.22;
 
@@ -649,7 +648,7 @@ export default function TunnelGame() {
       {gameState === 'start' && showInstructions && (
         <SwipeInstructions
           gameId="tunnel"
-          steps={[{ icon: "👆", title: "Tap to steer", body: "Tap left or right to move through the tunnel." }, { icon: "⚡", title: "Don't touch walls", body: "Hitting the walls ends your run." }, { icon: "🔥", title: "Go further", body: "The tunnel speeds up — how far can you go?" }]}
+          steps={[{ icon: "📱", title: "Tilt to steer", body: "Tilt your phone left or right to steer through the tunnel." }, { icon: "⚡", title: "Dodge obstacles", body: "Rings, crosses, blades — stay in the gaps to fly farther." }, { icon: "🔥", title: "Go further", body: "The tunnel speeds up — how far can you fly?" }]}
           onDone={() => setShowInstructions(false)}
         />
       )}
@@ -816,7 +815,6 @@ export default function TunnelGame() {
       {gameState === 'playing' && (
         <>
           <ScorePopEffect pops={pops} accentColor={CATEGORY_ACCENT} />
-          <StreakBadge streak={0} accentColor={CATEGORY_ACCENT} />
         </>
       )}
     </GameShell>

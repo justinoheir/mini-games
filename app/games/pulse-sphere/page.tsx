@@ -13,6 +13,7 @@ import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
 import { createTiltController } from '@/lib/tilt';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
+import { Orbit } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import ScorePopEffect, { useScorePop } from '@/components/ScorePopEffect';
 import StreakBadge from '@/components/StreakBadge';
@@ -80,7 +81,7 @@ export default function PulseSphere() {
     stream: null as MediaStream | null,
     analyser: null as AnalyserNode | null,
     audioCtx: null as AudioContext | null,
-    timeLeft: 60, intervalId: null as ReturnType<typeof setInterval> | null,
+    timeLeft: 45, intervalId: null as ReturnType<typeof setInterval> | null,
     // Tracking
     volumeSamples: [] as number[],
     tiltMagnitudes: [] as number[],
@@ -163,11 +164,11 @@ export default function PulseSphere() {
   const startLoop = useCallback(() => {
     const s = stateRef.current;
     s.volumeSamples = []; s.tiltMagnitudes = []; s.touchCount = 0;
-    s.timeLeft = 60; s.running = true; s.hue = 280;
+    s.timeLeft = 45; s.running = true; s.hue = 280;
     s.joystickX = 0; s.joystickY = 0;
     streakRef.current = 0; lastMilestoneRef.current = 0;
     setStreak(0); setNearMissMsg(false); setIsNewBest(false);
-    setTimeLeft(60); setGameState('playing');
+    setTimeLeft(45); setGameState('playing');
     stopMusicRef.current = startMusic('ambient');
     const capturedTheme = theme;
 
@@ -459,7 +460,10 @@ export default function PulseSphere() {
     tiltControllerRef.current?.stop();
   }, []);
 
-  const accent = theme.colors.accent;
+  // Pulse Sphere native accent is purple — consistent with Three.js sphere colour.
+  // White text on #a855f7 → 4.04:1 contrast (WCAG 2 AA pass for large/bold 20px text).
+  // The brand theme green (#00ff88) fails WCAG AA at 1.34:1 with white text.
+  const accent = '#a855f7';
 
   return (
     <>
@@ -476,7 +480,7 @@ export default function PulseSphere() {
       {gameState==='playing' && (
         <GameHUD
           items={[{ label: 'TIME', value: `${timeLeft}s`, danger: timeLeft <= 10 }]}
-          accentColor="#a855f7"
+          accentColor={accent}
         />
       )}
       {/* Mic fallback hint */}
@@ -518,16 +522,17 @@ export default function PulseSphere() {
           }} />
         </div>
       )}
-      {gameState==='countdown' && <Countdown onComplete={startLoop} accentColor="#a855f7" />}
+      {gameState==='countdown' && <Countdown onComplete={startLoop} accentColor={accent} />}
 
       {gameState==='start' && (
         <GameStartScreen
           emoji="🔮"
+          iconNode={<Orbit size={80} color={accent} strokeWidth={1.2} />}
           title="Pulse Sphere"
           description="Touch, move, and breathe to awaken the sphere. Your inputs shape it in real time."
           sensorNote="Uses mic, motion & touch"
           ctaLabel="Allow Access & Begin →"
-          accentColor="#a855f7"
+          accentColor={accent}
           ctaTextColor="#fff"
           onStart={handleStart}
         />
@@ -555,7 +560,7 @@ export default function PulseSphere() {
               { label: '👆 Touch engagement', value: `${touchScore}%`, color: '#a855f7' },
               { label: '🌟 Overall activity', value: `${Math.round((voiceScore + moveScore + touchScore) / 3)}%`, color: '#facc15' },
             ]}
-            accentColor="#a855f7"
+            accentColor={accent}
             onPlayAgain={handlePlayAgain}
           >
             <RadarChart voice={voiceScore} movement={moveScore} touch={touchScore} />

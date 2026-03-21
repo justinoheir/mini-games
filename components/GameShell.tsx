@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { ThemeContext } from '@/lib/ThemeContext';
 import { BrandTheme, DEFAULT_THEME } from '@/lib/brands';
@@ -10,6 +10,8 @@ import MobileGate from './MobileGate';
 interface GameShellProps {
   title: string;
   emoji: string;
+  /** Optional Lucide/React icon node to show instead of emoji in the title bar */
+  titleIcon?: React.ReactNode;
   accentColor: string;
   children: React.ReactNode;
   theme?: BrandTheme;
@@ -17,7 +19,7 @@ interface GameShellProps {
   mobileOnly?: boolean;
 }
 
-export default function GameShell({ title, emoji, accentColor, children, theme, mobileOnly = true }: GameShellProps) {
+export default function GameShell({ title, emoji, titleIcon, accentColor, children, theme, mobileOnly = true }: GameShellProps) {
   const router = useRouter();
   const resolvedTheme = theme ?? DEFAULT_THEME;
   const [backHovered, setBackHovered] = useState(false);
@@ -100,7 +102,10 @@ export default function GameShell({ title, emoji, accentColor, children, theme, 
               />
             ) : (
               <>
-                <span style={{ fontSize: 20 }}>{emoji}</span>
+                {titleIcon
+                  ? <span style={{ display: 'flex', alignItems: 'center' }}>{titleIcon}</span>
+                  : emoji ? <span style={{ fontSize: 20 }}>{emoji}</span> : null
+                }
                 <span style={{ color: 'var(--color-text)', fontWeight: 700, fontSize: 15, letterSpacing: '-0.3px' }}>
                   {title}
                 </span>

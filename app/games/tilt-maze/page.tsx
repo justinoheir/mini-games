@@ -14,10 +14,8 @@ import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
 import { motion, AnimatePresence } from 'framer-motion';
 import ScorePopEffect, { useScorePop } from '@/components/ScorePopEffect';
 import StreakBadge from '@/components/StreakBadge';
-import { CATEGORY_THEMES } from '@/lib/theme';
 import SwipeInstructions from '@/components/SwipeInstructions';
-
-const CATEGORY_ACCENT = CATEGORY_THEMES.cognitive.primaryAccent;
+import { Grid3x3 } from 'lucide-react';
 
 type MazeCell = { top: number; right: number; bottom: number; left: number };
 const GRID = 5;
@@ -111,16 +109,7 @@ export default function TiltMaze() {
   const [joystickThumb, setJoystickThumb] = useState({ x: 0, y: 0 });
   const [playerName, setPlayerName]   = useState('');
   const [playerAvatar, setPlayerAvatar] = useState('🎮');
-  const { pops, triggerPop } = useScorePop();
-  const prevScoreRef = useRef(0);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => {
-    const numScore = typeof 0 === 'number' ? 0 : 0;
-    if (numScore > prevScoreRef.current) {
-      triggerPop(`+${numScore - prevScoreRef.current}`, window.innerWidth / 2, 200);
-    }
-    prevScoreRef.current = numScore;
-  }, [0]); // triggerPop is stable
+  const { pops } = useScorePop();
   const playerSessionRef              = useRef<PlayerSession | null>(null);
   const [scorePop, setScorePop]       = useState<string | null>(null);
   const [nearMissMsg, setNearMissMsg] = useState(false);
@@ -546,6 +535,7 @@ export default function TiltMaze() {
       {gameState==='start' && (
         <GameStartScreen
           emoji="🌀"
+          iconNode={<Grid3x3 size={80} color={accent} strokeWidth={1.5} />}
           title="Tilt Maze"
           description="Tilt your phone to roll the ball through the maze. Reach the glowing exit before time runs out."
           sensorNote="Uses motion sensors"
@@ -574,8 +564,8 @@ export default function TiltMaze() {
       )}
       {gameState === 'playing' && (
         <>
-          <ScorePopEffect pops={pops} accentColor={CATEGORY_ACCENT} />
-          <StreakBadge streak={0} accentColor={CATEGORY_ACCENT} />
+          <ScorePopEffect pops={pops} accentColor={accent} />
+          <StreakBadge streak={0} accentColor={accent} />
         </>
       )}
     </GameShell>

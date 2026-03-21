@@ -48,7 +48,10 @@ test('2.1 — start screen: CTA button visible', async ({ page }) => {
 test('2.2 — start screen: name input visible', async ({ page }) => {
   const game = new GamePage(page, GAME_PATH, ACCENT)
   await game.goto({ skipUser: true })
-  await expect(game.nameInput).toBeVisible({ timeout: 3000 })
+  // Color Cascade uses a CTA-first flow: name input appears inside the PlayerNameInput
+  // overlay AFTER the CTA is clicked. Click the CTA to reveal the overlay.
+  await game.ctaButton.click({ force: true })
+  await expect(game.nameInput).toBeVisible({ timeout: 5000 })
 })
 
 test('2.3 — start screen: tagline visible', async ({ page }) => {

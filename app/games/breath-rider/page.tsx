@@ -14,10 +14,8 @@ import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
 import { motion, AnimatePresence } from 'framer-motion';
 import ScorePopEffect, { useScorePop } from '@/components/ScorePopEffect';
 import StreakBadge from '@/components/StreakBadge';
-import { CATEGORY_THEMES } from '@/lib/theme';
 import SwipeInstructions from '@/components/SwipeInstructions';
-
-const CATEGORY_ACCENT = CATEGORY_THEMES.breath.primaryAccent;
+import { Wind, Trophy, Mic, Navigation } from 'lucide-react';
 
 const GAME_ID = 'breath-rider';
 const PB_KEY = 'pb_breath-rider';
@@ -73,11 +71,11 @@ export default function BreathRider() {
     lastBreathVol: 0,
     streak: 0,
     lastNearMissScore: -1,
+    nearMissPending: false,
+    streakNeedsReset: false,
   });
 
-  // DOM refs for performance-critical overlays
-  const scorePopRef = useRef<HTMLDivElement>(null);
-  const streakBadgeRef = useRef<HTMLDivElement>(null);
+  // DOM ref for near-miss timeout tracking
   const nearMissTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [gameState, setGameState] = useState<GameState>('start');
@@ -93,6 +91,7 @@ export default function BreathRider() {
   useEffect(() => {
     const numScore = typeof score === 'number' ? score : 0;
     if (numScore > prevScoreRef.current) {
+      // Score batched with 1s timer — pop reflects coins collected in that second
       triggerPop(`+${numScore - prevScoreRef.current}`, window.innerWidth / 2, 200);
     }
     prevScoreRef.current = numScore;
@@ -100,6 +99,7 @@ export default function BreathRider() {
   const playerSessionRef = useRef<PlayerSession | null>(null);
   const [nearMissMsg, setNearMissMsg] = useState(false);
   const [isNewBest, setIsNewBest] = useState(false);
+  const [streak, setStreak] = useState(0);
 
   const getVolume = useCallback((): number => {
     const s = stateRef.current;
@@ -111,19 +111,7 @@ export default function BreathRider() {
     return Math.min(100, (Math.sqrt(sumSq / data.length) / 128) * 100);
   }, []);
 
-  const showScorePop = useCallback((text: string) => {
-    if (!scorePopRef.current) return;
-    const el = scorePopRef.current;
-    el.textContent = text;
-    el.style.opacity = '1';
-    el.style.transform = 'translateX(-50%) scale(1.5)';
-    el.style.transition = 'none';
-    setTimeout(() => {
-      el.style.transition = 'opacity 0.8s ease-out, transform 0.8s ease-out';
-      el.style.opacity = '0';
-      el.style.transform = 'translateX(-50%) scale(0.9) translateY(-40px)';
-    }, 50);
-  }, []);
+
 
   const endGame = useCallback((capturedTheme: typeof theme) => {
     const s = stateRef.current;
@@ -166,7 +154,8 @@ export default function BreathRider() {
     s.timeLeft = 45; s.running = true; s.trail = []; s.floatTexts = [];
     s.pulseRings = []; s.coinParticles = []; s.lastBreathVol = 0;
     s.streak = 0; s.lastNearMissScore = -1;
-    setTimeLeft(45); setScore(0); setNearMissMsg(false); setIsNewBest(false);
+    s.nearMissPending = false; s.streakNeedsReset = false;
+    setTimeLeft(45); setScore(0); setStreak(0); setNearMissMsg(false); setIsNewBest(false);
     setGameState('playing');
     stopMusicRef.current = startMusic('calm');
     const capturedTheme = theme;
@@ -202,13 +191,24 @@ export default function BreathRider() {
     }));
     s.spikeLastHit = new Array(8).fill(0);
 
-    // Reset streak badge
-    if (streakBadgeRef.current) streakBadgeRef.current.style.display = 'none';
-
     s.timerIntervalId = setInterval(() => {
       if (!s.running) return;
       s.timeLeft--;
       setTimeLeft(s.timeLeft);
+      // Batch React state updates with the 1s tick (avoids setState inside rAF)
+      setScore(s.coinsCollected);
+      if (s.streakNeedsReset) {
+        s.streakNeedsReset = false;
+        setStreak(0);
+      } else {
+        setStreak(s.streak);
+      }
+      if (s.nearMissPending) {
+        s.nearMissPending = false;
+        setNearMissMsg(true);
+        if (nearMissTimeoutRef.current) clearTimeout(nearMissTimeoutRef.current);
+        nearMissTimeoutRef.current = setTimeout(() => setNearMissMsg(false), 1500);
+      }
       sfx.tick();
       if (s.timeLeft === 10) sfx.warning();
       if (s.timeLeft <= 0) endGame(capturedTheme);
@@ -262,7 +262,7 @@ export default function BreathRider() {
           s.charY = H * 0.5; sfx.collision();
           hapticFail();
           s.streak = 0;
-          if (streakBadgeRef.current) streakBadgeRef.current.style.display = 'none';
+          s.streakNeedsReset = true;
           s.spikeFlashUntil = now + 180;
         }
       });
@@ -302,17 +302,10 @@ export default function BreathRider() {
             const speed = 1.8 + Math.random() * 2.5;
             s.coinParticles.push({ x: coin.x, y: cy2, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed, t: Date.now() });
           }
-          setScore(s.coinsCollected);
-          showScorePop('+1 🪙');
+
 
           // Streak tracking
           s.streak++;
-          if (streakBadgeRef.current && s.streak >= 3) {
-            streakBadgeRef.current.style.display = 'flex';
-            streakBadgeRef.current.textContent = `🔥 x${s.streak}`;
-            const sz = Math.min(1 + s.streak * 0.04, 1.5);
-            streakBadgeRef.current.style.transform = `scale(${sz})`;
-          }
 
           // Near-miss: score is within 10% of next milestone (every 5 coins)
           const nextMilestone = Math.ceil(s.coinsCollected / 5) * 5;
@@ -320,9 +313,7 @@ export default function BreathRider() {
           if (distToMilestone === 1 && s.lastNearMissScore !== s.coinsCollected) {
             s.lastNearMissScore = s.coinsCollected;
             playNearMiss();
-            setNearMissMsg(true);
-            if (nearMissTimeoutRef.current) clearTimeout(nearMissTimeoutRef.current);
-            nearMissTimeoutRef.current = setTimeout(() => setNearMissMsg(false), 1500);
+            s.nearMissPending = true;
           }
         }
       });
@@ -400,7 +391,7 @@ export default function BreathRider() {
       s.animId = requestAnimationFrame(loop);
     };
     s.animId = requestAnimationFrame(loop);
-  }, [getVolume, endGame, showScorePop, theme]);
+  }, [getVolume, endGame, theme]);
 
   const handleStart = useCallback(async (name: string, avatar: string) => {
     setPlayerName(name);
@@ -428,9 +419,29 @@ export default function BreathRider() {
     }
   }, []);
 
-  const handlePlayAgain = useCallback(() => {
+  const handlePlayAgain = useCallback(async () => {
     if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
-    setGameState('start');
+    // Instant replay: skip the start/registration screen and go directly to countdown.
+    // Re-request mic if possible; fall back to touch if denied.
+    const s = stateRef.current;
+    s.stream = null; s.analyser = null; s.audioCtx = null;
+    setGameState('requesting');
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const audioCtx = new AudioContext();
+      const source = audioCtx.createMediaStreamSource(stream);
+      const analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 256; analyser.smoothingTimeConstant = 0.3;
+      source.connect(analyser);
+      s.stream = stream; s.analyser = analyser; s.audioCtx = audioCtx;
+      s.usingTouchFallback = false;
+      setGameState('countdown');
+    } catch {
+      s.stream = null; s.analyser = null; s.audioCtx = null;
+      s.usingTouchFallback = true;
+      s.touchVolume = 0;
+      setGameState('countdown');
+    }
   }, []);
 
   useEffect(() => {
@@ -475,11 +486,15 @@ export default function BreathRider() {
       {gameState === 'start' && showInstructions && (
         <SwipeInstructions
           gameId="breath-rider"
-          steps={[{ icon: "🌬️", title: "Breathe in", body: "Inhale slowly to rise. Exhale to descend." }, { icon: "🚀", title: "Navigate", body: "Guide your rider through the gaps." }, { icon: "💨", title: "Stay smooth", body: "Calm, steady breaths = better control." }]}
+          steps={[
+            { icon: <Wind size={48} color={accent} />, title: "Breathe in", body: "Inhale slowly to rise. Exhale to descend." },
+            { icon: <Navigation size={48} color={accent} />, title: "Navigate", body: "Guide your rider through the gaps." },
+            { icon: <Mic size={48} color={accent} />, title: "Stay smooth", body: "Calm, steady breaths = better control." }
+          ]}
           onDone={() => setShowInstructions(false)}
         />
       )}
-    <GameShell title="Breath Rider" emoji="🌬️" accentColor={accent} theme={theme}>
+    <GameShell title="Breath Rider" emoji="" titleIcon={<Wind size={18} color="#fff" />} accentColor={accent} theme={theme}>
       <canvas
         ref={canvasRef}
         style={{
@@ -493,49 +508,11 @@ export default function BreathRider() {
         <>
           <GameHUD
             items={[
-              { label: 'COINS', value: String(score) },
-              { label: 'TIME', value: `${timeLeft}s`, danger: timeLeft <= 10 },
+              { label: 'COINS', value: String(score), testId: 'score' },
+              { label: 'TIME', value: `${timeLeft}s`, danger: timeLeft <= 10, testId: 'timer' },
             ]}
             accentColor={accent}
           />
-
-          {/* Score pop DOM ref overlay */}
-          <div
-            ref={scorePopRef}
-            style={{
-              position: 'fixed', top: '35%', left: '50%',
-              transform: 'translateX(-50%) scale(1)',
-              zIndex: 80, pointerEvents: 'none',
-              opacity: 0,
-              fontSize: 42, fontWeight: 900, color: '#fbbf24',
-              textShadow: '0 0 20px #fbbf2488',
-              whiteSpace: 'nowrap',
-            }}
-          />
-
-          {/* Streak badge DOM ref */}
-          <div
-            ref={streakBadgeRef}
-            style={{
-              display: 'none',
-              position: 'fixed',
-              top: 60,
-              left: 20,
-              alignItems: 'center',
-              justifyContent: 'center',
-              background: 'rgba(255,170,0,0.15)',
-              border: '1px solid rgba(255,170,0,0.5)',
-              borderRadius: 20,
-              padding: '4px 12px',
-              fontSize: 18,
-              fontWeight: 800,
-              color: '#ffaa00',
-              zIndex: 60,
-              transition: 'transform 0.2s',
-            }}
-          >
-            🔥 x3
-          </div>
 
           {/* Near-miss message */}
           <AnimatePresence>
@@ -554,7 +531,7 @@ export default function BreathRider() {
                   whiteSpace: 'nowrap',
                 }}
               >
-                So close! 🎯
+                So close!
               </motion.div>
             )}
           </AnimatePresence>
@@ -581,9 +558,11 @@ export default function BreathRider() {
               color: '#000',
               whiteSpace: 'nowrap',
               boxShadow: '0 4px 20px rgba(251,191,36,0.5)',
+              display: 'flex', alignItems: 'center', gap: 6,
             }}
           >
-            🏆 New Best!
+            <Trophy size={18} color="#000" />
+            New Best!
           </motion.div>
         )}
       </AnimatePresence>
@@ -597,11 +576,12 @@ export default function BreathRider() {
         {gameState==='start' && (
           <motion.div key="start" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} style={{ height: '100%' }}>
             <GameStartScreen
-              emoji="🌬️"
+              emoji=""
+              iconNode={<Wind size={72} color={accent} />}
               title="Breath Rider"
               description="Blow into the mic to make the rider climb. Collect coins and avoid spikes."
               sensorNote="Uses microphone"
-              ctaLabel="Allow Mic & Fly →"
+              ctaLabel="Allow Mic & Play →"
               accentColor={accent}
               onStart={handleStart}
             />
@@ -636,8 +616,8 @@ export default function BreathRider() {
       </AnimatePresence>
       {gameState === 'playing' && (
         <>
-          <ScorePopEffect pops={pops} accentColor={CATEGORY_ACCENT} />
-          <StreakBadge streak={0} accentColor={CATEGORY_ACCENT} />
+          <ScorePopEffect pops={pops} accentColor={accent} />
+          <StreakBadge streak={streak} accentColor={accent} />
         </>
       )}
     </GameShell>

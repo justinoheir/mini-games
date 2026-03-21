@@ -24,6 +24,7 @@ import ScorePopEffect, { useScorePop } from '@/components/ScorePopEffect';
 import StreakBadge from '@/components/StreakBadge';
 import { CATEGORY_THEMES } from '@/lib/theme';
 import SwipeInstructions from '@/components/SwipeInstructions';
+import { Eye } from 'lucide-react';
 
 const CATEGORY_ACCENT = CATEGORY_THEMES.cognitive.primaryAccent;
 
@@ -97,6 +98,9 @@ interface GameState {
   hitFlashY:        number;
   hitFlashTime:     number;      // timestamp of last hit (0 = none)
   hitFlashSize:     number;
+  // Reaction tier label (INSTANT / SHARP / GOOD)
+  reactionTierLabel: string;
+  reactionTierTime:  number;     // timestamp of last tier label (0 = none)
   // Miss flash effect (red burst on miss/wrong tap)
   missFlashX:       number;
   missFlashY:       number;
@@ -120,9 +124,10 @@ function randomDarkDuration(): number {
 }
 
 function getShapeWindowMs(elapsedMs: number): number {
-  // Linearly interpolate: 900ms at 0s → 400ms at 35s, then clamp
-  // Starts accessible for casual players (700ms reaction), ramps to challenging
-  return Math.max(400, 900 - (elapsedMs / 35000) * 500);
+  // Linearly interpolate: 950ms at 0s → 550ms at 45s
+  // Casual player floor: 550ms (achievable at 500ms reaction with 50ms buffer)
+  // Ramp is gradual — 400ms reduction over full 45s duration, no sudden spikes
+  return Math.max(550, 950 - (elapsedMs / 45000) * 400);
 }
 
 // Draw a shape on the canvas
@@ -235,6 +240,8 @@ export default function ShadowTapGame() {
     hitFlashY:       0,
     hitFlashTime:    0,
     hitFlashSize:    0,
+    reactionTierLabel: '',
+    reactionTierTime:  0,
     missFlashX:      0,
     missFlashY:      0,
     missFlashTime:   0,
@@ -259,9 +266,9 @@ export default function ShadowTapGame() {
     const numScore = typeof scoreDisplay === 'number' ? scoreDisplay : 0;
     if (numScore > prevScoreRef.current) {
       triggerPop(`+${numScore - prevScoreRef.current}`, window.innerWidth / 2, 200);
-      hapticScore();
-      playScoreHit('default', numScore - prevScoreRef.current);
-      setStreak(Math.floor(numScore / 5));
+      // Note: hapticScore() is called directly in handleTap for precise sync — not duplicated here
+      playScoreHit('cognitive', numScore - prevScoreRef.current);
+      setStreak(stateRef.current.sig.streak);
     }
     prevScoreRef.current = numScore;
   }, [scoreDisplay]); // triggerPop is stable
@@ -295,7 +302,6 @@ export default function ShadowTapGame() {
     cancelAnimationFrame(animRef.current);
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
     if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
-    sfx.success();
     hapticVictory();
     playVictoryFanfare();
     // Personal best tracking
@@ -331,10 +337,12 @@ export default function ShadowTapGame() {
     s.shapePhase     = 'dark';
     s.darkStartTime  = Date.now();
     s.darkDurationMs = randomDarkDuration();
-    s.hitFlashTime   = 0;
-    s.missFlashTime  = 0;
-    s.comboFlashTime = 0;
-    s.comboMultiplier = 0;
+    s.hitFlashTime      = 0;
+    s.missFlashTime     = 0;
+    s.comboFlashTime    = 0;
+    s.comboMultiplier   = 0;
+    s.reactionTierLabel = '';
+    s.reactionTierTime  = 0;
     setScoreDisplay(0);
     setTimeLeft(DURATION);
 
@@ -420,7 +428,7 @@ export default function ShadowTapGame() {
           ctx.fillStyle   = s.accentColor;
           ctx.shadowBlur  = 14;
           ctx.shadowColor = s.accentColor;
-          ctx.font        = 'bold 22px system-ui, -apple-system, sans-serif';
+          ctx.font        = 'bold 26px "Space Grotesk", system-ui, sans-serif';
           ctx.textAlign   = 'center';
           ctx.fillText(`×${s.comboMultiplier} STREAK`, s.hitFlashX, s.hitFlashY + yOff);
           ctx.restore();
@@ -448,6 +456,30 @@ export default function ShadowTapGame() {
           ctx.restore();
         } else {
           s.hitFlashTime = 0;
+        }
+      }
+
+      // ── Reaction tier label (INSTANT / SHARP / GOOD) ─────────────────────
+      if (s.reactionTierTime > 0) {
+        const rtAge = now - s.reactionTierTime;
+        const rtDur = 600;
+        if (rtAge < rtDur) {
+          const alpha = rtAge < 100 ? rtAge / 100 : Math.max(0, 1 - (rtAge - 100) / 500);
+          const yOff  = -30 - (rtAge / rtDur) * 40; // floats upward
+          const color = s.reactionTierLabel === 'INSTANT' ? '#4ade80' :
+                        s.reactionTierLabel === 'SHARP'   ? s.accentColor : '#facc15';
+          ctx.save();
+          ctx.globalAlpha = alpha;
+          ctx.fillStyle   = color;
+          ctx.shadowBlur  = 12;
+          ctx.shadowColor = color;
+          ctx.font        = 'bold 18px "Space Grotesk", system-ui, sans-serif';
+          ctx.textAlign   = 'center';
+          ctx.letterSpacing = '2px';
+          ctx.fillText(s.reactionTierLabel, s.hitFlashX, s.hitFlashY + yOff - s.hitFlashSize - 8);
+          ctx.restore();
+        } else {
+          s.reactionTierTime = 0;
         }
       }
 
@@ -483,9 +515,13 @@ export default function ShadowTapGame() {
 
         // Score by reaction speed
         let pts = 0;
-        if (reactionMs < 300)       pts = 10;
-        else if (reactionMs < 600)  pts = 5;
+        if (reactionMs < 200)       pts = 10;
+        else if (reactionMs < 400)  pts = 5;
         else                         pts = 2;
+
+        // Reaction tier label for display
+        s.reactionTierLabel = reactionMs < 200 ? 'INSTANT' : reactionMs < 400 ? 'SHARP' : 'GOOD';
+        s.reactionTierTime  = Date.now();
 
         // Streak bonus: +15 on every 5th consecutive hit
         if (s.sig.streak > 0 && s.sig.streak % 5 === 0) {
@@ -506,39 +542,35 @@ export default function ShadowTapGame() {
         s.hitFlashTime = Date.now();
 
         sfx.collect();
-        haptic([30]);
+        hapticScore();  // single satisfying haptic pattern (replaces haptic([30]) + useEffect hapticScore)
 
         // Start darkness phase immediately
         s.shapePhase    = 'dark';
         s.darkStartTime  = Date.now();
         s.darkDurationMs = randomDarkDuration();
       } else {
-        // Tapped outside shape while visible = wrong-area tap
+        // Tapped outside shape while visible = wrong-area tap (behavioral signal only, no score penalty)
         s.sig.wrongAreaTaps++;
         s.sig.streak = 0;
-        const penalty = Math.max(0, s.sig.score - 3);
-        s.sig.score = penalty;
-        setScoreDisplay(s.sig.score);
+        // No score penalty — wrong taps are tracked as a behavioral signal, not punished
         // Red miss flash at tap position
         s.missFlashX    = x;
         s.missFlashY    = y;
         s.missFlashTime = Date.now();
         sfx.nearMiss();   // subtle negative cue for false positive
-        haptic([50]);
+        haptic([40]);
       }
     } else {
-      // Tapped during darkness = wrong-area tap
+      // Tapped during darkness = wrong-area tap (behavioral signal only, no score penalty)
       s.sig.wrongAreaTaps++;
       s.sig.streak = 0;
-      const penalty = Math.max(0, s.sig.score - 3);
-      s.sig.score = penalty;
-      setScoreDisplay(s.sig.score);
+      // No score penalty — casual players shouldn't be punished for tapping in darkness
       // Red miss flash at tap position
       s.missFlashX    = x;
       s.missFlashY    = y;
       s.missFlashTime = Date.now();
       sfx.nearMiss();   // subtle negative cue for false positive
-      haptic([50]);
+      haptic([40]);
     }
   }, []);
 
@@ -654,7 +686,7 @@ export default function ShadowTapGame() {
       {phase === 'start' && showInstructions && (
         <SwipeInstructions
           gameId="shadow-tap"
-          steps={[{ icon: "👁️", title: "Watch the shadow", body: "A shape will appear briefly then vanish." }, { icon: "👆", title: "Tap the match", body: "Find and tap the matching shape from the options." }, { icon: "⚡", title: "Be quick", body: "You have limited time — trust your memory." }]}
+          steps={[{ icon: "👁️", title: "Watch the shadow", body: "A shape will flash briefly, then vanish into the dark." }, { icon: "👆", title: "Tap it fast", body: "When the silhouette appears, tap it before it disappears." }, { icon: "⚡", title: "Build streaks", body: "Hit 5 in a row for a streak bonus. Speed earns more points." }]}
           onDone={() => setShowInstructions(false)}
         />
       )}
@@ -664,6 +696,7 @@ export default function ShadowTapGame() {
       {phase === 'start' && (
         <GameStartScreen
           emoji={GAME_EMOJI}
+          iconNode={<Eye size={80} color={theme.colors.accent ?? ACCENT} strokeWidth={1.5} />}
           title={GAME_TITLE}
           description={GAME_TAGLINE}
           ctaLabel="Start"

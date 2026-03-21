@@ -12,7 +12,7 @@
 
 'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { Brain } from 'lucide-react';
+import { Brain, Eye, Hand } from 'lucide-react';
 import GameShell from '@/components/GameShell';
 import GameHUD from '@/components/GameHUD';
 import GameStartScreen from '@/components/GameStartScreen';
@@ -387,6 +387,12 @@ export default function MemoryGridGame() {
   const [phase, setPhase]             = useState<Phase>('start');
   const phaseRef                      = useRef<Phase>('start');
   const [showInstructions, setShowInstructions] = useState(true);
+  // Suppress instructions if already seen (checked after mount to avoid SSR hydration mismatch)
+  useEffect(() => {
+    try {
+      if (localStorage.getItem(`seen_${GAME_ID}`)) setShowInstructions(false);
+    } catch { /* ignore */ }
+  }, []);
   const [timeLeft, setTimeLeft]       = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(3); // shows current sequence length (LEVEL)
   const [finalSig, setFinalSig]       = useState<Signals | null>(null);
@@ -740,7 +746,10 @@ export default function MemoryGridGame() {
         <SwipeInstructions
           gameId="memory-grid"
           steps={[{ icon: "👁️", title: "Watch the pattern", body: "A sequence of tiles will light up." }, { icon: "👆", title: "Repeat it", body: "Tap the tiles in the same order." }, { icon: "🧠", title: "Go longer", body: "Each round adds one more tile to remember." }]}
-          onDone={() => setShowInstructions(false)}
+          onDone={() => {
+            try { localStorage.setItem(`seen_${GAME_ID}`, '1'); } catch { /* ignore */ }
+            setShowInstructions(false);
+          }}
         />
       )}
     <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accentColor}>
@@ -885,7 +894,7 @@ function SubphaseBanner({ subPhase, accentColor }: { subPhase: SubPhase; accentC
         alignItems: 'center',
         gap: 8,
       }}>
-        <span style={{ fontSize: 18 }}>👁️</span>
+        <Eye size={18} color="rgba(255,255,255,0.9)" />
         <span style={{ color: 'rgba(255,255,255,0.9)', fontWeight: 700, fontSize: 15, letterSpacing: '0.05em' }}>
           MEMORIZE THE PATTERN
         </span>
@@ -903,7 +912,7 @@ function SubphaseBanner({ subPhase, accentColor }: { subPhase: SubPhase; accentC
         gap: 8,
         boxShadow: `0 0 24px ${accentColor}88`,
       }}>
-        <span style={{ fontSize: 18 }}>👆</span>
+        <Hand size={18} color="#fff" />
         <span style={{ color: '#fff', fontWeight: 800, fontSize: 15, letterSpacing: '0.05em' }}>
           TAP THE SEQUENCE
         </span>

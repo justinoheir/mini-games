@@ -25,6 +25,7 @@ import ScorePopEffect, { useScorePop } from '@/components/ScorePopEffect';
 import StreakBadge from '@/components/StreakBadge';
 import { CATEGORY_THEMES } from '@/lib/theme';
 import SwipeInstructions from '@/components/SwipeInstructions';
+import { Search, Eye, Hand, Flame, Trophy } from 'lucide-react';
 
 const CATEGORY_ACCENT = CATEGORY_THEMES.cognitive.primaryAccent;
 
@@ -268,6 +269,7 @@ interface GameState {
   gridX:              number;
   gridY:              number;
   targetAreaH:        number;
+  targetAreaTop:      number;   // y-offset to clear the HUD overlay
 
   // Theme
   accentColor:        string;
@@ -305,6 +307,7 @@ export default function SymbolScanGame() {
     gridX:             0,
     gridY:             0,
     targetAreaH:       200,
+    targetAreaTop:     150,
     accentColor:       ACCENT,
   });
 
@@ -346,17 +349,21 @@ export default function SymbolScanGame() {
     const s   = stateRef.current;
     const W   = canvas.offsetWidth;
     const H   = canvas.offsetHeight;
-    const TAH = Math.min(200, Math.max(160, H * 0.26)); // target area height
+    // HUD sits at top:64 with height ~80px; leave 150px clear at top of canvas
+    // so the target-symbol area renders below the HUD overlay.
+    const TOP = 150;
+    const TAH = Math.min(160, Math.max(120, (H - TOP) * 0.22)); // target area height
     const PAD = 14;
-    const avail = H - TAH;
+    const avail = H - TOP - TAH;
     const cell  = Math.min(
       (W   - PAD * 2) / GRID_SIZE,
       (avail - PAD * 2) / GRID_SIZE,
     );
-    s.cellSize    = cell;
-    s.targetAreaH = TAH;
-    s.gridX       = (W - cell * GRID_SIZE) / 2;
-    s.gridY       = TAH + (avail - cell * GRID_SIZE) / 2;
+    s.cellSize      = cell;
+    s.targetAreaH   = TAH;
+    s.targetAreaTop = TOP;
+    s.gridX         = (W - cell * GRID_SIZE) / 2;
+    s.gridY         = TOP + TAH + (avail - cell * GRID_SIZE) / 2;
   }, []);
 
   // ─── SPAWN GRID ────────────────────────────────────────────────────────────
@@ -443,7 +450,7 @@ export default function SymbolScanGame() {
       const now = Date.now();
       const W   = canvas.offsetWidth;
       const H   = canvas.offsetHeight;
-      const { cellSize, gridX, gridY, targetAreaH, accentColor } = s;
+      const { cellSize, gridX, gridY, targetAreaH, targetAreaTop, accentColor } = s;
 
       // ── Background ─────────────────────────────────────────────────────────
       ctx.fillStyle = '#08090f';
@@ -472,14 +479,14 @@ export default function SymbolScanGame() {
       }
 
       // ── Target area ────────────────────────────────────────────────────────
-      // Accent-tinted band at top
+      // Accent-tinted band (starts below HUD)
       ctx.fillStyle = `${accentColor}0a`;
-      ctx.fillRect(0, 0, W, targetAreaH);
+      ctx.fillRect(0, targetAreaTop, W, targetAreaH);
 
       // Separator line
       ctx.strokeStyle = `${accentColor}30`;
       ctx.lineWidth   = 1;
-      ctx.beginPath(); ctx.moveTo(0, targetAreaH - 1); ctx.lineTo(W, targetAreaH - 1); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(0, targetAreaTop + targetAreaH - 1); ctx.lineTo(W, targetAreaTop + targetAreaH - 1); ctx.stroke();
 
       // "FIND" label
       ctx.save();
@@ -487,12 +494,12 @@ export default function SymbolScanGame() {
       ctx.font       = `700 18px 'Space Grotesk', sans-serif`;
       ctx.textAlign  = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText('FIND', W / 2, targetAreaH * 0.22);
+      ctx.fillText('FIND', W / 2, targetAreaTop + targetAreaH * 0.22);
       ctx.restore();
 
       // Large target symbol with glow
       const targetDisplaySize = Math.min(targetAreaH * 0.52, 72);
-      drawSymbol(ctx, W / 2, targetAreaH * 0.58, targetDisplaySize, s.targetSymbol, accentColor, true);
+      drawSymbol(ctx, W / 2, targetAreaTop + targetAreaH * 0.58, targetDisplaySize, s.targetSymbol, accentColor, true);
 
       // Grid timer progress bar (bottom of target area)
       const gridProgress = Math.min(1, Math.max(0, gridElapsed / GRID_DURATION));
@@ -500,7 +507,7 @@ export default function SymbolScanGame() {
       const barW = W * 0.72;
       const barH = 5;
       const barX = (W - barW) / 2;
-      const barY = targetAreaH - 14;
+      const barY = targetAreaTop + targetAreaH - 14;
       const barColor = remaining > 0.4 ? accentColor : remaining > 0.2 ? '#facc15' : '#ef4444';
 
       // Track
@@ -733,7 +740,10 @@ export default function SymbolScanGame() {
       window.removeEventListener('resize', resize);
       canvas.removeEventListener('pointerdown', onPointerDown);
     };
-  }, [handleTap, computeLayout]);
+  // Phase is intentionally included so this effect re-runs when the canvas
+  // enters the DOM (phase: 'start'→'countdown'), ensuring canvas.width/height
+  // and the pointerdown listener are set up before startLoop() fires.
+  }, [handleTap, computeLayout, phase]);
 
   // ─── CLEANUP ON UNMOUNT ───────────────────────────────────────────────────
 
@@ -810,11 +820,20 @@ export default function SymbolScanGame() {
       {phase === 'start' && showInstructions && (
         <SwipeInstructions
           gameId="symbol-scan"
-          steps={[{ icon: "👁️", title: "Find the symbol", body: "Scan the grid to find the target symbol." }, { icon: "👆", title: "Tap it fast", body: "Tap the correct symbol before time runs out." }, { icon: "🔥", title: "Chain correct taps", body: "Fast correct answers build your streak." }]}
+          steps={[
+            { icon: <Eye size={64} color="#10b981" strokeWidth={1.5} />, title: "Find the symbol", body: "Scan the grid to find the target symbol." },
+            { icon: <Hand size={64} color="#10b981" strokeWidth={1.5} />, title: "Tap it fast", body: "Tap the correct symbol before time runs out." },
+            { icon: <Flame size={64} color="#10b981" strokeWidth={1.5} />, title: "Chain correct taps", body: "Fast correct answers build your streak." },
+          ]}
           onDone={() => setShowInstructions(false)}
         />
       )}
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accent}>
+    <GameShell
+      title={GAME_TITLE}
+      emoji={GAME_EMOJI}
+      titleIcon={<Search size={20} color="#fff" strokeWidth={2} />}
+      accentColor={accent}
+    >
 
       {/* ── Start Screen ──────────────────────────────────────────────────── */}
       {phase === 'start' && (
@@ -825,6 +844,7 @@ export default function SymbolScanGame() {
           ctaLabel="Start"
           accentColor={accent}
           onStart={handleStart}
+          iconNode={<Search size={72} color={accent} strokeWidth={1.5} />}
         />
       )}
 
@@ -875,7 +895,8 @@ export default function SymbolScanGame() {
               boxShadow: '0 4px 20px rgba(251,191,36,0.5)',
             }}
           >
-            🏆 New Best!
+            <Trophy size={20} strokeWidth={2.5} style={{ display: 'inline-block', verticalAlign: 'middle', marginRight: 6 }} />
+            New Best!
           </motion.div>
         )}
       </AnimatePresence>

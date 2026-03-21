@@ -23,6 +23,7 @@ import { postWebhook } from '@/lib/webhook';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
 import { spawnBurst, updateAndDrawParticles, type Particle } from '@/lib/particles';
 import SwipeInstructions from '@/components/SwipeInstructions';
+import { PenLine } from 'lucide-react';
 
 // ─── SPEC CONSTANTS ────────────────────────────────────────────────────────────
 const GAME_ID      = 'path-trace';
@@ -564,7 +565,7 @@ export default function PathTraceGame() {
       const { x, y } = getCanvasCoords(e.clientX, e.clientY, canvas);
       const distToStart = Math.hypot(x - s.currentPath.startX, y - s.currentPath.startY);
 
-      if (distToStart <= 34) {
+      if (distToStart <= 44) {
         try { canvas.setPointerCapture(e.pointerId); } catch { /* ignore */ }
         s.isTracing          = true;
         s.activePointerId    = e.pointerId;
@@ -610,8 +611,8 @@ export default function PathTraceGame() {
         s.inDeviationEpisode = false;
       }
 
-      // Deviation > 40px: reset (treated as lift per spec)
-      if (dev > 40) {
+      // Deviation > 52px: reset (treated as lift per spec — raised from 40px for accessibility)
+      if (dev > 52) {
         // Inline reset to avoid stale closure issues
         s.isTracing          = false;
         s.tracePoints        = [];
@@ -660,6 +661,7 @@ export default function PathTraceGame() {
           setMilestoneText(`🎯 ${s.sig.pathsCompleted} paths!`);
           setMilestoneKey(k => k + 1);
           hapticCelebration();
+          sfx.success(); // escalating milestone audio
         }
 
         spawnBurst(s.particles, s.currentPath.endX, s.currentPath.endY, s.accentColor, 18, 6);
@@ -828,6 +830,7 @@ export default function PathTraceGame() {
       {phase === 'start' && (
         <GameStartScreen
           emoji={GAME_EMOJI}
+          iconNode={<PenLine size={80} color={theme.colors.accent ?? ACCENT} strokeWidth={1.5} />}
           title={GAME_TITLE}
           description={GAME_TAGLINE}
           ctaLabel="Start"
@@ -873,8 +876,8 @@ export default function PathTraceGame() {
               <GameHUD
                 accentColor={theme.colors.accent ?? ACCENT}
                 items={[
-                  { label: 'TIME',  value: timeLeft,     danger: timeLeft <= 10 },
-                  { label: 'SCORE', value: scoreDisplay },
+                  { label: 'TIME',  value: timeLeft,     danger: timeLeft <= 10, testId: 'timer' },
+                  { label: 'SCORE', value: scoreDisplay, testId: 'score' },
                 ]}
               />
               {/* Score pop overlay */}

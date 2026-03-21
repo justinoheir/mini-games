@@ -528,8 +528,8 @@ export default function ReactionChain() {
               <GameHUD
                 accentColor={theme.colors.accent ?? ACCENT}
                 items={[
-                  { label: 'TIME', value: timeLeft, danger: timeLeft <= 10 },
-                  { label: 'CHAIN', value: scoreDisplay },
+                  { label: 'TIME', value: timeLeft, danger: timeLeft <= 10, testId: 'timer' },
+                  { label: 'CHAIN', value: scoreDisplay, testId: 'score' },
                 ]}
               />
               {/* Streak badge — fires at 3+ consecutive taps */}

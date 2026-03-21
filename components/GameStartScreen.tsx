@@ -1,5 +1,5 @@
 'use client';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { sfx } from '@/lib/audio';
 import PlayerNameInput from '@/components/PlayerNameInput';
@@ -27,6 +27,19 @@ interface GameStartScreenProps {
   iconNode?: React.ReactNode;
 }
 
+/** Returns true when no valid stored user exists — new players go straight to registration. */
+function hasStoredUser(): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    const raw = localStorage.getItem('mg_user');
+    if (!raw) return false;
+    const p = JSON.parse(raw);
+    return !!(p.name || p.firstName);
+  } catch {
+    return false;
+  }
+}
+
 export default function GameStartScreen({
   emoji,
   title,
@@ -40,7 +53,15 @@ export default function GameStartScreen({
   children,
   iconNode,
 }: GameStartScreenProps) {
+  // Always start false (SSR-safe). After mount, check localStorage: if no stored user
+  // exists (new player), auto-show registration so the name input is immediately visible.
+  // This avoids a React hydration mismatch from reading localStorage during SSR.
   const [showRegistration, setShowRegistration] = useState(false);
+  useEffect(() => {
+    if (!hasStoredUser()) {
+      setShowRegistration(true);
+    }
+  }, []);
 
   return (
     <>

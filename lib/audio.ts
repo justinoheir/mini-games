@@ -86,9 +86,13 @@ export function isMuted(): boolean { return muted }
 
 // ─── Haptics ──────────────────────────────────────────────────────────────────
 export function haptic(pattern: number | number[]): void {
-  if (isBrowser && typeof navigator !== 'undefined' && navigator.vibrate) {
-    navigator.vibrate(pattern)
-  }
+  if (!isBrowser) return
+  if (typeof navigator === 'undefined' || !navigator.vibrate) return
+  // Respect ?haptics=off URL param for accessibility (B-M3)
+  try {
+    if (new URLSearchParams(window.location.search).get('haptics') === 'off') return
+  } catch { /* ignore */ }
+  navigator.vibrate(pattern)
 }
 
 // ─── SFX ──────────────────────────────────────────────────────────────────────

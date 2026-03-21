@@ -918,7 +918,7 @@ export default function SteadyHandGame() {
             title={GAME_TITLE}
             description={GAME_TAGLINE}
             ctaLabel="Start →"
-            sensorNote="Uses motion sensor — tilt to control"
+            sensorNote="Uses motion sensor — hold still to score"
             accentColor={accent}
             onStart={handleStart}
           >
@@ -959,9 +959,9 @@ export default function SteadyHandGame() {
             <GameHUD
               accentColor={accent}
               items={[
-                { label: 'TIME',      value: timeLeft,      danger: timeLeft <= 10 },
-                { label: 'STREAK', value: streakDisplay },
-                { label: 'ON TARGET', value: `${scoreDisplay}%` },
+                { label: 'TIME',      value: timeLeft,      danger: timeLeft <= 10, testId: 'timer' },
+                { label: 'STREAK', value: streakDisplay, testId: 'streak' },
+                { label: 'ON TARGET', value: `${scoreDisplay}%`, testId: 'score' },
               ]}
             />
           )}

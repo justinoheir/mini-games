@@ -1128,7 +1128,7 @@ export default function CrowdRoarGame() {
             onClick={() => { void handlePermission(); }}
             style={{
               background: theme.colors.accent ?? ACCENT,
-              color: '#ffffff',
+              color: '#000000',
               border: 'none',
               borderRadius: 14,
               padding: '0 48px',

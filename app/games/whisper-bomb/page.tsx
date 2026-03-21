@@ -12,10 +12,10 @@ import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
 import { motion, AnimatePresence } from 'framer-motion';
 import ScorePopEffect, { useScorePop } from '@/components/ScorePopEffect';
 import StreakBadge from '@/components/StreakBadge';
-import { CATEGORY_THEMES } from '@/lib/theme';
 import SwipeInstructions from '@/components/SwipeInstructions';
+import BombIcon from '@/components/BombIcon';
 
-const CATEGORY_ACCENT = CATEGORY_THEMES.breath.primaryAccent;
+
 
 const GAME_ID = 'whisper-bomb';
 const GAME_ACCENT = '#ef4444';
@@ -84,16 +84,7 @@ export default function WhisperBomb() {
   const [micError, setMicError]         = useState(false);
   const [playerName, setPlayerName]     = useState('');
   const [playerAvatar, setPlayerAvatar] = useState('🎮');
-  const { pops, triggerPop } = useScorePop();
-  const prevScoreRef = useRef(0);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => {
-    const numScore = typeof 0 === 'number' ? 0 : 0;
-    if (numScore > prevScoreRef.current) {
-      triggerPop(`+${numScore - prevScoreRef.current}`, window.innerWidth / 2, 200);
-    }
-    prevScoreRef.current = numScore;
-  }, [0]); // triggerPop is stable
+  const { pops, triggerPop: _triggerPop } = useScorePop(); // retained for future score pop integration
   const playerSessionRef                = useRef<PlayerSession | null>(null);
 
   // ── Polish state ───────────────────────────────────────────────────────────
@@ -404,11 +395,15 @@ export default function WhisperBomb() {
       {gameState === 'start' && showInstructions && (
         <SwipeInstructions
           gameId="whisper-bomb"
-          steps={[{ icon: "🤫", title: "Stay silent", body: "The fuse burns on its own — silence slows it down." }, { icon: "💣", title: "Loud = danger", body: "Any noise makes the fuse burn faster. Hold your breath." }, { icon: "🎯", title: "Defuse at the end", body: "Hold completely silent for 5 seconds at the end to defuse the bomb!" }]}
+          steps={[
+            { icon: "🤫", title: "Stay silent", body: "Noise burns the fuse — silence slows it down and lets it recover." },
+            { icon: "💣", title: "Loud = danger", body: "Volume spikes make the fuse burn fast. Hold your breath." },
+            { icon: "🎯", title: "Defuse at the end", body: "When the fuse is nearly gone, hold silent for 5 full seconds to defuse!" },
+          ]}
           onDone={() => setShowInstructions(false)}
         />
       )}
-    <GameShell title="Whisper Bomb" emoji="💣" accentColor={accent} theme={theme}>
+    <GameShell title="Whisper Bomb" emoji="💣" titleIcon={<BombIcon size={22} strokeColor={accent} />} accentColor={accent} theme={theme}>
       {/* Flash overlay */}
       <div
         ref={flashRef}
@@ -436,6 +431,7 @@ export default function WhisperBomb() {
           >
             <GameStartScreen
               emoji="💣"
+              iconNode={<BombIcon size={88} strokeColor={accent} />}
               title="Whisper Bomb"
               description="Stay silent to slow the fuse. Hold quiet for 5 seconds at the end to defuse."
               sensorNote="Uses microphone"
@@ -500,28 +496,6 @@ export default function WhisperBomb() {
                 {displayTime}s
               </div>
 
-              {/* Streak badge */}
-              <AnimatePresence>
-                {streakDisplay >= 3 && (
-                  <motion.div
-                    key={`streak-${streakDisplay}`}
-                    initial={{ scale: 0.6, opacity: 0 }}
-                    animate={{ scale: 1 + streakDisplay * 0.04, opacity: 1 }}
-                    exit={{ scale: 0.6, opacity: 0 }}
-                    transition={{ type: 'spring', stiffness: 400, damping: 20 }}
-                    style={{
-                      position: 'absolute', top: 52, left: 20,
-                      background: 'rgba(255,170,0,0.15)', border: '1px solid rgba(255,170,0,0.5)',
-                      borderRadius: 20, padding: '6px 12px',
-                      fontSize: 18, fontWeight: 800, color: '#ffaa00',
-                      display: 'flex', alignItems: 'center', gap: 4,
-                    }}
-                  >
-                    🔥 x{streakDisplay}
-                  </motion.div>
-                )}
-              </AnimatePresence>
-
               {/* Score pop overlay */}
               <AnimatePresence>
                 {scorePop && (
@@ -569,16 +543,16 @@ export default function WhisperBomb() {
               {/* Bomb */}
               <div
                 ref={bombContainerRef}
-                style={{ position: 'relative', display: 'inline-block', transform: 'scale(1)', transition: 'transform 0.05s', fontSize: 90 }}
+                style={{ position: 'relative', display: 'inline-block', transform: 'scale(1)', transition: 'transform 0.05s' }}
               >
-                💣
-                <div
-                  ref={bombFuseRef}
-                  style={{
-                    position: 'absolute', top: -4, right: -8, width: 4, height: '55px',
-                    backgroundColor: '#00ff88', borderRadius: 2, transformOrigin: 'bottom', transition: 'background-color 0.3s',
-                  }}
+                <BombIcon
+                  size={110}
+                  strokeColor={accent}
+                  fuseColor="#00ff88"
+                  bodyColor="#1a1a1a"
                 />
+                {/* Hidden div kept for rAF compat (fuse height/color updates; fuseBar is the primary indicator) */}
+                <div ref={bombFuseRef} style={{ display: 'none' }} />
               </div>
 
               {/* Fuse bar */}
@@ -695,7 +669,7 @@ export default function WhisperBomb() {
               {/* Final score */}
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <span style={{ color: '#666', fontSize: 13, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Final Score</span>
-                <span style={{ color: behavior.defused ? '#00ff88' : '#ef4444', fontSize: 32, fontWeight: 900, lineHeight: 1 }}>
+                <span style={{ color: behavior.defused ? '#00ff88' : '#ef4444', fontSize: 52, fontWeight: 900, lineHeight: 1 }}>
                   {behavior.defused ? `${behavior.fuseRemaining}%` : '0%'}
                 </span>
               </div>
@@ -716,7 +690,7 @@ export default function WhisperBomb() {
                 { label: 'Fuse left', value: `${behavior.fuseRemaining}%`, color: behavior.defused ? '#00ff88' : '#555' },
               ].map((stat) => (
                 <div key={stat.label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span style={{ color: '#555', fontSize: 14 }}>{stat.label}</span>
+                  <span style={{ color: '#555', fontSize: 16 }}>{stat.label}</span>
                   <span style={{ color: stat.color, fontSize: 16, fontWeight: 700 }}>{stat.value}</span>
                 </div>
               ))}
@@ -725,8 +699,8 @@ export default function WhisperBomb() {
                 marginTop: 4, padding: '10px 14px',
                 background: 'rgba(255,255,255,0.04)', borderRadius: 10, textAlign: 'center',
               }}>
-                <span style={{ color: '#888', fontSize: 13 }}>You are </span>
-                <span style={{ color: accent, fontSize: 16, fontWeight: 800 }}>{getProfile(behavior)}</span>
+                <span style={{ color: '#888', fontSize: 14 }}>You are </span>
+                <span style={{ color: accent, fontSize: 26, fontWeight: 800 }}>{getProfile(behavior)}</span>
               </div>
             </motion.div>
 
@@ -762,8 +736,8 @@ export default function WhisperBomb() {
       </AnimatePresence>
       {gameState === 'playing' && (
         <>
-          <ScorePopEffect pops={pops} accentColor={CATEGORY_ACCENT} />
-          <StreakBadge streak={0} accentColor={CATEGORY_ACCENT} />
+          <ScorePopEffect pops={pops} accentColor={accent} />
+          <StreakBadge streak={streakDisplay} accentColor={accent} position="bottom-center" />
         </>
       )}
     </GameShell>

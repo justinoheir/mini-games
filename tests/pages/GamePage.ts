@@ -57,7 +57,7 @@ export class GamePage {
     // The final CTA button after name is entered (may be same as startButton)
     // Prefer explicit data-testid, fall back to text heuristic
     return this.page.locator('[data-testid="start-cta"], button').filter({
-      hasText: /start|play|go|begin|drop/i
+      hasText: /start|play|go|begin|drop|enable|launch|motion/i
     }).last()
   }
 
@@ -68,9 +68,11 @@ export class GamePage {
   }
 
   get timerEl(): Locator {
-    return this.page.locator('[data-testid="timer"]').or(
-      this.page.locator('text=/^[0-9]+$/')
-    ).first()
+    // Prefer the explicit data-testid directly — do NOT use .or(text=/^[0-9]+$/) because
+    // the union locator + .first() picks the SCORE element (data-testid="score") which
+    // appears earlier in DOM order and matches the digit pattern, returning 0 instead
+    // of the timer value. data-testid="timer" is set on all GameHUD timer items.
+    return this.page.locator('[data-testid="timer"]').first()
   }
 
   get scoreEl(): Locator {
@@ -186,6 +188,14 @@ export class GamePage {
     if (!options.skipUser) await this.setStoredUser()
     if (options.sensors?.motion) await this.mockAccelerometer()
     if (options.sensors?.mic) await this.mockMicrophone()
+    // Mark SwipeInstructions as already seen so the overlay never blocks gameplay in tests.
+    // SwipeInstructions stores seen_${gameId} in localStorage; gameId matches the last segment of path.
+    const gameId = this.path.split('?')[0].split('/').filter(Boolean).pop() ?? ''
+    if (gameId) {
+      await this.page.addInitScript((id: string) => {
+        localStorage.setItem(`seen_${id}`, '1')
+      }, gameId)
+    }
 
     await this.page.goto(this.url)
     await this.page.waitForLoadState('networkidle')

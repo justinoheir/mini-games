@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { Trophy } from 'lucide-react';
 import { motion } from 'framer-motion';
 import Leaderboard from '@/components/Leaderboard';
 import { getMockLeaderboard, LeaderboardEntry } from '@/lib/leaderboard';
@@ -101,7 +102,7 @@ export default function EndScreen({
       const prevEntry = stored[gameId];
       const newNum = parseScoreNum(score);
       const prevNum = prevEntry ? parseScoreNum(prevEntry.score) : -Infinity;
-      if (newNum > prevNum || !prevEntry) {
+      if ((newNum > prevNum || !prevEntry) && newNum > 0) {
         setIsNewBest(true);
       }
       stored[gameId] = { score, personality, timestamp: Date.now() };
@@ -390,7 +391,7 @@ export default function EndScreen({
             letterSpacing: '-0.2px',
           }}
         >
-          🏆 See Leaderboard →
+          <Trophy size={17} style={{ display: 'inline', verticalAlign: 'middle', marginRight: 6 }} />See Leaderboard →
         </button>
 
         <button
@@ -434,6 +435,7 @@ export default function EndScreen({
           flexShrink: 0,
           padding: '12px 20px 20px',
           background: 'linear-gradient(transparent, #08090f 30%)',
+          backgroundColor: '#08090f',
         }}
       >
         <button

@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from 'next';
 import { Space_Grotesk } from 'next/font/google';
 import { PostHogProvider } from '@/lib/posthog';
+import ServiceWorkerRegistrar from '@/components/ServiceWorkerRegistrar';
 import './globals.css';
 
 const spaceGrotesk = Space_Grotesk({ subsets: ['latin'], weight: ['300', '400', '500', '600', '700'] });
@@ -30,7 +31,7 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={spaceGrotesk.className}>
+    <html lang="en" className={spaceGrotesk.className} suppressHydrationWarning>
       <head>
         <link rel="apple-touch-icon" href="/icons/icon-192.jpg" />
         <link rel="apple-touch-icon" sizes="152x152" href="/icons/icon-192.jpg" />
@@ -40,17 +41,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body style={{ margin: 0, padding: 0, backgroundColor: '#08090f', WebkitTapHighlightColor: 'transparent' }}>
         <PostHogProvider>
           {children}
-          <script
-            dangerouslySetInnerHTML={{
-              __html: `
-                if ('serviceWorker' in navigator) {
-                  window.addEventListener('load', function() {
-                    navigator.serviceWorker.register('/sw.js');
-                  });
-                }
-              `,
-            }}
-          />
+          <ServiceWorkerRegistrar />
         </PostHogProvider>
       </body>
     </html>
