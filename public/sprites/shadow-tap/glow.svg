@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <!-- Bright radial glow circle (tap feedback) -->
+  <defs>
+    <radialGradient id="glowGrad" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="rgba(255,255,255,1)"/>
+      <stop offset="30%" stop-color="rgba(253,224,71,0.9)"/>
+      <stop offset="70%" stop-color="rgba(234,179,8,0.4)"/>
+      <stop offset="100%" stop-color="rgba(234,179,8,0)"/>
+    </radialGradient>
+  </defs>
+  <circle cx="50" cy="50" r="50" fill="url(#glowGrad)"/>
+  <!-- Bright center -->
+  <circle cx="50" cy="50" r="20" fill="rgba(255,255,255,0.6)"/>
+  <circle cx="50" cy="50" r="8" fill="white"/>
+</svg>

@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 40">
+  <!-- Colored rect with subtle bevel -->
+  <defs>
+    <linearGradient id="blockGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#818cf8"/>
+      <stop offset="100%" stop-color="#4338ca"/>
+    </linearGradient>
+  </defs>
+  <rect x="2" y="2" width="116" height="36" rx="6" fill="url(#blockGrad)" stroke="rgba(255,255,255,0.2)" stroke-width="1.5"/>
+  <!-- Top bevel highlight -->
+  <rect x="4" y="3" width="112" height="6" rx="4" fill="rgba(255,255,255,0.3)"/>
+  <!-- Bottom bevel shadow -->
+  <rect x="4" y="33" width="112" height="4" rx="3" fill="rgba(0,0,0,0.2)"/>
+  <!-- Left shine -->
+  <rect x="4" y="4" width="6" height="32" rx="3" fill="rgba(255,255,255,0.15)"/>
+</svg>

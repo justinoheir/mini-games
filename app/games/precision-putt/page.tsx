@@ -20,6 +20,20 @@ import SwipeInstructions from '@/components/SwipeInstructions';
 
 const CATEGORY_ACCENT = CATEGORY_THEMES.sports.primaryAccent;
 
+// ─── SPRITE CACHE ─────────────────────────────────────────────────────────────
+const _spriteCache = new Map<string, HTMLImageElement>();
+function _loadSprite(src: string): HTMLImageElement {
+  if (_spriteCache.has(src)) return _spriteCache.get(src)!;
+  const img = new Image();
+  img.src = src;
+  _spriteCache.set(src, img);
+  return img;
+}
+if (typeof window !== 'undefined') {
+  _loadSprite('/sprites/precision-putt/ball.svg');
+  _loadSprite('/sprites/precision-putt/hole.svg');
+}
+
 const ACCENT = '#86efac';
 const GAME_ID = 'precision-putt';
 const PB_KEY       = 'pb_precision-putt';
@@ -316,11 +330,16 @@ export default function PrecisionPutt() {
 
       // Draw ball
       ctx.save();
-      const ballGrad = ctx.createRadialGradient(s.ballX - 3, s.ballY - 3, 1, s.ballX, s.ballY, s.ballRadius);
-      ballGrad.addColorStop(0, '#fff'); ballGrad.addColorStop(1, '#ddd');
-      ctx.fillStyle = ballGrad;
       ctx.shadowBlur = 8; ctx.shadowColor = 'rgba(134,239,172,0.5)';
-      ctx.beginPath(); ctx.arc(s.ballX, s.ballY, s.ballRadius, 0, Math.PI*2); ctx.fill();
+      const _ppBall = _loadSprite('/sprites/precision-putt/ball.svg');
+      if (_ppBall.complete && _ppBall.naturalWidth > 0) {
+        ctx.drawImage(_ppBall, s.ballX - s.ballRadius, s.ballY - s.ballRadius, s.ballRadius * 2, s.ballRadius * 2);
+      } else {
+        const ballGrad = ctx.createRadialGradient(s.ballX - 3, s.ballY - 3, 1, s.ballX, s.ballY, s.ballRadius);
+        ballGrad.addColorStop(0, '#fff'); ballGrad.addColorStop(1, '#ddd');
+        ctx.fillStyle = ballGrad;
+        ctx.beginPath(); ctx.arc(s.ballX, s.ballY, s.ballRadius, 0, Math.PI*2); ctx.fill();
+      }
       ctx.restore();
 
       // Power bar (charging)

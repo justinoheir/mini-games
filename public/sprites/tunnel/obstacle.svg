@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 40">
+  <!-- Neon outlined rect obstacle -->
+  <rect x="2" y="2" width="76" height="36" rx="5"
+    fill="rgba(239,68,68,0.15)" stroke="#ef4444" stroke-width="3"/>
+  <!-- Inner glow line -->
+  <rect x="6" y="6" width="68" height="28" rx="3"
+    fill="none" stroke="rgba(239,68,68,0.4)" stroke-width="1.5"/>
+  <!-- Corner accents -->
+  <line x1="2" y1="2" x2="14" y2="2" stroke="#ff6b6b" stroke-width="3" stroke-linecap="round"/>
+  <line x1="2" y1="2" x2="2" y2="14" stroke="#ff6b6b" stroke-width="3" stroke-linecap="round"/>
+  <line x1="78" y1="2" x2="66" y2="2" stroke="#ff6b6b" stroke-width="3" stroke-linecap="round"/>
+  <line x1="78" y1="2" x2="78" y2="14" stroke="#ff6b6b" stroke-width="3" stroke-linecap="round"/>
+  <line x1="2" y1="38" x2="14" y2="38" stroke="#ff6b6b" stroke-width="3" stroke-linecap="round"/>
+  <line x1="2" y1="38" x2="2" y2="26" stroke="#ff6b6b" stroke-width="3" stroke-linecap="round"/>
+  <line x1="78" y1="38" x2="66" y2="38" stroke="#ff6b6b" stroke-width="3" stroke-linecap="round"/>
+  <line x1="78" y1="38" x2="78" y2="26" stroke="#ff6b6b" stroke-width="3" stroke-linecap="round"/>
+</svg>

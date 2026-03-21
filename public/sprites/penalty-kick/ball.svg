@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <!-- White soccer ball with black pentagon pattern -->
+  <circle cx="50" cy="50" r="46" fill="white" stroke="#ccc" stroke-width="1"/>
+  <!-- Center pentagon -->
+  <polygon points="50,28 63,38 58,53 42,53 37,38" fill="#111"/>
+  <!-- Surrounding pentagons (partial) -->
+  <polygon points="50,28 37,38 28,27 36,15 64,15 72,27 63,38" fill="none" stroke="#111" stroke-width="2.5"/>
+  <polygon points="37,38 28,27 16,36 20,52 37,53" fill="none" stroke="#111" stroke-width="2.5"/>
+  <polygon points="63,38 80,36 84,52 63,53" fill="none" stroke="#111" stroke-width="2.5"/>
+  <polygon points="42,53 20,52 22,70 38,77 50,68" fill="none" stroke="#111" stroke-width="2.5"/>
+  <polygon points="58,53 80,52 78,70 62,77 50,68" fill="none" stroke="#111" stroke-width="2.5"/>
+  <!-- Shine -->
+  <ellipse cx="38" cy="34" rx="9" ry="6" fill="rgba(255,255,255,0.5)" transform="rotate(-20,38,34)"/>
+</svg>

@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 90">
+  <!-- Wrapped gift box -->
+  <defs>
+    <linearGradient id="scPresGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#34d399"/>
+      <stop offset="100%" stop-color="#059669"/>
+    </linearGradient>
+  </defs>
+  <!-- Box body -->
+  <rect x="6" y="34" width="68" height="52" rx="4" fill="url(#scPresGrad)" stroke="rgba(255,255,255,0.15)" stroke-width="1"/>
+  <!-- Box lid -->
+  <rect x="2" y="22" width="76" height="18" rx="4" fill="#4ade80" stroke="rgba(255,255,255,0.2)" stroke-width="1"/>
+  <!-- Ribbons -->
+  <rect x="36" y="34" width="8" height="52" fill="#fbbf24" opacity="0.85"/>
+  <rect x="6" y="52" width="68" height="8" fill="#fbbf24" opacity="0.85"/>
+  <rect x="36" y="22" width="8" height="18" fill="#f59e0b"/>
+  <rect x="2" y="28" width="76" height="6" fill="#f59e0b"/>
+  <!-- Bow -->
+  <ellipse cx="28" cy="18" rx="14" ry="8" fill="#fbbf24" transform="rotate(-20,28,18)"/>
+  <ellipse cx="52" cy="18" rx="14" ry="8" fill="#fbbf24" transform="rotate(20,52,18)"/>
+  <circle cx="40" cy="20" r="7" fill="#f59e0b" stroke="#d97706" stroke-width="1.5"/>
+</svg>

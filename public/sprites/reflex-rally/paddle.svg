@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 120">
+  <!-- Tennis paddle - tall rounded rectangle -->
+  <defs>
+    <linearGradient id="paddleGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#6366f1"/>
+      <stop offset="50%" stop-color="#818cf8"/>
+      <stop offset="100%" stop-color="#6366f1"/>
+    </linearGradient>
+  </defs>
+  <rect x="3" y="3" width="34" height="114" rx="10" fill="url(#paddleGrad)" stroke="#4338ca" stroke-width="2"/>
+  <!-- Grip lines -->
+  <line x1="10" y1="25" x2="30" y2="25" stroke="rgba(255,255,255,0.3)" stroke-width="2"/>
+  <line x1="10" y1="35" x2="30" y2="35" stroke="rgba(255,255,255,0.3)" stroke-width="2"/>
+  <line x1="10" y1="45" x2="30" y2="45" stroke="rgba(255,255,255,0.3)" stroke-width="2"/>
+  <!-- Shine -->
+  <rect x="7" y="8" width="10" height="50" rx="4" fill="rgba(255,255,255,0.2)"/>
+</svg>

@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <defs>
+    <linearGradient id="tileGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#a855f7"/>
+      <stop offset="100%" stop-color="#6366f1"/>
+    </linearGradient>
+  </defs>
+  <rect x="4" y="4" width="92" height="92" rx="14" fill="url(#tileGrad)" stroke="rgba(255,255,255,0.2)" stroke-width="2"/>
+  <!-- Bevel highlight top -->
+  <rect x="6" y="6" width="88" height="8" rx="10" fill="rgba(255,255,255,0.25)"/>
+  <!-- Bevel shadow bottom -->
+  <rect x="6" y="86" width="88" height="6" rx="6" fill="rgba(0,0,0,0.2)"/>
+  <!-- Center shine -->
+  <ellipse cx="35" cy="30" rx="20" ry="10" fill="rgba(255,255,255,0.15)" transform="rotate(-10,35,30)"/>
+</svg>

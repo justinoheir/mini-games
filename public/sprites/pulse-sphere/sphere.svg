@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120">
+  <!-- Blue/purple glowing circle with rings -->
+  <defs>
+    <radialGradient id="sphereGrad" cx="40%" cy="35%" r="65%">
+      <stop offset="0%" stop-color="#c084fc"/>
+      <stop offset="50%" stop-color="#7c3aed"/>
+      <stop offset="100%" stop-color="#2e1065"/>
+    </radialGradient>
+    <radialGradient id="glowOuter" cx="50%" cy="50%" r="50%">
+      <stop offset="60%" stop-color="rgba(124,58,237,0)"/>
+      <stop offset="100%" stop-color="rgba(124,58,237,0.3)"/>
+    </radialGradient>
+  </defs>
+  <!-- Outer glow rings -->
+  <circle cx="60" cy="60" r="58" fill="url(#glowOuter)"/>
+  <circle cx="60" cy="60" r="52" fill="none" stroke="rgba(192,132,252,0.2)" stroke-width="2"/>
+  <circle cx="60" cy="60" r="46" fill="none" stroke="rgba(192,132,252,0.15)" stroke-width="1.5"/>
+  <!-- Main sphere -->
+  <circle cx="60" cy="60" r="42" fill="url(#sphereGrad)" stroke="rgba(192,132,252,0.6)" stroke-width="2"/>
+  <!-- Equatorial ring -->
+  <ellipse cx="60" cy="60" rx="42" ry="14" fill="none" stroke="rgba(255,255,255,0.25)" stroke-width="2"/>
+  <!-- Highlight -->
+  <ellipse cx="45" cy="42" rx="14" ry="9" fill="rgba(255,255,255,0.35)" transform="rotate(-20,45,42)"/>
+  <circle cx="43" cy="40" r="5" fill="rgba(255,255,255,0.5)"/>
+</svg>

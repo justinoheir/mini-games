@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 80">
+  <!-- Teardrop / raindrop shape -->
+  <defs>
+    <linearGradient id="dropGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#60a5fa"/>
+      <stop offset="100%" stop-color="#2563eb"/>
+    </linearGradient>
+  </defs>
+  <path d="M30,5 C30,5 5,40 5,55 A25,25 0 0,0 55,55 C55,40 30,5 30,5 Z"
+    fill="url(#dropGrad)" stroke="rgba(255,255,255,0.3)" stroke-width="1.5"/>
+  <!-- Shine highlight -->
+  <ellipse cx="22" cy="42" rx="6" ry="10" fill="rgba(255,255,255,0.35)" transform="rotate(-15,22,42)"/>
+</svg>

@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <!-- Green magic bubble with highlight -->
+  <defs>
+    <radialGradient id="bubGrad" cx="40%" cy="35%" r="65%">
+      <stop offset="0%" stop-color="#4ade80"/>
+      <stop offset="60%" stop-color="#16a34a"/>
+      <stop offset="100%" stop-color="#052e16"/>
+    </radialGradient>
+  </defs>
+  <circle cx="50" cy="50" r="44" fill="url(#bubGrad)" stroke="rgba(74,222,128,0.5)" stroke-width="2"/>
+  <!-- Highlight -->
+  <ellipse cx="34" cy="28" rx="14" ry="9" fill="rgba(255,255,255,0.45)" transform="rotate(-20,34,28)"/>
+  <circle cx="30" cy="26" r="5" fill="rgba(255,255,255,0.6)"/>
+  <!-- Bubble rim reflection -->
+  <circle cx="50" cy="50" r="44" fill="none" stroke="rgba(255,255,255,0.15)" stroke-width="4"/>
+</svg>

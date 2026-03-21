@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <!-- Yellow starburst spark -->
+  <defs>
+    <radialGradient id="sparkGrad" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#fff"/>
+      <stop offset="30%" stop-color="#fef08a"/>
+      <stop offset="100%" stop-color="#eab308"/>
+    </radialGradient>
+  </defs>
+  <!-- 12-point burst -->
+  <polygon points="
+    50,5  53,38  68,14  55,44
+    88,28  58,50  95,50  62,55
+    88,72  58,58  68,86  53,62
+    50,95  47,62  32,86  45,58
+    12,72  42,55  5,50  38,50
+    12,28  45,44  32,14  47,38"
+    fill="url(#sparkGrad)"/>
+  <circle cx="50" cy="50" r="14" fill="#fff" opacity="0.9"/>
+</svg>

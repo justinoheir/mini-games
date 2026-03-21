@@ -21,6 +21,20 @@ import SwipeInstructions from '@/components/SwipeInstructions';
 
 const CATEGORY_ACCENT = CATEGORY_THEMES.sports.primaryAccent;
 
+// ─── SPRITE CACHE ─────────────────────────────────────────────────────────────
+const _spriteCache = new Map<string, HTMLImageElement>();
+function _loadSprite(src: string): HTMLImageElement {
+  if (_spriteCache.has(src)) return _spriteCache.get(src)!;
+  const img = new Image();
+  img.src = src;
+  _spriteCache.set(src, img);
+  return img;
+}
+if (typeof window !== 'undefined') {
+  _loadSprite('/sprites/reflex-rally/ball.svg');
+  _loadSprite('/sprites/reflex-rally/paddle.svg');
+}
+
 const ACCENT = '#84cc16';
 const GAME_ID = 'reflex-rally';
 const PB_KEY       = 'pb_reflex-rally';
@@ -259,10 +273,16 @@ export default function ReflexRally() {
           }
         }
 
-        // Ball (neon yellow)
+        // Ball sprite
         ctx.save(); ctx.shadowBlur = 14; ctx.shadowColor = '#fde047';
-        ctx.fillStyle = '#fde047'; ctx.beginPath();
-        ctx.arc(s.ballX, s.ballY, s.ballRadius, 0, Math.PI*2); ctx.fill(); ctx.restore();
+        const _rrBall = _loadSprite('/sprites/reflex-rally/ball.svg');
+        if (_rrBall.complete && _rrBall.naturalWidth > 0) {
+          ctx.drawImage(_rrBall, s.ballX - s.ballRadius, s.ballY - s.ballRadius, s.ballRadius * 2, s.ballRadius * 2);
+        } else {
+          ctx.fillStyle = '#fde047'; ctx.beginPath();
+          ctx.arc(s.ballX, s.ballY, s.ballRadius, 0, Math.PI*2); ctx.fill();
+        }
+        ctx.restore();
 
         // Miss — ball passed player zone
         if (s.ballX < W * 0.06) {

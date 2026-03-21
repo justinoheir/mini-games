@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 100">
+  <!-- Black cauldron pot -->
+  <defs>
+    <linearGradient id="potGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#3a3a3a"/>
+      <stop offset="100%" stop-color="#0d0d0d"/>
+    </linearGradient>
+    <radialGradient id="liquidGrad" cx="50%" cy="30%" r="70%">
+      <stop offset="0%" stop-color="#4ade80"/>
+      <stop offset="60%" stop-color="#16a34a"/>
+      <stop offset="100%" stop-color="#052e16"/>
+    </radialGradient>
+  </defs>
+  <!-- Legs -->
+  <rect x="20" y="82" width="10" height="18" rx="3" fill="#1c1c1c"/>
+  <rect x="90" y="82" width="10" height="18" rx="3" fill="#1c1c1c"/>
+  <rect x="55" y="85" width="10" height="15" rx="3" fill="#1c1c1c"/>
+  <!-- Pot body -->
+  <path d="M 12,45 Q 8,90 60,92 Q 112,90 108,45 Z" fill="url(#potGrad)"/>
+  <!-- Liquid surface -->
+  <ellipse cx="60" cy="44" rx="42" ry="12" fill="url(#liquidGrad)"/>
+  <!-- Rim -->
+  <ellipse cx="60" cy="38" rx="50" ry="14" fill="none" stroke="#555" stroke-width="8"/>
+  <ellipse cx="60" cy="38" rx="50" ry="14" fill="none" stroke="#2a2a2a" stroke-width="5"/>
+  <!-- Handle -->
+  <path d="M 20,38 Q 20,8 60,8 Q 100,8 100,38" fill="none" stroke="#444" stroke-width="8" stroke-linecap="round"/>
+  <!-- Body highlight -->
+  <path d="M 20,55 Q 18,80 35,85" fill="none" stroke="rgba(255,255,255,0.12)" stroke-width="6" stroke-linecap="round"/>
+</svg>

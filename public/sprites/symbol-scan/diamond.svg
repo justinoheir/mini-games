@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <defs>
+    <linearGradient id="dGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#f472b6"/>
+      <stop offset="100%" stop-color="#be185d"/>
+    </linearGradient>
+  </defs>
+  <polygon points="50,5 95,50 50,95 5,50" fill="url(#dGrad)" stroke="#ec4899" stroke-width="2"/>
+  <polygon points="50,5 95,50 50,40 28,28" fill="rgba(255,255,255,0.15)"/>
+  <ellipse cx="38" cy="30" rx="10" ry="6" fill="rgba(255,255,255,0.3)" transform="rotate(-30,38,30)"/>
+</svg>

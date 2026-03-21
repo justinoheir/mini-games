@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 100">
+  <!-- Simple stick figure with arms raised -->
+  <g stroke="#e2e8f0" stroke-linecap="round" stroke-linejoin="round">
+    <!-- Head -->
+    <circle cx="30" cy="14" r="12" fill="#fbbf24" stroke="#f59e0b" stroke-width="2"/>
+    <!-- Body -->
+    <line x1="30" y1="26" x2="30" y2="65" stroke-width="4"/>
+    <!-- Arms raised (V shape) -->
+    <line x1="30" y1="38" x2="6" y2="18" stroke-width="4"/>
+    <line x1="30" y1="38" x2="54" y2="18" stroke-width="4"/>
+    <!-- Legs -->
+    <line x1="30" y1="65" x2="14" y2="92" stroke-width="4"/>
+    <line x1="30" y1="65" x2="46" y2="92" stroke-width="4"/>
+  </g>
+</svg>

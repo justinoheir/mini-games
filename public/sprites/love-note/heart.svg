@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 90">
+  <!-- Classic heart, pink/red -->
+  <defs>
+    <linearGradient id="lnHeartGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#fb7185"/>
+      <stop offset="100%" stop-color="#e11d48"/>
+    </linearGradient>
+  </defs>
+  <path d="M50,82 C50,82 6,52 6,28 A22,22 0 0,1 50,20 A22,22 0 0,1 94,28 C94,52 50,82 50,82 Z"
+    fill="url(#lnHeartGrad)" stroke="#fb7185" stroke-width="1.5"/>
+  <!-- Highlight -->
+  <ellipse cx="28" cy="26" rx="11" ry="7" fill="rgba(255,255,255,0.35)" transform="rotate(-20,28,26)"/>
+  <circle cx="26" cy="24" r="4" fill="rgba(255,255,255,0.5)"/>
+</svg>

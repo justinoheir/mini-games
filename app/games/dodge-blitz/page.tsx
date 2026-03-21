@@ -30,6 +30,20 @@ import SwipeInstructions from '@/components/SwipeInstructions';
 
 const CATEGORY_ACCENT = CATEGORY_THEMES.sports.primaryAccent;
 
+// ─── SPRITE CACHE ─────────────────────────────────────────────────────────────
+const _spriteCache = new Map<string, HTMLImageElement>();
+function _loadSprite(src: string): HTMLImageElement {
+  if (_spriteCache.has(src)) return _spriteCache.get(src)!;
+  const img = new Image();
+  img.src = src;
+  _spriteCache.set(src, img);
+  return img;
+}
+if (typeof window !== 'undefined') {
+  _loadSprite('/sprites/dodge-blitz/obstacle.svg');
+  _loadSprite('/sprites/dodge-blitz/player.svg');
+}
+
 // ─── SPEC CONSTANTS ──────────────────────────────────────────────────────────
 
 const GAME_ID      = 'dodge-blitz';
@@ -557,22 +571,21 @@ export default function DodgeBlitzGame() {
           }
         }
 
-        // Draw diamond spike obstacle (elongated, falling from top)
+        // Draw obstacle sprite
         ctx.save();
-        ctx.translate(obs.x, obs.y);
         ctx.shadowBlur = 18;
         ctx.shadowColor = '#f97316';
-        ctx.fillStyle = '#dc2626';
-        ctx.strokeStyle = '#f97316';
-        ctx.lineWidth = 1.5;
-        ctx.beginPath();
-        ctx.moveTo(0, -obs.size * 1.65);   // top spike point
-        ctx.lineTo(obs.size * 0.68, 0);    // right mid
-        ctx.lineTo(0, obs.size * 0.90);    // bottom point
-        ctx.lineTo(-obs.size * 0.68, 0);   // left mid
-        ctx.closePath();
-        ctx.fill();
-        ctx.stroke();
+        const _obsImg = _loadSprite('/sprites/dodge-blitz/obstacle.svg');
+        if (_obsImg.complete && _obsImg.naturalWidth > 0) {
+          ctx.drawImage(_obsImg, obs.x - obs.size, obs.y - obs.size * 1.65, obs.size * 2, obs.size * 2.55);
+        } else {
+          ctx.translate(obs.x, obs.y);
+          ctx.fillStyle = '#dc2626'; ctx.strokeStyle = '#f97316'; ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          ctx.moveTo(0, -obs.size * 1.65); ctx.lineTo(obs.size * 0.68, 0);
+          ctx.lineTo(0, obs.size * 0.90); ctx.lineTo(-obs.size * 0.68, 0);
+          ctx.closePath(); ctx.fill(); ctx.stroke();
+        }
         ctx.restore();
       }
 

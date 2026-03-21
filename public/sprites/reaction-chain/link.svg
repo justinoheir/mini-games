@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 10">
+  <!-- Thin glowing link line -->
+  <defs>
+    <linearGradient id="linkGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="rgba(96,165,250,0)"/>
+      <stop offset="30%" stop-color="rgba(96,165,250,0.8)"/>
+      <stop offset="70%" stop-color="rgba(96,165,250,0.8)"/>
+      <stop offset="100%" stop-color="rgba(96,165,250,0)"/>
+    </linearGradient>
+  </defs>
+  <line x1="0" y1="5" x2="100" y2="5" stroke="url(#linkGrad)" stroke-width="3" stroke-linecap="round"/>
+  <line x1="0" y1="5" x2="100" y2="5" stroke="rgba(255,255,255,0.3)" stroke-width="1" stroke-linecap="round"/>
+</svg>

@@ -22,6 +22,19 @@ import SwipeInstructions from '@/components/SwipeInstructions';
 
 const CATEGORY_ACCENT = CATEGORY_THEMES.sports.primaryAccent;
 
+// ─── SPRITE CACHE ─────────────────────────────────────────────────────────────
+const _spriteCache = new Map<string, HTMLImageElement>();
+function _loadSprite(src: string): HTMLImageElement {
+  if (_spriteCache.has(src)) return _spriteCache.get(src)!;
+  const img = new Image();
+  img.src = src;
+  _spriteCache.set(src, img);
+  return img;
+}
+if (typeof window !== 'undefined') {
+  _loadSprite('/sprites/penalty-kick/ball.svg');
+}
+
 const ACCENT = '#22c55e';
 const GAME_ID = 'penalty-kick';
 const PB_KEY       = 'pb_penalty-kick';
@@ -248,11 +261,14 @@ export default function PenaltyKick() {
         const t = (s.ballY - (s.goalY + s.goalH)) / ((H*0.75) - (s.goalY + s.goalH));
         const scale = 0.3 + t * 0.7;
         const br = Math.max(4, s.ballRadius * scale);
-        // Ball (simple black/white)
+        // Ball sprite
         ctx.save(); ctx.shadowBlur = 8; ctx.shadowColor = '#fff';
-        ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(s.ballX, s.ballY, br, 0, Math.PI*2); ctx.fill();
-        ctx.fillStyle = '#000'; ctx.font = `${br*0.9}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-        ctx.fillText('⬡', s.ballX, s.ballY);
+        const _ballImg = _loadSprite('/sprites/penalty-kick/ball.svg');
+        if (_ballImg.complete && _ballImg.naturalWidth > 0) {
+          ctx.drawImage(_ballImg, s.ballX - br, s.ballY - br, br * 2, br * 2);
+        } else {
+          ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(s.ballX, s.ballY, br, 0, Math.PI*2); ctx.fill();
+        }
         ctx.restore();
 
         // Check goal (guard: only once per flight — phase check mirrors the miss path)
@@ -323,9 +339,12 @@ export default function PenaltyKick() {
       if (s.phase !== 'flying') {
         const br = s.ballRadius;
         ctx.save(); ctx.shadowBlur = 8; ctx.shadowColor = '#fff';
-        ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(s.ballX, s.ballY, br, 0, Math.PI*2); ctx.fill();
-        ctx.fillStyle = '#000'; ctx.font = `${br*0.9}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-        ctx.fillText('⬡', s.ballX, s.ballY);
+        const _ballImg2 = _loadSprite('/sprites/penalty-kick/ball.svg');
+        if (_ballImg2.complete && _ballImg2.naturalWidth > 0) {
+          ctx.drawImage(_ballImg2, s.ballX - br, s.ballY - br, br * 2, br * 2);
+        } else {
+          ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(s.ballX, s.ballY, br, 0, Math.PI*2); ctx.fill();
+        }
         ctx.restore();
       }
 

@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <!-- Red spiky hazard star -->
+  <defs>
+    <radialGradient id="obsGrad" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#ff6b6b"/>
+      <stop offset="100%" stop-color="#cc0000"/>
+    </radialGradient>
+  </defs>
+  <!-- 8-point star -->
+  <polygon points="
+    50,5  58,38  88,28  65,50
+    88,72  58,62  50,95  42,62
+    12,72  35,50  12,28  42,38"
+    fill="url(#obsGrad)" stroke="#ff0000" stroke-width="2" stroke-linejoin="round"/>
+  <!-- Inner shape -->
+  <circle cx="50" cy="50" r="15" fill="#ff3333" opacity="0.6"/>
+  <!-- Center highlight -->
+  <circle cx="44" cy="44" r="6" fill="rgba(255,200,200,0.4)"/>
+</svg>
