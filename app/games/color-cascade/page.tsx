@@ -329,6 +329,13 @@ export default function ColorCascadeGame() {
       ctx.fillStyle = ccBg;
       ctx.fillRect(0, 0, W, H);
 
+      // Vignette
+      const ccVig = ctx.createRadialGradient(W * 0.5, H * 0.5, H * 0.2, W * 0.5, H * 0.5, H * 0.85);
+      ccVig.addColorStop(0, 'rgba(0,0,0,0)');
+      ccVig.addColorStop(1, 'rgba(0,0,0,0.5)');
+      ctx.fillStyle = ccVig;
+      ctx.fillRect(0, 0, W, H);
+
       // Ambient glow tinted toward target color
       const targetHex = COLORS[s.targetColorIndex].hex;
       const ambGrad   = ctx.createRadialGradient(W / 2, H, 0, W / 2, H, H * 0.55);

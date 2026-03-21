@@ -443,6 +443,13 @@ export default function DodgeBlitzGame() {
       ctx.fillStyle = dbBg;
       ctx.fillRect(0, 0, W, H);
 
+      // Vignette
+      const dbVig = ctx.createRadialGradient(W * 0.5, H * 0.5, H * 0.2, W * 0.5, H * 0.5, H * 0.85);
+      dbVig.addColorStop(0, 'rgba(0,0,0,0)');
+      dbVig.addColorStop(1, 'rgba(0,0,0,0.5)');
+      ctx.fillStyle = dbVig;
+      ctx.fillRect(0, 0, W, H);
+
       // Speed lines
       if (s.speedLines.length > 0) {
         for (let si = s.speedLines.length - 1; si >= 0; si--) {

@@ -460,8 +460,15 @@ export default function SymbolScanGame() {
       ctx.fillStyle = ssBg;
       ctx.fillRect(0, 0, W, H);
 
+      // Subtle vignette
+      const ssVig = ctx.createRadialGradient(W * 0.5, H * 0.5, H * 0.2, W * 0.5, H * 0.5, H * 0.8);
+      ssVig.addColorStop(0, 'rgba(0,0,0,0)');
+      ssVig.addColorStop(1, 'rgba(0,0,0,0.5)');
+      ctx.fillStyle = ssVig;
+      ctx.fillRect(0, 0, W, H);
+
       // Subtle dot-grid background texture
-      ctx.fillStyle = 'rgba(255,255,255,0.025)';
+      ctx.fillStyle = 'rgba(255,255,255,0.022)';
       for (let gx = 24; gx < W; gx += 40) {
         for (let gy = 24; gy < H; gy += 40) {
           ctx.beginPath();

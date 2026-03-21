@@ -228,6 +228,13 @@ export default function ReactionChain() {
       ctx.fillStyle = rcBg;
       ctx.fillRect(0, 0, W, H);
 
+      // Subtle vignette
+      const rcVig = ctx.createRadialGradient(W * 0.5, H * 0.5, H * 0.2, W * 0.5, H * 0.5, H * 0.8);
+      rcVig.addColorStop(0, 'rgba(0,0,0,0)');
+      rcVig.addColorStop(1, 'rgba(0,0,0,0.5)');
+      ctx.fillStyle = rcVig;
+      ctx.fillRect(0, 0, W, H);
+
       // ── Chain-break red flash overlay ───────────────────────────────────────
       if (s.chainBreakFlash > 0) {
         ctx.fillStyle = `rgba(239, 68, 68, ${s.chainBreakFlash * 0.18})`;

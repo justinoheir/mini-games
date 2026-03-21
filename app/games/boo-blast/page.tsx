@@ -344,6 +344,13 @@ export default function BooBlastGame() {
       ctx.fillStyle = fog;
       ctx.fillRect(0, 0, W, H);
 
+      // Vignette
+      const bbVig = ctx.createRadialGradient(W * 0.5, H * 0.5, H * 0.2, W * 0.5, H * 0.5, H * 0.85);
+      bbVig.addColorStop(0, 'rgba(0,0,0,0)');
+      bbVig.addColorStop(1, 'rgba(0,0,0,0.55)');
+      ctx.fillStyle = bbVig;
+      ctx.fillRect(0, 0, W, H);
+
       // ── Spawn new ghosts ───────────────────────────────────────────────────
       if (now - s.lastSpawnTime >= s.spawnIntervalMs) {
         spawnGhost();

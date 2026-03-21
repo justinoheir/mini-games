@@ -455,6 +455,9 @@ export default function HoopShot() {
       const dpr = window.devicePixelRatio || 1;
       canvas.width  = window.innerWidth  * dpr;
       canvas.height = window.innerHeight * dpr;
+      // Keep CSS display size at 1:1 viewport pixels
+      canvas.style.width  = window.innerWidth  + 'px';
+      canvas.style.height = window.innerHeight + 'px';
       const ctx2 = canvas.getContext('2d');
       if (ctx2) ctx2.setTransform(dpr, 0, 0, dpr, 0, 0);
     };

@@ -380,6 +380,13 @@ export default function StackDropGame() {
       ctx.fillStyle = sdBg;
       ctx.fillRect(0, 0, W, H);
 
+      // Vignette
+      const sdVig = ctx.createRadialGradient(W * 0.5, H * 0.5, H * 0.25, W * 0.5, H * 0.5, H * 0.85);
+      sdVig.addColorStop(0, 'rgba(0,0,0,0)');
+      sdVig.addColorStop(1, 'rgba(0,0,0,0.55)');
+      ctx.fillStyle = sdVig;
+      ctx.fillRect(0, 0, W, H);
+
       // Camera transform
       ctx.save();
       ctx.translate(0, -s.cameraY);

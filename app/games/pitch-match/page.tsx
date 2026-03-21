@@ -544,6 +544,13 @@ export default function PitchMatchGame() {
       ctx.fillStyle = pmBg;
       ctx.fillRect(0, 0, W, H);
 
+      // Vignette
+      const pmVig = ctx.createRadialGradient(W * 0.5, H * 0.5, H * 0.2, W * 0.5, H * 0.5, H * 0.8);
+      pmVig.addColorStop(0, 'rgba(0,0,0,0)');
+      pmVig.addColorStop(1, 'rgba(0,0,0,0.5)');
+      ctx.fillStyle = pmVig;
+      ctx.fillRect(0, 0, W, H);
+
       // Layer 2: Subtle oscilloscope waveform (studio monitor aesthetic)
       if (pitchBufRef.current !== null) {
         const wbuf = pitchBufRef.current;

@@ -369,6 +369,13 @@ export default function PathTraceGame() {
       ctx.fillStyle = ptBg;
       ctx.fillRect(0, 0, W, H);
 
+      // Vignette
+      const ptVig = ctx.createRadialGradient(W * 0.5, H * 0.5, H * 0.2, W * 0.5, H * 0.5, H * 0.8);
+      ptVig.addColorStop(0, 'rgba(0,0,0,0)');
+      ptVig.addColorStop(1, 'rgba(0,0,0,0.5)');
+      ctx.fillStyle = ptVig;
+      ctx.fillRect(0, 0, W, H);
+
       // Subtle dot-grid
       ctx.fillStyle = 'rgba(255,255,255,0.025)';
       const gs = 32;
