@@ -849,12 +849,19 @@ export default function BooBlastGame() {
 
     const resize = () => {
       const dpr = window.devicePixelRatio || 1;
-      const w = canvas.offsetWidth;
-      const h = canvas.offsetHeight;
+      // Use parent dimensions so the canvas buffer EXACTLY matches CSS display size
+      const parent = canvas.parentElement;
+      const w = parent ? parent.clientWidth  : window.innerWidth;
+      const h = parent ? parent.clientHeight : window.innerHeight;
+      // Lock CSS display size first — prevents browser from stretching buffer to fill %
+      canvas.style.width  = w + 'px';
+      canvas.style.height = h + 'px';
       canvas.width  = w * dpr;
       canvas.height = h * dpr;
       const ctx2 = canvas.getContext('2d');
       if (ctx2) ctx2.setTransform(dpr, 0, 0, dpr, 0, 0);
+      // Reset bg so it re-initialises at correct dims on next frame
+      BG_INITIALIZED = false;
     };
     resize();
     window.addEventListener('resize', resize);
