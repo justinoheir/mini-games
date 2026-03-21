@@ -376,14 +376,18 @@ export default function TurkeyTrotGame() {
 
       ctx.imageSmoothingEnabled = true;
 
-      // ── Background ──────────────────────────────────────────────────────
-      ctx.fillStyle = '#0f0800';
+      // ── Background — rich warm autumn gradient ───────────────────────────
+      const ttBg = ctx.createRadialGradient(W * 0.5, H * 0.35, 0, W * 0.5, H * 0.65, Math.max(W, H) * 0.9);
+      ttBg.addColorStop(0,   '#1a0e00');
+      ttBg.addColorStop(0.55, '#0e0800');
+      ttBg.addColorStop(1,   '#060400');
+      ctx.fillStyle = ttBg;
       ctx.fillRect(0, 0, W, H);
 
       // Warm bottom-edge vignette
       const vig = ctx.createRadialGradient(W * 0.5, H * 0.85, H * 0.05, W * 0.5, H * 0.85, H * 0.75);
       vig.addColorStop(0, 'rgba(249,115,22,0)');
-      vig.addColorStop(1, 'rgba(120,45,0,0.20)');
+      vig.addColorStop(1, 'rgba(120,45,0,0.25)');
       ctx.fillStyle = vig;
       ctx.fillRect(0, 0, W, H);
 

@@ -172,9 +172,11 @@ export default function PenaltyKick() {
       if (!s.running) return;
       ctx.save();
       applyShake(ctx, s.shake);
-      // Football pitch — deep grass gradient
-      const bg = ctx.createLinearGradient(0, 0, 0, H);
-      bg.addColorStop(0, '#0a1f0a'); bg.addColorStop(1, '#051005');
+      // Football pitch — rich deep grass gradient
+      const bg = ctx.createRadialGradient(W * 0.5, H * 0.4, 0, W * 0.5, H * 0.7, Math.max(W, H) * 0.9);
+      bg.addColorStop(0,   '#0a2008');
+      bg.addColorStop(0.5, '#061505');
+      bg.addColorStop(1,   '#030a02');
       ctx.fillStyle = bg;
       ctx.fillRect(0, 0, W, H);
 

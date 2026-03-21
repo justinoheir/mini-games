@@ -187,9 +187,11 @@ export default function PrecisionPutt() {
 
     const loop = () => {
       if (!s.running) return;
-      // Golf fairway — rich dark green
-      const bg = ctx.createLinearGradient(0, 0, 0, H);
-      bg.addColorStop(0, '#0c1e10'); bg.addColorStop(1, '#060f08');
+      // Golf fairway — rich dark green gradient
+      const bg = ctx.createRadialGradient(W * 0.5, H * 0.4, 0, W * 0.5, H * 0.7, Math.max(W, H) * 0.9);
+      bg.addColorStop(0,   '#0e2212');
+      bg.addColorStop(0.5, '#08140a');
+      bg.addColorStop(1,   '#030805');
       ctx.fillStyle = bg;
       ctx.fillRect(0, 0, W, H);
 

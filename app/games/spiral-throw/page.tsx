@@ -189,9 +189,11 @@ export default function SpiralThrow() {
       if (!s.running) return;
       ctx.save();
       applyShake(ctx, s.shake);
-      // Football field — rich dark grass
-      const bg = ctx.createLinearGradient(0, 0, 0, H);
-      bg.addColorStop(0, '#0d1f0a'); bg.addColorStop(1, '#050f05');
+      // Football field — night stadium, rich deep grass
+      const bg = ctx.createRadialGradient(W * 0.5, H * 0.5, 0, W * 0.5, H * 0.6, Math.max(W, H) * 0.9);
+      bg.addColorStop(0,   '#0e200a');
+      bg.addColorStop(0.5, '#091505');
+      bg.addColorStop(1,   '#040a02');
       ctx.fillStyle = bg;
       ctx.fillRect(0, 0, W, H);
 

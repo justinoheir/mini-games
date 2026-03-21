@@ -508,14 +508,18 @@ export default function HarvestCatch() {
         }
       }
 
-      // ── Background ──────────────────────────────────────────────────────────
-      ctx.fillStyle = '#0a0500';
+      // ── Background — rich autumn harvest gradient ────────────────────────────
+      const hcBg = ctx.createRadialGradient(W * 0.5, H * 0.3, 0, W * 0.5, H * 0.65, Math.max(W, H) * 0.9);
+      hcBg.addColorStop(0,   '#1a0d00');
+      hcBg.addColorStop(0.55, '#0e0800');
+      hcBg.addColorStop(1,   '#060400');
+      ctx.fillStyle = hcBg;
       ctx.fillRect(0, 0, W, H);
 
-      // Warm orange vignette
+      // Warm amber vignette edges
       const vg = ctx.createRadialGradient(W / 2, H * 0.45, H * 0.08, W / 2, H * 0.45, H * 0.85);
       vg.addColorStop(0, 'rgba(0,0,0,0)');
-      vg.addColorStop(1, 'rgba(130, 50, 0, 0.32)');
+      vg.addColorStop(1, 'rgba(130, 50, 0, 0.38)');
       ctx.fillStyle = vg;
       ctx.fillRect(0, 0, W, H);
 

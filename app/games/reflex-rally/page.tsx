@@ -186,9 +186,11 @@ export default function ReflexRally() {
       applyShake(ctx, s.shake);
       // Init playerY on first frame
     if (!s.playerY) s.playerY = (s.courtTop + s.courtBottom) / 2;
-    // Clay court — terracotta atmosphere
-      const bg = ctx.createLinearGradient(0, 0, 0, H);
-      bg.addColorStop(0, '#200e06'); bg.addColorStop(1, '#0d0603');
+    // Clay court — rich terracotta atmosphere
+      const bg = ctx.createRadialGradient(W * 0.5, H * 0.4, 0, W * 0.5, H * 0.7, Math.max(W, H) * 0.9);
+      bg.addColorStop(0,   '#241008');
+      bg.addColorStop(0.5, '#160a04');
+      bg.addColorStop(1,   '#080402');
       ctx.fillStyle = bg;
       ctx.fillRect(0, 0, W, H);
 

@@ -188,9 +188,11 @@ export default function HoopShot() {
       if (!s.running) return;
       ctx.save();
       applyShake(ctx, s.shake);
-      // Basketball court — hardwood atmosphere
-      const bg = ctx.createLinearGradient(0, 0, 0, H);
-      bg.addColorStop(0, '#100c03'); bg.addColorStop(0.6, '#160e04'); bg.addColorStop(1, '#0c0800');
+      // Basketball court — rich hardwood atmosphere
+      const bg = ctx.createRadialGradient(W * 0.5, H * 0.4, 0, W * 0.5, H * 0.6, Math.max(W, H) * 0.9);
+      bg.addColorStop(0,   '#1c1204');
+      bg.addColorStop(0.5, '#120c02');
+      bg.addColorStop(1,   '#080500');
       ctx.fillStyle = bg;
       ctx.fillRect(0, 0, W, H);
       // Hardwood grain lines

@@ -267,10 +267,11 @@ export default function TiltMaze() {
         if (Date.now() >= s.celebrateUntil) { s.celebrateUntil = 0; endGame(capturedTheme); return; }
         s.animId = requestAnimationFrame(loop); return;
       }
-      // Dungeon atmosphere — dark stone gradient + vignette
-      const bgGrad = ctx2d.createLinearGradient(0, 0, 0, H);
-      bgGrad.addColorStop(0, '#131921');
-      bgGrad.addColorStop(1, '#0d1117');
+      // Dungeon atmosphere — deep stone/indigo radial gradient
+      const bgGrad = ctx2d.createRadialGradient(W * 0.5, H * 0.4, 0, W * 0.5, H * 0.65, Math.max(W, H) * 0.9);
+      bgGrad.addColorStop(0,   '#0e1220');
+      bgGrad.addColorStop(0.55, '#090d18');
+      bgGrad.addColorStop(1,   '#04060e');
       ctx2d.fillStyle = bgGrad;
       ctx2d.fillRect(0, 0, W, H);
       const vig = ctx2d.createRadialGradient(W/2, H/2, W*0.1, W/2, H/2, W*0.75);

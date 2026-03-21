@@ -513,8 +513,16 @@ export default function SteadyHandGame() {
       const textC  = dark ? '#ffffff' : '#0d1117';
       const textC2 = dark ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.4)';
 
-      // Background
-      ctx.fillStyle = bg;
+      // Background — rich teal/dark gradient in dark mode
+      if (dark) {
+        const shBg = ctx.createRadialGradient(W * 0.5, H * 0.35, 0, W * 0.5, H * 0.65, Math.max(W, H) * 0.9);
+        shBg.addColorStop(0,   '#001510');
+        shBg.addColorStop(0.55, '#000d08');
+        shBg.addColorStop(1,   '#000503');
+        ctx.fillStyle = shBg;
+      } else {
+        ctx.fillStyle = bg;
+      }
       ctx.fillRect(0, 0, W, H);
 
       // Grid
