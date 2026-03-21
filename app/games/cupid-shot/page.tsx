@@ -436,8 +436,8 @@ export default function CupidShot() {
       s.lastTs     = ts;
       s.elapsedMs += dt;
 
-      const W           = canvas.offsetWidth;
-      const H           = canvas.offsetHeight;
+      const W           = window.innerWidth;
+      const H           = window.innerHeight;
       const elapsedSec  = s.elapsedMs / 1000;
       const bullseyeX   = W / 2;
       const bullseyeY   = H * 0.42;
@@ -748,8 +748,8 @@ export default function CupidShot() {
     const s = stateRef.current;
     if (!s.running) return;
 
-    const W          = canvas.offsetWidth;
-    const H          = canvas.offsetHeight;
+    const W          = window.innerWidth;
+    const H          = window.innerHeight;
     const bullseyeX  = W / 2;
     const now        = Date.now();
 
@@ -874,8 +874,10 @@ export default function CupidShot() {
 
     const resize = () => {
       const dpr = window.devicePixelRatio || 1;
-      const w = canvas.offsetWidth;
-      const h = canvas.offsetHeight;
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      canvas.style.width  = w + 'px';
+      canvas.style.height = h + 'px';
       canvas.width  = w * dpr;
       canvas.height = h * dpr;
       const ctx2 = canvas.getContext('2d');

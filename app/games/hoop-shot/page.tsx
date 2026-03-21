@@ -132,8 +132,8 @@ export default function HoopShot() {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const s = stateRef.current;
-    s.ballX = canvas.offsetWidth / 2;
-    s.ballY = canvas.offsetHeight - 80;
+    s.ballX = window.innerWidth / 2;
+    s.ballY = window.innerHeight - 80;
     s.ballVX = 0; s.ballVY = 0;
     s.ballInFlight = false;
     s.ballVisible = true;
@@ -146,7 +146,7 @@ export default function HoopShot() {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
     const s = stateRef.current;
-    const W = canvas.offsetWidth, H = canvas.offsetHeight;
+    const W = window.innerWidth, H = window.innerHeight;
 
     s.running = true;
     s.timeLeft = DURATION;

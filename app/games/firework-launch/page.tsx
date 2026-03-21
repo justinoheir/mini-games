@@ -544,8 +544,8 @@ export default function FireworkLaunchGame() {
     s.screenFlashTime    = 0;
     s.streakResetPending = false;
     s.lastAutoLaunchTime = 0;
-    s.buildings          = generateBuildings(canvas.offsetWidth, canvas.offsetHeight);
-    s.stars              = generateStars(canvas.offsetWidth, canvas.offsetHeight);
+    s.buildings          = generateBuildings(window.innerWidth, window.innerHeight);
+    s.stars              = generateStars(window.innerWidth, window.innerHeight);
 
     setScoreDisplay(0);
     setStreakDisplay(0);
@@ -568,8 +568,8 @@ export default function FireworkLaunchGame() {
 
     const loop = () => {
       if (!s.running) return;
-      const W = canvas.offsetWidth;
-      const H = canvas.offsetHeight;
+      const W = window.innerWidth;
+      const H = window.innerHeight;
       const now = Date.now();
 
       // ── Background — deep midnight celebration gradient ───────────────────
@@ -860,17 +860,19 @@ export default function FireworkLaunchGame() {
 
     const resize = () => {
       const dpr = window.devicePixelRatio || 1;
-      const w = canvas.offsetWidth;
-      const h = canvas.offsetHeight;
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      canvas.style.width  = w + 'px';
+      canvas.style.height = h + 'px';
       canvas.width  = w * dpr;
       canvas.height = h * dpr;
       const ctx2 = canvas.getContext('2d');
       if (ctx2) ctx2.setTransform(dpr, 0, 0, dpr, 0, 0);
       // Regenerate skyline on resize
       const s = stateRef.current;
-      if (s.buildings.length === 0 || canvas.offsetWidth !== s.buildings[s.buildings.length - 1].x) {
-        s.buildings = generateBuildings(canvas.offsetWidth, canvas.offsetHeight);
-        s.stars     = generateStars(canvas.offsetWidth, canvas.offsetHeight);
+      if (s.buildings.length === 0 || window.innerWidth !== s.buildings[s.buildings.length - 1].x) {
+        s.buildings = generateBuildings(window.innerWidth, window.innerHeight);
+        s.stars     = generateStars(window.innerWidth, window.innerHeight);
       }
     };
     resize();

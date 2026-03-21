@@ -291,10 +291,10 @@ export default function DodgeBlitzGame() {
     for (let i = 0; i < count; i++) {
       let x: number;
       if (count === 1) {
-        x = margin + Math.random() * (canvas.offsetWidth - margin * 2);
+        x = margin + Math.random() * (window.innerWidth - margin * 2);
       } else {
         // Spread across segments so multiple obstacles are always passable
-        const segment = canvas.offsetWidth / count;
+        const segment = window.innerWidth / count;
         x = segment * i + margin + Math.random() * Math.max(0, segment - margin * 2);
       }
 
@@ -378,8 +378,8 @@ export default function DodgeBlitzGame() {
     const loop = () => {
       if (!s.running) return;
 
-      const W = canvas.offsetWidth;
-      const H = canvas.offsetHeight;
+      const W = window.innerWidth;
+      const H = window.innerHeight;
       const elapsed = (Date.now() - s.gameStartTime) / 1000;
 
       s.tiltSampleFrame++;
@@ -632,8 +632,10 @@ export default function DodgeBlitzGame() {
 
     const resize = () => {
       const dpr = window.devicePixelRatio || 1;
-      const w = canvas.offsetWidth;
-      const h = canvas.offsetHeight;
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      canvas.style.width  = w + 'px';
+      canvas.style.height = h + 'px';
       canvas.width  = w * dpr;
       canvas.height = h * dpr;
       const ctx2 = canvas.getContext('2d');
