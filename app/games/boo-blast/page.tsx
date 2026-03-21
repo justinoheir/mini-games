@@ -83,7 +83,6 @@ interface Particle {
   vy: number;
   alpha: number;
   size: number;
-  color: string;
 }
 
 interface ScoreFloat {
@@ -92,7 +91,6 @@ interface ScoreFloat {
   text: string;
   alpha: number;
   vy: number;
-  isBoss: boolean;
 }
 
 // ─── SIGNALS ──────────────────────────────────────────────────────────────────
@@ -123,33 +121,6 @@ function getPersonality(sig: Signals): string {
   return 'First Time Ghost 🌱';
 }
 
-// ─── BACKGROUND ELEMENTS (module-level, pre-computed once) ───────────────────
-interface Star { x: number; y: number; r: number; phase: number; twinkle: boolean }
-interface Bat  { x: number; y: number; phase: number; speed: number; size: number }
-
-let BG_STARS: Star[] = [];
-let BG_BATS:  Bat[]  = [];
-let BG_INITIALIZED = false;
-
-function initBgElements(W: number, H: number) {
-  if (BG_INITIALIZED) return;
-  BG_INITIALIZED = true;
-  BG_STARS = Array.from({ length: 60 }, () => ({
-    x:       Math.random() * W,
-    y:       Math.random() * H * 0.65,
-    r:       0.5 + Math.random() * 1.5,
-    phase:   Math.random() * Math.PI * 2,
-    twinkle: Math.random() > 0.5,
-  }));
-  BG_BATS = Array.from({ length: 4 }, (_, i) => ({
-    x:     Math.random() * W,
-    y:     H * (0.2 + Math.random() * 0.35),
-    phase: i * Math.PI * 0.5,
-    speed: 0.3 + Math.random() * 0.4,
-    size:  W * 0.025 + Math.random() * W * 0.015,
-  }));
-}
-
 // ─── GAME STATE ───────────────────────────────────────────────────────────────
 interface GameState {
   running: boolean;
@@ -167,9 +138,6 @@ interface GameState {
   stageLabelUntil: number;
   // Change-guard for setHauntingLevel (avoid redundant re-renders from rAF)
   lastHauntingDisplayed: number;
-  // Screen shake
-  shakeUntil: number;
-  shakeIntensity: number;
 }
 
 type Phase = 'start' | 'countdown' | 'playing' | 'done';
@@ -203,8 +171,6 @@ export default function BooBlastGame() {
     stageLabel: null,
     stageLabelUntil: 0,
     lastHauntingDisplayed: 0,
-    shakeUntil: 0,
-    shakeIntensity: 0,
   });
 
   // Only these drive re-renders
@@ -299,8 +265,6 @@ export default function BooBlastGame() {
     s.stageLabel    = null;
     s.stageLabelUntil = 0;
     s.lastHauntingDisplayed = 0;
-    s.shakeUntil    = 0;
-    s.shakeIntensity = 0;
 
     setScoreDisplay(0);
     setHauntingLevel(0);
@@ -365,205 +329,20 @@ export default function BooBlastGame() {
       const H   = canvas.offsetHeight;
       const now = Date.now();
 
-      // ── Init background elements (no-op after first call) ─────────────────
-      initBgElements(W, H);
-
-      // ── Screen shake setup ────────────────────────────────────────────────
-      let isShaking = false;
-      if (now < s.shakeUntil) {
-        isShaking = true;
-        const intensity = s.shakeIntensity * ((s.shakeUntil - now) / 300);
-        ctx.save();
-        ctx.translate(
-          (Math.random() - 0.5) * intensity * 2,
-          (Math.random() - 0.5) * intensity * 2,
-        );
-      }
-
-      // ── Background: haunted graveyard scene ───────────────────────────────
-      // Sky — deep radial gradient
-      const skyGrad = ctx.createRadialGradient(W * 0.5, H * 0.3, 0, W * 0.5, H * 0.5, Math.max(W, H) * 0.85);
-      skyGrad.addColorStop(0, '#1a0a2e');
-      skyGrad.addColorStop(1, '#04010a');
-      ctx.fillStyle = skyGrad;
+      // ── Background: deep haunted purple radial gradient ────────────────────
+      const bbBg = ctx.createRadialGradient(W * 0.5, H * 0.35, 0, W * 0.5, H * 0.6, Math.max(W, H) * 0.9);
+      bbBg.addColorStop(0,   '#1a0a2e');
+      bbBg.addColorStop(0.5, '#0e0518');
+      bbBg.addColorStop(1,   '#060208');
+      ctx.fillStyle = bbBg;
       ctx.fillRect(0, 0, W, H);
 
-      // Stars
-      for (const star of BG_STARS) {
-        const alpha = star.twinkle
-          ? 0.4 + 0.6 * Math.abs(Math.sin(now * 0.003 + star.phase))
-          : 0.8;
-        ctx.save();
-        ctx.globalAlpha = alpha;
-        ctx.fillStyle = '#ffffff';
-        ctx.beginPath();
-        ctx.arc(star.x, star.y, star.r, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.restore();
-      }
-
-      // Moon — outer glow
-      const moonX = W * 0.78;
-      const moonY = H * 0.15;
-      const moonR = W * 0.065;
-      const moonGlow = ctx.createRadialGradient(moonX, moonY, 0, moonX, moonY, W * 0.16);
-      moonGlow.addColorStop(0, 'rgba(255,255,220,0.25)');
-      moonGlow.addColorStop(1, 'rgba(255,255,220,0)');
-      ctx.fillStyle = moonGlow;
-      ctx.beginPath();
-      ctx.arc(moonX, moonY, W * 0.16, 0, Math.PI * 2);
-      ctx.fill();
-      // Moon body
-      ctx.fillStyle = '#fffde0';
-      ctx.beginPath();
-      ctx.arc(moonX, moonY, moonR, 0, Math.PI * 2);
-      ctx.fill();
-      // Moon inner shadow
-      ctx.save();
-      ctx.globalAlpha = 0.15;
-      ctx.fillStyle = 'rgba(200,190,120,0.15)';
-      ctx.beginPath();
-      ctx.arc(moonX + moonR * 0.2, moonY - moonR * 0.1, moonR * 0.75, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.restore();
-
-      // Distant hills — back layer
-      ctx.fillStyle = '#0d0520';
-      ctx.beginPath();
-      ctx.moveTo(0, H);
-      ctx.lineTo(0, H * 0.65);
-      ctx.bezierCurveTo(W * 0.15, H * 0.45, W * 0.30, H * 0.55, W * 0.45, H * 0.55);
-      ctx.bezierCurveTo(W * 0.60, H * 0.55, W * 0.70, H * 0.42, W * 0.82, H * 0.50);
-      ctx.bezierCurveTo(W * 0.90, H * 0.55, W * 0.96, H * 0.60, W, H * 0.60);
-      ctx.lineTo(W, H);
-      ctx.closePath();
-      ctx.fill();
-
-      // Distant hills — front layer
-      ctx.fillStyle = '#110825';
-      ctx.beginPath();
-      ctx.moveTo(0, H);
-      ctx.lineTo(0, H * 0.72);
-      ctx.bezierCurveTo(W * 0.12, H * 0.58, W * 0.25, H * 0.65, W * 0.38, H * 0.62);
-      ctx.bezierCurveTo(W * 0.50, H * 0.60, W * 0.62, H * 0.55, W * 0.75, H * 0.62);
-      ctx.bezierCurveTo(W * 0.85, H * 0.67, W * 0.93, H * 0.68, W, H * 0.65);
-      ctx.lineTo(W, H);
-      ctx.closePath();
-      ctx.fill();
-
-      // Ground — dark grass strip
-      ctx.fillStyle = '#050e08';
-      ctx.fillRect(0, H * 0.82, W, H * 0.18);
-
-      // Fog — 3 overlapping radial gradients along ground line
-      for (let fi = 0; fi < 3; fi++) {
-        const fogX = W * (0.2 + fi * 0.3);
-        const fogG = ctx.createRadialGradient(fogX, H * 0.82, 0, fogX, H * 0.82, W * 0.35);
-        fogG.addColorStop(0, 'rgba(60,20,80,0.18)');
-        fogG.addColorStop(1, 'rgba(60,20,80,0)');
-        ctx.fillStyle = fogG;
-        ctx.fillRect(0, H * 0.70, W, H * 0.30);
-      }
-
-      // Tombstones (5 pre-positioned relative to canvas size)
-      const tombDefs = [
-        { rx: 0.15, ry: 0.78, rw: 0.045, rh: 0.085, color: '#1a1a2e', angle: -2 },
-        { rx: 0.30, ry: 0.77, rw: 0.040, rh: 0.070, color: '#15152a', angle: 1.5 },
-        { rx: 0.47, ry: 0.79, rw: 0.050, rh: 0.095, color: '#201535', angle: 0 },
-        { rx: 0.63, ry: 0.76, rw: 0.042, rh: 0.075, color: '#1a1a2e', angle: -1 },
-        { rx: 0.80, ry: 0.78, rw: 0.048, rh: 0.088, color: '#15152a', angle: 2 },
-      ];
-      for (const td of tombDefs) {
-        const tx = W * td.rx;
-        const ty = H * td.ry;
-        const tw = W * td.rw;
-        const th = H * td.rh;
-        ctx.save();
-        ctx.translate(tx, ty + th);
-        ctx.rotate((td.angle * Math.PI) / 180);
-        ctx.fillStyle = td.color;
-        // Draw tombstone body
-        ctx.beginPath();
-        // Rounded top using arc
-        ctx.arc(tw * 0.5, -th + tw * 0.5, tw * 0.5, Math.PI, 0);
-        ctx.lineTo(tw, 0);
-        ctx.lineTo(0, 0);
-        ctx.closePath();
-        ctx.fill();
-        ctx.restore();
-      }
-
-      // Dead trees — left and right sides
-      const drawTree = (tx: number, ty: number, trunkH: number) => {
-        ctx.save();
-        ctx.strokeStyle = '#0d0a15';
-        ctx.lineWidth = 3;
-        ctx.lineCap = 'round';
-        // Trunk
-        ctx.beginPath();
-        ctx.moveTo(tx, ty);
-        ctx.lineTo(tx, ty - trunkH);
-        ctx.stroke();
-        // Branches (3–4 forks)
-        const branches = [
-          { fromY: 0.3, dx: -0.55, dy: -0.35 },
-          { fromY: 0.5, dx: 0.50,  dy: -0.30 },
-          { fromY: 0.65, dx: -0.40, dy: -0.20 },
-          { fromY: 0.75, dx: 0.35, dy: -0.18 },
-        ];
-        for (const b of branches) {
-          const bx = tx;
-          const by = ty - trunkH * (1 - b.fromY);
-          ctx.lineWidth = 2;
-          ctx.beginPath();
-          ctx.moveTo(bx, by);
-          ctx.lineTo(bx + trunkH * b.dx * 0.5, by - trunkH * Math.abs(b.dy));
-          ctx.stroke();
-        }
-        ctx.restore();
-      };
-      drawTree(W * 0.08, H * 0.80, H * 0.35);
-      drawTree(W * 0.92, H * 0.80, H * 0.35);
-
-      // Animated bats
-      for (const bat of BG_BATS) {
-        bat.x += bat.speed * 16 * 0.03; // ~16ms deltaTime approximation
-        if (bat.x > W + bat.size * 2) bat.x = -bat.size * 2;
-        const bx = bat.x;
-        const by = bat.y;
-        const wingFlap = Math.sin(now * 0.008 + bat.phase) * bat.size * 0.4;
-        ctx.save();
-        ctx.fillStyle = '#1a0a2e';
-        ctx.strokeStyle = '#1a0a2e';
-        ctx.lineWidth = 1;
-        ctx.globalAlpha = 0.85;
-        // M-shape bat: left wing arc + right wing arc
-        ctx.beginPath();
-        ctx.moveTo(bx, by);
-        ctx.bezierCurveTo(
-          bx - bat.size * 0.5, by + wingFlap,
-          bx - bat.size * 1.0, by - bat.size * 0.3,
-          bx - bat.size * 1.2, by,
-        );
-        ctx.bezierCurveTo(
-          bx - bat.size * 1.0, by + bat.size * 0.2,
-          bx - bat.size * 0.5, by - bat.size * 0.1,
-          bx, by,
-        );
-        ctx.bezierCurveTo(
-          bx + bat.size * 0.5, by + wingFlap,
-          bx + bat.size * 1.0, by - bat.size * 0.3,
-          bx + bat.size * 1.2, by,
-        );
-        ctx.bezierCurveTo(
-          bx + bat.size * 1.0, by + bat.size * 0.2,
-          bx + bat.size * 0.5, by - bat.size * 0.1,
-          bx, by,
-        );
-        ctx.closePath();
-        ctx.fill();
-        ctx.restore();
-      }
+      const fog = ctx.createRadialGradient(W * 0.5, H * 0.4, 0, W * 0.5, H * 0.4, Math.max(W, H) * 0.75);
+      fog.addColorStop(0,   'rgba(168, 85, 247, 0.14)');
+      fog.addColorStop(0.5, 'rgba(100, 40, 200, 0.07)');
+      fog.addColorStop(1,   'rgba(0,   0,   0,  0)');
+      ctx.fillStyle = fog;
+      ctx.fillRect(0, 0, W, H);
 
       // Vignette
       const bbVig = ctx.createRadialGradient(W * 0.5, H * 0.5, H * 0.2, W * 0.5, H * 0.5, H * 0.85);
@@ -614,43 +393,6 @@ export default function BooBlastGame() {
 
         // ── Draw ghost ─────────────────────────────────────────────────────
         const isBoss = ghost.typeId === 'boss_ghost';
-        // Subtle vertical bob
-        const bobOffset = Math.sin(now * 0.002 + ghost.id * 1.3) * 4;
-        const drawY = ghost.y + bobOffset;
-
-        // Ghost blob body (drawn behind emoji)
-        ctx.save();
-        ctx.globalAlpha = ghost.opacity * 0.7;
-        const bodyGrad = ctx.createRadialGradient(
-          ghost.x, drawY - ghost.size * 0.15, 0,
-          ghost.x, drawY, ghost.size * 0.55,
-        );
-        bodyGrad.addColorStop(0, isBoss ? 'rgba(255,80,255,0.9)' : 'rgba(200,170,255,0.85)');
-        bodyGrad.addColorStop(1, 'rgba(120,60,200,0)');
-        ctx.fillStyle = bodyGrad;
-        ctx.beginPath();
-        ctx.arc(ghost.x, drawY - ghost.size * 0.1, ghost.size * 0.48, Math.PI, 0);
-        // Wavy bottom edge (ghost tail)
-        const waveY    = drawY + ghost.size * 0.3;
-        const tailCount = 3;
-        const tailW    = (ghost.size * 0.96) / tailCount;
-        const left  = ghost.x - ghost.size * 0.48;
-        const right = ghost.x + ghost.size * 0.48;
-        ctx.lineTo(right, waveY);
-        for (let t = 0; t < tailCount; t++) {
-          const tx2  = right - (t + 0.5) * tailW;
-          const bump = t % 2 === 0 ? waveY + ghost.size * 0.18 : waveY - ghost.size * 0.08;
-          ctx.quadraticCurveTo(
-            tx2 + tailW * 0.25, bump,
-            tx2 - tailW * 0.25, waveY + (t % 2 === 0 ? ghost.size * 0.04 : 0),
-          );
-        }
-        ctx.lineTo(left, waveY);
-        ctx.closePath();
-        ctx.fill();
-        ctx.restore();
-
-        // Emoji on top (existing glow effects preserved)
         ctx.save();
         ctx.globalAlpha  = ghost.opacity;
         ctx.shadowBlur   = isBoss ? 50 : 22;
@@ -658,14 +400,14 @@ export default function BooBlastGame() {
         ctx.font         = `${ghost.size}px "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif`;
         ctx.textAlign    = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText(ghost.emoji, ghost.x, drawY);
+        ctx.fillText(ghost.emoji, ghost.x, ghost.y);
 
         // Extra outer glow pass for boss
         if (isBoss) {
           ctx.shadowBlur  = 80;
           ctx.shadowColor = '#ff00ff';
           ctx.globalAlpha = ghost.opacity * 0.5;
-          ctx.fillText(ghost.emoji, ghost.x, drawY);
+          ctx.fillText(ghost.emoji, ghost.x, ghost.y);
         }
         ctx.restore();
       }
@@ -682,7 +424,7 @@ export default function BooBlastGame() {
         return;
       }
 
-      // ── Particles: multi-color burst ──────────────────────────────────────
+      // ── Particles: purple burst ────────────────────────────────────────────
       for (let i = s.particles.length - 1; i >= 0; i--) {
         const p = s.particles[i];
         p.x    += p.vx;
@@ -693,9 +435,9 @@ export default function BooBlastGame() {
 
         ctx.save();
         ctx.globalAlpha = p.alpha;
-        ctx.fillStyle   = p.color;
-        ctx.shadowBlur  = 10;
-        ctx.shadowColor = p.color;
+        ctx.fillStyle   = s.accentColor;
+        ctx.shadowBlur  = 8;
+        ctx.shadowColor = s.accentColor;
         ctx.beginPath();
         ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
         ctx.fill();
@@ -711,16 +453,12 @@ export default function BooBlastGame() {
 
         ctx.save();
         ctx.globalAlpha  = f.alpha;
+        ctx.fillStyle    = '#ffffff';
         ctx.shadowBlur   = 14;
-        ctx.shadowColor  = f.isBoss ? '#ff44ff' : s.accentColor;
-        ctx.font         = `bold ${f.isBoss ? 28 : 22}px 'Space Grotesk', system-ui, -apple-system, sans-serif`;
+        ctx.shadowColor  = s.accentColor;
+        ctx.font         = 'bold 22px system-ui, -apple-system, sans-serif';
         ctx.textAlign    = 'center';
         ctx.textBaseline = 'middle';
-        // Stroke for legibility
-        ctx.strokeStyle = 'rgba(0,0,0,0.5)';
-        ctx.lineWidth   = 2;
-        ctx.strokeText(f.text, f.x, f.y);
-        ctx.fillStyle   = f.isBoss ? '#ff44ff' : '#ffffff';
         ctx.fillText(f.text, f.x, f.y);
         ctx.restore();
       }
@@ -740,9 +478,6 @@ export default function BooBlastGame() {
         ctx.fillText(s.stageLabel, W / 2, H * 0.42);
         ctx.restore();
       }
-
-      // ── End screen shake transform ─────────────────────────────────────────
-      if (isShaking) ctx.restore();
 
       animRef.current = requestAnimationFrame(loop);
     };
@@ -782,47 +517,31 @@ export default function BooBlastGame() {
 
         if (ghost.typeId === 'big_ghost')    s.sig.bigGhostsHit++;
         if (ghost.typeId === 'small_ghost')  s.sig.smallGhostsHit++;
-        if (ghost.typeId === 'boss_ghost') {
-          s.sig.bossGhostsHit++;
-          // Screen shake on boss kill
-          s.shakeUntil     = Date.now() + 300;
-          s.shakeIntensity = 8;
-        }
+        if (ghost.typeId === 'boss_ghost')   s.sig.bossGhostsHit++;
 
-        // Multi-color particle burst
-        const isBossHit = ghost.typeId === 'boss_ghost';
-        const particleCount = isBossHit ? 24 : 14;
-        const bossColors    = ['#ff44ff', '#ff0088', '#ffaa00', '#ffffff', '#aa44ff'];
-        const regColors     = ['#c084fc', '#e879f9', '#ffffff', '#a855f7'];
-        const colors = isBossHit ? bossColors : regColors;
-
+        // Purple particle burst from tap point
+        const particleCount = ghost.typeId === 'boss_ghost' ? 20 : 12;
         for (let p = 0; p < particleCount; p++) {
           const angle = (Math.PI * 2 * p) / particleCount + Math.random() * 0.4;
-          const speed = isBossHit
-            ? 3 + Math.random() * 5   // 3–8 for boss
-            : 2 + Math.random() * 3;  // 2–5 for regular
+          const speed = 2.5 + Math.random() * 4.5;
           s.particles.push({
             x:     ghost.x,
             y:     ghost.y,
             vx:    Math.cos(angle) * speed,
             vy:    Math.sin(angle) * speed - 2,
             alpha: 1,
-            size:  3 + Math.random() * 4, // 3–7px
-            color: colors[Math.floor(Math.random() * colors.length)],
+            size:  2 + Math.random() * 4,
           });
         }
 
         // Score float
-        const floatText = isBossHit
-          ? `💥+${ghost.points}`
-          : `+${ghost.points}`;
+        const floatText = `+${ghost.points}${ghost.typeId === 'boss_ghost' ? ' 💀' : ''}`;
         s.scoreFloats.push({
-          x:      ghost.x,
-          y:      ghost.y - ghost.size * 0.5,
-          text:   floatText,
-          alpha:  1,
-          vy:     -1.8,
-          isBoss: isBossHit,
+          x:     ghost.x,
+          y:     ghost.y - ghost.size * 0.5,
+          text:  floatText,
+          alpha: 1,
+          vy:    -1.8,
         });
 
         s.ghosts.splice(i, 1);
