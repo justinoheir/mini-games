@@ -525,6 +525,15 @@ export default function SteadyHandGame() {
       }
       ctx.fillRect(0, 0, W, H);
 
+      // Vignette (dark mode only)
+      if (dark) {
+        const shVig = ctx.createRadialGradient(W * 0.5, H * 0.5, H * 0.25, W * 0.5, H * 0.5, H * 0.85);
+        shVig.addColorStop(0, 'rgba(0,0,0,0)');
+        shVig.addColorStop(1, 'rgba(0,0,0,0.45)');
+        ctx.fillStyle = shVig;
+        ctx.fillRect(0, 0, W, H);
+      }
+
       // Grid
       ctx.strokeStyle = gridC;
       ctx.lineWidth = 1;
