@@ -30,6 +30,21 @@ const CATEGORY_ACCENT = CATEGORY_THEMES.holiday.primaryAccent;
 
 // ─── SPEC CONSTANTS ───────────────────────────────────────────────────────────
 
+
+// --- SPRITE CACHE -------------------------------------------------------------
+const _spriteCache = new Map<string, HTMLImageElement>();
+function _loadSprite(src: string): HTMLImageElement {
+  if (_spriteCache.has(src)) return _spriteCache.get(src)!;
+  const img = new Image();
+  img.src = src;
+  _spriteCache.set(src, img);
+  return img;
+}
+if (typeof window !== 'undefined') {
+  _loadSprite('/sprites/cupid-shot/arrow.svg');
+  _loadSprite('/sprites/cupid-shot/heart.svg');
+}
+
 const GAME_ID      = 'cupid-shot';
 const PB_KEY       = 'pb_cupid-shot';
 const ACCENT       = '#f43f5e';

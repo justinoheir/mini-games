@@ -19,6 +19,20 @@ import SwipeInstructions from '@/components/SwipeInstructions';
 
 const CATEGORY_ACCENT = CATEGORY_THEMES.cognitive.primaryAccent;
 
+
+// --- SPRITE CACHE -------------------------------------------------------------
+const _spriteCache = new Map<string, HTMLImageElement>();
+function _loadSprite(src: string): HTMLImageElement {
+  if (_spriteCache.has(src)) return _spriteCache.get(src)!;
+  const img = new Image();
+  img.src = src;
+  _spriteCache.set(src, img);
+  return img;
+}
+if (typeof window !== 'undefined') {
+  _loadSprite('/sprites/stack-drop/block.svg');
+}
+
 const GAME_ID      = 'stack-drop';
 const PB_KEY       = 'pb_stack-drop';
 const ACCENT       = '#f97316';

@@ -17,6 +17,21 @@ import ScorePopEffect, { useScorePop } from '@/components/ScorePopEffect';
 
 // ─── SPEC CONSTANTS ───────────────────────────────────────────────────────────
 
+
+// --- SPRITE CACHE -------------------------------------------------------------
+const _spriteCache = new Map<string, HTMLImageElement>();
+function _loadSprite(src: string): HTMLImageElement {
+  if (_spriteCache.has(src)) return _spriteCache.get(src)!;
+  const img = new Image();
+  img.src = src;
+  _spriteCache.set(src, img);
+  return img;
+}
+if (typeof window !== 'undefined') {
+  _loadSprite('/sprites/reaction-chain/node.svg');
+  _loadSprite('/sprites/reaction-chain/link.svg');
+}
+
 const GAME_ID      = 'reaction-chain';
 const ACCENT       = '#facc15';
 const DURATION     = 45;

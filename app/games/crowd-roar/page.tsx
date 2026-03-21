@@ -35,6 +35,21 @@ const CATEGORY_ACCENT = CATEGORY_THEMES.sports.primaryAccent;
 
 // ─── SPEC CONSTANTS ──────────────────────────────────────────────────────────
 
+
+// --- SPRITE CACHE -------------------------------------------------------------
+const _spriteCache = new Map<string, HTMLImageElement>();
+function _loadSprite(src: string): HTMLImageElement {
+  if (_spriteCache.has(src)) return _spriteCache.get(src)!;
+  const img = new Image();
+  img.src = src;
+  _spriteCache.set(src, img);
+  return img;
+}
+if (typeof window !== 'undefined') {
+  _loadSprite('/sprites/crowd-roar/person.svg');
+  _loadSprite('/sprites/crowd-roar/meter.svg');
+}
+
 const GAME_ID      = 'crowd-roar';
 const PB_KEY       = 'pb_crowd-roar';
 const ACCENT       = '#ef4444';

@@ -21,6 +21,21 @@ const CATEGORY_ACCENT = CATEGORY_THEMES.holiday.primaryAccent;
 
 // ─── SPEC CONSTANTS ──────────────────────────────────────────────────────────
 
+
+// --- SPRITE CACHE -------------------------------------------------------------
+const _spriteCache = new Map<string, HTMLImageElement>();
+function _loadSprite(src: string): HTMLImageElement {
+  if (_spriteCache.has(src)) return _spriteCache.get(src)!;
+  const img = new Image();
+  img.src = src;
+  _spriteCache.set(src, img);
+  return img;
+}
+if (typeof window !== 'undefined') {
+  _loadSprite('/sprites/love-note/heart.svg');
+  _loadSprite('/sprites/love-note/note.svg');
+}
+
 const GAME_ID      = 'love-note';
 const PB_KEY       = 'pb_love-note';
 const ACCENT       = '#ec4899';

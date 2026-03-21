@@ -34,6 +34,21 @@ const CATEGORY_ACCENT = CATEGORY_THEMES.holiday.primaryAccent;
 
 // ─── SPEC CONSTANTS ──────────────────────────────────────────────────────────
 
+
+// --- SPRITE CACHE -------------------------------------------------------------
+const _spriteCache = new Map<string, HTMLImageElement>();
+function _loadSprite(src: string): HTMLImageElement {
+  if (_spriteCache.has(src)) return _spriteCache.get(src)!;
+  const img = new Image();
+  img.src = src;
+  _spriteCache.set(src, img);
+  return img;
+}
+if (typeof window !== 'undefined') {
+  _loadSprite('/sprites/snow-catch/snowflake.svg');
+  _loadSprite('/sprites/snow-catch/present.svg');
+}
+
 const GAME_ID        = 'snow-catch';
 const PB_KEY       = 'pb_snow-catch';
 const ACCENT         = '#93c5fd';
@@ -115,6 +130,16 @@ function drawSnowflake(
   x: number, y: number, size: number, rotation: number,
   color: string, glow: boolean,
 ): void {
+  const _sfImg = _loadSprite('/sprites/snow-catch/snowflake.svg');
+  if (_sfImg.complete && _sfImg.naturalWidth > 0) {
+    ctx.save();
+    if (glow) { ctx.shadowBlur = size * 2; ctx.shadowColor = color; }
+    ctx.translate(x, y);
+    ctx.rotate(rotation);
+    ctx.drawImage(_sfImg, -size, -size, size * 2, size * 2);
+    ctx.restore();
+    return;
+  }
   ctx.save();
   ctx.translate(x, y);
   ctx.rotate(rotation);

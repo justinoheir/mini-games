@@ -31,6 +31,21 @@ const CATEGORY_ACCENT = CATEGORY_THEMES.cognitive.primaryAccent;
 
 // ─── SPEC CONSTANTS ──────────────────────────────────────────────────────────
 
+
+// --- SPRITE CACHE -------------------------------------------------------------
+const _spriteCache = new Map<string, HTMLImageElement>();
+function _loadSprite(src: string): HTMLImageElement {
+  if (_spriteCache.has(src)) return _spriteCache.get(src)!;
+  const img = new Image();
+  img.src = src;
+  _spriteCache.set(src, img);
+  return img;
+}
+if (typeof window !== 'undefined') {
+  _loadSprite('/sprites/steady-hand/ball.svg');
+  _loadSprite('/sprites/steady-hand/ring.svg');
+}
+
 const GAME_ID      = 'steady-hand';
 const PB_KEY       = 'pb_steady-hand';
 
