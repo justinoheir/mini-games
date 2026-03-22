@@ -272,7 +272,6 @@ function SideNavBar() {
       width: 256,
       background: '#1c1b1b',
       borderRight: '1px solid rgba(63,72,78,0.15)',
-      display: 'flex',
       flexDirection: 'column',
       zIndex: 40,
       overflowY: 'auto',
