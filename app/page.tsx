@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import NextLink from 'next/link';
 import { useRouter } from 'next/navigation';
 import type React from 'react';
@@ -319,6 +319,114 @@ function SideNavBar() {
         </div>
       </div>
     </aside>
+  );
+}
+
+// ─── Hero Section ─────────────────────────────────────────────────────────────
+
+// ─── Brand Analyzer Section ────────────────────────────────────────────────
+
+interface BrandResult {
+  companyName: string;
+  primaryColor: string;
+  ogImage: string | null;
+  industry: string;
+}
+
+const INDUSTRY_LABELS: Record<string, string> = {
+  cpg: 'CPG', food_bev: 'Food & Bev', sports: 'Sports', technology: 'Technology',
+  healthcare: 'Healthcare', finance: 'Finance', retail: 'Retail', automotive: 'Automotive',
+};
+
+function BrandAnalyzerSection() {
+  const [url, setUrl] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState<BrandResult | null>(null);
+  const [error, setError] = useState('');
+
+  const analyze = async () => {
+    if (!url.trim()) return;
+    setLoading(true); setError(''); setResult(null);
+    try {
+      const res = await fetch(`/api/analyze-brand?url=${encodeURIComponent(url.trim())}`);
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      setResult(data);
+    } catch { setError('Could not analyze that URL. Try another.'); }
+    finally { setLoading(false); }
+  };
+
+  const suggested = result
+    ? ALL_GAMES.filter(g => (g as Game & { industries?: string[] }).industries?.includes(result.industry)).slice(0, 6)
+    : [];
+
+  return (
+    <section style={{ padding: '32px 16px 28px', borderBottom: '1px solid rgba(63,72,78,0.12)', marginTop: 72 }}>
+      <div style={{ maxWidth: 520 }}>
+        <p style={{ color: '#bfc8ce', fontSize: 10, fontWeight: 700, fontFamily: "'Manrope',sans-serif", textTransform: 'uppercase', letterSpacing: '0.18em', margin: '0 0 8px' }}>
+          Try It For Your Brand
+        </p>
+        <h2 style={{ color: '#e5e2e1', fontSize: 'clamp(1.3rem,4vw,1.75rem)', fontWeight: 900, fontFamily: "'Space Grotesk',sans-serif", letterSpacing: '-0.03em', margin: '0 0 20px', lineHeight: 1.2 }}>
+          See Glimmers in your brand colors
+        </h2>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <input
+            value={url}
+            onChange={e => setUrl(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && analyze()}
+            placeholder="yourbrand.com"
+            style={{ flex: 1, background: '#201f1f', border: '1px solid rgba(63,72,78,0.4)', borderRadius: 6, padding: '12px 14px', color: '#e5e2e1', fontSize: 14, fontFamily: "'Manrope',sans-serif", outline: 'none' }}
+          />
+          <button onClick={analyze} disabled={loading} style={{ background: loading ? '#2a2a2a' : 'linear-gradient(135deg,#84d0f9,#4a99c0)', color: loading ? '#bfc8ce' : '#003549', border: 'none', borderRadius: 6, padding: '12px 18px', fontWeight: 700, fontSize: 13, fontFamily: "'Space Grotesk',sans-serif", cursor: loading ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap' }}>
+            {loading ? 'Analyzing…' : 'Analyze →'}
+          </button>
+        </div>
+        {error && <p style={{ color: '#feb967', fontSize: 12, marginTop: 8, fontFamily: "'Manrope',sans-serif" }}>{error}</p>}
+      </div>
+
+      {result && (
+        <div style={{ marginTop: 24 }}>
+          {/* Brand card */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 14px', background: '#1c1b1b', borderRadius: 8, border: `1px solid ${result.primaryColor}44`, marginBottom: 20, maxWidth: 420 }}>
+            {result.ogImage && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={result.ogImage} alt="" style={{ width: 36, height: 36, borderRadius: 6, objectFit: 'cover', flexShrink: 0 }} onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+            )}
+            <div style={{ width: 14, height: 14, borderRadius: '50%', background: result.primaryColor, flexShrink: 0 }} />
+            <div>
+              <div style={{ color: '#e5e2e1', fontWeight: 700, fontSize: 14, fontFamily: "'Space Grotesk',sans-serif" }}>{result.companyName}</div>
+              <div style={{ color: '#bfc8ce', fontSize: 10, fontFamily: "'Manrope',sans-serif", textTransform: 'uppercase', letterSpacing: '0.1em', marginTop: 2 }}>
+                {INDUSTRY_LABELS[result.industry] ?? result.industry} · {result.primaryColor}
+              </div>
+            </div>
+          </div>
+
+          {/* Suggested games */}
+          {suggested.length > 0 && (
+            <>
+              <p style={{ color: '#bfc8ce', fontSize: 10, fontWeight: 700, fontFamily: "'Manrope',sans-serif", textTransform: 'uppercase', letterSpacing: '0.15em', marginBottom: 12, padding: '0 0 0 0' }}>
+                Recommended for {result.companyName}
+              </p>
+              <div style={{ display: 'flex', gap: 10, overflowX: 'auto', paddingBottom: 8, scrollbarWidth: 'none' } as React.CSSProperties}>
+                {suggested.map(game => (
+                  <NextLink key={game.id} href={`${game.href}?brandName=${encodeURIComponent(result.companyName)}&brandColor=${encodeURIComponent(result.primaryColor)}`} style={{ textDecoration: 'none', flexShrink: 0 }}>
+                    <div style={{ width: 140, background: '#1c1b1b', borderRadius: 8, overflow: 'hidden', border: `1px solid ${result.primaryColor}33` }}>
+                      <div style={{ height: 68, background: '#111115', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        <span className="material-symbols-outlined" style={{ fontSize: 32, color: result.primaryColor, opacity: 0.8 }}>{game.icon}</span>
+                      </div>
+                      <div style={{ padding: '10px 12px' }}>
+                        <div style={{ color: '#e5e2e1', fontSize: 12, fontWeight: 700, fontFamily: "'Space Grotesk',sans-serif", marginBottom: 4 }}>{game.title}</div>
+                        <div style={{ color: result.primaryColor, fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.1em', fontFamily: "'Manrope',sans-serif" }}>Preview →</div>
+                      </div>
+                    </div>
+                  </NextLink>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -1408,6 +1516,9 @@ export default function Home() {
       }} className="main-canvas">
         {/* Inner content — constrained width */}
         <div style={{ maxWidth: 1200, margin: '0 auto' }}>
+          {/* Brand Analyzer */}
+          <BrandAnalyzerSection />
+
           {/* Hero */}
           <div className="hero-mt" style={{ marginTop: 48 }}>
             <HeroSection

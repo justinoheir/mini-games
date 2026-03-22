@@ -2,7 +2,7 @@
 import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { ThemeContext } from '@/lib/ThemeContext';
-import { BrandTheme, DEFAULT_THEME } from '@/lib/brands';
+import { BrandTheme, DEFAULT_THEME, buildDynamicTheme } from '@/lib/brands';
 import { applyTheme } from '@/lib/theme';
 import MuteButton from './MuteButton';
 import MobileGate from './MobileGate';
@@ -21,7 +21,19 @@ interface GameShellProps {
 
 export default function GameShell({ title, emoji, titleIcon, accentColor, children, theme, mobileOnly = true }: GameShellProps) {
   const router = useRouter();
-  const resolvedTheme = theme ?? DEFAULT_THEME;
+
+  // Read dynamic brand params from URL (client-side only to avoid SSR issues)
+  const [dynamicTheme, setDynamicTheme] = useState<BrandTheme | null>(null);
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const brandName = params.get('brandName');
+    const brandColor = params.get('brandColor');
+    if (brandName && brandColor) {
+      setDynamicTheme(buildDynamicTheme(decodeURIComponent(brandName), decodeURIComponent(brandColor)));
+    }
+  }, []);
+
+  const resolvedTheme: BrandTheme = theme ?? dynamicTheme ?? DEFAULT_THEME;
   const [backHovered, setBackHovered] = useState(false);
 
   useEffect(() => {

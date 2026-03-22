@@ -61,3 +61,23 @@ export const BRANDS: Record<string, BrandTheme> = {
     },
   },
 };
+
+export function buildDynamicTheme(name: string, primaryColor: string): BrandTheme {
+  const hex = (n: number) => Math.max(0, Math.min(255, Math.round(n))).toString(16).padStart(2, '0');
+  const r = parseInt(primaryColor.slice(1, 3), 16) || 132;
+  const g = parseInt(primaryColor.slice(3, 5), 16) || 208;
+  const b = parseInt(primaryColor.slice(5, 7), 16) || 249;
+  return {
+    id: 'dynamic',
+    name,
+    colors: {
+      primary:       primaryColor,
+      accent:        primaryColor,
+      background:    `#${hex(r * 0.07)}${hex(g * 0.07)}${hex(b * 0.07)}`,
+      card:          `#${hex(r * 0.13)}${hex(g * 0.13)}${hex(b * 0.13)}`,
+      text:          '#ffffff',
+      textSecondary: 'rgba(255,255,255,0.6)',
+    },
+    poweredBy: true,
+  };
+}
