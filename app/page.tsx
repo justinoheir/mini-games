@@ -129,7 +129,6 @@ function TopNavBar() {
           {[
             { label: 'Discover', active: true },
             { label: 'Library', active: false },
-            { label: 'Store', active: false },
             { label: 'Community', active: false },
           ].map(item => (
             <button key={item.label} style={{
@@ -221,7 +220,6 @@ function TopNavBar() {
         {[
           { label: 'Discover',     icon: 'explore',       active: true  },
           { label: 'Library',      icon: 'sports_esports', active: false },
-          { label: 'Store',        icon: 'shopping_bag',  active: false },
           { label: 'Achievements', icon: 'military_tech', active: false },
           { label: 'Community',    icon: 'groups',        active: false },
         ].map(item => (
@@ -258,7 +256,6 @@ function SideNavBar() {
   const navItems = [
     { icon: 'explore',          label: 'Discover',     active: true  },
     { icon: 'video_library',    label: 'Library',      active: false },
-    { icon: 'storefront',       label: 'Store',        active: false },
     { icon: 'emoji_events',     label: 'Achievements', active: false },
     { icon: 'group',            label: 'Community',    active: false },
   ];
@@ -1122,7 +1119,6 @@ function BottomNavBar() {
   const items = [
     { icon: 'explore',       label: 'Discover', active: true  },
     { icon: 'video_library', label: 'Library',  active: false },
-    { icon: 'storefront',    label: 'Store',    active: false },
     { icon: 'emoji_events',  label: 'Rewards',  active: false },
   ];
 
@@ -1268,3 +1264,4 @@ export default function Home() {
     </div>
   );
 }
+
