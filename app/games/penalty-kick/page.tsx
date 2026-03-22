@@ -580,6 +580,7 @@ export default function PenaltyKick() {
           accentColor={ACCENT}
           onPlayAgain={handlePlayAgain}
           didWin={goals >= 5}
+          finalScore={goals}
         />
       )}
       {phase === 'playing' && (

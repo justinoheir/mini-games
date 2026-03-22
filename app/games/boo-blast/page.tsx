@@ -830,6 +830,7 @@ export default function BooBlastGame() {
           accentColor={accent}
           onPlayAgain={handlePlayAgain}
           didWin={finalSig.score >= 10 && finalSig.hauntingLevel < 5}
+          finalScore={finalSig.score}
         />
       )}
 

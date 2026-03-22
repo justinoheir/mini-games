@@ -14,6 +14,7 @@ import {
   CATEGORY_META,
   INDUSTRIES,
 } from '@/lib/games';
+import { getGlobalStats, type GlobalStats } from '@/lib/gameStorage';
 
 // ─── TopNavBar ────────────────────────────────────────────────────────────────
 
@@ -1473,6 +1474,7 @@ function FloatingActionButton() {
 export default function Home() {
   const [featuredIndex, setFeaturedIndex] = useState(0);
   const [visible, setVisible] = useState(false);
+  const [returnStats, setReturnStats] = useState<GlobalStats | null>(null);
 
   useEffect(() => {
     // Load play data for initial featured index
@@ -1481,6 +1483,10 @@ export default function Home() {
       const firstUnplayed = FEATURED_GAMES.findIndex((g) => !played.includes(g.id));
       if (firstUnplayed !== -1) setFeaturedIndex(firstUnplayed);
     } catch { /* ignore */ }
+
+    // Load return-user stats
+    const s = getGlobalStats();
+    if (s.totalGamesPlayed > 0) setReturnStats(s);
 
     setTimeout(() => setVisible(true), 30);
   }, []);
@@ -1528,6 +1534,26 @@ export default function Home() {
               onDotClick={handleDotClick}
             />
           </div>
+
+          {/* Return-user stats banner */}
+          {returnStats && returnStats.totalGamesPlayed > 0 && (
+            <div style={{ padding: '12px 16px', background: '#1c1b1b', borderRadius: 8, border: '1px solid rgba(63,72,78,0.1)', margin: '16px 0 0', display: 'flex', gap: 20, flexWrap: 'wrap' }}>
+              <div>
+                <div style={{ color: '#84d0f9', fontWeight: 900, fontSize: 22, fontFamily: "'Space Grotesk',sans-serif" }}>{returnStats.totalGamesPlayed}</div>
+                <div style={{ color: '#bfc8ce', fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.12em', fontFamily: "'Manrope',sans-serif" }}>Games Played</div>
+              </div>
+              {returnStats.favoritGame && (
+                <div>
+                  <div style={{ color: '#feb967', fontWeight: 900, fontSize: 22, fontFamily: "'Space Grotesk',sans-serif" }}>{ALL_GAMES.find(g => g.id === returnStats.favoritGame)?.title ?? '—'}</div>
+                  <div style={{ color: '#bfc8ce', fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.12em', fontFamily: "'Manrope',sans-serif" }}>Favourite Game</div>
+                </div>
+              )}
+              <div>
+                <div style={{ color: '#e5e2e1', fontWeight: 900, fontSize: 22, fontFamily: "'Space Grotesk',sans-serif" }}>{returnStats.lastActiveAt ? new Date(returnStats.lastActiveAt).toLocaleDateString('en', { month: 'short', day: 'numeric' }) : '—'}</div>
+                <div style={{ color: '#bfc8ce', fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.12em', fontFamily: "'Manrope',sans-serif" }}>Last Active</div>
+              </div>
+            </div>
+          )}
 
           <BrowseByIndustrySection />
 

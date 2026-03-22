@@ -572,6 +572,7 @@ export default function TiltMaze() {
           accentColor={accent}
           onPlayAgain={handlePlayAgain}
           didWin={!!b.completionTime}
+          finalScore={b.completionTime ?? 0}
         />
       )}
       {gameState === 'playing' && (

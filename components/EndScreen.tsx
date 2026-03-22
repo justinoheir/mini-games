@@ -5,6 +5,7 @@ import { Trophy } from 'lucide-react';
 import { motion } from 'framer-motion';
 import Leaderboard from '@/components/Leaderboard';
 import { getMockLeaderboard, LeaderboardEntry } from '@/lib/leaderboard';
+import { recordGamePlayed } from '@/lib/gameStorage';
 
 interface Insight {
   label: string;
@@ -65,6 +66,10 @@ interface EndScreenProps {
   ctaTextColor?: string;
   /** Optional content rendered between insight chips and buttons (e.g. RadarChart) */
   children?: React.ReactNode;
+  /** Raw numeric score for persistent storage (separate from the formatted score string) */
+  finalScore?: number;
+  /** Game duration in ms for persistent storage */
+  gameDurationMs?: number;
 }
 
 /** Parse a numeric value from score strings like "42 pts", "3.2s", "7", "87%" */
@@ -86,6 +91,8 @@ export default function EndScreen({
   brandId = 'ether',
   ctaTextColor = '#000',
   children,
+  finalScore,
+  gameDurationMs,
 }: EndScreenProps) {
   const router = useRouter();
   const confettiDone = useRef(false);
@@ -94,6 +101,14 @@ export default function EndScreen({
   const [copyConfirm, setCopyConfirm] = useState(false);
   const [leaderboardVisible, setLeaderboardVisible] = useState(false);
   const [leaderboardEntries, setLeaderboardEntries] = useState<LeaderboardEntry[]>([]);
+
+  // Persist game record on mount
+  useEffect(() => {
+    if (gameId && finalScore !== undefined) {
+      recordGamePlayed(gameId, finalScore, gameDurationMs ?? 0);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Personal best check + localStorage save
   useEffect(() => {

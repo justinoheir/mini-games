@@ -12,6 +12,7 @@ import {
   CATEGORY_META,
   INDUSTRIES,
 } from '@/lib/games';
+import { type GameRecord, getAllRecords } from '@/lib/gameStorage';
 
 // ─── Filter config ────────────────────────────────────────────────────────────
 
@@ -398,7 +399,7 @@ function BottomNavBar() {
 
 // ─── GameCard ─────────────────────────────────────────────────────────────────
 
-function GameCard({ game, played }: { game: Game; played: boolean }) {
+function GameCard({ game, played, record }: { game: Game; played: boolean; record?: GameRecord | null }) {
   const category = CATEGORY_META[game.category].label;
 
   return (
@@ -465,6 +466,22 @@ function GameCard({ game, played }: { game: Game; played: boolean }) {
           }}>
             {game.duration} · {category}
           </div>
+          {record ? (
+            <div style={{
+              color: '#84d0f9', fontSize: 10, fontWeight: 700,
+              fontFamily: "'Space Grotesk',sans-serif",
+              marginTop: 4,
+            }}>
+              Best: {record.highScore}
+              <span style={{ color: 'rgba(132,208,249,0.5)', fontWeight: 400, marginLeft: 4 }}>
+                · {record.timesPlayed}×
+              </span>
+            </div>
+          ) : played ? (
+            <div style={{ color: 'rgba(191,200,206,0.3)', fontSize: 9, fontFamily: "'Manrope',sans-serif", marginTop: 4, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+              No score saved yet
+            </div>
+          ) : null}
         </div>
       </div>
     </NextLink>
@@ -477,6 +494,7 @@ export default function LibraryPage() {
   const [activeFilter, setActiveFilter] = useState<FilterKey>('All');
   const [selectedIndustry, setSelectedIndustry] = useState<Industry | null>(null);
   const [playedIds, setPlayedIds] = useState<string[]>([]);
+  const [gameRecords, setGameRecords] = useState<Record<string, GameRecord>>({});
   const [visible, setVisible] = useState(false);
 
   useEffect(() => {
@@ -484,6 +502,7 @@ export default function LibraryPage() {
       const stored = JSON.parse(localStorage.getItem('mg_played') || '[]');
       if (Array.isArray(stored)) setPlayedIds(stored);
     } catch { /* ignore */ }
+    setGameRecords(getAllRecords());
     setTimeout(() => setVisible(true), 30);
   }, []);
 
@@ -609,6 +628,7 @@ export default function LibraryPage() {
                 key={game.id}
                 game={game}
                 played={playedIds.includes(game.id)}
+                record={gameRecords[game.id] ?? null}
               />
             ))}
           </div>
