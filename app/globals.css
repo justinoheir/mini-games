@@ -34,6 +34,149 @@
   }
 }
 
+/* ─── Glimmers Design Tokens ──────────────────────────────── */
+:root {
+  --primary: #84d0f9;
+  --primary-container: #4a99c0;
+  --secondary: #afcadc;
+  --tertiary: #feb967;
+  --surface: #131313;
+  --surface-dim: #131313;
+  --surface-container-lowest: #0e0e0e;
+  --surface-container-low: #1c1b1b;
+  --surface-container: #201f1f;
+  --surface-container-high: #2a2a2a;
+  --surface-container-highest: #353534;
+  --on-surface: #e5e2e1;
+  --on-surface-variant: #bfc8ce;
+  --outline-variant: #3f484e;
+  --on-primary: #003549;
+  --on-primary-container: #002d40;
+}
+
+/* ─── Material Symbols ────────────────────────────────────── */
+.material-symbols-outlined {
+  font-family: 'Material Symbols Outlined';
+  font-weight: normal;
+  font-style: normal;
+  font-size: 24px;
+  line-height: 1;
+  letter-spacing: normal;
+  text-transform: none;
+  display: inline-block;
+  white-space: nowrap;
+  word-wrap: normal;
+  direction: ltr;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  -moz-osx-font-smoothing: grayscale;
+  font-feature-settings: 'liga';
+  vertical-align: middle;
+}
+
+/* ─── Layout: Side nav + main canvas ─────────────────────── */
+.side-nav {
+  display: none;
+}
+
+@media (min-width: 1024px) {
+  .side-nav {
+    display: flex;
+  }
+  .main-canvas {
+    margin-left: 256px;
+    padding-left: 48px !important;
+    padding-right: 48px !important;
+  }
+  .bottom-nav {
+    display: none !important;
+  }
+  .fab {
+    display: flex !important;
+  }
+  .top-search {
+    display: flex !important;
+  }
+  .top-nav-links {
+    display: flex !important;
+  }
+}
+
+@media (max-width: 1023px) {
+  .top-search {
+    display: none;
+  }
+  .top-nav-links {
+    display: none;
+  }
+  .fab {
+    display: none !important;
+  }
+}
+
+/* ─── Skill challenges responsive ────────────────────────── */
+.skill-challenges-grid {
+  grid-template-columns: 1fr !important;
+}
+.skill-large-card {
+  grid-column: span 1 !important;
+}
+
+@media (min-width: 768px) {
+  .skill-challenges-grid {
+    grid-template-columns: repeat(3, 1fr) !important;
+  }
+  .skill-large-card {
+    grid-column: span 2 !important;
+  }
+}
+
+/* ─── New arrivals responsive ─────────────────────────────── */
+.new-arrivals-grid {
+  grid-template-columns: repeat(2, 1fr) !important;
+}
+
+@media (min-width: 768px) {
+  .new-arrivals-grid {
+    grid-template-columns: repeat(4, 1fr) !important;
+  }
+}
+
+/* ─── New arrival card hover ──────────────────────────────── */
+.new-arrival-card {
+  cursor: pointer;
+  transition: transform 0.2s ease;
+}
+.new-arrival-card:hover {
+  transform: translateY(-4px);
+}
+.new-arrival-card .new-arrival-icon {
+  filter: grayscale(100%);
+  transition: filter 0.3s ease, opacity 0.3s ease;
+}
+.new-arrival-card:hover .new-arrival-icon {
+  filter: grayscale(0%);
+  opacity: 0.4;
+}
+
+/* ─── All games card hover ────────────────────────────────── */
+.all-game-card:hover {
+  background: #201f1f !important;
+  transform: translateY(-2px);
+}
+
+/* ─── Precision network responsive ───────────────────────── */
+.precision-network-layout {
+  flex-direction: column !important;
+}
+
+@media (min-width: 768px) {
+  .precision-network-layout {
+    flex-direction: row !important;
+  }
+}
+
+/* ─── Legacy color vars ───────────────────────────────────── */
 :root {
   --color-bg:             #08090f;
   --color-surface:        #0e1018;

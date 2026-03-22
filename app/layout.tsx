@@ -37,6 +37,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <link rel="apple-touch-icon" sizes="152x152" href="/icons/icon-192.jpg" />
         <link rel="apple-touch-icon" sizes="180x180" href="/icons/icon-192.jpg" />
         <link rel="apple-touch-startup-image" href="/icons/icon-512.jpg" />
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+        <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
+        <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&display=swap" rel="stylesheet" />
       </head>
       <body style={{ margin: 0, padding: 0, backgroundColor: '#08090f', WebkitTapHighlightColor: 'transparent' }}>
         <PostHogProvider>

@@ -1,45 +1,10 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import NextLink from 'next/link';
-import { motion, AnimatePresence } from 'framer-motion';
-import {
-  Compass,
-  Bomb,
-  Wind,
-  Target,
-  Zap,
-  Activity,
-  Moon,
-  Palette,
-  Grid3x3,
-  Link as ChainLink,
-  Layers,
-  Timer,
-  Circle,
-  Navigation,
-  Flag,
-  RotateCw,
-  Gift,
-  Ghost,
-  Sparkles,
-  Heart,
-  Feather,
-  Snowflake,
-  FlaskConical,
-  Clock,
-  Mail,
-  Wheat,
-  Radio,
-  ChevronsLeftRight,
-  Pen,
-  Music,
-} from 'lucide-react';
 import type React from 'react';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
-
-type GameIcon = React.ComponentType<{ size?: number; color?: string; strokeWidth?: number }>;
 
 type GameCategory = 'skill' | 'sports' | 'holiday' | 'cognitive' | 'breath';
 
@@ -50,475 +15,1117 @@ interface Game {
   href: string;
   accentColor: string;
   duration: string;
-  Icon: GameIcon;
+  icon: string; // Material Symbol name
   category: GameCategory;
 }
 
 // ─── Game Data ────────────────────────────────────────────────────────────────
 
 const SKILL_GAMES: Game[] = [
-  { id: 'tilt-maze',       title: 'Tilt Maze',       tagline: 'Roll the ball with your body',              href: '/games/tilt-maze',       accentColor: '#a855f7', duration: '60s', Icon: Compass,          category: 'skill'     },
-  { id: 'whisper-bomb',    title: 'Whisper Bomb',    tagline: 'Stay silent. Defuse the bomb.',              href: '/games/whisper-bomb',    accentColor: '#ef4444', duration: '30s', Icon: Bomb,             category: 'breath'    },
-  { id: 'breath-rider',    title: 'Breath Rider',    tagline: 'Fly with your breath',                       href: '/games/breath-rider',    accentColor: '#3b82f6', duration: '45s', Icon: Wind,             category: 'breath'    },
-  { id: 'steady-hand',     title: 'Steady Hand',     tagline: 'Hold perfectly still. We dare you.',        href: '/games/steady-hand',     accentColor: '#22c55e', duration: '30s', Icon: Target,           category: 'skill'     },
-  { id: 'tunnel',          title: 'Infinite Tunnel', tagline: "Dodge the rings. Don't crash.",              href: '/games/tunnel',          accentColor: '#00ffff', duration: '60s', Icon: Zap,              category: 'skill'     },
-  { id: 'pulse-sphere',    title: 'Pulse Sphere',    tagline: 'Touch. Move. Breathe. Watch it respond.',    href: '/games/pulse-sphere',    accentColor: '#a855f7', duration: '60s', Icon: Activity,         category: 'breath'    },
-  { id: 'shadow-tap',      title: 'Shadow Tap',      tagline: "Tap what you see. Before it's gone.",        href: '/games/shadow-tap',      accentColor: '#64748b', duration: '45s', Icon: Moon,             category: 'cognitive' },
-  { id: 'color-cascade',   title: 'Color Cascade',   tagline: 'Match the color. Match the speed.',          href: '/games/color-cascade',   accentColor: '#f43f5e', duration: '45s', Icon: Palette,          category: 'cognitive' },
-  { id: 'memory-grid',     title: 'Memory Grid',     tagline: 'Remember the pattern. Repeat it.',           href: '/games/memory-grid',     accentColor: '#8b5cf6', duration: '60s', Icon: Grid3x3,          category: 'cognitive' },
-  { id: 'reaction-chain',  title: 'Reaction Chain',  tagline: 'Tap fast. Keep the chain alive.',             href: '/games/reaction-chain',  accentColor: '#facc15', duration: '45s', Icon: ChainLink,        category: 'cognitive' },
-  { id: 'stack-drop',      title: 'Stack Drop',      tagline: "Drop it. Stack it. Don't tip it.",            href: '/games/stack-drop',      accentColor: '#f97316', duration: '60s', Icon: Layers,           category: 'skill'     },
-  { id: 'dodge-blitz',     title: 'Dodge Blitz',     tagline: "Tilt to survive. Don't stop moving.",        href: '/games/dodge-blitz',     accentColor: '#06b6d4', duration: '45s', Icon: ChevronsLeftRight, category: 'skill'    },
-  { id: 'crowd-roar',      title: 'Crowd Roar',      tagline: "Roar loud. Hold it. Don't fade.",             href: '/games/crowd-roar',      accentColor: '#ef4444', duration: '45s', Icon: Radio,            category: 'breath'    },
-  { id: 'balance-beam',    title: 'Balance Beam',    tagline: 'Keep the ball on the beam. Stay still.',      href: '/games/balance-beam',    accentColor: '#f59e0b', duration: '60s', Icon: Activity,         category: 'skill'     },
-  { id: 'path-trace',      title: 'Path Trace',      tagline: "Follow the line. Don't stray.",               href: '/games/path-trace',      accentColor: '#e879f9', duration: '45s', Icon: Pen,              category: 'skill'     },
-  { id: 'pitch-match',     title: 'Pitch Match',     tagline: 'Hit the note. Hold it. Feel it.',              href: '/games/pitch-match',     accentColor: '#34d399', duration: '45s', Icon: Music,            category: 'breath'    },
-  { id: 'symbol-scan',     title: 'Symbol Scan',     tagline: 'Find it. Tap it. Before the clock runs out.', href: '/games/symbol-scan',     accentColor: '#10b981', duration: '60s', Icon: Grid3x3,          category: 'cognitive' },
+  { id: 'tilt-maze',       title: 'Tilt Maze',       tagline: 'Roll the ball with your body',              href: '/games/tilt-maze',       accentColor: '#a855f7', duration: '60s', icon: 'explore',             category: 'skill'     },
+  { id: 'whisper-bomb',    title: 'Whisper Bomb',    tagline: 'Stay silent. Defuse the bomb.',             href: '/games/whisper-bomb',    accentColor: '#ef4444', duration: '30s', icon: 'bomb',                category: 'breath'    },
+  { id: 'breath-rider',    title: 'Breath Rider',    tagline: 'Fly with your breath',                      href: '/games/breath-rider',    accentColor: '#3b82f6', duration: '45s', icon: 'air',                 category: 'breath'    },
+  { id: 'steady-hand',     title: 'Steady Hand',     tagline: 'Hold perfectly still. We dare you.',       href: '/games/steady-hand',     accentColor: '#22c55e', duration: '30s', icon: 'ads_click',           category: 'skill'     },
+  { id: 'tunnel',          title: 'Infinite Tunnel', tagline: "Dodge the rings. Don't crash.",             href: '/games/tunnel',          accentColor: '#00ffff', duration: '60s', icon: 'bolt',                category: 'skill'     },
+  { id: 'pulse-sphere',    title: 'Pulse Sphere',    tagline: 'Touch. Move. Breathe. Watch it respond.',   href: '/games/pulse-sphere',    accentColor: '#a855f7', duration: '60s', icon: 'pulmonology',         category: 'breath'    },
+  { id: 'shadow-tap',      title: 'Shadow Tap',      tagline: "Tap what you see. Before it's gone.",       href: '/games/shadow-tap',      accentColor: '#64748b', duration: '45s', icon: 'dark_mode',           category: 'cognitive' },
+  { id: 'color-cascade',   title: 'Color Cascade',   tagline: 'Match the color. Match the speed.',         href: '/games/color-cascade',   accentColor: '#f43f5e', duration: '45s', icon: 'palette',             category: 'cognitive' },
+  { id: 'memory-grid',     title: 'Memory Grid',     tagline: 'Remember the pattern. Repeat it.',          href: '/games/memory-grid',     accentColor: '#8b5cf6', duration: '60s', icon: 'grid_view',           category: 'cognitive' },
+  { id: 'reaction-chain',  title: 'Reaction Chain',  tagline: 'Tap fast. Keep the chain alive.',            href: '/games/reaction-chain',  accentColor: '#facc15', duration: '45s', icon: 'link',                category: 'cognitive' },
+  { id: 'stack-drop',      title: 'Stack Drop',      tagline: "Drop it. Stack it. Don't tip it.",           href: '/games/stack-drop',      accentColor: '#f97316', duration: '60s', icon: 'layers',              category: 'skill'     },
+  { id: 'dodge-blitz',     title: 'Dodge Blitz',     tagline: "Tilt to survive. Don't stop moving.",       href: '/games/dodge-blitz',     accentColor: '#06b6d4', duration: '45s', icon: 'swap_horiz',          category: 'skill'     },
+  { id: 'crowd-roar',      title: 'Crowd Roar',      tagline: "Roar loud. Hold it. Don't fade.",            href: '/games/crowd-roar',      accentColor: '#ef4444', duration: '45s', icon: 'radio',               category: 'breath'    },
+  { id: 'balance-beam',    title: 'Balance Beam',    tagline: 'Keep the ball on the beam. Stay still.',     href: '/games/balance-beam',    accentColor: '#f59e0b', duration: '60s', icon: 'balance',             category: 'skill'     },
+  { id: 'path-trace',      title: 'Path Trace',      tagline: "Follow the line. Don't stray.",              href: '/games/path-trace',      accentColor: '#e879f9', duration: '45s', icon: 'edit',                category: 'skill'     },
+  { id: 'pitch-match',     title: 'Pitch Match',     tagline: 'Hit the note. Hold it. Feel it.',             href: '/games/pitch-match',     accentColor: '#34d399', duration: '45s', icon: 'music_note',          category: 'breath'    },
+  { id: 'symbol-scan',     title: 'Symbol Scan',     tagline: 'Find it. Tap it. Before the clock runs out.', href: '/games/symbol-scan',   accentColor: '#10b981', duration: '60s', icon: 'manage_search',       category: 'cognitive' },
 ];
 
 const SPORTS_GAMES: Game[] = [
-  { id: 'hoop-shot',      title: 'Hoop Shot',      tagline: 'Swipe to score. 60 seconds on the clock.',     href: '/games/hoop-shot',      accentColor: '#f97316', duration: '60s', Icon: Circle,     category: 'sports' },
-  { id: 'penalty-kick',   title: 'Penalty Kick',   tagline: 'Beat the keeper. Aim for the corners.',         href: '/games/penalty-kick',   accentColor: '#22c55e', duration: '60s', Icon: Navigation, category: 'sports' },
-  { id: 'spiral-throw',   title: 'Spiral Throw',   tagline: "Lead your receiver. Don't throw behind.",       href: '/games/spiral-throw',   accentColor: '#f59e0b', duration: '60s', Icon: RotateCw,   category: 'sports' },
-  { id: 'reflex-rally',   title: 'Reflex Rally',   tagline: "Return every shot. Don't miss.",                href: '/games/reflex-rally',   accentColor: '#84cc16', duration: '60s', Icon: Timer,      category: 'sports' },
-  { id: 'precision-putt', title: 'Precision Putt', tagline: 'Read the green. Control the power.',            href: '/games/precision-putt', accentColor: '#86efac', duration: '60s', Icon: Flag,       category: 'sports' },
+  { id: 'hoop-shot',      title: 'Hoop Shot',      tagline: 'Swipe to score. 60 seconds on the clock.',    href: '/games/hoop-shot',      accentColor: '#f97316', duration: '60s', icon: 'sports_basketball', category: 'sports' },
+  { id: 'penalty-kick',   title: 'Penalty Kick',   tagline: 'Beat the keeper. Aim for the corners.',        href: '/games/penalty-kick',   accentColor: '#22c55e', duration: '60s', icon: 'sports_soccer',     category: 'sports' },
+  { id: 'spiral-throw',   title: 'Spiral Throw',   tagline: "Lead your receiver. Don't throw behind.",      href: '/games/spiral-throw',   accentColor: '#f59e0b', duration: '60s', icon: 'sports_football',   category: 'sports' },
+  { id: 'reflex-rally',   title: 'Reflex Rally',   tagline: "Return every shot. Don't miss.",               href: '/games/reflex-rally',   accentColor: '#84cc16', duration: '60s', icon: 'sports_tennis',     category: 'sports' },
+  { id: 'precision-putt', title: 'Precision Putt', tagline: 'Read the green. Control the power.',           href: '/games/precision-putt', accentColor: '#86efac', duration: '60s', icon: 'sports_golf',       category: 'sports' },
 ];
 
 const HOLIDAY_GAMES: Game[] = [
-  { id: 'gift-rush',        title: 'Gift Rush',        tagline: "Swipe left or right. Fast. Santa's watching.", href: '/games/gift-rush',        accentColor: '#ef4444', duration: '45s', Icon: Gift,         category: 'holiday' },
-  { id: 'snow-catch',       title: 'Snow Catch',       tagline: "Tilt to catch the snow. Miss one and it's over.", href: '/games/snow-catch',    accentColor: '#93c5fd', duration: '45s', Icon: Snowflake,    category: 'holiday' },
-  { id: 'boo-blast',        title: 'Boo Blast',        tagline: "Tap the ghosts. They won't wait.",              href: '/games/boo-blast',        accentColor: '#a855f7', duration: '30s', Icon: Ghost,        category: 'holiday' },
-  { id: 'cauldron-bubble',  title: 'Cauldron Bubble',  tagline: 'Blow to bubble. Too quiet = dead. Too loud = BOOM.', href: '/games/cauldron-bubble', accentColor: '#22c55e', duration: '45s', Icon: FlaskConical, category: 'holiday' },
-  { id: 'firework-launch',  title: 'Firework Launch',  tagline: 'Swipe to launch. Tap to detonate. Make it count.', href: '/games/firework-launch', accentColor: '#f59e0b', duration: '45s', Icon: Sparkles,    category: 'holiday' },
-  { id: 'countdown-crush',  title: 'Countdown Crush',  tagline: 'Score before midnight. Every second counts.',   href: '/games/countdown-crush',  accentColor: '#fbbf24', duration: '30s', Icon: Clock,        category: 'holiday' },
-  { id: 'cupid-shot',       title: 'Cupid Shot',       tagline: 'Aim. Wait. Shoot at the perfect moment.',       href: '/games/cupid-shot',       accentColor: '#f43f5e', duration: '45s', Icon: Heart,        category: 'holiday' },
-  { id: 'love-note',        title: 'Love Note',        tagline: 'Remember the sequence. Tap it back. From the heart.', href: '/games/love-note', accentColor: '#ec4899', duration: '60s', Icon: Mail,         category: 'holiday' },
-  { id: 'turkey-trot',      title: 'Turkey Trot',      tagline: "The turkey's running. Prove you're faster.",    href: '/games/turkey-trot',      accentColor: '#f97316', duration: '30s', Icon: Feather,      category: 'holiday' },
-  { id: 'harvest-catch',    title: 'Harvest Catch',    tagline: "Tilt to catch the harvest. Skip the Brussels sprouts.", href: '/games/harvest-catch', accentColor: '#d97706', duration: '45s', Icon: Wheat, category: 'holiday' },
+  { id: 'gift-rush',        title: 'Gift Rush',        tagline: "Swipe left or right. Fast. Santa's watching.", href: '/games/gift-rush',        accentColor: '#ef4444', duration: '45s', icon: 'redeem',        category: 'holiday' },
+  { id: 'snow-catch',       title: 'Snow Catch',       tagline: "Tilt to catch the snow. Miss one and it's over.", href: '/games/snow-catch',    accentColor: '#93c5fd', duration: '45s', icon: 'ac_unit',       category: 'holiday' },
+  { id: 'boo-blast',        title: 'Boo Blast',        tagline: "Tap the ghosts. They won't wait.",              href: '/games/boo-blast',        accentColor: '#a855f7', duration: '30s', icon: 'ghost',         category: 'holiday' },
+  { id: 'cauldron-bubble',  title: 'Cauldron Bubble',  tagline: 'Blow to bubble. Too quiet = dead. Too loud = BOOM.', href: '/games/cauldron-bubble', accentColor: '#22c55e', duration: '45s', icon: 'science',  category: 'holiday' },
+  { id: 'firework-launch',  title: 'Firework Launch',  tagline: 'Swipe to launch. Tap to detonate. Make it count.', href: '/games/firework-launch', accentColor: '#f59e0b', duration: '45s', icon: 'celebration', category: 'holiday' },
+  { id: 'countdown-crush',  title: 'Countdown Crush',  tagline: 'Score before midnight. Every second counts.',   href: '/games/countdown-crush',  accentColor: '#fbbf24', duration: '30s', icon: 'timer',        category: 'holiday' },
+  { id: 'cupid-shot',       title: 'Cupid Shot',       tagline: 'Aim. Wait. Shoot at the perfect moment.',       href: '/games/cupid-shot',       accentColor: '#f43f5e', duration: '45s', icon: 'favorite',     category: 'holiday' },
+  { id: 'love-note',        title: 'Love Note',        tagline: 'Remember the sequence. Tap it back. From the heart.', href: '/games/love-note', accentColor: '#ec4899', duration: '60s', icon: 'mail',          category: 'holiday' },
+  { id: 'turkey-trot',      title: 'Turkey Trot',      tagline: "The turkey's running. Prove you're faster.",    href: '/games/turkey-trot',      accentColor: '#f97316', duration: '30s', icon: 'directions_run', category: 'holiday' },
+  { id: 'harvest-catch',    title: 'Harvest Catch',    tagline: "Tilt to catch the harvest. Skip the Brussels sprouts.", href: '/games/harvest-catch', accentColor: '#d97706', duration: '45s', icon: 'agriculture', category: 'holiday' },
 ];
 
 const ALL_GAMES: Game[] = [...SKILL_GAMES, ...SPORTS_GAMES, ...HOLIDAY_GAMES];
 
-// Hero rotation pool
 const FEATURED_GAMES: Game[] = [
-  SKILL_GAMES[0],   // tilt-maze
-  SKILL_GAMES[1],   // whisper-bomb
-  SKILL_GAMES[4],   // tunnel
-  SKILL_GAMES[9],   // reaction-chain
-  HOLIDAY_GAMES[2], // boo-blast
-  HOLIDAY_GAMES[4], // firework-launch
+  SKILL_GAMES[0],
+  SKILL_GAMES[1],
+  SKILL_GAMES[4],
+  SKILL_GAMES[9],
+  HOLIDAY_GAMES[2],
+  HOLIDAY_GAMES[4],
 ];
 
-// "New Arrivals"
 const NEW_ARRIVAL_IDS = ['harvest-catch', 'love-note', 'countdown-crush', 'cauldron-bubble', 'snow-catch'];
 const NEW_ARRIVALS: Game[] = NEW_ARRIVAL_IDS
   .map(id => ALL_GAMES.find(g => g.id === id))
   .filter((g): g is Game => g !== undefined);
 
-// ─── Category badge config ────────────────────────────────────────────────────
+// ─── Category config ──────────────────────────────────────────────────────────
 
-const CATEGORY_META: Record<GameCategory, { label: string; color: string; bg: string }> = {
-  skill:     { label: 'SKILL',     color: '#a855f7', bg: 'rgba(168,85,247,0.15)' },
-  sports:    { label: 'SPORTS',    color: '#f97316', bg: 'rgba(249,115,22,0.15)' },
-  holiday:   { label: 'HOLIDAY',   color: '#fbbf24', bg: 'rgba(251,191,36,0.15)' },
-  cognitive: { label: 'BRAIN',     color: '#6366f1', bg: 'rgba(99,102,241,0.15)' },
-  breath:    { label: 'BREATH',    color: '#3b82f6', bg: 'rgba(59,130,246,0.15)' },
+const CATEGORY_META: Record<GameCategory, { label: string }> = {
+  skill:     { label: 'SKILL'   },
+  sports:    { label: 'SPORTS'  },
+  holiday:   { label: 'HOLIDAY' },
+  cognitive: { label: 'BRAIN'   },
+  breath:    { label: 'BREATH'  },
 };
 
-// ─── Game Card ────────────────────────────────────────────────────────────────
+// ─── TopNavBar ────────────────────────────────────────────────────────────────
 
-function GameCard({ game, rank }: { game: Game; rank?: number }) {
-  const { Icon } = game;
-  const cat = CATEGORY_META[game.category];
-
+function TopNavBar() {
   return (
-    <div
-      className="game-card-netflix"
-      data-testid="game-card"
-      style={{ position: 'relative' }}
-    >
-      {/* Main game link */}
-      <NextLink href={game.href} style={{ textDecoration: 'none', display: 'block', height: '100%' }}>
-        <motion.div
-          whileHover={{
-            scale: 1.05,
-            boxShadow: `0 0 0 2px ${game.accentColor}99, 0 8px 32px ${game.accentColor}44`,
-          }}
-          whileTap={{ scale: 0.97 }}
-          transition={{ type: 'spring', stiffness: 400, damping: 22 }}
-          style={{
-            height: '100%',
-            background: `linear-gradient(160deg, ${game.accentColor}cc 0%, ${game.accentColor}55 45%, #08090f 100%)`,
-            borderRadius: 14,
-            border: `1px solid ${game.accentColor}33`,
-            display: 'flex',
-            flexDirection: 'column',
-            padding: '12px 12px 14px',
+    <header style={{
+      position: 'fixed',
+      top: 0,
+      left: 0,
+      right: 0,
+      zIndex: 50,
+      height: 64,
+      background: 'rgba(19,19,19,0.7)',
+      backdropFilter: 'blur(24px)',
+      WebkitBackdropFilter: 'blur(24px)',
+      borderBottom: '1px solid rgba(63,72,78,0.2)',
+      display: 'flex',
+      alignItems: 'center',
+      padding: '0 24px',
+      gap: 32,
+    }}>
+      {/* Logo */}
+      <div style={{
+        fontFamily: "'Space Grotesk', sans-serif",
+        fontWeight: 700,
+        fontSize: 18,
+        letterSpacing: '0.15em',
+        color: '#84d0f9',
+        textTransform: 'uppercase',
+        flexShrink: 0,
+      }}>
+        GLIMMERS
+      </div>
+
+      {/* Nav links — center */}
+      <nav style={{ display: 'flex', gap: 32, flex: 1, justifyContent: 'center' }} className="top-nav-links">
+        {[
+          { label: 'Discover', active: true },
+          { label: 'Library', active: false },
+          { label: 'Store', active: false },
+          { label: 'Community', active: false },
+        ].map(item => (
+          <button key={item.label} style={{
+            background: 'none',
+            border: 'none',
             cursor: 'pointer',
-            position: 'relative',
-            overflow: 'hidden',
-          }}
-        >
-          {/* Shimmer highlight on top edge */}
-          <div
+            fontFamily: "'Space Grotesk', sans-serif",
+            fontSize: 14,
+            fontWeight: item.active ? 600 : 400,
+            color: item.active ? '#84d0f9' : '#bfc8ce',
+            padding: '4px 0',
+            borderBottom: item.active ? '2px solid #84d0f9' : '2px solid transparent',
+            transition: 'color 0.2s, border-color 0.2s',
+          }}>
+            {item.label}
+          </button>
+        ))}
+      </nav>
+
+      {/* Right: search + icons */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0 }}>
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          background: '#201f1f',
+          border: '1px solid rgba(63,72,78,0.3)',
+          borderRadius: 8,
+          padding: '6px 12px',
+          gap: 8,
+        }} className="top-search">
+          <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#bfc8ce' }}>search</span>
+          <input
+            placeholder="Search games..."
             style={{
-              position: 'absolute',
-              top: 0,
-              left: 0,
-              right: 0,
-              height: 1,
-              background: `linear-gradient(to right, transparent, ${game.accentColor}66, transparent)`,
-              pointerEvents: 'none',
+              background: 'none',
+              border: 'none',
+              outline: 'none',
+              color: '#e5e2e1',
+              fontSize: 13,
+              fontFamily: "'Space Grotesk', sans-serif",
+              width: 140,
             }}
           />
+        </div>
+        <button style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4 }}>
+          <span className="material-symbols-outlined" style={{ fontSize: 22, color: '#bfc8ce' }}>notifications</span>
+        </button>
+        <button style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4 }}>
+          <span className="material-symbols-outlined" style={{ fontSize: 22, color: '#bfc8ce' }}>account_circle</span>
+        </button>
+      </div>
+    </header>
+  );
+}
 
-          {/* Top row: duration + category */}
-          <div
-            style={{
+// ─── SideNavBar ───────────────────────────────────────────────────────────────
+
+function SideNavBar() {
+  const navItems = [
+    { icon: 'explore',          label: 'Discover',     active: true  },
+    { icon: 'video_library',    label: 'Library',      active: false },
+    { icon: 'storefront',       label: 'Store',        active: false },
+    { icon: 'emoji_events',     label: 'Achievements', active: false },
+    { icon: 'group',            label: 'Community',    active: false },
+  ];
+
+  return (
+    <aside className="side-nav" style={{
+      position: 'fixed',
+      top: 64,
+      left: 0,
+      bottom: 0,
+      width: 256,
+      background: '#1c1b1b',
+      borderRight: '1px solid rgba(63,72,78,0.15)',
+      display: 'flex',
+      flexDirection: 'column',
+      zIndex: 40,
+      overflowY: 'auto',
+    }}>
+      {/* Header */}
+      <div style={{ padding: '24px 20px 16px' }}>
+        <div style={{
+          fontFamily: "'Space Grotesk', sans-serif",
+          fontWeight: 700,
+          fontSize: 15,
+          color: '#84d0f9',
+          marginBottom: 2,
+        }}>
+          Aetheric Console
+        </div>
+        <div style={{
+          fontFamily: "'Manrope', sans-serif",
+          fontSize: 10,
+          fontWeight: 600,
+          letterSpacing: '0.15em',
+          color: '#bfc8ce',
+          textTransform: 'uppercase',
+        }}>
+          Precision Gaming
+        </div>
+      </div>
+
+      {/* Nav items */}
+      <nav style={{ flex: 1, padding: '8px 12px' }}>
+        {navItems.map(item => (
+          <button key={item.label} style={{
+            width: '100%',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 12,
+            padding: '10px 12px',
+            borderRadius: 8,
+            background: item.active ? '#201f1f' : 'transparent',
+            border: 'none',
+            cursor: 'pointer',
+            marginBottom: 2,
+          }}>
+            <span className="material-symbols-outlined" style={{
+              fontSize: 22,
+              color: item.active ? '#84d0f9' : '#bfc8ce',
+            }}>
+              {item.icon}
+            </span>
+            <span style={{
+              fontFamily: "'Space Grotesk', sans-serif",
+              fontSize: 14,
+              fontWeight: item.active ? 600 : 400,
+              color: item.active ? '#e5e2e1' : '#bfc8ce',
+            }}>
+              {item.label}
+            </span>
+            {item.active && (
+              <div style={{
+                marginLeft: 'auto',
+                width: 3,
+                height: 16,
+                borderRadius: 2,
+                background: '#84d0f9',
+              }} />
+            )}
+          </button>
+        ))}
+      </nav>
+
+      {/* Pro Account card */}
+      <div style={{ padding: '12px 16px 24px' }}>
+        <div style={{
+          background: 'linear-gradient(135deg, #201f1f, #2a2a2a)',
+          border: '1px solid rgba(63,72,78,0.3)',
+          borderRadius: 12,
+          padding: '14px 16px',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 10,
+        }}>
+          <div style={{
+            width: 36,
+            height: 36,
+            borderRadius: 10,
+            background: 'linear-gradient(135deg, #84d0f9, #4a99c0)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            flexShrink: 0,
+          }}>
+            <span className="material-symbols-outlined" style={{ fontSize: 20, color: '#002d40' }}>bolt</span>
+          </div>
+          <div>
+            <div style={{
+              fontFamily: "'Space Grotesk', sans-serif",
+              fontSize: 11,
+              fontWeight: 700,
+              letterSpacing: '0.1em',
+              color: '#e5e2e1',
+              textTransform: 'uppercase',
+            }}>
+              Pro Account
+            </div>
+            <div style={{
+              fontFamily: "'Manrope', sans-serif",
+              fontSize: 10,
+              fontWeight: 600,
+              letterSpacing: '0.12em',
+              color: '#feb967',
+              textTransform: 'uppercase',
+            }}>
+              Active Plan
+            </div>
+          </div>
+        </div>
+      </div>
+    </aside>
+  );
+}
+
+// ─── Hero Section ─────────────────────────────────────────────────────────────
+
+function HeroSection({ game, index, total, onDotClick }: {
+  game: Game;
+  index: number;
+  total: number;
+  onDotClick: (i: number) => void;
+}) {
+  return (
+    <section style={{
+      width: '100%',
+      height: 500,
+      borderRadius: 16,
+      background: '#1c1b1b',
+      position: 'relative',
+      overflow: 'hidden',
+      marginBottom: 80,
+    }}>
+      {/* Decorative bg icon */}
+      <div style={{
+        position: 'absolute',
+        right: -20,
+        top: '50%',
+        transform: 'translateY(-50%)',
+        fontSize: 280,
+        color: 'white',
+        filter: 'grayscale(100%)',
+        opacity: 0.06,
+        pointerEvents: 'none',
+        lineHeight: 1,
+      }}>
+        <span className="material-symbols-outlined" style={{ fontSize: 280 }}>{game.icon}</span>
+      </div>
+
+      {/* Colored ambient glow */}
+      <div style={{
+        position: 'absolute',
+        inset: 0,
+        background: `radial-gradient(ellipse 60% 80% at 80% 40%, ${game.accentColor}18 0%, transparent 60%)`,
+        pointerEvents: 'none',
+      }} />
+
+      {/* Bottom overlay gradient */}
+      <div style={{
+        position: 'absolute',
+        inset: 0,
+        background: 'linear-gradient(to top, #131313 0%, rgba(19,19,19,0.4) 50%, transparent 100%)',
+        pointerEvents: 'none',
+      }} />
+
+      {/* Content — bottom left */}
+      <div style={{
+        position: 'absolute',
+        bottom: 0,
+        left: 0,
+        right: 0,
+        padding: '0 40px 40px',
+        zIndex: 10,
+      }}>
+        {/* Badge */}
+        <div style={{
+          display: 'inline-block',
+          background: 'rgba(132,208,249,0.1)',
+          color: '#84d0f9',
+          padding: '4px 12px',
+          borderRadius: 4,
+          fontSize: 10,
+          fontWeight: 700,
+          letterSpacing: '0.2em',
+          textTransform: 'uppercase',
+          marginBottom: 12,
+          fontFamily: "'Space Grotesk', sans-serif",
+        }}>
+          Featured Experience
+        </div>
+
+        {/* Title */}
+        <h1 style={{
+          fontFamily: "'Space Grotesk', sans-serif",
+          fontSize: 'clamp(42px, 7vw, 64px)',
+          fontWeight: 700,
+          letterSpacing: '-0.04em',
+          color: '#e5e2e1',
+          textTransform: 'uppercase',
+          margin: '0 0 10px',
+          lineHeight: 1.0,
+        }}>
+          {game.title}
+        </h1>
+
+        {/* Description */}
+        <p style={{
+          fontFamily: "'Manrope', sans-serif",
+          fontSize: 15,
+          color: '#bfc8ce',
+          margin: '0 0 24px',
+          maxWidth: 480,
+          lineHeight: 1.6,
+        }}>
+          {game.tagline}
+        </p>
+
+        {/* Buttons */}
+        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+          <NextLink href={game.href} style={{ textDecoration: 'none' }}>
+            <button style={{
+              background: 'linear-gradient(135deg, #84d0f9, #4a99c0)',
+              color: '#002d40',
+              fontFamily: "'Space Grotesk', sans-serif",
+              fontWeight: 700,
+              fontSize: 14,
+              padding: '12px 32px',
+              borderRadius: 8,
+              border: 'none',
+              cursor: 'pointer',
+              letterSpacing: '0.02em',
+            }}>
+              LAUNCH CORE
+            </button>
+          </NextLink>
+          <button style={{
+            background: '#2a2a2a',
+            color: '#e5e2e1',
+            fontFamily: "'Space Grotesk', sans-serif",
+            fontWeight: 500,
+            fontSize: 14,
+            padding: '12px 24px',
+            borderRadius: 8,
+            border: '1px solid rgba(63,72,78,0.4)',
+            cursor: 'pointer',
+          }}>
+            VIEW INTEL
+          </button>
+        </div>
+
+        {/* Dot indicators */}
+        <div style={{ display: 'flex', gap: 6, marginTop: 20 }}>
+          {Array.from({ length: total }).map((_, i) => (
+            <button
+              key={i}
+              onClick={() => onDotClick(i)}
+              style={{
+                width: i === index ? 24 : 6,
+                height: 4,
+                borderRadius: 999,
+                background: i === index ? '#84d0f9' : 'rgba(255,255,255,0.2)',
+                border: 'none',
+                cursor: 'pointer',
+                padding: 0,
+                transition: 'all 0.3s ease',
+                flexShrink: 0,
+              }}
+            />
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+// ─── Skill Challenges Section ─────────────────────────────────────────────────
+
+function SkillChallengesSection({ firstGame }: { firstGame: Game }) {
+  return (
+    <section style={{ marginBottom: 96 }}>
+      {/* Section header */}
+      <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', marginBottom: 24 }}>
+        <div>
+          <h2 style={{
+            fontFamily: "'Space Grotesk', sans-serif",
+            fontSize: 30,
+            fontWeight: 700,
+            color: '#e5e2e1',
+            margin: 0,
+            letterSpacing: '-0.02em',
+          }}>
+            Skill Challenges
+          </h2>
+          <p style={{
+            fontFamily: "'Manrope', sans-serif",
+            fontSize: 11,
+            fontWeight: 600,
+            letterSpacing: '0.2em',
+            color: '#bfc8ce',
+            textTransform: 'uppercase',
+            margin: '4px 0 0',
+          }}>
+            Global Competition Matrix
+          </p>
+        </div>
+        <a href="#" style={{
+          fontFamily: "'Space Grotesk', sans-serif",
+          fontSize: 13,
+          fontWeight: 600,
+          color: '#84d0f9',
+          textDecoration: 'none',
+        }}>
+          Open Arena →
+        </a>
+      </div>
+
+      {/* Grid */}
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(3, 1fr)',
+        gap: 24,
+      }} className="skill-challenges-grid">
+        {/* Large card */}
+        <div style={{
+          gridColumn: 'span 2',
+          background: '#1c1b1b',
+          borderRadius: 16,
+          padding: 32,
+          border: '1px solid rgba(63,72,78,0.15)',
+        }} className="skill-large-card">
+          {/* Live badge */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
+            <div style={{
+              width: 8,
+              height: 8,
+              borderRadius: '50%',
+              background: '#feb967',
+              flexShrink: 0,
+            }} />
+            <span style={{
+              fontFamily: "'Manrope', sans-serif",
+              fontSize: 10,
+              fontWeight: 700,
+              letterSpacing: '0.2em',
+              color: '#bfc8ce',
+              textTransform: 'uppercase',
+            }}>
+              Live Tournament
+            </span>
+          </div>
+
+          <h3 style={{
+            fontFamily: "'Space Grotesk', sans-serif",
+            fontSize: 28,
+            fontWeight: 700,
+            color: '#e5e2e1',
+            margin: '0 0 8px',
+            letterSpacing: '-0.02em',
+          }}>
+            Circuit Breaker
+          </h3>
+          <p style={{
+            fontFamily: "'Manrope', sans-serif",
+            fontSize: 14,
+            color: '#bfc8ce',
+            margin: '0 0 32px',
+            lineHeight: 1.6,
+            maxWidth: 400,
+          }}>
+            Push your reaction speed to the limit. The global leaderboard resets every 24 hours.
+          </p>
+
+          {/* Chips */}
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+            <div style={{
+              background: 'rgba(132,208,249,0.08)',
+              border: '1px solid rgba(132,208,249,0.2)',
+              borderRadius: 6,
+              padding: '6px 14px',
+              fontSize: 12,
+              fontFamily: "'Space Grotesk', sans-serif",
+              fontWeight: 600,
+              color: '#84d0f9',
               display: 'flex',
               alignItems: 'center',
-              justifyContent: 'space-between',
-              marginBottom: 4,
-            }}
-          >
-            {/* Category badge */}
-            <div
-              style={{
-                background: cat.bg,
-                color: cat.color,
-                fontSize: 9,
-                fontFamily: "'Space Grotesk', system-ui, sans-serif",
-                fontWeight: 800,
-                padding: '2px 7px',
-                borderRadius: 999,
-                letterSpacing: '0.1em',
-                lineHeight: 1.6,
-              }}
-            >
-              {cat.label}
+              gap: 6,
+            }}>
+              <span className="material-symbols-outlined" style={{ fontSize: 14 }}>group</span>
+              Participants 12.4k
             </div>
-
-            {/* Duration badge */}
-            <div
-              style={{
-                background: 'rgba(0,0,0,0.55)',
-                backdropFilter: 'blur(8px)',
-                WebkitBackdropFilter: 'blur(8px)',
-                color: 'rgba(255,255,255,0.9)',
-                fontSize: 11,
-                fontFamily: "'JetBrains Mono', monospace",
-                fontWeight: 600,
-                padding: '3px 8px',
-                borderRadius: 999,
-                letterSpacing: '0.02em',
-                lineHeight: 1.6,
-              }}
-            >
-              {game.duration}
-            </div>
-          </div>
-
-          {/* Large decorative icon — centered */}
-          <div
-            style={{
-              flex: 1,
+            <div style={{
+              background: 'rgba(254,185,103,0.08)',
+              border: '1px solid rgba(254,185,103,0.2)',
+              borderRadius: 6,
+              padding: '6px 14px',
+              fontSize: 12,
+              fontFamily: "'Space Grotesk', sans-serif",
+              fontWeight: 600,
+              color: '#feb967',
               display: 'flex',
               alignItems: 'center',
-              justifyContent: 'center',
-              opacity: 0.25,
-              paddingBottom: 4,
-            }}
-          >
-            <Icon size={72} color="white" strokeWidth={1.5} />
-          </div>
-
-          {/* Bottom text */}
-          <div style={{ flexShrink: 0, paddingBottom: rank !== undefined ? 0 : 4 }}>
-            <div
-              style={{
-                color: '#ffffff',
-                fontWeight: 700,
-                fontSize: 14,
-                lineHeight: 1.25,
-                marginBottom: 4,
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap',
-                fontFamily: "'Space Grotesk', system-ui, sans-serif",
-              }}
-            >
-              {game.title}
-            </div>
-            <div
-              style={{
-                color: 'rgba(255,255,255,0.55)',
-                fontSize: 11,
-                lineHeight: 1.4,
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap',
-              }}
-            >
-              {game.tagline}
+              gap: 6,
+            }}>
+              <span className="material-symbols-outlined" style={{ fontSize: 14 }}>timer</span>
+              Time Remaining 04:22:18
             </div>
           </div>
+        </div>
 
-          {/* Rank badge for "Most Played" */}
-          {rank !== undefined && (
-            <div
-              style={{
-                position: 'absolute',
-                top: 8,
-                left: 8,
-                background: game.accentColor,
-                color: '#000',
-                fontSize: 10,
-                fontWeight: 900,
-                width: 20,
-                height: 20,
-                borderRadius: '50%',
+        {/* Small card */}
+        <div style={{
+          background: '#201f1f',
+          borderRadius: 16,
+          padding: 32,
+          border: '1px solid rgba(63,72,78,0.15)',
+          display: 'flex',
+          flexDirection: 'column',
+          justifyContent: 'space-between',
+        }}>
+          <div>
+            <span className="material-symbols-outlined" style={{
+              fontSize: 40,
+              color: '#84d0f9',
+              display: 'block',
+              marginBottom: 16,
+            }}>
+              precision_manufacturing
+            </span>
+            <h3 style={{
+              fontFamily: "'Space Grotesk', sans-serif",
+              fontSize: 22,
+              fontWeight: 700,
+              color: '#e5e2e1',
+              margin: '0 0 8px',
+              letterSpacing: '-0.02em',
+            }}>
+              Neural Link
+            </h3>
+            <p style={{
+              fontFamily: "'Manrope', sans-serif",
+              fontSize: 13,
+              color: '#bfc8ce',
+              margin: 0,
+              lineHeight: 1.6,
+            }}>
+              Synchronize your cognitive response patterns with the network.
+            </p>
+          </div>
+          <button style={{
+            marginTop: 24,
+            background: 'none',
+            border: 'none',
+            cursor: 'pointer',
+            fontFamily: "'Space Grotesk', sans-serif",
+            fontSize: 13,
+            fontWeight: 700,
+            color: '#84d0f9',
+            padding: 0,
+            textAlign: 'left',
+          }}>
+            Enter Sync →
+          </button>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+// ─── New Arrivals Section ─────────────────────────────────────────────────────
+
+function NewArrivalsSection() {
+  return (
+    <section style={{ marginBottom: 96 }}>
+      <h2 style={{
+        fontFamily: "'Space Grotesk', sans-serif",
+        fontSize: 30,
+        fontWeight: 700,
+        color: '#e5e2e1',
+        margin: '0 0 24px',
+        letterSpacing: '-0.02em',
+      }}>
+        New Arrivals
+      </h2>
+
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(2, 1fr)',
+        gap: 24,
+      }} className="new-arrivals-grid">
+        {NEW_ARRIVALS.map(game => (
+          <NextLink key={game.id} href={game.href} style={{ textDecoration: 'none' }}>
+            <div className="new-arrival-card">
+              {/* Image area */}
+              <div style={{
+                aspectRatio: '3/4',
+                background: '#1c1b1b',
+                borderRadius: 12,
+                position: 'relative',
+                overflow: 'hidden',
+                marginBottom: 12,
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                fontFamily: "'Space Grotesk', system-ui, sans-serif",
-              }}
-            >
-              {rank}
+              }}>
+                {/* Centered icon */}
+                <span className="material-symbols-outlined new-arrival-icon" style={{
+                  fontSize: 80,
+                  color: 'white',
+                  opacity: 0.15,
+                }}>
+                  {game.icon}
+                </span>
+
+                {/* NEW badge */}
+                <div style={{
+                  position: 'absolute',
+                  top: 12,
+                  right: 12,
+                  background: '#84d0f9',
+                  color: '#002d40',
+                  fontSize: 9,
+                  fontWeight: 800,
+                  letterSpacing: '0.15em',
+                  padding: '3px 8px',
+                  borderRadius: 4,
+                  fontFamily: "'Space Grotesk', sans-serif",
+                  textTransform: 'uppercase',
+                }}>
+                  NEW
+                </div>
+              </div>
+
+              {/* Text */}
+              <div style={{
+                fontFamily: "'Space Grotesk', sans-serif",
+                fontSize: 16,
+                fontWeight: 700,
+                color: '#e5e2e1',
+                marginBottom: 4,
+              }}>
+                {game.title}
+              </div>
+              <div style={{
+                fontFamily: "'Manrope', sans-serif",
+                fontSize: 10,
+                fontWeight: 600,
+                letterSpacing: '0.15em',
+                color: '#bfc8ce',
+                textTransform: 'uppercase',
+              }}>
+                {CATEGORY_META[game.category].label}
+              </div>
             </div>
-          )}
-        </motion.div>
-      </NextLink>
-
-      {/* QA button — bottom corner */}
-      <NextLink
-        href={`/qa?game=${game.id}`}
-        onClick={(e) => e.stopPropagation()}
-        style={{
-          position: 'absolute',
-          bottom: 10,
-          right: 10,
-          fontSize: 9,
-          fontWeight: 700,
-          letterSpacing: '0.5px',
-          padding: '2px 6px',
-          borderRadius: 4,
-          background: 'rgba(0,0,0,0.5)',
-          color: 'rgba(255,255,255,0.25)',
-          border: '1px solid rgba(255,255,255,0.08)',
-          textDecoration: 'none',
-          zIndex: 10,
-          lineHeight: 1.6,
-          display: 'block',
-        }}
-      >
-        QA
-      </NextLink>
-    </div>
-  );
-}
-
-// ─── Carousel Row ─────────────────────────────────────────────────────────────
-
-function CarouselRow({
-  title,
-  emoji,
-  games,
-  showRanks = false,
-}: {
-  title: string;
-  emoji?: string;
-  games: Game[];
-  showRanks?: boolean;
-}) {
-  if (games.length === 0) return null;
-
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 16 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
-      style={{ marginBottom: 40 }}
-    >
-      {/* Row header */}
-      <div
-        style={{
-          padding: '0 20px',
-          marginBottom: 14,
-          display: 'flex',
-          alignItems: 'center',
-          gap: 8,
-        }}
-      >
-        {emoji && (
-          <span style={{ fontSize: 16, lineHeight: 1 }}>{emoji}</span>
-        )}
-        <span
-          style={{
-            fontSize: 13,
-            fontWeight: 700,
-            letterSpacing: '0.12em',
-            textTransform: 'uppercase',
-            color: 'rgba(255,255,255,0.65)',
-            fontFamily: "'Space Grotesk', system-ui, sans-serif",
-          }}
-        >
-          {title}
-        </span>
-        <div
-          style={{
-            flex: 1,
-            height: 1,
-            background: 'linear-gradient(to right, rgba(255,255,255,0.07), transparent)',
-            marginLeft: 8,
-          }}
-        />
-        <span
-          style={{
-            fontSize: 11,
-            color: 'rgba(255,255,255,0.3)',
-            fontFamily: "'Space Grotesk', system-ui, sans-serif",
-            fontWeight: 600,
-          }}
-        >
-          {games.length} games
-        </span>
-      </div>
-
-      {/* Scrollable cards */}
-      <div className="carousel-row" style={{ paddingLeft: 20, paddingRight: 20 }}>
-        {games.map((game, i) => (
-          <GameCard key={game.id} game={game} rank={showRanks ? i + 1 : undefined} />
+          </NextLink>
         ))}
       </div>
-    </motion.div>
+    </section>
   );
 }
 
-// ─── Ether Stripe Divider ─────────────────────────────────────────────────────
+// ─── Precision Network Section ────────────────────────────────────────────────
 
-function EtherStripe({ opacity = 0.35, margin = '0' }: { opacity?: number; margin?: string }) {
+function PrecisionNetworkSection() {
+  const activities = [
+    { color: '#84d0f9', user: 'ARC_7742',   action: 'achieved rank S+ in Tilt Maze',   time: '2s ago'  },
+    { color: '#3f484e', user: 'NEO_PRISM',  action: 'completed Reaction Chain x32',   time: '8s ago'  },
+    { color: '#feb967', user: 'VXLR_09',   action: 'set new record — Steady Hand',    time: '15s ago' },
+  ];
+
   return (
-    <div
-      style={{
-        height: 2,
-        margin,
-        background:
-          'repeating-linear-gradient(to right, #5b9fc0 0px, #5b9fc0 80px, transparent 80px, transparent 100px)',
-        opacity,
-      }}
-    />
+    <section style={{ marginBottom: 96 }}>
+      <div style={{
+        background: '#1c1b1b',
+        borderRadius: 20,
+        padding: 40,
+        border: '1px solid rgba(63,72,78,0.15)',
+      }}>
+        <div style={{
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 48,
+        }} className="precision-network-layout">
+          {/* Left column */}
+          <div style={{ flex: 1 }} className="precision-left">
+            <h2 style={{
+              fontFamily: "'Space Grotesk', sans-serif",
+              fontSize: 30,
+              fontWeight: 700,
+              color: '#e5e2e1',
+              margin: '0 0 12px',
+              letterSpacing: '-0.02em',
+            }}>
+              Precision Network
+            </h2>
+            <p style={{
+              fontFamily: "'Manrope', sans-serif",
+              fontSize: 14,
+              color: '#bfc8ce',
+              margin: '0 0 28px',
+              lineHeight: 1.7,
+              maxWidth: 380,
+            }}>
+              Join 4,200+ precision gamers competing in real-time. Track your performance, climb global leaderboards, and unlock exclusive achievements.
+            </p>
+
+            {/* Overlapping avatars */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 0, marginBottom: 28 }}>
+              {['#84d0f9', '#feb967', '#a855f7'].map((color, i) => (
+                <div key={i} style={{
+                  width: 36,
+                  height: 36,
+                  borderRadius: '50%',
+                  background: color,
+                  border: '2px solid #1c1b1b',
+                  marginLeft: i > 0 ? -10 : 0,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontSize: 14,
+                  fontWeight: 700,
+                  color: '#131313',
+                  fontFamily: "'Space Grotesk', sans-serif",
+                }}>
+                  {['A', 'N', 'V'][i]}
+                </div>
+              ))}
+              <div style={{
+                marginLeft: 12,
+                fontFamily: "'Space Grotesk', sans-serif",
+                fontSize: 13,
+                fontWeight: 600,
+                color: '#84d0f9',
+              }}>
+                +4.2k players online
+              </div>
+            </div>
+
+            <button style={{
+              background: '#4a99c0',
+              color: '#001d2a',
+              fontFamily: "'Space Grotesk', sans-serif",
+              fontWeight: 700,
+              fontSize: 14,
+              padding: '12px 28px',
+              borderRadius: 8,
+              border: 'none',
+              cursor: 'pointer',
+              letterSpacing: '0.05em',
+            }}>
+              JOIN UPLINK
+            </button>
+          </div>
+
+          {/* Right column — live feed terminal */}
+          <div style={{ flex: 1 }} className="precision-right">
+            <div style={{
+              background: '#0e0e0e',
+              borderRadius: 12,
+              padding: 24,
+              border: '1px solid rgba(63,72,78,0.2)',
+            }}>
+              {/* Terminal header */}
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
+                <span style={{
+                  fontFamily: "'Space Grotesk', sans-serif",
+                  fontSize: 11,
+                  fontWeight: 700,
+                  letterSpacing: '0.2em',
+                  color: '#bfc8ce',
+                  textTransform: 'uppercase',
+                }}>
+                  Live Feed
+                </span>
+                <span style={{
+                  fontFamily: "'Manrope', sans-serif",
+                  fontSize: 11,
+                  fontWeight: 600,
+                  color: '#feb967',
+                }}>
+                  0.02ms Latency
+                </span>
+              </div>
+
+              {/* Activity items */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                {activities.map((item, i) => (
+                  <div key={i} style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+                    <div style={{
+                      width: 3,
+                      height: 36,
+                      borderRadius: 2,
+                      background: item.color,
+                      flexShrink: 0,
+                      marginTop: 2,
+                    }} />
+                    <div>
+                      <div style={{
+                        fontFamily: "'Space Grotesk', sans-serif",
+                        fontSize: 12,
+                        fontWeight: 700,
+                        color: '#e5e2e1',
+                        marginBottom: 2,
+                      }}>
+                        {item.user}
+                      </div>
+                      <div style={{
+                        fontFamily: "'Manrope', sans-serif",
+                        fontSize: 11,
+                        color: '#bfc8ce',
+                      }}>
+                        {item.action}
+                      </div>
+                    </div>
+                    <div style={{
+                      marginLeft: 'auto',
+                      fontFamily: "'Manrope', sans-serif",
+                      fontSize: 10,
+                      color: 'rgba(191,200,206,0.5)',
+                      flexShrink: 0,
+                    }}>
+                      {item.time}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
   );
 }
 
-// ─── Stats Bar ────────────────────────────────────────────────────────────────
+// ─── All Games Section ────────────────────────────────────────────────────────
 
-function StatsBar({ playCounts }: { playCounts: Record<string, number> }) {
-  const totalPlays = Object.values(playCounts).reduce((s, n) => s + n, 0);
-  const gamesPlayed = Object.keys(playCounts).filter((k) => playCounts[k] > 0).length;
+function AllGamesSection() {
+  return (
+    <section style={{ marginBottom: 96 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
+        <div>
+          <h2 style={{
+            fontFamily: "'Space Grotesk', sans-serif",
+            fontSize: 30,
+            fontWeight: 700,
+            color: '#e5e2e1',
+            margin: 0,
+            letterSpacing: '-0.02em',
+          }}>
+            All Games
+          </h2>
+          <p style={{
+            fontFamily: "'Manrope', sans-serif",
+            fontSize: 11,
+            fontWeight: 600,
+            letterSpacing: '0.15em',
+            color: '#bfc8ce',
+            textTransform: 'uppercase',
+            margin: '4px 0 0',
+          }}>
+            {ALL_GAMES.length} Experiences Available
+          </p>
+        </div>
+      </div>
 
-  if (totalPlays === 0) return null;
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))',
+        gap: 16,
+      }}>
+        {ALL_GAMES.map(game => (
+          <NextLink key={game.id} href={game.href} style={{ textDecoration: 'none' }}>
+            <div className="all-game-card" style={{
+              background: '#1c1b1b',
+              borderRadius: 12,
+              padding: 16,
+              border: '1px solid rgba(63,72,78,0.12)',
+              cursor: 'pointer',
+              transition: 'background 0.2s, transform 0.2s',
+            }}>
+              {/* Icon area */}
+              <div style={{
+                height: 80,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                marginBottom: 12,
+              }}>
+                <span className="material-symbols-outlined" style={{
+                  fontSize: 48,
+                  color: 'white',
+                  opacity: 0.2,
+                }}>
+                  {game.icon}
+                </span>
+              </div>
+
+              {/* Title */}
+              <div style={{
+                fontFamily: "'Space Grotesk', sans-serif",
+                fontSize: 13,
+                fontWeight: 700,
+                color: '#e5e2e1',
+                marginBottom: 4,
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+              }}>
+                {game.title}
+              </div>
+
+              {/* Category + duration */}
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <span style={{
+                  fontFamily: "'Manrope', sans-serif",
+                  fontSize: 9,
+                  fontWeight: 600,
+                  letterSpacing: '0.12em',
+                  color: '#bfc8ce',
+                  textTransform: 'uppercase',
+                }}>
+                  {CATEGORY_META[game.category].label}
+                </span>
+                <span style={{
+                  fontFamily: "'Space Grotesk', sans-serif",
+                  fontSize: 10,
+                  color: 'rgba(191,200,206,0.5)',
+                }}>
+                  {game.duration}
+                </span>
+              </div>
+            </div>
+          </NextLink>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+// ─── Bottom Nav Bar (mobile) ──────────────────────────────────────────────────
+
+function BottomNavBar() {
+  const items = [
+    { icon: 'explore',       label: 'Discover', active: true  },
+    { icon: 'video_library', label: 'Library',  active: false },
+    { icon: 'storefront',    label: 'Store',    active: false },
+    { icon: 'emoji_events',  label: 'Rewards',  active: false },
+  ];
 
   return (
-    <motion.div
-      initial={{ opacity: 0, y: -8 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ delay: 0.3, duration: 0.3 }}
-      style={{
-        margin: '0 20px 24px',
-        padding: '10px 16px',
-        background: 'rgba(255,255,255,0.03)',
-        border: '1px solid rgba(255,255,255,0.06)',
-        borderRadius: 12,
-        display: 'flex',
-        gap: 24,
-        alignItems: 'center',
-      }}
-    >
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-        <span
-          style={{
-            fontSize: 20,
-            fontWeight: 900,
-            color: '#00ff88',
-            fontFamily: "'Space Grotesk', system-ui, sans-serif",
-            letterSpacing: '-0.5px',
-            lineHeight: 1,
-          }}
-        >
-          {totalPlays}
-        </span>
-        <span
-          style={{
+    <nav className="bottom-nav" style={{
+      position: 'fixed',
+      bottom: 0,
+      left: 0,
+      right: 0,
+      background: 'rgba(28,27,27,0.7)',
+      backdropFilter: 'blur(24px)',
+      WebkitBackdropFilter: 'blur(24px)',
+      borderTop: '1px solid rgba(63,72,78,0.1)',
+      display: 'flex',
+      zIndex: 50,
+      paddingBottom: 'env(safe-area-inset-bottom)',
+    }}>
+      {items.map(item => (
+        <button key={item.label} style={{
+          flex: 1,
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '10px 0',
+          background: 'none',
+          border: 'none',
+          cursor: 'pointer',
+          gap: 4,
+        }}>
+          <span className="material-symbols-outlined" style={{
+            fontSize: 22,
+            color: item.active ? '#84d0f9' : '#bfc8ce',
+          }}>
+            {item.icon}
+          </span>
+          <span style={{
+            fontFamily: "'Space Grotesk', sans-serif",
             fontSize: 10,
-            fontWeight: 700,
-            color: 'rgba(255,255,255,0.4)',
-            letterSpacing: '0.08em',
-            textTransform: 'uppercase',
-            fontFamily: "'Space Grotesk', system-ui, sans-serif",
-          }}
-        >
-          Total Plays
-        </span>
-      </div>
-      <div
-        style={{ width: 1, height: 28, background: 'rgba(255,255,255,0.08)' }}
-      />
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-        <span
-          style={{
-            fontSize: 20,
-            fontWeight: 900,
-            color: '#a855f7',
-            fontFamily: "'Space Grotesk', system-ui, sans-serif",
-            letterSpacing: '-0.5px',
-            lineHeight: 1,
-          }}
-        >
-          {gamesPlayed}
-        </span>
-        <span
-          style={{
-            fontSize: 10,
-            fontWeight: 700,
-            color: 'rgba(255,255,255,0.4)',
-            letterSpacing: '0.08em',
-            textTransform: 'uppercase',
-            fontFamily: "'Space Grotesk', system-ui, sans-serif",
-          }}
-        >
-          Games Tried
-        </span>
-      </div>
-      <div
-        style={{ width: 1, height: 28, background: 'rgba(255,255,255,0.08)' }}
-      />
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-        <span
-          style={{
-            fontSize: 20,
-            fontWeight: 900,
-            color: '#facc15',
-            fontFamily: "'Space Grotesk', system-ui, sans-serif",
-            letterSpacing: '-0.5px',
-            lineHeight: 1,
-          }}
-        >
-          {ALL_GAMES.length - gamesPlayed}
-        </span>
-        <span
-          style={{
-            fontSize: 10,
-            fontWeight: 700,
-            color: 'rgba(255,255,255,0.4)',
-            letterSpacing: '0.08em',
-            textTransform: 'uppercase',
-            fontFamily: "'Space Grotesk', system-ui, sans-serif",
-          }}
-        >
-          To Discover
-        </span>
-      </div>
-    </motion.div>
+            fontWeight: item.active ? 700 : 400,
+            color: item.active ? '#84d0f9' : '#bfc8ce',
+            letterSpacing: '0.05em',
+          }}>
+            {item.label}
+          </span>
+        </button>
+      ))}
+    </nav>
+  );
+}
+
+// ─── Floating Action Button ───────────────────────────────────────────────────
+
+function FloatingActionButton() {
+  return (
+    <button className="fab" style={{
+      position: 'fixed',
+      bottom: 32,
+      right: 32,
+      width: 56,
+      height: 56,
+      borderRadius: '50%',
+      background: 'linear-gradient(135deg, #84d0f9, #4a99c0)',
+      border: 'none',
+      cursor: 'pointer',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      boxShadow: '0 4px 24px rgba(132,208,249,0.4)',
+      zIndex: 45,
+    }}>
+      <span className="material-symbols-outlined" style={{ fontSize: 26, color: '#002d40' }}>play_arrow</span>
+    </button>
   );
 }
 
@@ -526,36 +1133,12 @@ function StatsBar({ playCounts }: { playCounts: Record<string, number> }) {
 
 export default function Home() {
   const [featuredIndex, setFeaturedIndex] = useState(0);
-  const [userName, setUserName] = useState<string | null>(null);
-  const [playCounts, setPlayCounts] = useState<Record<string, number>>({});
-  const [mostPlayed, setMostPlayed] = useState<Game[]>([]);
   const [visible, setVisible] = useState(false);
 
   useEffect(() => {
-    // Load user name
-    try {
-      const userRaw = localStorage.getItem('mg_user');
-      if (userRaw) {
-        const user = JSON.parse(userRaw) as { name?: string };
-        if (user?.name) {
-          setUserName(user.name.split(' ')[0]);
-        }
-      }
-    } catch { /* ignore */ }
-
-    // Load play data
+    // Load play data for initial featured index
     try {
       const played: string[] = JSON.parse(localStorage.getItem('mg_played') || '[]');
-      const counts: Record<string, number> = {};
-      played.forEach((id) => { counts[id] = (counts[id] || 0) + 1; });
-      setPlayCounts(counts);
-
-      const mp = [...ALL_GAMES]
-        .filter((g) => counts[g.id] > 0)
-        .sort((a, b) => (counts[b.id] || 0) - (counts[a.id] || 0))
-        .slice(0, 12);
-      setMostPlayed(mp);
-
       const firstUnplayed = FEATURED_GAMES.findIndex((g) => !played.includes(g.id));
       if (firstUnplayed !== -1) setFeaturedIndex(firstUnplayed);
     } catch { /* ignore */ }
@@ -571,396 +1154,48 @@ export default function Home() {
     return () => clearInterval(timer);
   }, []);
 
+  const handleDotClick = useCallback((i: number) => setFeaturedIndex(i), []);
   const featuredGame = FEATURED_GAMES[featuredIndex] ?? FEATURED_GAMES[0];
-  const FeaturedIcon = featuredGame.Icon;
 
   return (
-    <div
-      style={{
-        background: '#08090f',
-        minHeight: '100vh',
-        opacity: visible ? 1 : 0,
-        transition: 'opacity 0.35s ease',
-        fontFamily: "'Space Grotesk', system-ui, sans-serif",
-      }}
-    >
-      {/* ── Sticky Header ──────────────────────────────────────── */}
-      <header
-        style={{
-          position: 'sticky',
-          top: 0,
-          zIndex: 100,
-          height: 56,
-          background: 'rgba(8, 9, 15, 0.9)',
-          backdropFilter: 'blur(20px)',
-          WebkitBackdropFilter: 'blur(20px)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          padding: '0 20px',
-          borderBottom: '1px solid rgba(255,255,255,0.05)',
-        }}
-      >
-        {/* Wordmark */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <img
-            src="/brand/ether-wordmark-transparent-light.png"
-            alt="Ether"
-            style={{ height: 28, width: 'auto', objectFit: 'contain', flexShrink: 0 }}
-          />
-        </div>
+    <div style={{
+      background: '#131313',
+      minHeight: '100vh',
+      opacity: visible ? 1 : 0,
+      transition: 'opacity 0.35s ease',
+      fontFamily: "'Space Grotesk', sans-serif",
+    }}>
+      <TopNavBar />
+      <SideNavBar />
 
-        {/* Game count pill */}
-        <div
-          style={{
-            background: 'rgba(255,255,255,0.05)',
-            border: '1px solid rgba(255,255,255,0.08)',
-            borderRadius: 999,
-            padding: '4px 10px',
-            fontSize: 11,
-            fontWeight: 700,
-            color: 'rgba(255,255,255,0.45)',
-            letterSpacing: '0.06em',
-          }}
-        >
-          {ALL_GAMES.length} GAMES
-        </div>
-
-        {/* User avatar */}
-        {userName && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span style={{ color: 'rgba(255,255,255,0.55)', fontSize: 13, fontWeight: 500 }}>
-              {userName}
-            </span>
-            <div
-              style={{
-                width: 32,
-                height: 32,
-                borderRadius: '50%',
-                background: 'linear-gradient(135deg, #5b9fc0 0%, #a855f7 100%)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                fontSize: 13,
-                fontWeight: 700,
-                color: '#fff',
-                flexShrink: 0,
-                boxShadow: '0 2px 8px rgba(91,159,192,0.4)',
-              }}
-            >
-              {userName[0].toUpperCase()}
-            </div>
-          </div>
-        )}
-      </header>
-
-      {/* ── Hero Section ───────────────────────────────────────── */}
-      <section
-        style={{
-          position: 'relative',
-          height: '42vh',
-          minHeight: 280,
-          maxHeight: 520,
-          overflow: 'hidden',
-        }}
-      >
-        {/* Animated background */}
-        <AnimatePresence mode="wait">
-          <motion.div
-            key={featuredGame.id + '-bg'}
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.7, ease: 'easeInOut' }}
-            style={{
-              position: 'absolute',
-              inset: 0,
-              background: `
-                radial-gradient(ellipse 130% 110% at 75% 25%, ${featuredGame.accentColor}30 0%, transparent 60%),
-                radial-gradient(ellipse 70% 90% at 15% 85%, ${featuredGame.accentColor}18 0%, transparent 50%),
-                #08090f
-              `,
-            }}
-          />
-        </AnimatePresence>
-
-        {/* Large decorative icon — background */}
-        <AnimatePresence mode="wait">
-          <motion.div
-            key={featuredGame.id + '-icon'}
-            initial={{ opacity: 0, scale: 0.75, rotate: -10 }}
-            animate={{ opacity: 0.08, scale: 1, rotate: 0 }}
-            exit={{ opacity: 0, scale: 1.15, rotate: 8 }}
-            transition={{ duration: 0.9, ease: [0.22, 1, 0.36, 1] }}
-            style={{
-              position: 'absolute',
-              right: '6%',
-              top: '50%',
-              transform: 'translateY(-50%)',
-              pointerEvents: 'none',
-            }}
-          >
-            <FeaturedIcon size={220} color={featuredGame.accentColor} strokeWidth={1} />
-          </motion.div>
-        </AnimatePresence>
-
-        {/* Subtle noise texture overlay */}
-        <div
-          style={{
-            position: 'absolute',
-            inset: 0,
-            backgroundImage:
-              "url(\"data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.04'/%3E%3C/svg%3E\")",
-            backgroundSize: '200px',
-            pointerEvents: 'none',
-            opacity: 0.6,
-          }}
-        />
-
-        {/* Bottom gradient fade */}
-        <div
-          style={{
-            position: 'absolute',
-            inset: 0,
-            background: 'linear-gradient(to top, #08090f 0%, rgba(8,9,15,0.3) 55%, transparent 100%)',
-            pointerEvents: 'none',
-          }}
-        />
-
-        {/* Hero content */}
-        <div
-          style={{
-            position: 'absolute',
-            bottom: 0,
-            left: 0,
-            right: 0,
-            padding: '0 24px 28px',
-          }}
-        >
-          <AnimatePresence mode="wait">
-            <motion.div
-              key={featuredGame.id + '-text'}
-              initial={{ opacity: 0, y: 14 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -10 }}
-              transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
-            >
-              {/* Category chip */}
-              <div
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: 5,
-                  background: `${featuredGame.accentColor}22`,
-                  border: `1px solid ${featuredGame.accentColor}44`,
-                  borderRadius: 999,
-                  padding: '3px 10px',
-                  marginBottom: 10,
-                  fontSize: 10,
-                  fontWeight: 800,
-                  color: featuredGame.accentColor,
-                  letterSpacing: '0.1em',
-                  textTransform: 'uppercase',
-                }}
-              >
-                <span style={{ width: 5, height: 5, borderRadius: '50%', background: featuredGame.accentColor, display: 'inline-block' }} />
-                FEATURED
-              </div>
-
-              {/* Title */}
-              <h1
-                style={{
-                  color: '#ffffff',
-                  fontSize: 'clamp(38px, 9vw, 58px)',
-                  fontWeight: 900,
-                  margin: '0 0 6px',
-                  letterSpacing: '-0.03em',
-                  lineHeight: 1.05,
-                  fontFamily: "'Space Grotesk', system-ui, sans-serif",
-                  textShadow: '0 2px 20px rgba(0,0,0,0.5)',
-                }}
-              >
-                {featuredGame.title}
-              </h1>
-
-              {/* Tagline */}
-              <p
-                style={{
-                  color: 'rgba(255,255,255,0.6)',
-                  fontSize: 15,
-                  margin: '0 0 20px',
-                  lineHeight: 1.5,
-                  maxWidth: 300,
-                }}
-              >
-                {featuredGame.tagline}
-              </p>
-
-              {/* CTA row */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <NextLink href={featuredGame.href} style={{ textDecoration: 'none' }}>
-                  <motion.div
-                    whileHover={{ scale: 1.04, boxShadow: `0 6px 28px ${featuredGame.accentColor}66` }}
-                    whileTap={{ scale: 0.96 }}
-                    transition={{ type: 'spring', stiffness: 400, damping: 22 }}
-                    style={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: 8,
-                      background: featuredGame.accentColor,
-                      color: '#08090f',
-                      fontWeight: 800,
-                      fontSize: 15,
-                      padding: '13px 24px',
-                      borderRadius: 12,
-                      letterSpacing: '-0.01em',
-                      cursor: 'pointer',
-                      fontFamily: "'Space Grotesk', system-ui, sans-serif",
-                      boxShadow: `0 4px 20px ${featuredGame.accentColor}44`,
-                    }}
-                  >
-                    ▶ Play Now
-                  </motion.div>
-                </NextLink>
-
-                {/* Duration pill */}
-                <div
-                  style={{
-                    background: 'rgba(0,0,0,0.55)',
-                    backdropFilter: 'blur(8px)',
-                    WebkitBackdropFilter: 'blur(8px)',
-                    color: 'rgba(255,255,255,0.7)',
-                    fontSize: 12,
-                    fontFamily: "'JetBrains Mono', monospace",
-                    fontWeight: 600,
-                    padding: '6px 12px',
-                    borderRadius: 999,
-                    border: '1px solid rgba(255,255,255,0.1)',
-                    letterSpacing: '0.02em',
-                  }}
-                >
-                  ⏱ {featuredGame.duration}
-                </div>
-              </div>
-            </motion.div>
-          </AnimatePresence>
-
-          {/* Dot indicators */}
-          <div style={{ display: 'flex', gap: 5, marginTop: 18 }}>
-            {FEATURED_GAMES.map((_, i) => (
-              <button
-                key={i}
-                onClick={() => setFeaturedIndex(i)}
-                aria-label={`Featured game ${i + 1}`}
-                style={{
-                  width: i === featuredIndex ? 24 : 6,
-                  height: 4,
-                  borderRadius: 999,
-                  background:
-                    i === featuredIndex
-                      ? featuredGame.accentColor
-                      : 'rgba(255,255,255,0.18)',
-                  border: 'none',
-                  padding: 0,
-                  cursor: 'pointer',
-                  transition: 'all 0.3s ease',
-                  flexShrink: 0,
-                }}
-              />
-            ))}
-          </div>
-        </div>
-
-        {/* Ether stripe — bottom edge */}
-        <div
-          style={{
-            position: 'absolute',
-            bottom: 0,
-            left: 0,
-            right: 0,
-            height: 2,
-            background:
-              'repeating-linear-gradient(to right, #5b9fc0 0px, #5b9fc0 80px, transparent 80px, transparent 100px)',
-            opacity: 0.5,
-          }}
-        />
-      </section>
-
-      {/* ── Category Rows ──────────────────────────────────────── */}
-      <div style={{ paddingTop: 32 }}>
-        {/* Personal stats — only if player has history */}
-        <StatsBar playCounts={playCounts} />
-
-        {/* Most Played — personalized row first */}
-        {mostPlayed.length > 0 && (
-          <>
-            <CarouselRow emoji="🔥" title="Most Played" games={mostPlayed} showRanks />
-            <EtherStripe opacity={0.2} margin="0 0 20px" />
-          </>
-        )}
-
-        <CarouselRow emoji="🎮" title="Skill Games" games={SKILL_GAMES} />
-        <EtherStripe opacity={0.2} margin="0 0 20px" />
-
-        <CarouselRow emoji="🏟️" title="Sports Games" games={SPORTS_GAMES} />
-        <EtherStripe opacity={0.2} margin="0 0 20px" />
-
-        <CarouselRow emoji="🎉" title="Holiday Games" games={HOLIDAY_GAMES} />
-        <EtherStripe opacity={0.2} margin="0 0 20px" />
-
-        <CarouselRow emoji="⭐" title="New Arrivals" games={NEW_ARRIVALS} />
-      </div>
-
-      {/* ── Footer ─────────────────────────────────────────────── */}
-      <footer
-        style={{
-          borderTop: '1px solid rgba(255,255,255,0.04)',
-          marginTop: 16,
-          paddingTop: 0,
-        }}
-      >
-        <EtherStripe opacity={0.45} margin="0 0 28px" />
-        <div
-          style={{
-            textAlign: 'center',
-            padding: '0 20px 52px',
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            gap: 10,
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span
-              style={{
-                color: 'rgba(255,255,255,0.28)',
-                fontSize: 12,
-                fontWeight: 500,
-                letterSpacing: '0.08em',
-                fontFamily: "'Space Grotesk', system-ui, sans-serif",
-              }}
-            >
-              Powered by
-            </span>
-            <img
-              src="/brand/ether-wordmark-transparent-light.png"
-              alt="Ether"
-              style={{ height: 18, width: 'auto', opacity: 0.65 }}
+      {/* Main canvas */}
+      <main style={{
+        paddingTop: 80,
+        paddingBottom: 96,
+        paddingLeft: 24,
+        paddingRight: 24,
+      }} className="main-canvas">
+        {/* Inner content — constrained width */}
+        <div style={{ maxWidth: 1200, margin: '0 auto' }}>
+          {/* Hero */}
+          <div style={{ marginTop: 48 }}>
+            <HeroSection
+              game={featuredGame}
+              index={featuredIndex}
+              total={FEATURED_GAMES.length}
+              onDotClick={handleDotClick}
             />
           </div>
-          <div
-            style={{
-              color: 'rgba(255,255,255,0.12)',
-              fontSize: 11,
-              fontWeight: 400,
-              letterSpacing: '0.06em',
-              fontFamily: "'Space Grotesk', system-ui, sans-serif",
-            }}
-          >
-            © 2026 Ether · {ALL_GAMES.length} games · Play anywhere
-          </div>
+
+          <SkillChallengesSection firstGame={FEATURED_GAMES[0]} />
+          <NewArrivalsSection />
+          <PrecisionNetworkSection />
+          <AllGamesSection />
         </div>
-      </footer>
+      </main>
+
+      <BottomNavBar />
+      <FloatingActionButton />
     </div>
   );
 }
