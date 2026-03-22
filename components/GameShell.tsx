@@ -36,6 +36,26 @@ export default function GameShell({ title, emoji, titleIcon, accentColor, childr
   const resolvedTheme: BrandTheme = theme ?? dynamicTheme ?? DEFAULT_THEME;
   const [backHovered, setBackHovered] = useState(false);
 
+  // Prevent screen from dimming during gameplay
+  useEffect(() => {
+    let wakeLock: WakeLockSentinel | null = null;
+    const acquire = async () => {
+      try {
+        if ('wakeLock' in navigator) {
+          wakeLock = await navigator.wakeLock.request('screen');
+        }
+      } catch { /* not supported or denied — silently ignore */ }
+    };
+    acquire();
+    // Re-acquire when tab becomes visible again (wake lock releases on tab switch)
+    const onVisible = () => { if (document.visibilityState === 'visible') acquire(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible);
+      wakeLock?.release().catch(() => {});
+    };
+  }, []);
+
   useEffect(() => {
     applyTheme(resolvedTheme);
   }, [resolvedTheme]);
