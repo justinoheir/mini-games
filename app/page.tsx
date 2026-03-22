@@ -1257,7 +1257,6 @@ export default function Home() {
             />
           </div>
 
-          <SkillChallengesSection firstGame={FEATURED_GAMES[0]} />
           <NewArrivalsSection />
           <PrecisionNetworkSection />
           <AllGamesSection />
