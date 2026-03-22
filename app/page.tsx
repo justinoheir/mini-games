@@ -91,95 +91,164 @@ const CATEGORY_META: Record<GameCategory, { label: string }> = {
 // ─── TopNavBar ────────────────────────────────────────────────────────────────
 
 function TopNavBar() {
-  return (
-    <header style={{
-      position: 'fixed',
-      top: 0,
-      left: 0,
-      right: 0,
-      zIndex: 50,
-      height: 64,
-      background: 'rgba(19,19,19,0.7)',
-      backdropFilter: 'blur(24px)',
-      WebkitBackdropFilter: 'blur(24px)',
-      borderBottom: '1px solid rgba(63,72,78,0.2)',
-      display: 'flex',
-      alignItems: 'center',
-      padding: '0 24px',
-      gap: 32,
-    }}>
-      {/* Logo */}
-      <div style={{
-        fontFamily: "'Space Grotesk', sans-serif",
-        fontWeight: 700,
-        fontSize: 18,
-        letterSpacing: '0.15em',
-        color: '#84d0f9',
-        textTransform: 'uppercase',
-        flexShrink: 0,
-      }}>
-        GLIMMERS
-      </div>
+  const [menuOpen, setMenuOpen] = useState(false);
 
-      {/* Nav links — center */}
-      <nav style={{ display: 'flex', gap: 32, flex: 1, justifyContent: 'center' }} className="top-nav-links">
+  return (
+    <>
+      <header style={{
+        position: 'fixed',
+        top: 0,
+        left: 0,
+        right: 0,
+        zIndex: 50,
+        height: 64,
+        background: 'rgba(19,19,19,0.7)',
+        backdropFilter: 'blur(24px)',
+        WebkitBackdropFilter: 'blur(24px)',
+        borderBottom: '1px solid rgba(63,72,78,0.2)',
+        display: 'flex',
+        alignItems: 'center',
+        padding: '0 24px',
+        gap: 32,
+      }}>
+        {/* Logo */}
+        <div style={{
+          fontFamily: "'Space Grotesk', sans-serif",
+          fontWeight: 700,
+          fontSize: 18,
+          letterSpacing: '0.15em',
+          color: '#84d0f9',
+          textTransform: 'uppercase',
+          flexShrink: 0,
+        }}>
+          GLIMMERS
+        </div>
+
+        {/* Nav links — center (hidden on mobile) */}
+        <nav className="hidden md:flex top-nav-links" style={{ gap: 32, flex: 1, justifyContent: 'center' }}>
+          {[
+            { label: 'Discover', active: true },
+            { label: 'Library', active: false },
+            { label: 'Store', active: false },
+            { label: 'Community', active: false },
+          ].map(item => (
+            <button key={item.label} style={{
+              background: 'none',
+              border: 'none',
+              cursor: 'pointer',
+              fontFamily: "'Space Grotesk', sans-serif",
+              fontSize: 14,
+              fontWeight: item.active ? 600 : 400,
+              color: item.active ? '#84d0f9' : '#bfc8ce',
+              padding: '4px 0',
+              borderBottom: item.active ? '2px solid #84d0f9' : '2px solid transparent',
+              transition: 'color 0.2s, border-color 0.2s',
+            }}>
+              {item.label}
+            </button>
+          ))}
+        </nav>
+
+        {/* Right: search + icons */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0, marginLeft: 'auto' }}>
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            background: '#201f1f',
+            border: '1px solid rgba(63,72,78,0.3)',
+            borderRadius: 8,
+            padding: '6px 12px',
+            gap: 8,
+          }} className="top-search">
+            <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#bfc8ce' }}>search</span>
+            <input
+              placeholder="Search games..."
+              style={{
+                background: 'none',
+                border: 'none',
+                outline: 'none',
+                color: '#e5e2e1',
+                fontSize: 13,
+                fontFamily: "'Space Grotesk', sans-serif",
+                width: 140,
+              }}
+            />
+          </div>
+          {/* Mobile-only search icon */}
+          <button className="top-search-icon-mobile" style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4 }}>
+            <span className="material-symbols-outlined" style={{ fontSize: 22, color: '#bfc8ce' }}>search</span>
+          </button>
+          <button style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4 }}>
+            <span className="material-symbols-outlined" style={{ fontSize: 22, color: '#bfc8ce' }}>account_circle</span>
+          </button>
+          {/* Hamburger — mobile only */}
+          <button
+            className="md:hidden"
+            onClick={() => setMenuOpen(true)}
+            style={{ background: 'none', border: 'none', color: '#84d0f9', cursor: 'pointer', padding: 4 }}
+          >
+            <span className="material-symbols-outlined">menu</span>
+          </button>
+        </div>
+      </header>
+
+      {/* Mobile drawer overlay */}
+      {menuOpen && (
+        <div
+          onClick={() => setMenuOpen(false)}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 200 }}
+        />
+      )}
+
+      {/* Mobile drawer */}
+      <div style={{
+        position: 'fixed', top: 0, left: 0, height: '100%', width: 'min(75vw, 280px)',
+        background: '#1c1b1b', zIndex: 201,
+        transform: menuOpen ? 'translateX(0)' : 'translateX(-100%)',
+        transition: 'transform 0.3s ease',
+        overflowY: 'auto',
+        padding: '20px 0',
+      }}>
+        {/* Drawer header */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0 20px 24px' }}>
+          <span style={{ color: '#84d0f9', fontWeight: 900, fontSize: 18, fontFamily: "'Space Grotesk',sans-serif", letterSpacing: '-0.03em' }}>GLIMMERS</span>
+          <button onClick={() => setMenuOpen(false)} style={{ background: 'none', border: 'none', color: '#bfc8ce', cursor: 'pointer' }}>
+            <span className="material-symbols-outlined">close</span>
+          </button>
+        </div>
+
+        {/* Drawer nav items */}
         {[
-          { label: 'Discover', active: true },
-          { label: 'Library', active: false },
-          { label: 'Store', active: false },
-          { label: 'Community', active: false },
+          { label: 'Discover',     icon: 'explore',       active: true  },
+          { label: 'Library',      icon: 'sports_esports', active: false },
+          { label: 'Store',        icon: 'shopping_bag',  active: false },
+          { label: 'Achievements', icon: 'military_tech', active: false },
+          { label: 'Community',    icon: 'groups',        active: false },
         ].map(item => (
-          <button key={item.label} style={{
-            background: 'none',
-            border: 'none',
-            cursor: 'pointer',
-            fontFamily: "'Space Grotesk', sans-serif",
-            fontSize: 14,
-            fontWeight: item.active ? 600 : 400,
-            color: item.active ? '#84d0f9' : '#bfc8ce',
-            padding: '4px 0',
-            borderBottom: item.active ? '2px solid #84d0f9' : '2px solid transparent',
-            transition: 'color 0.2s, border-color 0.2s',
+          <button key={item.label} onClick={() => setMenuOpen(false)} style={{
+            display: 'flex', alignItems: 'center', gap: 14, width: '100%',
+            padding: '14px 20px', background: item.active ? '#201f1f' : 'none', border: 'none',
+            color: item.active ? '#84d0f9' : '#bfc8ce', cursor: 'pointer',
+            fontFamily: "'Manrope',sans-serif", fontSize: 11, fontWeight: 700,
+            textTransform: 'uppercase', letterSpacing: '0.1em',
           }}>
+            <span className="material-symbols-outlined" style={{ fontSize: 20 }}>{item.icon}</span>
             {item.label}
           </button>
         ))}
-      </nav>
 
-      {/* Right: search + icons */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0 }}>
-        <div style={{
-          display: 'flex',
-          alignItems: 'center',
-          background: '#201f1f',
-          border: '1px solid rgba(63,72,78,0.3)',
-          borderRadius: 8,
-          padding: '6px 12px',
-          gap: 8,
-        }} className="top-search">
-          <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#bfc8ce' }}>search</span>
-          <input
-            placeholder="Search games..."
-            style={{
-              background: 'none',
-              border: 'none',
-              outline: 'none',
-              color: '#e5e2e1',
-              fontSize: 13,
-              fontFamily: "'Space Grotesk', sans-serif",
-              width: 140,
-            }}
-          />
+        {/* Pro Account */}
+        <div style={{ margin: '24px 16px 0', padding: 14, background: '#2a2a2a', borderRadius: 8, display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{ width: 32, height: 32, borderRadius: 6, background: 'rgba(132,208,249,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#84d0f9' }}>
+            <span className="material-symbols-outlined" style={{ fontSize: 18 }}>bolt</span>
+          </div>
+          <div>
+            <div style={{ color: '#e5e2e1', fontSize: 9, fontWeight: 900, letterSpacing: '0.15em', textTransform: 'uppercase' }}>Pro Account</div>
+            <div style={{ color: '#feb967', fontSize: 9, fontWeight: 700, textTransform: 'uppercase' }}>Active Plan</div>
+          </div>
         </div>
-        {/* Mobile-only search icon */}
-        <button className="top-search-icon-mobile" style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4 }}>
-          <span className="material-symbols-outlined" style={{ fontSize: 22, color: '#bfc8ce' }}>search</span>
-        </button>
-        <button style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4 }}>
-          <span className="material-symbols-outlined" style={{ fontSize: 22, color: '#bfc8ce' }}>account_circle</span>
-        </button>
       </div>
-    </header>
+    </>
   );
 }
 
