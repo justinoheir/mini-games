@@ -1,13 +1,16 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import type React from 'react';
 import NextLink from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
   type Game,
   type GameCategory,
+  type Industry,
   ALL_GAMES,
   CATEGORY_META,
+  INDUSTRIES,
 } from '@/lib/games';
 
 // ─── Filter config ────────────────────────────────────────────────────────────
@@ -472,6 +475,7 @@ function GameCard({ game, played }: { game: Game; played: boolean }) {
 
 export default function LibraryPage() {
   const [activeFilter, setActiveFilter] = useState<FilterKey>('All');
+  const [selectedIndustry, setSelectedIndustry] = useState<Industry | null>(null);
   const [playedIds, setPlayedIds] = useState<string[]>([]);
   const [visible, setVisible] = useState(false);
 
@@ -485,7 +489,9 @@ export default function LibraryPage() {
 
   const filteredGames = ALL_GAMES.filter(game => {
     const targetCat = FILTER_TO_CATEGORY[activeFilter];
-    return targetCat === null || game.category === targetCat;
+    const categoryOk = targetCat === null || game.category === targetCat;
+    const industryOk = selectedIndustry === null || game.industries.includes(selectedIndustry);
+    return categoryOk && industryOk;
   });
 
   const gamesPlayed = ALL_GAMES.filter(g => playedIds.includes(g.id)).length;
@@ -527,7 +533,7 @@ export default function LibraryPage() {
           </div>
 
           {/* Category filter pills */}
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 24 }}>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
             {FILTERS.map(f => (
               <button
                 key={f}
@@ -548,6 +554,46 @@ export default function LibraryPage() {
                 }}
               >
                 {f}
+              </button>
+            ))}
+          </div>
+
+          {/* Industry filter pills */}
+          <div style={{
+            display: 'flex',
+            gap: 8,
+            overflowX: 'auto',
+            marginBottom: 24,
+            paddingBottom: 4,
+            scrollbarWidth: 'none',
+            msOverflowStyle: 'none',
+          } as React.CSSProperties}>
+            {INDUSTRIES.map(ind => (
+              <button
+                key={ind.id}
+                onClick={() => setSelectedIndustry(selectedIndustry === ind.id ? null : ind.id)}
+                style={{
+                  flexShrink: 0,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 5,
+                  background: selectedIndustry === ind.id ? 'rgba(132,208,249,0.15)' : 'transparent',
+                  color: selectedIndustry === ind.id ? '#84d0f9' : 'rgba(191,200,206,0.5)',
+                  border: selectedIndustry === ind.id ? '1px solid rgba(132,208,249,0.3)' : '1px solid rgba(63,72,78,0.2)',
+                  borderRadius: 4,
+                  padding: '6px 12px',
+                  fontSize: 10,
+                  fontWeight: 700,
+                  fontFamily: "'Manrope',sans-serif",
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.08em',
+                  cursor: 'pointer',
+                  whiteSpace: 'nowrap',
+                  transition: 'all 0.2s ease',
+                }}
+              >
+                <span style={{ fontSize: 12 }}>{ind.icon}</span>
+                {ind.label}
               </button>
             ))}
           </div>

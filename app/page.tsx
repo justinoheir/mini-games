@@ -7,10 +7,12 @@ import type React from 'react';
 import {
   type Game,
   type GameCategory,
+  type Industry,
   ALL_GAMES,
   FEATURED_GAMES,
   NEW_ARRIVALS,
   CATEGORY_META,
+  INDUSTRIES,
 } from '@/lib/games';
 
 // ─── TopNavBar ────────────────────────────────────────────────────────────────
@@ -440,19 +442,21 @@ function HeroSection({ game, index, total, onDotClick }: {
               LAUNCH CORE
             </button>
           </NextLink>
-          <button className="hero-btn" style={{
-            background: '#2a2a2a',
-            color: '#e5e2e1',
-            fontFamily: "'Space Grotesk', sans-serif",
-            fontWeight: 500,
-            fontSize: 14,
-            padding: '12px 24px',
-            borderRadius: 8,
-            border: '1px solid rgba(63,72,78,0.4)',
-            cursor: 'pointer',
-          }}>
-            VIEW INTEL
-          </button>
+          <NextLink href={`/qa?game=${game.id}`} style={{ textDecoration: 'none' }}>
+            <button className="hero-btn" style={{
+              background: '#2a2a2a',
+              color: '#e5e2e1',
+              fontFamily: "'Space Grotesk', sans-serif",
+              fontWeight: 500,
+              fontSize: 14,
+              padding: '12px 24px',
+              borderRadius: 8,
+              border: '1px solid rgba(63,72,78,0.4)',
+              cursor: 'pointer',
+            }}>
+              VIEW INTEL
+            </button>
+          </NextLink>
         </div>
 
         {/* Dot indicators */}
@@ -673,6 +677,172 @@ function SkillChallengesSection({ firstGame }: { firstGame: Game }) {
   );
 }
 
+// ─── Industry Game Card ───────────────────────────────────────────────────────
+
+function IndustryGameCard({ game }: { game: Game }) {
+  return (
+    <NextLink href={game.href} style={{ textDecoration: 'none', flexShrink: 0 }}>
+      <div style={{
+        width: 'clamp(160px, 42vw, 200px)',
+        background: '#1c1b1b',
+        borderRadius: 8,
+        overflow: 'hidden',
+        display: 'flex',
+        flexDirection: 'column',
+      }}>
+        <div style={{
+          height: 80,
+          background: '#111115',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          position: 'relative',
+        }}>
+          <span className="material-symbols-outlined" style={{
+            fontSize: 36,
+            color: game.accentColor,
+            opacity: 0.6,
+          }}>
+            {game.icon}
+          </span>
+        </div>
+        <div style={{ padding: '10px 12px' }}>
+          <div style={{
+            color: '#e5e2e1',
+            fontWeight: 700,
+            fontSize: 13,
+            fontFamily: "'Space Grotesk',sans-serif",
+          }}>
+            {game.title}
+          </div>
+          <div style={{
+            color: 'rgba(191,200,206,0.6)',
+            fontSize: 10,
+            fontWeight: 700,
+            textTransform: 'uppercase',
+            letterSpacing: '0.08em',
+            fontFamily: "'Manrope',sans-serif",
+            marginTop: 2,
+          }}>
+            {game.duration}
+          </div>
+        </div>
+      </div>
+    </NextLink>
+  );
+}
+
+// ─── Browse by Industry Section ───────────────────────────────────────────────
+
+function BrowseByIndustrySection() {
+  const [selectedIndustry, setSelectedIndustry] = useState<string | null>(null);
+  const industryGames = selectedIndustry
+    ? ALL_GAMES.filter(g => g.industries.includes(selectedIndustry as Industry))
+    : [];
+
+  return (
+    <section style={{ marginBottom: 40, paddingTop: 8 }}>
+      <div style={{
+        padding: '0 16px',
+        marginBottom: 14,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+      }}>
+        <div>
+          <h2 style={{
+            color: '#e5e2e1',
+            fontSize: 18,
+            fontWeight: 700,
+            fontFamily: "'Space Grotesk',sans-serif",
+            margin: 0,
+          }}>
+            Browse by Industry
+          </h2>
+          <p style={{
+            color: '#bfc8ce',
+            fontSize: 11,
+            fontFamily: "'Manrope',sans-serif",
+            margin: '2px 0 0',
+            textTransform: 'uppercase',
+            letterSpacing: '0.1em',
+          }}>
+            Find the right experience for your audience
+          </p>
+        </div>
+      </div>
+
+      {/* Industry pill row */}
+      <div style={{
+        display: 'flex',
+        gap: 8,
+        overflowX: 'auto',
+        padding: '0 16px 4px',
+        scrollbarWidth: 'none',
+        msOverflowStyle: 'none',
+      } as React.CSSProperties}>
+        {INDUSTRIES.map(ind => (
+          <button
+            key={ind.id}
+            onClick={() => setSelectedIndustry(selectedIndustry === ind.id ? null : ind.id)}
+            style={{
+              flexShrink: 0,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              background: selectedIndustry === ind.id ? '#84d0f9' : '#201f1f',
+              color: selectedIndustry === ind.id ? '#003549' : '#bfc8ce',
+              border: 'none',
+              borderRadius: 4,
+              padding: '10px 16px',
+              fontSize: 12,
+              fontWeight: 700,
+              fontFamily: "'Manrope',sans-serif",
+              textTransform: 'uppercase',
+              letterSpacing: '0.08em',
+              cursor: 'pointer',
+              whiteSpace: 'nowrap',
+              transition: 'all 0.2s ease',
+            }}
+          >
+            <span>{ind.icon}</span>
+            {ind.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Industry games row */}
+      {selectedIndustry && (
+        <div style={{ marginTop: 16 }}>
+          <div style={{
+            padding: '0 16px',
+            marginBottom: 10,
+            color: '#bfc8ce',
+            fontSize: 11,
+            fontFamily: "'Manrope',sans-serif",
+            textTransform: 'uppercase',
+            letterSpacing: '0.1em',
+          }}>
+            {industryGames.length} experiences for {INDUSTRIES.find(i => i.id === selectedIndustry)?.label}
+          </div>
+          <div style={{
+            display: 'flex',
+            gap: 12,
+            overflowX: 'auto',
+            padding: '0 16px 8px',
+            scrollbarWidth: 'none',
+            msOverflowStyle: 'none',
+          } as React.CSSProperties}>
+            {industryGames.map(game => (
+              <IndustryGameCard key={game.id} game={game} />
+            ))}
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
 // ─── New Arrivals Section ─────────────────────────────────────────────────────
 
 function NewArrivalsSection() {
@@ -685,81 +855,125 @@ function NewArrivalsSection() {
         color: '#e5e2e1',
         margin: '0 0 24px',
         letterSpacing: '-0.02em',
+        paddingLeft: 16,
       }}>
         New Arrivals
       </h2>
 
-      <div style={{
-        display: 'grid',
-        gridTemplateColumns: 'repeat(2, 1fr)',
-        gap: 24,
-      }} className="new-arrivals-grid">
-        {NEW_ARRIVALS.map(game => (
-          <NextLink key={game.id} href={game.href} style={{ textDecoration: 'none' }}>
-            <div className="new-arrival-card">
-              {/* Image area */}
-              <div style={{
-                aspectRatio: '3/4',
-                background: '#1c1b1b',
-                borderRadius: 12,
-                position: 'relative',
-                overflow: 'hidden',
-                marginBottom: 12,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
+      {/* Horizontal scroll with fade edges */}
+      <div style={{ position: 'relative' }}>
+        <div
+          className="new-arrivals-row"
+          style={{
+            display: 'flex',
+            gap: 12,
+            overflowX: 'auto',
+            paddingLeft: 16,
+            paddingRight: 16,
+            paddingBottom: 8,
+            scrollbarWidth: 'none',
+            msOverflowStyle: 'none',
+            WebkitOverflowScrolling: 'touch',
+          } as React.CSSProperties}
+        >
+          {NEW_ARRIVALS.map(game => (
+            <NextLink key={game.id} href={game.href} style={{ textDecoration: 'none', flexShrink: 0 }}>
+              <div className="new-arrival-card" style={{
+                flexShrink: 0,
+                width: 'clamp(140px, 38vw, 180px)',
               }}>
-                {/* Centered icon */}
-                <span className="material-symbols-outlined new-arrival-icon" style={{
-                  fontSize: 80,
-                  color: 'white',
-                  opacity: 0.15,
-                }}>
-                  {game.icon}
-                </span>
-
-                {/* NEW badge */}
+                {/* Image area */}
                 <div style={{
-                  position: 'absolute',
-                  top: 12,
-                  right: 12,
-                  background: '#84d0f9',
-                  color: '#002d40',
-                  fontSize: 9,
-                  fontWeight: 800,
-                  letterSpacing: '0.15em',
-                  padding: '3px 8px',
-                  borderRadius: 4,
-                  fontFamily: "'Space Grotesk', sans-serif",
-                  textTransform: 'uppercase',
+                  aspectRatio: '3/4',
+                  background: '#1c1b1b',
+                  borderRadius: 12,
+                  position: 'relative',
+                  overflow: 'hidden',
+                  marginBottom: 12,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
                 }}>
-                  NEW
-                </div>
-              </div>
+                  {/* Centered icon */}
+                  <span className="material-symbols-outlined new-arrival-icon" style={{
+                    fontSize: 80,
+                    color: 'white',
+                    opacity: 0.15,
+                  }}>
+                    {game.icon}
+                  </span>
 
-              {/* Text */}
-              <div className="arrival-title" style={{
-                fontFamily: "'Space Grotesk', sans-serif",
-                fontSize: 16,
-                fontWeight: 700,
-                color: '#e5e2e1',
-                marginBottom: 4,
-              }}>
-                {game.title}
+                  {/* NEW badge */}
+                  <div style={{
+                    position: 'absolute',
+                    top: 12,
+                    right: 12,
+                    background: '#84d0f9',
+                    color: '#002d40',
+                    fontSize: 9,
+                    fontWeight: 800,
+                    letterSpacing: '0.15em',
+                    padding: '3px 8px',
+                    borderRadius: 4,
+                    fontFamily: "'Space Grotesk', sans-serif",
+                    textTransform: 'uppercase',
+                  }}>
+                    NEW
+                  </div>
+                </div>
+
+                {/* Text */}
+                <div className="arrival-title" style={{
+                  fontFamily: "'Space Grotesk', sans-serif",
+                  fontSize: 16,
+                  fontWeight: 700,
+                  color: '#e5e2e1',
+                  marginBottom: 4,
+                }}>
+                  {game.title}
+                </div>
+                <div style={{
+                  fontFamily: "'Manrope', sans-serif",
+                  fontSize: 10,
+                  fontWeight: 600,
+                  letterSpacing: '0.15em',
+                  color: '#bfc8ce',
+                  textTransform: 'uppercase',
+                  marginBottom: 8,
+                }}>
+                  {CATEGORY_META[game.category].label}
+                </div>
+                <NextLink href={`/qa?game=${game.id}`} onClick={(e) => e.stopPropagation()} style={{ textDecoration: 'none', display: 'block' }}>
+                  <div style={{
+                    background: 'rgba(132,208,249,0.07)',
+                    border: '1px solid rgba(132,208,249,0.15)',
+                    borderRadius: 4,
+                    padding: '5px 0',
+                    textAlign: 'center',
+                    color: '#84d0f9',
+                    fontSize: 9,
+                    fontWeight: 700,
+                    fontFamily: "'Manrope', sans-serif",
+                    letterSpacing: '0.12em',
+                    textTransform: 'uppercase',
+                  }}>
+                    VIEW INTEL
+                  </div>
+                </NextLink>
               </div>
-              <div style={{
-                fontFamily: "'Manrope', sans-serif",
-                fontSize: 10,
-                fontWeight: 600,
-                letterSpacing: '0.15em',
-                color: '#bfc8ce',
-                textTransform: 'uppercase',
-              }}>
-                {CATEGORY_META[game.category].label}
-              </div>
-            </div>
-          </NextLink>
-        ))}
+            </NextLink>
+          ))}
+        </div>
+        {/* Right fade */}
+        <div style={{
+          position: 'absolute',
+          right: 0,
+          top: 0,
+          bottom: 8,
+          width: 48,
+          background: 'linear-gradient(to left, #131313, transparent)',
+          pointerEvents: 'none',
+        }} />
       </div>
     </section>
   );
@@ -1017,7 +1231,7 @@ function AllGamesSection() {
               </div>
 
               {/* Category + duration */}
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
                 <span style={{
                   fontFamily: "'Manrope', sans-serif",
                   fontSize: 9,
@@ -1036,6 +1250,25 @@ function AllGamesSection() {
                   {game.duration}
                 </span>
               </div>
+
+              {/* Intel button */}
+              <NextLink href={`/qa?game=${game.id}`} onClick={(e) => e.stopPropagation()} style={{ textDecoration: 'none', display: 'block' }}>
+                <div style={{
+                  background: 'rgba(132,208,249,0.07)',
+                  border: '1px solid rgba(132,208,249,0.15)',
+                  borderRadius: 4,
+                  padding: '5px 0',
+                  textAlign: 'center',
+                  color: '#84d0f9',
+                  fontSize: 9,
+                  fontWeight: 700,
+                  fontFamily: "'Manrope', sans-serif",
+                  letterSpacing: '0.12em',
+                  textTransform: 'uppercase',
+                }}>
+                  VIEW INTEL
+                </div>
+              </NextLink>
             </div>
           </NextLink>
         ))}
@@ -1184,6 +1417,8 @@ export default function Home() {
               onDotClick={handleDotClick}
             />
           </div>
+
+          <BrowseByIndustrySection />
 
           <NewArrivalsSection />
 
