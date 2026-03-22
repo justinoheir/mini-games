@@ -1254,7 +1254,7 @@ export default function Home() {
           </div>
 
           <NewArrivalsSection />
-          <PrecisionNetworkSection />
+
           <AllGamesSection />
         </div>
       </main>
