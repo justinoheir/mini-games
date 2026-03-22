@@ -171,8 +171,9 @@ function TopNavBar() {
             }}
           />
         </div>
-        <button style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4 }}>
-          <span className="material-symbols-outlined" style={{ fontSize: 22, color: '#bfc8ce' }}>notifications</span>
+        {/* Mobile-only search icon */}
+        <button className="top-search-icon-mobile" style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4 }}>
+          <span className="material-symbols-outlined" style={{ fontSize: 22, color: '#bfc8ce' }}>search</span>
         </button>
         <button style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4 }}>
           <span className="material-symbols-outlined" style={{ fontSize: 22, color: '#bfc8ce' }}>account_circle</span>
@@ -332,7 +333,7 @@ function HeroSection({ game, index, total, onDotClick }: {
   onDotClick: (i: number) => void;
 }) {
   return (
-    <section style={{
+    <section className="hero-section" style={{
       width: '100%',
       height: 500,
       borderRadius: 16,
@@ -374,7 +375,7 @@ function HeroSection({ game, index, total, onDotClick }: {
       }} />
 
       {/* Content — bottom left */}
-      <div style={{
+      <div className="hero-content" style={{
         position: 'absolute',
         bottom: 0,
         left: 0,
@@ -400,7 +401,7 @@ function HeroSection({ game, index, total, onDotClick }: {
         </div>
 
         {/* Title */}
-        <h1 style={{
+        <h1 className="hero-title" style={{
           fontFamily: "'Space Grotesk', sans-serif",
           fontSize: 'clamp(42px, 7vw, 64px)',
           fontWeight: 700,
@@ -414,7 +415,7 @@ function HeroSection({ game, index, total, onDotClick }: {
         </h1>
 
         {/* Description */}
-        <p style={{
+        <p className="hero-desc" style={{
           fontFamily: "'Manrope', sans-serif",
           fontSize: 15,
           color: '#bfc8ce',
@@ -426,9 +427,9 @@ function HeroSection({ game, index, total, onDotClick }: {
         </p>
 
         {/* Buttons */}
-        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+        <div className="hero-btns" style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
           <NextLink href={game.href} style={{ textDecoration: 'none' }}>
-            <button style={{
+            <button className="hero-btn" style={{
               background: 'linear-gradient(135deg, #84d0f9, #4a99c0)',
               color: '#002d40',
               fontFamily: "'Space Grotesk', sans-serif",
@@ -443,7 +444,7 @@ function HeroSection({ game, index, total, onDotClick }: {
               LAUNCH CORE
             </button>
           </NextLink>
-          <button style={{
+          <button className="hero-btn" style={{
             background: '#2a2a2a',
             color: '#e5e2e1',
             fontFamily: "'Space Grotesk', sans-serif",
@@ -487,11 +488,11 @@ function HeroSection({ game, index, total, onDotClick }: {
 
 function SkillChallengesSection({ firstGame }: { firstGame: Game }) {
   return (
-    <section style={{ marginBottom: 96 }}>
+    <section className="section-mb" style={{ marginBottom: 96 }}>
       {/* Section header */}
       <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', marginBottom: 24 }}>
         <div>
-          <h2 style={{
+          <h2 className="section-h2" style={{
             fontFamily: "'Space Grotesk', sans-serif",
             fontSize: 30,
             fontWeight: 700,
@@ -537,7 +538,7 @@ function SkillChallengesSection({ firstGame }: { firstGame: Game }) {
           borderRadius: 16,
           padding: 32,
           border: '1px solid rgba(63,72,78,0.15)',
-        }} className="skill-large-card">
+        }} className="skill-large-card skill-large-pad">
           {/* Live badge */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
             <div style={{
@@ -559,7 +560,7 @@ function SkillChallengesSection({ firstGame }: { firstGame: Game }) {
             </span>
           </div>
 
-          <h3 style={{
+          <h3 className="skill-h3" style={{
             fontFamily: "'Space Grotesk', sans-serif",
             fontSize: 28,
             fontWeight: 700,
@@ -680,8 +681,8 @@ function SkillChallengesSection({ firstGame }: { firstGame: Game }) {
 
 function NewArrivalsSection() {
   return (
-    <section style={{ marginBottom: 96 }}>
-      <h2 style={{
+    <section className="section-mb" style={{ marginBottom: 96 }}>
+      <h2 className="section-h2" style={{
         fontFamily: "'Space Grotesk', sans-serif",
         fontSize: 30,
         fontWeight: 700,
@@ -741,7 +742,7 @@ function NewArrivalsSection() {
               </div>
 
               {/* Text */}
-              <div style={{
+              <div className="arrival-title" style={{
                 fontFamily: "'Space Grotesk', sans-serif",
                 fontSize: 16,
                 fontWeight: 700,
@@ -778,8 +779,8 @@ function PrecisionNetworkSection() {
   ];
 
   return (
-    <section style={{ marginBottom: 96 }}>
-      <div style={{
+    <section className="section-mb" style={{ marginBottom: 96 }}>
+      <div className="precision-pad" style={{
         background: '#1c1b1b',
         borderRadius: 20,
         padding: 40,
@@ -792,7 +793,7 @@ function PrecisionNetworkSection() {
         }} className="precision-network-layout">
           {/* Left column */}
           <div style={{ flex: 1 }} className="precision-left">
-            <h2 style={{
+            <h2 className="section-h2" style={{
               fontFamily: "'Space Grotesk', sans-serif",
               fontSize: 30,
               fontWeight: 700,
@@ -845,7 +846,7 @@ function PrecisionNetworkSection() {
               </div>
             </div>
 
-            <button style={{
+            <button className="precision-btn" style={{
               background: '#4a99c0',
               color: '#001d2a',
               fontFamily: "'Space Grotesk', sans-serif",
@@ -856,6 +857,7 @@ function PrecisionNetworkSection() {
               border: 'none',
               cursor: 'pointer',
               letterSpacing: '0.05em',
+              minHeight: 44,
             }}>
               JOIN UPLINK
             </button>
@@ -894,7 +896,7 @@ function PrecisionNetworkSection() {
               {/* Activity items */}
               <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
                 {activities.map((item, i) => (
-                  <div key={i} style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+                  <div key={i} className={i >= 2 ? 'feed-item-hide' : ''} style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
                     <div style={{
                       width: 3,
                       height: 36,
@@ -945,10 +947,10 @@ function PrecisionNetworkSection() {
 
 function AllGamesSection() {
   return (
-    <section style={{ marginBottom: 96 }}>
+    <section className="section-mb" style={{ marginBottom: 96 }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
         <div>
-          <h2 style={{
+          <h2 className="section-h2" style={{
             fontFamily: "'Space Grotesk', sans-serif",
             fontSize: 30,
             fontWeight: 700,
@@ -988,7 +990,7 @@ function AllGamesSection() {
               transition: 'background 0.2s, transform 0.2s',
             }}>
               {/* Icon area */}
-              <div style={{
+              <div className="all-game-icon-area" style={{
                 height: 80,
                 display: 'flex',
                 alignItems: 'center',
@@ -1178,7 +1180,7 @@ export default function Home() {
         {/* Inner content — constrained width */}
         <div style={{ maxWidth: 1200, margin: '0 auto' }}>
           {/* Hero */}
-          <div style={{ marginTop: 48 }}>
+          <div className="hero-mt" style={{ marginTop: 48 }}>
             <HeroSection
               game={featuredGame}
               index={featuredIndex}

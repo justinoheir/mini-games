@@ -74,6 +74,11 @@
   vertical-align: middle;
 }
 
+/* ─── Smooth scrolling ────────────────────────────────────── */
+html {
+  scroll-behavior: smooth;
+}
+
 /* ─── Layout: Side nav + main canvas ─────────────────────── */
 .side-nav {
   display: none;
@@ -111,6 +116,126 @@
   }
   .fab {
     display: none !important;
+  }
+  .top-search-icon-mobile {
+    display: inline-flex !important;
+  }
+  .top-notifications {
+    display: none !important;
+  }
+}
+
+@media (min-width: 1024px) {
+  .top-search-icon-mobile {
+    display: none !important;
+  }
+}
+
+/* ─── Mobile-first responsive overrides ──────────────────── */
+
+/* Hero */
+.hero-section { /* base: set in inline style */ }
+.hero-content { /* base: set in inline style */ }
+.hero-desc    { display: block; }
+.hero-btns    { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+.hero-btn     { min-height: 44px; display: inline-flex; align-items: center; justify-content: center; }
+
+/* Sections */
+.section-mb { /* uses inline style */ }
+.section-h2 { /* uses inline style */ }
+
+/* Bottom nav tap targets */
+.bottom-nav button { min-height: 48px; }
+
+/* All-game cards mobile compact */
+.all-game-card-title {
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@media (max-width: 767px) {
+  /* Main canvas horizontal padding */
+  .main-canvas {
+    padding-left: 16px !important;
+    padding-right: 16px !important;
+  }
+
+  /* Hero */
+  .hero-section {
+    height: clamp(220px, 55vw, 340px) !important;
+    margin-bottom: 40px !important;
+  }
+  .hero-content {
+    padding: 0 16px 16px !important;
+  }
+  .hero-title {
+    font-size: clamp(28px, 8vw, 52px) !important;
+    margin-bottom: 8px !important;
+  }
+  .hero-desc {
+    display: none !important;
+  }
+  .hero-btns {
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: 8px !important;
+  }
+  .hero-btn {
+    width: 100% !important;
+    min-height: 44px !important;
+    text-align: center !important;
+    padding-left: 16px !important;
+    padding-right: 16px !important;
+  }
+  .hero-mt {
+    margin-top: 16px !important;
+  }
+
+  /* Section spacing & typography */
+  .section-mb {
+    margin-bottom: 40px !important;
+  }
+  .section-h2 {
+    font-size: 1.5rem !important;
+  }
+
+  /* Skill challenges */
+  .skill-large-pad {
+    padding: 20px !important;
+  }
+  .skill-h3 {
+    font-size: 20px !important;
+  }
+
+  /* Precision network */
+  .precision-pad {
+    padding: 20px !important;
+  }
+  .precision-btn {
+    width: 100% !important;
+    text-align: center !important;
+  }
+  .feed-item-hide {
+    display: none !important;
+  }
+
+  /* New arrivals */
+  .arrival-title {
+    font-size: 14px !important;
+  }
+
+  /* All games: compact cards */
+  .all-game-card {
+    padding: 12px !important;
+  }
+  .all-game-icon-area {
+    height: 60px !important;
+    margin-bottom: 8px !important;
+  }
+  .all-game-icon-area .material-symbols-outlined {
+    font-size: 36px !important;
   }
 }
 
@@ -226,6 +351,8 @@ html, body {
   margin: 0;
   padding: 0;
   width: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
   background: var(--color-bg);
   color: var(--color-text);
   font-family: var(--font-display);
