@@ -152,6 +152,8 @@ Every game must meet WCAG 2.1 AA minimum.
 
 ## 10. QA / Testing Rules
 
+⚠️ **MANDATORY: QA must run after every update to any game. See GLIMMERS_WORKFLOW.md.**
+
 *(Enforced by QA agent — do not modify without coordination)*
 
 - Every game must have a corresponding `tests/<game-name>.spec.ts`

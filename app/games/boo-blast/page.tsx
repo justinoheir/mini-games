@@ -741,8 +741,8 @@ export default function BooBlastGame() {
               <GameHUD
                 accentColor={accent}
                 items={[
-                  { label: 'TIME',       value: timeLeft,     danger: timeLeft <= 10 },
-                  { label: 'BLASTED 👻', value: scoreDisplay },
+                  { label: 'TIME',       value: timeLeft,     danger: timeLeft <= 10, testId: 'timer' },
+                  { label: 'BLASTED 👻', value: scoreDisplay, testId: 'score' },
                 ]}
               />
 

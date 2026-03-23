@@ -906,8 +906,8 @@ export default function SymbolScanGame() {
             <GameHUD
               accentColor={accent}
               items={[
-                { label: 'TIME',  value: timeLeft,     danger: timeLeft <= 10 },
-                { label: 'FOUND', value: scoreDisplay },
+                { label: 'TIME',  value: timeLeft,     danger: timeLeft <= 10, testId: 'timer' },
+                { label: 'FOUND', value: scoreDisplay, testId: 'score' },
               ]}
             />
           )}

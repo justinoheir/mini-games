@@ -451,7 +451,7 @@ export default function TiltMaze() {
       <canvas ref={canvasRef} style={{ display: gameState==='playing' ? 'block' : 'none', position: 'absolute', top:0, left:0, touchAction: 'none' }} />
       {gameState==='playing' && (
         <GameHUD
-          items={[{ label: 'TIME', value: `${timeLeft}s`, danger: timeLeft <= 10 }]}
+          items={[{ label: 'TIME', value: `${timeLeft}s`, danger: timeLeft <= 10, testId: 'timer' }]}
           accentColor={accent}
         />
       )}

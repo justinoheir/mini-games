@@ -586,8 +586,8 @@ export default function GiftRushGame() {
             <GameHUD
               accentColor={accentColor}
               items={[
-                { label: 'TIME',       value: timeLeft,      danger: timeLeft <= 10 },
-                { label: 'GIFTS',      value: scoreDisplay },
+                { label: 'TIME',       value: timeLeft,      danger: timeLeft <= 10, testId: 'timer' },
+                { label: 'GIFTS',      value: scoreDisplay,  testId: 'score' },
                 { label: 'STREAK',     value: streakDisplay },
               ]}
             />

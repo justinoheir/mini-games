@@ -494,7 +494,7 @@ export default function PulseSphere() {
 
       {gameState==='playing' && (
         <GameHUD
-          items={[{ label: 'TIME', value: `${timeLeft}s`, danger: timeLeft <= 10 }]}
+          items={[{ label: 'TIME', value: `${timeLeft}s`, danger: timeLeft <= 10, testId: 'timer' }]}
           accentColor={accent}
         />
       )}

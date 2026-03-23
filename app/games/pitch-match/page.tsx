@@ -993,8 +993,8 @@ export default function PitchMatchGame() {
             <GameHUD
               accentColor={theme.colors.accent ?? ACCENT}
               items={[
-                { label: 'TIME', value: timeLeft, danger: timeLeft <= 10 },
-                { label: 'SCORE', value: scoreDisplay },
+                { label: 'TIME', value: timeLeft, danger: timeLeft <= 10, testId: 'timer' },
+                { label: 'SCORE', value: scoreDisplay, testId: 'score' },
               ]}
             />
           )}

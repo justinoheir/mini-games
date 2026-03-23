@@ -683,8 +683,8 @@ export default function TunnelGame() {
       {gameState === 'playing' && (
         <GameHUD
           items={[
-            { label: 'SURVIVED', value: `${survivedDisplay}s` },
-            { label: 'TIME', value: `${timeLeft}s`, danger: timeLeft <= 10 },
+            { label: 'SURVIVED', value: `${survivedDisplay}s`,                testId: 'score' },
+            { label: 'TIME',     value: `${timeLeft}s`, danger: timeLeft <= 10, testId: 'timer' },
           ]}
           accentColor={accent}
         />

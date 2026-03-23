@@ -535,8 +535,8 @@ export default function PrecisionPutt() {
       {phase === 'playing' && (
         <GameHUD
           items={[
-            { label: 'HOLE', value: `${Math.min(holeDisplay, MAX_HOLES)}/${MAX_HOLES}` },
-            { label: 'TIME', value: `${timeLeft}s`, danger: timeLeft <= 10 },
+            { label: 'HOLE', value: `${Math.min(holeDisplay, MAX_HOLES)}/${MAX_HOLES}`, testId: 'score' },
+            { label: 'TIME', value: `${timeLeft}s`, danger: timeLeft <= 10, testId: 'timer' },
           ]}
           accentColor={ACCENT}
         />

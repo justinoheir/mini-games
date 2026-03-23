@@ -906,7 +906,7 @@ export default function SteadyHandGame() {
           onDone={() => setShowInstructions(false)}
         />
       )}
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accent}>
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accent} background="radial-gradient(ellipse at 50% 0%, rgba(180,210,255,0.07) 0%, transparent 55%), linear-gradient(180deg, #060d1a 0%, #070f1e 40%, #08111f 65%, #060d1a 100%)">
 
       {/* ── Start Screen ──────────────────────────────────────────────────── */}
       {phase === 'start' && (

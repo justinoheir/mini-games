@@ -632,8 +632,8 @@ export default function StackDropGame() {
             <GameHUD
               accentColor={theme.colors.accent ?? ACCENT}
               items={[
-                { label: 'TIME',   value: timeLeft,       danger: timeLeft <= 10 },
-                { label: 'HEIGHT', value: heightDisplay },
+                { label: 'TIME',   value: timeLeft,       danger: timeLeft <= 10, testId: 'timer' },
+                { label: 'HEIGHT', value: heightDisplay,  testId: 'score' },
               ]}
             />
           )}

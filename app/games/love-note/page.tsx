@@ -588,9 +588,9 @@ export default function LoveNoteGame() {
           <GameHUD
             accentColor={accentColor}
             items={[
-              { label: 'NOTE LENGTH 💌', value: sequence.length },
+              { label: 'NOTE LENGTH 💌', value: sequence.length, testId: 'score' },
               { label: 'HEARTS ❤️',     value: lives },
-              { label: 'ROUND',          value: round },
+              { label: 'ROUND',          value: round, testId: 'timer' },
             ]}
           />
 

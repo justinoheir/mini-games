@@ -529,8 +529,8 @@ export default function HoopShot() {
       {phase === 'playing' && (
         <GameHUD
           items={[
-            { label: 'SCORE', value: scoreDisplay },
-            { label: 'TIME', value: `${timeLeft}s`, danger: timeLeft <= 10 },
+            { label: 'SCORE', value: scoreDisplay,                               testId: 'score' },
+            { label: 'TIME',  value: `${timeLeft}s`, danger: timeLeft <= 10, testId: 'timer' },
             { label: 'STREAK 🔥', value: streakDisplay },
           ]}
           accentColor={ACCENT}

@@ -1002,7 +1002,7 @@ export default function FireworkLaunchGame() {
           onDone={() => setShowInstructions(false)}
         />
       )}
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT} background="radial-gradient(ellipse at 50% 100%, rgba(80,20,0,0.6) 0%, rgba(20,5,40,0.4) 40%, transparent 70%), radial-gradient(ellipse at 70% 30%, rgba(100,30,5,0.2) 0%, transparent 40%), linear-gradient(180deg, #000005 0%, #020210 40%, #030215 70%, #000005 100%)">
 
       {/* ── Start Screen ──────────────────────────────────────────────────── */}
       {phase === 'start' && (
@@ -1040,8 +1040,8 @@ export default function FireworkLaunchGame() {
             <GameHUD
               accentColor={theme.colors.accent ?? ACCENT}
               items={[
-                { label: 'TIME', value: timeLeft, danger: timeLeft <= 10 },
-                { label: 'SCORE 🎆', value: scoreDisplay },
+                { label: 'TIME', value: timeLeft, danger: timeLeft <= 10, testId: 'timer' },
+                { label: 'SCORE 🎆', value: scoreDisplay, testId: 'score' },
                 { label: 'STREAK ✨', value: streakDisplay },
               ]}
             />

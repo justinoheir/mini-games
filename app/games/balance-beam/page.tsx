@@ -824,8 +824,8 @@ export default function BalanceBeamGame() {
             <GameHUD
               accentColor={theme.colors.accent ?? ACCENT}
               items={[
-                { label: 'TIME',    value: timeLeft,     danger: timeLeft <= 10 },
-                { label: 'BALANCE', value: scoreDisplay },
+                { label: 'TIME',    value: timeLeft,     danger: timeLeft <= 10, testId: 'timer' },
+                { label: 'BALANCE', value: scoreDisplay, testId: 'score' },
               ]}
             />
           )}

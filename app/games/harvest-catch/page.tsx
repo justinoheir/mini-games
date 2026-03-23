@@ -941,7 +941,7 @@ export default function HarvestCatch() {
           onDone={() => setShowInstructions(false)}
         />
       )}
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT} background="radial-gradient(ellipse at 50% 100%, rgba(120,60,5,0.55) 0%, rgba(60,25,3,0.3) 40%, transparent 70%), radial-gradient(ellipse at 20% 50%, rgba(80,35,2,0.2) 0%, transparent 40%), linear-gradient(180deg, #1a0c02 0%, #150a02 40%, #100801 70%, #0e0701 100%)">
 
       {/* ── Start Screen ─────────────────────────────────────────────────── */}
       {phase === 'start' && (
@@ -983,8 +983,8 @@ export default function HarvestCatch() {
             <GameHUD
               accentColor={theme.colors.accent ?? ACCENT}
               items={[
-                { label: 'TIME',       value: timeLeft,      danger: timeLeft <= 10 },
-                { label: 'HARVEST 🍁', value: scoreDisplay },
+                { label: 'TIME',       value: timeLeft,      danger: timeLeft <= 10, testId: 'timer' },
+                { label: 'HARVEST 🍁', value: scoreDisplay,  testId: 'score' },
                 { label: 'STREAK 🦃',  value: streakDisplay },
               ]}
             />

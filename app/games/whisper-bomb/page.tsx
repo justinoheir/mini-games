@@ -2,8 +2,10 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { Mic } from 'lucide-react';
 import GameShell from '@/components/GameShell';
+import GameHUD from '@/components/GameHUD';
 import GameStartScreen from '@/components/GameStartScreen';
 import Countdown from '@/components/Countdown';
+import EndScreen from '@/components/EndScreen';
 import { initAudio, sfx, haptic, startMusic, increaseMusicTempo, playScoreHit, playVictoryFanfare, playNearMiss, playPersonalBest } from '@/lib/audio';
 import { hapticScore, hapticFail, hapticVictory } from '@/lib/haptics';
 import { useBrandTheme } from '@/lib/useBrandTheme';
@@ -95,6 +97,7 @@ export default function WhisperBomb() {
   const [gameState, setGameState]       = useState<GameState>('start');
   const [showInstructions, setShowInstructions] = useState(true);
   const [displayTime, setDisplayTime]   = useState(30);
+  const [fuseDisplay, setFuseDisplay]   = useState(100);
   const [behavior, setBehavior]         = useState<BehaviorData | null>(null);
   const [micError, setMicError]         = useState(false);
   const [playerName, setPlayerName]     = useState('');
@@ -189,6 +192,7 @@ export default function WhisperBomb() {
     s.dangerFrames = 0; s.quietStreak = 0; s.running = true; s.musicSped = false;
     s.lastSpikeCountTime = 0;
     setDisplayTime(30);
+    setFuseDisplay(100);
     setScorePop(null);
     setStreakDisplay(0);
     setNearMiss(false);
@@ -202,6 +206,7 @@ export default function WhisperBomb() {
       if (!s.running) return;
       s.timeLeft--;
       setDisplayTime(s.timeLeft);
+      setFuseDisplay(Math.round(Math.max(0, s.fuse)));
       sfx.tick();
       if (s.timeLeft === 15 && !s.musicSped) {
         s.musicSped = true;
@@ -492,6 +497,13 @@ export default function WhisperBomb() {
             transition={{ duration: 0.2 }}
             style={{ position: 'absolute', inset: 0 }}
           >
+            <GameHUD
+              accentColor={accent}
+              items={[
+                { label: 'TIME', value: displayTime, danger: displayTime <= 10, testId: 'timer' },
+                { label: 'FUSE', value: `${fuseDisplay}%`, testId: 'score' },
+              ]}
+            />
             <div
               ref={playAreaRef}
               style={{
@@ -501,17 +513,6 @@ export default function WhisperBomb() {
                 background: 'radial-gradient(ellipse at center, rgba(30,5,5,1) 0%, rgba(10,3,3,1) 40%, #000 100%)',
               }}
             >
-              {/* Timer */}
-              <div style={{
-                position: 'absolute', top: 52, right: 20,
-                fontFamily: "'JetBrains Mono', 'Courier New', monospace",
-                fontSize: 40, fontWeight: displayTime <= 10 ? 900 : 700,
-                color: displayTime <= 10 ? '#ef4444' : '#888',
-                letterSpacing: '0.03em', lineHeight: 1,
-                transition: 'color 0.3s',
-              }}>
-                {displayTime}s
-              </div>
 
               {/* Score pop overlay */}
               <AnimatePresence>
@@ -623,132 +624,24 @@ export default function WhisperBomb() {
         )}
 
         {gameState === 'done' && behavior && (
-          <motion.div
-            key="done"
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.35, ease: 'easeOut' }}
-            style={{
-              position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column',
-              alignItems: 'center', justifyContent: 'center',
-              background: '#000', padding: '24px 20px', gap: 16, overflowY: 'auto',
-            }}
-          >
-            {/* Title */}
-            <motion.div
-              initial={{ scale: 0.7, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              transition={{ delay: 0.1, type: 'spring', stiffness: 260, damping: 20 }}
-              style={{ fontSize: 52, lineHeight: 1 }}
-            >
-              {behavior.defused ? '✅' : '💥'}
-            </motion.div>
-            <motion.div
-              initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.18, duration: 0.3 }}
-              style={{ fontSize: 26, fontWeight: 900, color: behavior.defused ? '#00ff88' : '#ef4444', textAlign: 'center' }}
-            >
-              {behavior.defused ? 'Defused! 🔍' : '💥 BOOM!'}
-            </motion.div>
-
-            {/* Personal best banner */}
-            <AnimatePresence>
-              {isNewPB && (
-                <motion.div
-                  key="pb-banner"
-                  initial={{ opacity: 0, scale: 0.8, y: -8 }}
-                  animate={{ opacity: 1, scale: 1, y: 0 }}
-                  exit={{ opacity: 0, scale: 0.8 }}
-                  transition={{ delay: 0.3, type: 'spring', stiffness: 300, damping: 20 }}
-                  style={{
-                    background: 'linear-gradient(135deg, rgba(255,215,0,0.2), rgba(255,170,0,0.1))',
-                    border: '1px solid rgba(255,215,0,0.5)', borderRadius: 14,
-                    padding: '10px 20px', fontSize: 18, fontWeight: 800, color: '#ffd700',
-                    textAlign: 'center',
-                  }}
-                >
-                  🏆 New Best!
-                </motion.div>
-              )}
-            </AnimatePresence>
-
-            {/* Score card */}
-            <motion.div
-              initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.25, duration: 0.3 }}
-              style={{
-                width: '100%', maxWidth: 320,
-                background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)',
-                borderRadius: 16, padding: '20px 20px', display: 'flex', flexDirection: 'column', gap: 12,
-              }}
-            >
-              {/* Final score */}
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span style={{ color: '#666', fontSize: 13, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Final Score</span>
-                <span style={{ color: behavior.defused ? '#00ff88' : '#ef4444', fontSize: 52, fontWeight: 900, lineHeight: 1 }}>
-                  {behavior.defused ? `${behavior.fuseRemaining}%` : '0%'}
-                </span>
-              </div>
-              {/* Personal best */}
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span style={{ color: '#666', fontSize: 13, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Personal Best</span>
-                <span style={{ color: '#ffd700', fontSize: 24, fontWeight: 800, lineHeight: 1 }}>
-                  {personalBest !== null ? `${personalBest}%` : '—'}
-                </span>
-              </div>
-              {/* Divider */}
-              <div style={{ height: 1, background: 'rgba(255,255,255,0.08)', margin: '4px 0' }} />
-              {/* Stats */}
-              {[
-                { label: 'Noise spikes', value: String(behavior.noiseSpikes), color: '#ef4444' },
-                { label: 'Avg volume', value: `${behavior.avgVolume}/100`, color: '#ffaa00' },
-                { label: 'Danger time', value: `${behavior.dangerSeconds}s`, color: '#ff6666' },
-                { label: 'Fuse left', value: `${behavior.fuseRemaining}%`, color: behavior.defused ? '#00ff88' : '#555' },
-              ].map((stat) => (
-                <div key={stat.label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span style={{ color: '#555', fontSize: 16 }}>{stat.label}</span>
-                  <span style={{ color: stat.color, fontSize: 16, fontWeight: 700 }}>{stat.value}</span>
-                </div>
-              ))}
-              {/* Personality */}
-              <div style={{
-                marginTop: 4, padding: '10px 14px',
-                background: 'rgba(255,255,255,0.04)', borderRadius: 10, textAlign: 'center',
-              }}>
-                <span style={{ color: '#888', fontSize: 14 }}>You are </span>
-                <span style={{ color: accent, fontSize: 26, fontWeight: 800 }}>{getProfile(behavior)}</span>
-              </div>
-            </motion.div>
-
-            {/* Action buttons */}
-            <motion.div
-              initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.35, duration: 0.3 }}
-              style={{ display: 'flex', gap: 12, width: '100%', maxWidth: 320 }}
-            >
-              <button
-                onClick={handlePlayAgain}
-                style={{
-                  flex: 1, padding: '14px 0', borderRadius: 12, border: 'none',
-                  background: accent, color: '#fff', fontSize: 16, fontWeight: 800,
-                  cursor: 'pointer', letterSpacing: '0.02em',
-                }}
-              >
-                Play Again
-              </button>
-              <button
-                onClick={handleShare}
-                style={{
-                  flex: 1, padding: '14px 0', borderRadius: 12,
-                  border: `1px solid rgba(255,255,255,0.2)`, background: 'rgba(255,255,255,0.06)',
-                  color: '#fff', fontSize: 16, fontWeight: 700, cursor: 'pointer', letterSpacing: '0.02em',
-                }}
-              >
-                {copied ? '✓ Copied!' : '📤 Share'}
-              </button>
-            </motion.div>
-          </motion.div>
+          <EndScreen
+            gameId={GAME_ID}
+            title={behavior.defused ? 'Defused! 🔍' : '💥 BOOM!'}
+            emoji={behavior.defused ? '✅' : '💥'}
+            score={behavior.defused ? `${behavior.fuseRemaining}%` : '0%'}
+            personality={getProfile(behavior)}
+            insights={[
+              { label: 'Noise spikes', value: String(behavior.noiseSpikes), color: '#ef4444' },
+              { label: 'Avg volume',   value: `${behavior.avgVolume}/100`,   color: '#ffaa00' },
+              { label: 'Danger time',  value: `${behavior.dangerSeconds}s`,  color: '#ff6666' },
+              { label: 'Fuse left',    value: `${behavior.fuseRemaining}%`,  color: behavior.defused ? '#00ff88' : '#555' },
+            ]}
+            accentColor={accent}
+            ctaTextColor="#fff"
+            onPlayAgain={handlePlayAgain}
+            didWin={behavior.defused}
+            finalScore={behavior.defused ? behavior.fuseRemaining : 0}
+          />
         )}
       </AnimatePresence>
       {gameState === 'playing' && (

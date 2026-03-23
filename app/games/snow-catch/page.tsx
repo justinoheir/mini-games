@@ -907,9 +907,9 @@ export default function SnowCatchGame() {
             <GameHUD
               accentColor={theme.colors.accent ?? ACCENT}
               items={[
-                { label: 'TIME',       value: timeLeft,      danger: timeLeft <= 10 },
-                { label: 'CAUGHT', value: scoreDisplay },
-                { label: 'STREAK',     value: streakDisplay },
+                { label: 'TIME',   value: timeLeft,      danger: timeLeft <= 10, testId: 'timer' },
+                { label: 'CAUGHT', value: scoreDisplay,  testId: 'score' },
+                { label: 'STREAK', value: streakDisplay },
               ]}
             />
           )}

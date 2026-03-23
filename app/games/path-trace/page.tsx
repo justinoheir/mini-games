@@ -843,7 +843,7 @@ export default function PathTraceGame() {
           onDone={() => setShowInstructions(false)}
         />
       )}
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT} background="linear-gradient(180deg, #f5f1eb 0%, #ede8df 35%, #e8e3d9 60%, #ede8df 80%, #f0ece4 100%)">
 
       {/* ── Start Screen ──────────────────────────────────────────────────── */}
       {phase === 'start' && (

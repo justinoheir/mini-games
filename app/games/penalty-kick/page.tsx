@@ -523,8 +523,8 @@ export default function PenaltyKick() {
       {phase === 'playing' && (
         <GameHUD
           items={[
-            { label: 'GOALS', value: goalsDisplay },
-            { label: 'SHOTS', value: `${shotsState}/${MAX_SHOTS}` },
+            { label: 'GOALS', value: goalsDisplay,              testId: 'score' },
+            { label: 'SHOTS', value: `${shotsState}/${MAX_SHOTS}`, testId: 'timer' },
           ]}
           accentColor={ACCENT}
         />

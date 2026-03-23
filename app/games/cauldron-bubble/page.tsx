@@ -919,9 +919,9 @@ export default function CauldronBubble() {
               <GameHUD
                 accentColor={accent}
                 items={[
-                  { label: 'TIME',   value: timeLeft,      danger: timeLeft <= 10 },
-                  { label: 'BREW ✨', value: scoreDisplay                          },
-                  { label: 'BREW %',  value: volumeDisplay                         },
+                  { label: 'TIME',   value: timeLeft,      danger: timeLeft <= 10, testId: 'timer' },
+                  { label: 'BREW ✨', value: scoreDisplay,  testId: 'score'                        },
+                  { label: 'BREW %',  value: volumeDisplay                                        },
                 ]}
               />
 

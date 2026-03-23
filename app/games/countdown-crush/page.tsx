@@ -897,7 +897,7 @@ export default function CountdownCrushGame() {
               <GameHUD
                 accentColor={accent}
                 items={[
-                  { label: 'SCORE 🥂', value: scoreDisplay },
+                  { label: 'SCORE 🥂', value: scoreDisplay, testId: 'score' },
                   { label: 'MULT',     value: multiplierUI },
                 ]}
               />

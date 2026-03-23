@@ -1033,8 +1033,8 @@ export default function CupidShot() {
             <GameHUD
               accentColor={accent}
               items={[
-                { label: 'TIME',          value: timeLeft,      danger: timeLeft <= 10 },
-                { label: 'LOVE SCORE 💕', value: scoreDisplay },
+                { label: 'TIME',          value: timeLeft,      danger: timeLeft <= 10, testId: 'timer' },
+                { label: 'LOVE SCORE 💕', value: scoreDisplay,  testId: 'score' },
                 { label: 'ARROWS 🏹',     value: arrowsDisplay },
               ]}
             />
