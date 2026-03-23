@@ -479,7 +479,8 @@ export default function GiftRushGame() {
           onDone={() => setShowInstructions(false)}
         />
       )}
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accentColor}>
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accentColor}
+      background="radial-gradient(ellipse at 50% 0%, rgba(255,200,50,0.12) 0%, transparent 50%), linear-gradient(180deg, #1a0005 0%, #280008 30%, #320008 60%, #1a0005 100%)">
       {/* Global CSS: snowfall + score pop animations */}
       <style>{`
         @keyframes gr-snowfall {

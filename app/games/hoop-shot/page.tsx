@@ -518,7 +518,8 @@ export default function HoopShot() {
           onDone={() => setShowInstructions(false)}
         />
       )}
-    <GameShell title="Hoop Shot" emoji="🏀" accentColor={ACCENT} theme={theme}>
+    <GameShell title="Hoop Shot" emoji="🏀" accentColor={ACCENT} theme={theme}
+      background="radial-gradient(ellipse at 50% 120%, #8b5e3c 0%, #6b4423 30%, #4a2d14 60%, #1a0f06 85%, #0a0604 100%), radial-gradient(ellipse at 50% 0%, rgba(255,160,80,0.12) 0%, transparent 60%)">
       <canvas
         ref={canvasRef}
         style={{ display: phase === 'playing' ? 'block' : 'none', position: 'absolute', top: 0, left: 0 }}

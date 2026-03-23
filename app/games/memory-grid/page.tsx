@@ -762,7 +762,8 @@ export default function MemoryGridGame() {
           }}
         />
       )}
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accentColor}>
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accentColor}
+      background="radial-gradient(ellipse at 50% 0%, rgba(255,180,80,0.12) 0%, transparent 55%), linear-gradient(180deg, #120d06 0%, #1e1508 30%, #2a1c0a 55%, #1e1508 80%, #120d06 100%)">
       {/* ── Start Screen ───────────────────────────────────────────────────── */}
       {phase === 'start' && (
         <GameStartScreen

@@ -809,7 +809,8 @@ export default function DodgeBlitzGame() {
           onDone={() => setShowInstructions(false)}
         />
       )}
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}
+      background="linear-gradient(180deg, #0d0020 0%, #160035 40%, #1a0040 70%, #0a0015 100%), radial-gradient(ellipse at 0% 100%, rgba(180,0,255,0.12) 0%, transparent 50%), radial-gradient(ellipse at 100% 0%, rgba(0,200,255,0.08) 0%, transparent 50%)">
 
       {/* ── Start Screen ──────────────────────────────────────────────────── */}
       {phase === 'start' && (

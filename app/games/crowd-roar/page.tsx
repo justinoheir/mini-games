@@ -1068,7 +1068,8 @@ export default function CrowdRoarGame() {
           onDone={() => setShowInstructions(false)}
         />
       )}
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}
+      background="radial-gradient(ellipse at 50% 30%, rgba(255,160,60,0.18) 0%, rgba(255,100,30,0.08) 30%, transparent 65%), linear-gradient(180deg, #0a0608 0%, #120a10 40%, #0d0609 70%, #060305 100%)">
 
       {/* ── Start Screen ───────────────────────────────────────────────────── */}
       {phase === 'start' && (

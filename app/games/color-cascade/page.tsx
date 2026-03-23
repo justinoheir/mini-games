@@ -708,7 +708,8 @@ export default function ColorCascadeGame() {
           onDone={() => setShowInstructions(false)}
         />
       )}
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}
+      background="radial-gradient(ellipse at 20% 80%, rgba(255,80,120,0.1) 0%, transparent 40%), radial-gradient(ellipse at 80% 20%, rgba(80,180,255,0.1) 0%, transparent 40%), radial-gradient(ellipse at 50% 50%, rgba(150,80,255,0.08) 0%, transparent 50%), linear-gradient(180deg, #080808 0%, #0f0f0f 50%, #080808 100%)">
 
       {/* ── Start Screen ────────────────────────────────────────────────────── */}
       {phase === 'start' && (

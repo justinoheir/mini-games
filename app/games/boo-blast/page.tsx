@@ -697,7 +697,8 @@ export default function BooBlastGame() {
         onDone={() => setShowInstructions(false)}
       />
     )}
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accent}>
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accent}
+      background="radial-gradient(ellipse at 50% 80%, rgba(80,0,120,0.2) 0%, rgba(40,0,80,0.1) 40%, transparent 70%), linear-gradient(180deg, #04020a 0%, #080412 30%, #0c0618 55%, #080412 80%, #04020a 100%)">
 
       {/* ── Start Screen ────────────────────────────────────────────────────── */}
       {phase === 'start' && (

@@ -511,7 +511,8 @@ export default function PenaltyKick() {
           onDone={() => setShowInstructions(false)}
         />
       )}
-    <GameShell title="Penalty Kick" emoji="⚽" accentColor={ACCENT} theme={theme}>
+    <GameShell title="Penalty Kick" emoji="⚽" accentColor={ACCENT} theme={theme}
+      background="radial-gradient(ellipse at 20% 0%, rgba(255,255,220,0.08) 0%, transparent 50%), radial-gradient(ellipse at 80% 0%, rgba(255,255,220,0.08) 0%, transparent 50%), radial-gradient(ellipse at 50% 110%, #1a5c2a 0%, #0d2e14 40%, #051209 70%, #020808 100%)">
       <canvas
         ref={canvasRef}
         style={{ display: phase === 'playing' ? 'block' : 'none', position: 'absolute', top: 0, left: 0 }}

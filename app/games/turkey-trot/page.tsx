@@ -777,7 +777,8 @@ export default function TurkeyTrotGame() {
           onDone={() => setShowInstructions(false)}
         />
       )}
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accent}>
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accent}
+      background="radial-gradient(ellipse at 50% 100%, rgba(80,160,40,0.15) 0%, transparent 40%), linear-gradient(180deg, #1a0e04 0%, #2e1a06 25%, #3e2408 45%, #4a2e0a 60%, #3e2408 78%, #2a1804 92%, #1a0e04 100%)">
       {/* ── Start Screen ──────────────────────────────────────────────────── */}
       {phase === 'start' && (
         <GameStartScreen

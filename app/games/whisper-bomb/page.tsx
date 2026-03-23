@@ -418,7 +418,8 @@ export default function WhisperBomb() {
           onDone={() => setShowInstructions(false)}
         />
       )}
-    <GameShell title="Whisper Bomb" emoji="💣" titleIcon={<BombIcon size={22} strokeColor={accent} />} accentColor={accent} theme={theme}>
+    <GameShell title="Whisper Bomb" emoji="💣" titleIcon={<BombIcon size={22} strokeColor={accent} />} accentColor={accent} theme={theme}
+      background="radial-gradient(ellipse at 50% 60%, rgba(255,240,200,0.12) 0%, rgba(255,200,100,0.05) 30%, transparent 60%), linear-gradient(180deg, #020202 0%, #050505 50%, #020202 100%)">
       {/* Flash overlay */}
       <div
         ref={flashRef}

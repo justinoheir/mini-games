@@ -994,7 +994,8 @@ export default function CupidShot() {
           onDone={() => setShowInstructions(false)}
         />
       )}
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accent}>
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accent}
+      background="linear-gradient(180deg, #87cefa 0%, #a8d8f0 25%, #c5e8f8 50%, #dff0fa 70%, #eef8ff 90%, #f8fdff 100%), radial-gradient(ellipse at 30% 40%, rgba(255,255,255,0.5) 0%, transparent 30%), radial-gradient(ellipse at 70% 65%, rgba(255,255,255,0.4) 0%, transparent 25%)">
 
       {/* ── Start Screen ─────────────────────────────────────────────────── */}
       {gamePhase === 'start' && (

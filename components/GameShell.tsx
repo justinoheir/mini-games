@@ -17,9 +17,11 @@ interface GameShellProps {
   theme?: BrandTheme;
   /** Set false to disable the mobile-only gate for a specific game (e.g. a demo mode). Default: true */
   mobileOnly?: boolean;
+  /** Rich environment background (CSS background shorthand). Overrides the default --color-bg fill. */
+  background?: string;
 }
 
-export default function GameShell({ title, emoji, titleIcon, accentColor, children, theme, mobileOnly = true }: GameShellProps) {
+export default function GameShell({ title, emoji, titleIcon, accentColor, children, theme, mobileOnly = true, background }: GameShellProps) {
   const router = useRouter();
 
   // Read dynamic brand params from URL (client-side only to avoid SSR issues)
@@ -70,6 +72,7 @@ export default function GameShell({ title, emoji, titleIcon, accentColor, childr
           height: '100vh',
           overflow: 'hidden',
           backgroundColor: 'var(--color-bg)',
+          background: background ?? undefined,
           position: 'relative',
           fontFamily: 'var(--font-display)',
         }}

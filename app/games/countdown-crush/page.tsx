@@ -854,7 +854,8 @@ export default function CountdownCrushGame() {
           onDone={() => setShowInstructions(false)}
         />
       )}
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accent}>
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accent}
+      background="radial-gradient(ellipse at 30% 30%, rgba(100,80,200,0.08) 0%, transparent 45%), radial-gradient(ellipse at 70% 70%, rgba(80,100,200,0.06) 0%, transparent 45%), linear-gradient(180deg, #080810 0%, #0c0c18 40%, #0a0a14 70%, #080810 100%)">
 
       {/* ── Start Screen ─────────────────────────────────────────────────── */}
       {phase === 'start' && (

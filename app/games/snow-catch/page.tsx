@@ -868,7 +868,8 @@ export default function SnowCatchGame() {
           onDone={() => setShowInstructions(false)}
         />
       )}
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}
+      background="linear-gradient(180deg, #04091a 0%, #080f2a 30%, #0d1840 60%, #091228 85%, #040a1a 100%), radial-gradient(ellipse at 50% 0%, rgba(160,200,255,0.1) 0%, transparent 60%)">
 
       {/* ── Start Screen ─────────────────────────────────────────────────── */}
       {phase === 'start' && (

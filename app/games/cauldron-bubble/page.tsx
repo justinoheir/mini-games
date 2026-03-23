@@ -878,7 +878,8 @@ export default function CauldronBubble() {
           onDone={() => setShowInstructions(false)}
         />
       )}
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accent}>
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accent}
+      background="radial-gradient(ellipse at 50% 80%, rgba(0,200,80,0.15) 0%, rgba(0,120,50,0.08) 40%, transparent 70%), linear-gradient(180deg, #0d0018 0%, #15002a 40%, #1a0030 65%, #0a0015 100%)">
 
       {/* ── Start Screen ──────────────────────────────────────────────────── */}
       {phase === 'start' && (

@@ -503,7 +503,8 @@ export default function LoveNoteGame() {
           onDone={() => setShowInstructions(false)}
         />
       )}
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accentColor}>
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accentColor}
+      background="linear-gradient(160deg, #1a0520 0%, #2a0835 25%, #350a45 50%, #2a0830 75%, #1a0520 100%), radial-gradient(ellipse at 60% 30%, rgba(255,100,150,0.12) 0%, transparent 55%)">
 
 
       {/* ── CSS Keyframes ─────────────────────────────────────────────────── */}

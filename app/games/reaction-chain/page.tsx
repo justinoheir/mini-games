@@ -528,7 +528,8 @@ export default function ReactionChain() {
           onDone={() => setShowInstructions(false)}
         />
       )}
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}
+      background="radial-gradient(ellipse at 50% 50%, rgba(0,80,200,0.12) 0%, transparent 60%), radial-gradient(ellipse at 20% 80%, rgba(0,150,255,0.08) 0%, transparent 40%), linear-gradient(180deg, #020810 0%, #040c18 35%, #060e1e 60%, #040c18 85%, #020810 100%)">
       {/* ── Start Screen ──────────────────────────────────────────────────── */}
       {phase === 'start' && (
         <GameStartScreen

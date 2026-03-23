@@ -464,7 +464,8 @@ export default function SpiralThrow() {
           onDone={() => setShowInstructions(false)}
         />
       )}
-    <GameShell title="Spiral Throw" emoji="🏈" accentColor={ACCENT} theme={theme}>
+    <GameShell title="Spiral Throw" emoji="🏈" accentColor={ACCENT} theme={theme}
+      background="linear-gradient(180deg, #3a8fd4 0%, #5aaae8 20%, #8dc8f0 40%, #b8def7 58%, #6db85e 62%, #3a9430 75%, #1e7018 90%, #0f5010 100%)">
       <canvas
         ref={canvasRef}
         style={{ display: phase === 'playing' ? 'block' : 'none', position: 'absolute', top: 0, left: 0 }}

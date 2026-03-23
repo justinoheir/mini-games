@@ -601,7 +601,8 @@ export default function StackDropGame() {
           onDone={() => setShowInstructions(false)}
         />
       )}
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}
+      background="radial-gradient(ellipse at 50% 0%, rgba(255,200,120,0.15) 0%, transparent 55%), linear-gradient(180deg, #2a1a08 0%, #3a2210 30%, #4a2a14 55%, #3a2210 80%, #2a1a08 100%)">
 
       {phase === 'start' && (
         <GameStartScreen

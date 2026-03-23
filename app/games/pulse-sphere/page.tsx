@@ -488,7 +488,8 @@ export default function PulseSphere() {
           onDone={() => setShowInstructions(false)}
         />
       )}
-    <GameShell title="Pulse Sphere" emoji="🔮" accentColor={accent} theme={theme}>
+    <GameShell title="Pulse Sphere" emoji="🔮" accentColor={accent} theme={theme}
+      background="radial-gradient(ellipse at 50% 50%, rgba(0,180,160,0.12) 0%, transparent 60%), radial-gradient(ellipse at 80% 20%, rgba(0,220,200,0.08) 0%, transparent 40%), linear-gradient(180deg, #020c0c 0%, #031212 35%, #041616 60%, #031212 85%, #020c0c 100%)">
       <div ref={mountRef} style={{ width:'100%', height:'100%', display: gameState==='playing' ? 'block' : 'none', position:'relative', zIndex:1, touchAction:'none' }} />
 
       {gameState==='playing' && (

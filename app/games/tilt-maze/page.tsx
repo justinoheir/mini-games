@@ -446,7 +446,8 @@ export default function TiltMaze() {
           onDone={() => setShowInstructions(false)}
         />
       )}
-    <GameShell title="Tilt Maze" emoji="🌀" accentColor={accent} theme={theme}>
+    <GameShell title="Tilt Maze" emoji="🌀" accentColor={accent} theme={theme}
+      background="repeating-linear-gradient(0deg, transparent, transparent 39px, rgba(255,255,255,0.025) 39px, rgba(255,255,255,0.025) 40px), repeating-linear-gradient(90deg, transparent, transparent 39px, rgba(255,255,255,0.025) 39px, rgba(255,255,255,0.025) 40px), linear-gradient(180deg, #060809 0%, #090c10 50%, #060809 100%)">
       <canvas ref={canvasRef} style={{ display: gameState==='playing' ? 'block' : 'none', position: 'absolute', top:0, left:0, touchAction: 'none' }} />
       {gameState==='playing' && (
         <GameHUD

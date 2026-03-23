@@ -524,7 +524,8 @@ export default function BreathRider() {
           onDone={() => setShowInstructions(false)}
         />
       )}
-    <GameShell title="Breath Rider" emoji="" titleIcon={<Wind size={18} color="#fff" />} accentColor={accent} theme={theme}>
+    <GameShell title="Breath Rider" emoji="" titleIcon={<Wind size={18} color="#fff" />} accentColor={accent} theme={theme}
+      background="linear-gradient(180deg, #1a6eb5 0%, #2e8fd4 20%, #7ec8e3 45%, #c8e8f5 65%, #e8f4fa 80%, #f5faff 100%)">
       <canvas
         ref={canvasRef}
         style={{

@@ -867,6 +867,7 @@ export default function SymbolScanGame() {
       emoji={GAME_EMOJI}
       titleIcon={<Search size={20} color="#fff" strokeWidth={2} />}
       accentColor={accent}
+      background="radial-gradient(ellipse at 50% 50%, rgba(200,160,60,0.1) 0%, transparent 60%), radial-gradient(ellipse at 50% 100%, rgba(160,120,40,0.12) 0%, transparent 50%), linear-gradient(180deg, #0e0c09 0%, #16130c 35%, #1a160e 60%, #16130c 85%, #0e0c09 100%)"
     >
 
       {/* ── Start Screen ──────────────────────────────────────────────────── */}

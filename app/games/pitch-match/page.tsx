@@ -917,7 +917,8 @@ export default function PitchMatchGame() {
           onDone={() => setShowInstructions(false)}
         />
       )}
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}
+      background="radial-gradient(ellipse at 50% 30%, rgba(0,180,255,0.08) 0%, transparent 50%), radial-gradient(ellipse at 20% 70%, rgba(0,255,150,0.06) 0%, transparent 40%), linear-gradient(180deg, #060809 0%, #080c0e 40%, #060a0c 70%, #040608 100%)">
 
       {/* ── Start Screen ─────────────────────────────────────────────────── */}
       {phase === 'start' && (

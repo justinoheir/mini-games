@@ -783,7 +783,8 @@ export default function BalanceBeamGame() {
           onDone={() => setShowInstructions(false)}
         />
       )}
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}
+      background="radial-gradient(ellipse at 50% 20%, rgba(255,200,100,0.2) 0%, rgba(255,150,50,0.08) 40%, transparent 70%), linear-gradient(180deg, #0d0608 0%, #180b0d 30%, #200d10 55%, #180b0d 80%, #0d0608 100%)">
 
       {/* ── Start Screen ────────────────────────────────────────────────── */}
       {phase === 'start' && (

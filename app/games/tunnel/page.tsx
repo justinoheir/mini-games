@@ -668,7 +668,8 @@ export default function TunnelGame() {
           onDone={() => setShowInstructions(false)}
         />
       )}
-    <GameShell title="Infinite Tunnel" emoji="🚀" accentColor={accent} theme={theme}>
+    <GameShell title="Infinite Tunnel" emoji="🚀" accentColor={accent} theme={theme}
+      background="radial-gradient(ellipse at 50% 50%, #1a0a3a 0%, #0d0520 40%, #050212 70%, #020108 100%), radial-gradient(ellipse at 30% 20%, rgba(100,60,200,0.15) 0%, transparent 50%), radial-gradient(ellipse at 70% 80%, rgba(60,80,200,0.12) 0%, transparent 50%)">
       <div ref={mountRef} style={{ width: '100%', height: '100%', display: gameState === 'playing' ? 'block' : 'none', position: 'relative', zIndex: 1, touchAction: 'none' }} />
 
       {/* Near-miss edge glow — appears via DOM ref, fades out */}

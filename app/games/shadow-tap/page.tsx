@@ -722,7 +722,8 @@ export default function ShadowTapGame() {
           onDone={() => setShowInstructions(false)}
         />
       )}
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}
+      background="radial-gradient(ellipse at 30% 60%, rgba(80,60,40,0.2) 0%, transparent 50%), radial-gradient(ellipse at 70% 30%, rgba(60,40,20,0.15) 0%, transparent 40%), linear-gradient(180deg, #040303 0%, #080605 40%, #060404 70%, #040303 100%)">
 
       {/* ── Start Screen ──────────────────────────────────────────────────── */}
       {phase === 'start' && (

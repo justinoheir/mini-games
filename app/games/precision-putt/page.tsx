@@ -523,7 +523,8 @@ export default function PrecisionPutt() {
           onDone={() => setShowInstructions(false)}
         />
       )}
-    <GameShell title="Precision Putt" emoji="🏌️" accentColor={ACCENT} theme={theme}>
+    <GameShell title="Precision Putt" emoji="🏌️" accentColor={ACCENT} theme={theme}
+      background="linear-gradient(180deg, #87ceeb 0%, #b8e4f7 25%, #5a9e6a 55%, #2d6e3a 75%, #1a4a25 100%), radial-gradient(ellipse at 75% 60%, rgba(255,220,150,0.15) 0%, transparent 40%)">
       <canvas
         ref={canvasRef}
         style={{ display: phase === 'playing' ? 'block' : 'none', position: 'absolute', top: 0, left: 0, touchAction: 'none' }}

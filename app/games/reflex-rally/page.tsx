@@ -460,7 +460,8 @@ export default function ReflexRally() {
           onDone={() => setShowInstructions(false)}
         />
       )}
-    <GameShell title="Reflex Rally" emoji="🎾" accentColor={ACCENT} theme={theme}>
+    <GameShell title="Reflex Rally" emoji="🎾" accentColor={ACCENT} theme={theme}
+      background="linear-gradient(180deg, #7a2e1a 0%, #9e3c22 25%, #b8472a 45%, #8b3520 65%, #5a2010 85%, #2d1008 100%), radial-gradient(ellipse at 50% 50%, rgba(255,180,120,0.08) 0%, transparent 60%)">
       <canvas
         ref={canvasRef}
         style={{ display: phase === 'playing' ? 'block' : 'none', position: 'absolute', top: 0, left: 0, touchAction: 'none' }}
