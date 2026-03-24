@@ -430,14 +430,13 @@ export default function EndScreen({
       <p
         style={{
           color: 'var(--color-text-secondary)',
-          fontSize: 11,
           textAlign: 'center',
           marginTop: 16,
           marginBottom: 8,
           opacity: 0.35,
         }}
       >
-        ⚡ Powered by Ether
+        <img src="/brand/ether-wordmark-transparent-light.png" alt="Ether" style={{ height: 16, display: 'inline-block', verticalAlign: 'middle' }} />
       </p>
       </div>{/* end scrollable content */}
 

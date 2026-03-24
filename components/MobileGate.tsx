@@ -180,14 +180,8 @@ export default function MobileGate({ children, accentColor = '#00ff88', gameEmoj
         </div>
 
         {/* Powered by */}
-        <div style={{
-          color: 'rgba(255,255,255,0.2)',
-          fontSize: 11,
-          fontWeight: 600,
-          letterSpacing: '0.8px',
-          textTransform: 'uppercase',
-        }}>
-          ⚡ Powered by Ether
+        <div style={{ opacity: 0.2 }}>
+          <img src="/brand/ether-wordmark-transparent-light.png" alt="Ether" style={{ height: 14, display: 'inline-block' }} />
         </div>
       </div>
 
