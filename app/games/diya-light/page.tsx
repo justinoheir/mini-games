@@ -5,69 +5,169 @@ import GameHUD from '@/components/GameHUD';
 import GameStartScreen from '@/components/GameStartScreen';
 import Countdown from '@/components/Countdown';
 import EndScreen from '@/components/EndScreen';
-import { initAudio, sfx } from '@/lib/audio';
-import { hapticScore, hapticFail, hapticVictory, hapticCombo, hapticImpact } from '@/lib/haptics';
+import { initAudio, sfx, haptic, startMusic } from '@/lib/audio';
 import { useBrandTheme } from '@/lib/useBrandTheme';
+import { postWebhook } from '@/lib/webhook';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
-const GAME_ID='diya-light';const ACCENT='#f59e0b';const DURATION=45;const GAME_EMOJI='🪔';const GAME_TITLE='Diya Light';const GAME_TAGLINE='Light the diyas. In order!';
-interface Signals{total:number;success:number;fail:number;maxStreak:number;streakCurrent:number;score:number;bonus:number;}
-function getPersonality(s:Signals){const a=s.total>0?s.success/s.total:0;if(a>=0.9&&s.maxStreak>=5)return'Legend '+GAME_EMOJI;if(s.maxStreak>=6)return'Unstoppable 🔥';if(a>=0.7)return'Pro Player 🎯';return'Keep Playing 💪';}
-type Phase='start'|'countdown'|'playing'|'done';
-interface Obj{x:number;y:number;vy:number;r:number;color:string;active:boolean;id:number;}
-interface GameState{running:boolean;timeLeft:number;sig:Signals;frame:number;accentColor:string;floats:Array<{x:number;y:number;text:string;alpha:number;vy:number;color:string}>;scorePop:number;objects:Obj[];nextId:number;basketX:number;}
-const COLS=['#f59e0b','#4ade80','#3b82f6','#f43f5e','#fbbf24','#a855f7','#f97316','#06b6d4'];
-export default function DiyaLight(){
-  const theme=useBrandTheme();
-  const canvasRef=useRef<HTMLCanvasElement>(null);const animRef=useRef(0);const timerRef=useRef<ReturnType<typeof setInterval>|null>(null);
-  const stateRef=useRef<GameState>({running:false,timeLeft:DURATION,sig:{total:0,success:0,fail:0,maxStreak:0,streakCurrent:0,score:0,bonus:0},frame:0,accentColor:ACCENT,floats:[],scorePop:0,objects:[],nextId:0,basketX:0});
-  const[phase,setPhase]=useState<Phase>('start');const[timeLeft,setTimeLeft]=useState(DURATION);const[scoreDisplay,setScoreDisplay]=useState(0);const[finalSig,setFinalSig]=useState<Signals|null>(null);
-  const playerSessionRef=useRef<PlayerSession|null>(null);
-  useEffect(()=>{stateRef.current.accentColor=theme.colors.accent??ACCENT;},[theme]);
-  const endGame=useCallback(()=>{const s=stateRef.current;s.running=false;cancelAnimationFrame(animRef.current);if(timerRef.current){clearInterval(timerRef.current);timerRef.current=null;}const pb=parseInt(localStorage.getItem('pb_'+GAME_ID)??"0");if(s.sig.score>pb)localStorage.setItem('pb_'+GAME_ID,String(s.sig.score));setFinalSig({...s.sig});setPhase('done');hapticVictory();},[]);
-  const startLoop=useCallback(()=>{
-    const canvas=canvasRef.current;if(!canvas)return;const ctx=canvas.getContext('2d');if(!ctx)return;
-    const s=stateRef.current;const W=canvas.width,H=canvas.height;
-    s.running=true;s.timeLeft=DURATION;s.sig={total:0,success:0,fail:0,maxStreak:0,streakCurrent:0,score:0,bonus:0};s.frame=0;s.floats=[];s.scorePop=0;s.objects=[];s.nextId=0;s.basketX=W/2;
-    setScoreDisplay(0);setTimeLeft(DURATION);setPhase('playing');
-    timerRef.current=setInterval(()=>{s.timeLeft--;setTimeLeft(s.timeLeft);if(s.timeLeft<=0){sfx.fail();endGame();}},1000);
+
+const GAME_ID = 'diya-light';
+const ACCENT = '#f59e0b';
+const DURATION = 45;
+const GAME_EMOJI = '🪔';
+const GAME_TITLE = 'Diya Light';
+const GAME_TAGLINE = 'Light the diyas. In order!';
+const BG_COLOR = '#14100a';
+const MUSIC_PAT: import('@/lib/audio').MusicPattern = 'holiday';
+const PB_KEY = 'mg_pb_diya-light';
+
+interface Signals {
+  score: number; hits: number; attempts: number;
+  reactionTimes: number[]; maxStreak: number; streakCurrent: number;
+}
+function getPersonality(sig: Signals): string {
+  const acc = sig.attempts > 0 ? sig.hits / sig.attempts : 0;
+  const avg = sig.reactionTimes.length > 0 ? sig.reactionTimes.reduce((a,b)=>a+b,0)/sig.reactionTimes.length : 9999;
+  if (acc >= 0.75 && avg < 700) return 'Diwali Master 🪔';
+  if (acc >= 0.55) return 'Light Keeper 🕯️';
+  if (sig.maxStreak >= 4) return 'Devoted 🙏';
+  return 'Still Learning ✨';
+}
+type Phase = 'start' | 'countdown' | 'playing' | 'done';
+function WebhookEmitter({ theme, sig, personality, player }: { theme: ReturnType<typeof useBrandTheme>; sig: Signals; personality: string; player: PlayerSession | null; }) {
+  const fired = useRef(false);
+  useEffect(() => { if (fired.current) return; fired.current = true; postWebhook(theme, GAME_ID, { personality, score: sig.score }, player); }, [theme, sig, personality, player]);
+  return null;
+}
+
+export default function DiyaLightGame() {
+  const theme = useBrandTheme();
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const animRef = useRef(0);
+  const timerRef = useRef<ReturnType<typeof setInterval>|null>(null);
+  const stopMusicRef = useRef<(()=>void)|null>(null);
+  const COLORS = ['#ef4444','#3b82f6','#22c55e','#fbbf24','#a855f7','#f97316'];
+  const stateRef = useRef({ running:false, timeLeft:DURATION, sig:{score:0,hits:0,attempts:0,reactionTimes:[] as number[],maxStreak:0,streakCurrent:0}, cells:[] as {x:number,y:number,w:number,h:number,lit:number,color:string}[], sequence:[] as number[], playerSeq:[] as number[], phase:'showing'as'showing'|'input', showIdx:0, showTimer:0 });
+
+  const buildGrid = useCallback((W:number,H:number)=>{
+    const s=stateRef.current; const N=6,cols=3,cw=(W-56)/3,ch=72,sX=28,sY=H/2-ch;
+    s.cells=Array.from({length:N},(_,i)=>({x:sX+(i%cols)*(cw+4),y:sY+Math.floor(i/cols)*(ch+8),w:cw,h:ch,lit:0,color:COLORS[i]}));
+  },[]);
+
+  const newRound = useCallback(()=>{
+    const s=stateRef.current; const len=Math.min(2+Math.floor(s.sig.hits/2),8);
+    s.sequence=Array.from({length:len},()=>Math.floor(Math.random()*s.cells.length));
+    s.playerSeq=[]; s.phase='showing'; s.showIdx=0; s.showTimer=0; s.sig.attempts++;
+  },[]);
+
+  const endGame = useCallback(()=>{
+    const s=stateRef.current; s.running=false;
+    cancelAnimationFrame(animRef.current);
+    if(timerRef.current){clearInterval(timerRef.current);timerRef.current=null;}
+    if(stopMusicRef.current){stopMusicRef.current();stopMusicRef.current=null;}
+    setFinalSig({...s.sig}); setPhase('done');
+  },[]);
+
+  const startLoop = useCallback(()=>{
+    const c=canvasRef.current; if(!c) return;
+    const ctx=c.getContext('2d'); if(!ctx) return;
+    const s=stateRef.current;
+    s.running=true; s.timeLeft=DURATION;
+    s.sig={score:0,hits:0,attempts:0,reactionTimes:[],maxStreak:0,streakCurrent:0};
+    setScoreDisplay(0); setTimeLeft(DURATION); setPhase('playing');
+    stopMusicRef.current=startMusic(MUSIC_PAT);
+    timerRef.current=setInterval(()=>{s.timeLeft--;setTimeLeft(s.timeLeft);if(s.timeLeft<=0){sfx.fail();haptic([100]);endGame();}},1000);
+    buildGrid(c.width,c.height); setTimeout(()=>newRound(),500);
     const loop=()=>{
-      if(!s.running)return;ctx.clearRect(0,0,W,H);s.frame++;
-      ctx.fillStyle='#140800';ctx.fillRect(0,0,W,H);
-      // Festive background elements
-      for(let i=0;i<8;i++){const bx=(i*137+s.frame*0.2)%W,by=(i*91+s.frame*0.1)%H;ctx.fillStyle=COLS[i%COLS.length]+'12';ctx.beginPath();ctx.arc(bx,by,15+i*3,0,Math.PI*2);ctx.fill();}
-      // Spawn objects
-      if(s.frame%Math.max(15,50-s.sig.success*2)===0){s.objects.push({x:40+Math.random()*(W-80),y:-20,vy:2+Math.random()*2,r:22,color:COLS[Math.floor(Math.random()*COLS.length)],active:true,id:s.nextId++});}
-      // Basket
-      ctx.save();ctx.strokeStyle=ACCENT;ctx.lineWidth=4;ctx.shadowBlur=8;ctx.shadowColor=ACCENT;
-      ctx.beginPath();ctx.moveTo(s.basketX-44,H-60);ctx.lineTo(s.basketX-50,H-20);ctx.lineTo(s.basketX+50,H-20);ctx.lineTo(s.basketX+44,H-60);ctx.stroke();ctx.restore();
-      // Objects
-      for(let i=s.objects.length-1;i>=0;i--){const obj=s.objects[i];if(!obj.active){s.objects.splice(i,1);continue;}
-        obj.y+=obj.vy;
-        if(obj.y+obj.r>H-60&&obj.y-obj.r<H-20&&Math.abs(obj.x-s.basketX)<50){obj.active=false;s.sig.total++;s.sig.success++;s.sig.streakCurrent++;if(s.sig.streakCurrent>s.sig.maxStreak)s.sig.maxStreak=s.sig.streakCurrent;const mult=s.sig.streakCurrent>=3?2:1;s.sig.score+=mult;s.scorePop=Date.now()+300;setScoreDisplay(s.sig.score);sfx.collect();hapticScore();if(s.sig.streakCurrent>=3)hapticCombo(s.sig.streakCurrent);s.floats.push({x:obj.x,y:obj.y-20,text:'+'+mult,alpha:1,vy:-2.5,color:'#fbbf24'});}
-        else if(obj.y>H+30){obj.active=false;s.sig.fail++;s.sig.streakCurrent=0;hapticFail();}
-        else{ctx.save();ctx.shadowBlur=10;ctx.shadowColor=obj.color;ctx.fillStyle=obj.color;ctx.beginPath();ctx.arc(obj.x,obj.y,obj.r,0,Math.PI*2);ctx.fill();ctx.fillStyle='#ffffff';ctx.font='20px sans-serif';ctx.textAlign='center';ctx.fillText(GAME_EMOJI,obj.x,obj.y+7);ctx.restore();}}
-      if(s.scorePop>Date.now()){const t=(s.scorePop-Date.now())/300;ctx.save();ctx.globalAlpha=t;ctx.font='bold '+Math.round(38*(1+(1-t)*0.3))+'px sans-serif';ctx.fillStyle=ACCENT;ctx.textAlign='center';ctx.fillText(''+s.sig.score,W/2,90);ctx.restore();}
-      s.floats=s.floats.filter(f=>f.alpha>0.02);s.floats.forEach(f=>{ctx.save();ctx.globalAlpha=f.alpha;ctx.fillStyle=f.color;ctx.font='bold 22px sans-serif';ctx.textAlign='center';ctx.fillText(f.text,f.x,f.y);ctx.restore();f.y+=f.vy;f.alpha*=0.95;});
-      animRef.current=requestAnimationFrame(loop);};
+      if(!s.running) return;
+      const W=c.width,H=c.height;
+      ctx.fillStyle=BG_COLOR; ctx.fillRect(0,0,W,H);
+      if(s.phase==='showing'){s.showTimer++;if(s.showTimer%26===0){if(s.showIdx<s.sequence.length){s.cells[s.sequence[s.showIdx]].lit=18;sfx.countdown();haptic([15]);s.showIdx++;}else{s.phase='input';}}}
+      s.cells.forEach((cel,i)=>{
+        const bright=cel.lit>0;
+        ctx.shadowBlur=bright?18:0; ctx.shadowColor=cel.color;
+        ctx.fillStyle=bright?cel.color:cel.color+'2a';
+        ctx.strokeStyle=cel.color+(bright?'':'44'); ctx.lineWidth=bright?2.5:1.5;
+        ctx.roundRect(cel.x,cel.y,cel.w,cel.h,8); ctx.fill(); ctx.stroke(); ctx.shadowBlur=0;
+        ctx.fillStyle='rgba(255,255,255,0.55)'; ctx.font='11px monospace'; ctx.textAlign='center'; ctx.textBaseline='middle';
+        ctx.fillText(String(i+1),cel.x+cel.w/2,cel.y+cel.h/2);
+        if(cel.lit>0) cel.lit--;
+      });
+      ctx.fillStyle='rgba(255,255,255,0.5)'; ctx.font='13px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='top';
+      ctx.fillText(s.phase==='showing'?'WATCH…':'TAP THE SEQUENCE! '+s.playerSeq.length+'/'+s.sequence.length,W/2,H*0.22);
+      if(s.sig.streakCurrent>=3){ctx.fillStyle=ACCENT;ctx.font='bold 15px sans-serif';ctx.fillText('×'+s.sig.streakCurrent+' STREAK!',W/2,H-70);}
+      animRef.current=requestAnimationFrame(loop);
+    };
     animRef.current=requestAnimationFrame(loop);
-  },[endGame]);
+  },[endGame,buildGrid,newRound]);
+
+  const handleTap = useCallback((cx:number,cy:number)=>{
+    const c=canvasRef.current; if(!c) return;
+    const s=stateRef.current; if(!s.running||s.phase!=='input') return;
+    const rect=c.getBoundingClientRect();
+    const x=(cx-rect.left)*(c.width/rect.width),y=(cy-rect.top)*(c.height/rect.height);
+    for(let i=0;i<s.cells.length;i++){
+      const cel=s.cells[i];
+      if(x>=cel.x&&x<=cel.x+cel.w&&y>=cel.y&&y<=cel.y+cel.h){
+        cel.lit=10; sfx.click(); haptic([15]); s.playerSeq.push(i);
+        if(s.sequence[s.playerSeq.length-1]!==i){s.sig.streakCurrent=0;sfx.fail();haptic([40,30,40]);setTimeout(()=>{if(s.running)newRound();},450);return;}
+        if(s.playerSeq.length===s.sequence.length){
+          s.sig.hits++; s.sig.streakCurrent++;
+          if(s.sig.streakCurrent>s.sig.maxStreak) s.sig.maxStreak=s.sig.streakCurrent;
+          s.sig.score+=s.sig.streakCurrent>=3?2:1; setScoreDisplay(s.sig.score);
+          sfx.success(); haptic([50,20,80]); setTimeout(()=>{if(s.running)newRound();},520);
+        }
+        break;
+      }
+    }
+  },[newRound]);
+
   useEffect(()=>{
-    const canvas=canvasRef.current;if(!canvas)return;
-    const resize=()=>{canvas.width=canvas.offsetWidth;canvas.height=canvas.offsetHeight;};resize();window.addEventListener('resize',resize);
-    const onPointerMove=(e:PointerEvent)=>{if(phase!=='playing')return;const s=stateRef.current;const rect=canvas.getBoundingClientRect();s.basketX=Math.max(55,Math.min(canvas.width-55,(e.clientX-rect.left)*(canvas.width/rect.width)));};
-    const onPointerDown=(e:PointerEvent)=>{if(phase!=='playing')return;const s=stateRef.current;const rect=canvas.getBoundingClientRect();s.basketX=Math.max(55,Math.min(canvas.width-55,(e.clientX-rect.left)*(canvas.width/rect.width)));};
-    canvas.addEventListener('pointermove',onPointerMove);canvas.addEventListener('pointerdown',onPointerDown);
-    return()=>{window.removeEventListener('resize',resize);canvas.removeEventListener('pointermove',onPointerMove);canvas.removeEventListener('pointerdown',onPointerDown);};
-  },[phase]);
-  useEffect(()=>()=>{cancelAnimationFrame(animRef.current);if(timerRef.current)clearInterval(timerRef.current);},[]);
-  const handleStart=useCallback(async(n:string,a:string)=>{playerSessionRef.current=savePlayerSession(GAME_ID,n,a);await initAudio();setPhase('countdown');},[]);
-  const handlePlayAgain=useCallback(()=>{setPhase('start');setScoreDisplay(0);setTimeLeft(DURATION);setFinalSig(null);},[]);
-  return(<GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent??ACCENT}>
-    {phase==='start'&&<GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description={GAME_TAGLINE} ctaLabel={'Play! '+GAME_EMOJI} accentColor={theme.colors.accent??ACCENT} onStart={handleStart}/>}
-    {phase==='countdown'&&<Countdown onComplete={startLoop} accentColor={theme.colors.accent??ACCENT}/>}
-    {(phase==='playing'||phase==='countdown')&&(<><canvas ref={canvasRef} style={{position:'absolute',inset:0,width:'100%',height:'100%',touchAction:'none'}} role="img" aria-label={'Diya Light game canvas'}/>
-    {phase==='playing'&&<GameHUD accentColor={theme.colors.accent??ACCENT} items={[{label:'TIME',value:timeLeft,danger:timeLeft<=10},{label:'SCORE',value:scoreDisplay}]}/>}</>)}
-    {phase==='done'&&finalSig&&<EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI} score={String(finalSig.score)} personality={getPersonality(finalSig)}
-      insights={[{label:'Caught',value:String(finalSig.success),color:ACCENT},{label:'Missed',value:String(finalSig.fail),color:'#ef4444'},{label:'Best Streak',value:'x'+finalSig.maxStreak,color:'#fbbf24'},{label:'Total',value:String(finalSig.total),color:'#06b6d4'}]}
-      accentColor={theme.colors.accent??ACCENT} onPlayAgain={handlePlayAgain} didWin={finalSig.success>=15}/>}
-  </GameShell>);}
+    const c=canvasRef.current; if(!c) return;
+    const resize=()=>{c.width=c.offsetWidth;c.height=c.offsetHeight;buildGrid(c.width,c.height);};
+    resize(); window.addEventListener('resize',resize);
+    const onDown=(e:PointerEvent)=>{if(phase==='playing')handleTap(e.clientX,e.clientY);};
+    c.addEventListener('pointerdown',onDown);
+    return()=>{window.removeEventListener('resize',resize);c.removeEventListener('pointerdown',onDown);};
+  },[phase,handleTap,buildGrid]);
+
+  useEffect(()=>()=>{cancelAnimationFrame(animRef.current);if(timerRef.current)clearInterval(timerRef.current);if(stopMusicRef.current)stopMusicRef.current();},[]);
+
+  
+  const [phase, setPhase] = useState<Phase>('start');
+  const [timeLeft, setTimeLeft] = useState(DURATION);
+  const [scoreDisplay, setScoreDisplay] = useState(0);
+  const [finalSig, setFinalSig] = useState<Signals|null>(null);
+  const playerSessionRef = useRef<PlayerSession|null>(null);
+  
+  const handleStart = useCallback((name: string, avatar: string) => { initAudio(); playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar); setPhase('countdown'); }, []);
+  const handleCountdownDone = useCallback(() => { startLoop(); }, [startLoop]);
+  const handlePlayAgain = useCallback(() => { setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null); }, []);
+  const buildInsights = (sig: Signals) => {
+    const acc = sig.attempts > 0 ? Math.round((sig.hits/sig.attempts)*100) : 0;
+    const avg = sig.reactionTimes.length > 0 ? Math.round(sig.reactionTimes.reduce((a,b)=>a+b,0)/sig.reactionTimes.length) : 0;
+    const pb = parseInt(localStorage.getItem(PB_KEY) ?? '0');
+    if (sig.score > pb) localStorage.setItem(PB_KEY, String(sig.score));
+    return [
+      { label: 'Accuracy', value: acc + '%', color: acc>=70?'#4ade80':acc>=40?'#facc15':'#ef4444' },
+      { label: 'Avg React', value: avg + 'ms', color: ACCENT },
+      { label: 'Best Streak', value: '×' + sig.maxStreak, color: ACCENT },
+      { label: 'Score', value: String(sig.score), color: 'var(--color-text)' },
+    ];
+  };
+  
+  return (
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent??ACCENT}>
+      {phase==='start'&&<GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description={GAME_TAGLINE} ctaLabel="Start" accentColor={theme.colors.accent??ACCENT} onStart={handleStart}/>}
+      {phase==='countdown'&&<Countdown onComplete={handleCountdownDone} accentColor={theme.colors.accent??ACCENT}/>}
+      {(phase==='playing'||phase==='countdown')&&<>
+        <canvas ref={canvasRef} aria-label="Diya Light game canvas" role="img" style={{position:'absolute',inset:0,width:'100%',height:'100%',touchAction:'none'}}/>
+        {phase==='playing'&&<GameHUD accentColor={theme.colors.accent??ACCENT} items={[{label:'TIME',value:timeLeft,danger:timeLeft<=5},{label:'SCORE',value:scoreDisplay}]}/>}
+      </>}
+      {phase==='done'&&finalSig&&<>
+        <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI} score={String(finalSig.score)} personality={getPersonality(finalSig)} insights={buildInsights(finalSig)} accentColor={theme.colors.accent??ACCENT} onPlayAgain={handlePlayAgain} didWin={finalSig.score>=5}/>
+        <WebhookEmitter theme={theme} sig={finalSig} personality={getPersonality(finalSig)} player={playerSessionRef.current}/>
+      </>}
+    </GameShell>
+  );
+}
+}
