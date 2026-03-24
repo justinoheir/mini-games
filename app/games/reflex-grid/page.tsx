@@ -9,7 +9,7 @@ import { initAudio, sfx } from '@/lib/audio';
 import { hapticScore, hapticFail, hapticVictory, hapticCombo } from '@/lib/haptics';
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
-const GAME_ID='reflex-grid';const ACCENT='#ef4444';const DURATION=45;const GAME_EMOJI='⚡';const GAME_TITLE='Reflex Grid';const GAME_TAGLINE='Tap the flash. Never miss twice.';
+const GAME_ID='reflex-grid';const ACCENT='#ef4444';const DURATION=30;const GAME_EMOJI='⚡';const GAME_TITLE='Reflex Grid';const GAME_TAGLINE='Tap the flash. Never miss twice.';
 interface Signals{totalItems:number;correct:number;wrong:number;maxStreak:number;streakCurrent:number;score:number;reactionSum:number;}
 function getPersonality(sig:Signals){const acc=sig.totalItems>0?sig.correct/sig.totalItems:0;if(acc>=0.9&&sig.maxStreak>=5)return'Cognitive Elite 🧠';if(sig.maxStreak>=6)return'Focus Master 🎯';if(acc>=0.75)return'Sharp Mind ⚡';return'Brain Trainer 💪';}
 type Phase='start'|'countdown'|'playing'|'done';

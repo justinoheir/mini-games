@@ -5,7 +5,7 @@ import { GamePage } from './pages/GamePage'
 const GAME_ID = 'hum-maze'
 const GAME_PATH = '/games/hum-maze'
 const ACCENT = '#14b8a6'
-const GAME_DURATION_MS = 45000
+const GAME_DURATION_MS = 60000
 const SENSOR = 'touch'
 
 test('1.1 â€” page loads without JS errors', async ({ page }) => {
