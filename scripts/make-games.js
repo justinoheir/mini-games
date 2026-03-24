@@ -1343,3 +1343,38 @@ for(const g of GAMES){
 }
 fs.writeFileSync(gtsPath,gts,'utf8');
 console.log('games.ts updated');
+
+// --- PATCH: Add 5 missing manifest games --------------------------------------
+const PATCH_GAMES = [
+  { id:'equation-tap',  title:'Equation Tap',  tag:'Math at the speed of thought.', ac:'#facc15', dur:45, cat:'cognitive', arch:'choice', icon:'calculate', ind:['technology','finance','healthcare'] },
+  { id:'type-speed',    title:'Type Speed',    tag:'How fast are your fingers?',     ac:'#e879f9', dur:30, cat:'cognitive', arch:'tap',    icon:'keyboard', ind:['technology','finance','healthcare'] },
+  { id:'morse-tap',     title:'Morse Tap',     tag:'Dot dash. Fast. Go.',            ac:'#fbbf24', dur:45, cat:'breath',    arch:'timing', icon:'radio',    ind:['technology','cpg','healthcare'] },
+  { id:'clover-path',   title:'Clover Path',   tag:'Connect the clovers.',          ac:'#22c55e', dur:45, cat:'holiday',   arch:'tap',    icon:'eco',      ind:['retail','food_bev','cpg'] },
+  { id:'cosmic-catch',  title:'Cosmic Catch',  tag:'Planets fall. Catch them all.', ac:'#6366f1', dur:30, cat:'skill',     arch:'tilt',   icon:'public',   ind:['technology','automotive','cpg'] },
+];
+// Set emojis and bgs for patch games
+EMOJIS['equation-tap']='??'; EMOJIS['type-speed']='??'; EMOJIS['morse-tap']='??'; EMOJIS['clover-path']='??'; EMOJIS['cosmic-catch']='??';
+BGS['equation-tap']='#14120a'; BGS['type-speed']='#0d001a'; BGS['morse-tap']='#14100a'; BGS['clover-path']='#001407'; BGS['cosmic-catch']='#07070f';
+PERS_MAP['equation-tap']=['Math Genius ??','Calculator ??','Getting There ??','Still Counting ??'];
+PERS_MAP['type-speed']=['Speed Typer ??','Fast Fingers ??','Steady Pace ??','Hunt & Peck ??'];
+PERS_MAP['morse-tap']=['Telegraph Master ??','Code Tapper ·—·','Learning Morse ??','Beep Boop ??'];
+PERS_MAP['clover-path']=['Lucky Legend ??','Path Finder ??','Explorer ???','Getting Lost ??'];
+PERS_MAP['cosmic-catch']=['Astronomer ??','Star Catcher ?','Space Cadet ??','Lost in Space ??'];
+Q['equation-tap']=[{q:'3 + 8 = ?',opts:['9','10','11','12'],c:2},{q:'15 - 7 = ?',opts:['6','7','8','9'],c:2},{q:'4 × 4 = ?',opts:['12','14','16','18'],c:2},{q:'20 / 5 = ?',opts:['3','4','5','6'],c:1},{q:'9 + 6 = ?',opts:['13','14','15','16'],c:1}];
+
+for(const g of PATCH_GAMES){
+  const gameDir=path.join(GAMES_DIR,g.id);
+  const gamePath=path.join(gameDir,'page.tsx');
+  const testPath=path.join(TESTS_DIR,g.id+'.spec.ts');
+  if(fs.existsSync(gamePath)){console.log('  SKIP PATCH: '+g.id);continue;}
+  console.log('  BUILD PATCH: '+g.id+' ['+g.arch+']');
+  try{
+    mkFile(gamePath,buildFile(g));
+    mkFile(testPath,buildTestSpec(g));
+    const entry=fmtE(g)+'\n';
+    const arr=g.cat==='sports'?'SPORTS_GAMES':g.cat==='holiday'?'HOLIDAY_GAMES':'SKILL_GAMES';
+    let gts2=fs.readFileSync(gtsPath,'utf8');
+    if(!gts2.includes("'"+g.id+"'")){const idx=gts2.lastIndexOf('export const '+arr);if(idx>=0){const end=gts2.indexOf('];',idx);if(end>=0){gts2=gts2.slice(0,end)+entry+gts2.slice(end);fs.writeFileSync(gtsPath,gts2,'utf8');}}}
+    console.log('  PATCH built: '+g.id);
+  }catch(e){console.error('  PATCH ERROR '+g.id+': '+e.message);}
+}
