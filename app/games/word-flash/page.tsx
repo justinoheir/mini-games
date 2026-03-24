@@ -304,17 +304,17 @@ export default function WordFlashGame() {
       const ms = Date.now() - s.probeShownAt;
       s.sig.total++; s.sig.totalMs += ms;
 
-      let playerSaidYes = false;
-      if (px >= yesX && px <= yesX + btnW && py >= btnY && py <= btnY + btnH) playerSaidYes = true;
-      else if (px >= noX && px <= noX + btnW && py >= btnY && py <= btnY + btnH) playerSaidYes = false;
+      let playerSaies = false;
+      if (px >= yesX && px <= yesX + btnW && py >= btnY && py <= btnY + btnH) playerSaies = true;
+      else if (px >= noX && px <= noX + btnW && py >= btnY && py <= btnY + btnH) playerSaies = false;
       else return;
 
-      const correct = (playerSaidYes && s.probeIsStudied) || (!playerSaidYes && !s.probeIsStudied);
-      s.feedback = playerSaidYes;
+      const correct = (playerSaies && s.probeIsStudied) || (!playerSaies && !s.probeIsStudied);
+      s.feedback = playerSaies;
       s.feedbackTimer = 15;
 
       if (correct) {
-        if (playerSaidYes) s.sig.hits++;
+        if (playerSaies) s.sig.hits++;
         else s.sig.correctRejections++;
         s.sig.streakCurrent++;
         if (s.sig.streakCurrent > s.sig.maxStreak) s.sig.maxStreak = s.sig.streakCurrent;
@@ -325,11 +325,11 @@ export default function WordFlashGame() {
         if (s.sig.streakCurrent >= 3) hapticCombo(s.sig.streakCurrent);
         s.floats.push({ x: W / 2, y: H * 0.52, text: `+${speedPts} ✓`, alpha: 1, vy: -2.5, color: '#fbbf24' });
       } else {
-        if (playerSaidYes) s.sig.falseAlarms++;
+        if (playerSaies) s.sig.falseAlarms++;
         else s.sig.misses++;
         s.sig.streakCurrent = 0;
         sfx.collision(); hapticFail();
-        s.floats.push({ x: W / 2, y: H * 0.52, text: playerSaidYes ? 'FALSE ALARM!' : 'MISSED IT!', alpha: 1, vy: -2, color: '#ef4444' });
+        s.floats.push({ x: W / 2, y: H * 0.52, text: playerSaies ? 'FALSE ALARM!' : 'MISSED IT!', alpha: 1, vy: -2, color: '#ef4444' });
       }
       setTimeout(() => { if (s.running) startFlash(); }, 550);
     };

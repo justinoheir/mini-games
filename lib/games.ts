@@ -67,8 +67,6 @@ export const SKILL_GAMES: Game[] = [
   { id: 'path-trace',      title: 'Path Trace',      tagline: "Follow the line. Don't stray.",                href: '/games/path-trace',      accentColor: '#e879f9', duration: '45s', icon: 'edit',                category: 'skill',     industries: ['technology', 'automotive', 'finance']    },
   { id: 'pitch-match',     title: 'Pitch Match',     tagline: 'Hit the note. Hold it. Feel it.',               href: '/games/pitch-match',     accentColor: '#34d399', duration: '45s', icon: 'music_note',          category: 'breath',    industries: ['cpg', 'food_bev', 'retail']              },
   { id: 'symbol-scan',     title: 'Symbol Scan',     tagline: 'Find it. Tap it. Before the clock runs out.',  href: '/games/symbol-scan',     accentColor: '#10b981', duration: '60s', icon: 'manage_search',       category: 'cognitive', industries: ['finance', 'technology', 'healthcare']    },
-];
-
   { id: 'neon-archer',   title: 'Neon Archer',   tagline: 'Swipe to aim. Release at the perfect moment.',  href: '/games/neon-archer',   accentColor: '#00ffcc', duration: '60s', icon: 'sports_martial_arts', category: 'sports',    industries: ['sports', 'technology', 'retail']   },
   { id: 'ice-sculptor',  title: 'Ice Sculptor',  tagline: 'Chip away ice. Reveal the hidden shape.',        href: '/games/ice-sculptor',  accentColor: '#93c5fd', duration: '45s', icon: 'ac_unit',             category: 'skill',     industries: ['retail', 'cpg', 'technology']      },
   { id: 'gravity-flip',  title: 'Gravity Flip',  tagline: 'Tap to flip gravity. Dodge everything.',         href: '/games/gravity-flip',  accentColor: '#8b5cf6', duration: '60s', icon: 'swap_vert',           category: 'skill',     industries: ['technology', 'sports', 'retail']   },
@@ -121,8 +119,6 @@ export const HOLIDAY_GAMES: Game[] = [
   { id: 'taco-toss',        title: 'Taco Toss',        tagline: 'Catch the fillings. Build the taco.',                 href: '/games/taco-toss',       accentColor: '#84cc16', duration: '45s', icon: 'lunch_dining',      category: 'holiday', industries: ['food_bev','cpg','retail']              },
   { id: 'basket-weave',     title: 'Basket Weave',     tagline: 'Over. Under. Don\'t drop a strand.',                  href: '/games/basket-weave',    accentColor: '#d97706', duration: '60s', icon: 'texture',           category: 'holiday', industries: ['retail','cpg','food_bev']              },
   { id: 'clover-path',      title: 'Clover Path',      tagline: 'Trace the lucky path. Don\'t stray!',                 href: '/games/clover-path',     accentColor: '#22c55e', duration: '45s', icon: 'route',             category: 'holiday', industries: ['retail','cpg','food_bev']              },
-];
-
   { id: 'signal-boost',  title: 'Signal Boost',  tagline: 'Hum steady to keep the tower alive.',           href: '/games/signal-boost',  accentColor: '#f59e0b', duration: '45s', icon: 'cell_tower',          category: 'breath',    industries: ['technology', 'cpg', 'healthcare']  },
   { id: 'crystal-grow',  title: 'Crystal Grow',  tagline: 'Breathe steady to grow the crystal.',            href: '/games/crystal-grow',  accentColor: '#e879f9', duration: '45s', icon: 'diamond',             category: 'breath',    industries: ['healthcare', 'retail', 'technology'] },
 ];
@@ -146,8 +142,6 @@ export const BREATH_GAMES: Game[] = [
   { id: 'sound-waves',     title: 'Sound Waves',      tagline: 'Shout the frequency. Shatter walls.',               href: '/games/sound-waves',     accentColor: '#22d3ee', duration: '45s', icon: 'graphic_eq',          category: 'breath', industries: ['technology','cpg','sports']            },
   { id: 'sing-along',      title: 'Sing Along',       tagline: 'Match the note. Hold it perfect.',                  href: '/games/sing-along',      accentColor: '#fb7185', duration: '45s', icon: 'mic',                 category: 'breath', industries: ['cpg','retail','food_bev']              },
   { id: 'morse-tap',       title: 'Morse Tap',        tagline: 'Tap the code. Send the message.',                   href: '/games/morse-tap',       accentColor: '#fbbf24', duration: '45s', icon: 'radio',               category: 'breath', industries: ['technology','automotive','finance']    },
-];
-
   { id: 'morse-decode',  title: 'Morse Decode',  tagline: 'Flash by flash — what is the letter?',          href: '/games/morse-decode',  accentColor: '#facc15', duration: '60s', icon: 'radio',               category: 'cognitive', industries: ['technology', 'finance', 'healthcare'] },
   { id: 'code-breaker',  title: 'Code Breaker',  tagline: 'Memorize. Hide. Enter. Beat the clock.',         href: '/games/code-breaker',  accentColor: '#06b6d4', duration: '60s', icon: 'lock',                category: 'cognitive', industries: ['technology', 'finance', 'retail']   },
 ];

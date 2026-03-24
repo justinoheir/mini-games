@@ -228,12 +228,12 @@ export default function ShapeRotateGame() {
       const optW = Math.min(W / 2 - 20, 130);
       const optH = Math.min(H * 0.22, 110);
       const gridX = (W - optW * 2 - 10) / 2;
-      const gridY = H * 0.42;
+      const gri = H * 0.42;
 
       q.options.forEach((opt, i) => {
         const col = i % 2, row = Math.floor(i / 2);
         const bx = gridX + col * (optW + 10);
-        const by = gridY + row * (optH + 10);
+        const by = gri + row * (optH + 10);
         const cx = bx + optW / 2, cy = by + optH / 2;
 
         let border = ACCENT;
@@ -292,12 +292,12 @@ export default function ShapeRotateGame() {
       const optW = Math.min(W / 2 - 20, 130);
       const optH = Math.min(H * 0.22, 110);
       const gridX = (W - optW * 2 - 10) / 2;
-      const gridY = H * 0.42;
+      const gri = H * 0.42;
 
       for (let i = 0; i < 4; i++) {
         const col = i % 2, row = Math.floor(i / 2);
         const bx = gridX + col * (optW + 10);
-        const by = gridY + row * (optH + 10);
+        const by = gri + row * (optH + 10);
         if (px >= bx && px <= bx + optW && py >= by && py <= by + optH) {
           const ms = Date.now() - s.shownAt;
           s.sig.total++; s.sig.totalMs += ms;

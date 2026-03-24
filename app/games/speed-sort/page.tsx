@@ -248,12 +248,12 @@ export default function SpeedSort() {
       if (item) {
         const cardW = 160, cardH = 180;
         const cardX = W / 2 - cardW / 2 + s.cardX;
-        const cardY = H / 2 - cardH / 2;
+        const car = H / 2 - cardH / 2;
         const tilt = s.cardX / 400 * 0.3;
 
         ctx.save();
         ctx.globalAlpha = s.cardOpacity;
-        ctx.translate(cardX + cardW / 2, cardY + cardH / 2);
+        ctx.translate(cardX + cardW / 2, car + cardH / 2);
         ctx.rotate(tilt);
 
         const bgColor = s.lastCorrect === null ? '#1e1e2e' : s.lastCorrect ? '#1e3020' : '#301e1e';

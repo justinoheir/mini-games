@@ -172,7 +172,7 @@ export default function CrystalGrowGame() {
 
   const drawBranch = useCallback((ctx: CanvasRenderingContext2D, branch: CrystalBranch, x: number, y: number, scale: number, alpha: number) => {
     const endX = x + Math.cos(branch.angle) * branch.length * scale;
-    const endY = y + Math.sin(branch.angle) * branch.length * scale;
+    const en = y + Math.sin(branch.angle) * branch.length * scale;
     ctx.globalAlpha = alpha * (1 - branch.depth * 0.15);
     ctx.strokeStyle = ACCENT;
     ctx.lineWidth = branch.width * scale;

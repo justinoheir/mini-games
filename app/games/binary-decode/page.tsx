@@ -200,12 +200,12 @@ export default function BinaryDecodeGame() {
       const optW = Math.min((W - 50) / 2 - 5, 120);
       const optH = 52;
       const optGridX = (W - (optW * 2 + 10)) / 2;
-      const optGridY = H * 0.57;
+      const optGri = H * 0.57;
 
       q.options.forEach((opt, i) => {
         const col = i % 2, row = Math.floor(i / 2);
         const bx = optGridX + col * (optW + 10);
-        const by = optGridY + row * (optH + 10);
+        const by = optGri + row * (optH + 10);
         const isSelected = s.feedback === i;
         const isCorrect = opt === q.value;
 
@@ -275,12 +275,12 @@ export default function BinaryDecodeGame() {
       const optW = Math.min((W - 50) / 2 - 5, 120);
       const optH = 52;
       const optGridX = (W - (optW * 2 + 10)) / 2;
-      const optGridY = H * 0.57;
+      const optGri = H * 0.57;
 
       for (let i = 0; i < 4; i++) {
         const col = i % 2, row = Math.floor(i / 2);
         const bx = optGridX + col * (optW + 10);
-        const by = optGridY + row * (optH + 10);
+        const by = optGri + row * (optH + 10);
         if (px >= bx && px <= bx + optW && py >= by && py <= by + optH) {
           const ms = Date.now() - s.shownAt;
           s.sig.total++; s.sig.totalMs += ms;

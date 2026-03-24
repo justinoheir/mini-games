@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -137,7 +137,7 @@ function makeCauldronPath(cx: number, cy: number, r: number): Path2D {
   const rimRX     = r * 1.1;
   const wideRX    = r * 1.18;
   const bottomRX  = r * 0.55;
-  const midY      = (rimY + bottomY) / 2 + r * 0.05;
+  const mi      = (rimY + bottomY) / 2 + r * 0.05;
 
   const p = new Path2D();
   p.moveTo(cx - rimRX, rimY);

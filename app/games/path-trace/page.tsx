@@ -652,7 +652,7 @@ export default function PathTraceGame() {
       }
 
       // Check if reached end dot
-      const distToEnd = Math.hypot(x - s.currentPath.endX, y - s.currentPath.endY);
+      const distToEnd = Math.hypot(x - s.currentPath.endX, y - s.currentPath.endY)
       if (distToEnd <= 32) {
         // Inline completePath to avoid stale closure issues
         const elapsedMs  = s.pathStartTime > 0 ? Date.now() - s.pathStartTime : 5000;

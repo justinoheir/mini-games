@@ -121,9 +121,7 @@ export default function DragonParadeGame() {
         s.headX+=dx*0.18; s.headY+=dy*0.18;
       }
       s.headX=Math.max(DRAGON_R,Math.min(W-DRAGON_R,s.headX));
-      s.headY=Math.max(DRAGON_R+70,Math.min(H-DRAGON_R,s.headY));
-
-      // Update body segments (follow head with distance constraint)
+      s.headY=Math.max(DRAGON_R+70,Math.min(H-DRAGON_R,s.headY));// Update body segments (follow head with distance constraint)
       s.segments[0].x=s.headX; s.segments[0].y=s.headY;
       for(let i=1;i<s.segments.length;i++){
         const prev=s.segments[i-1], curr=s.segments[i];
@@ -150,7 +148,7 @@ export default function DragonParadeGame() {
 
         // Collision: check if head passes through gate
         if(!g.passed && s.headX>g.x && s.headX<g.x+g.w){
-          const inGap=s.headY>g.y && s.headY<g.y+g.h;
+          const inGap=s.headY<g.y && s.headY<g.y+g.h;
           if(!inGap){
             s.sig.bodyCollisions++; s.sig.streakCurrent=0;
             hapticFail(); sfx.collision();
@@ -205,7 +203,7 @@ export default function DragonParadeGame() {
       ctx.fillStyle='#ef4444';
       ctx.beginPath(); ctx.arc(s.headX,s.headY,DRAGON_R+4,0,Math.PI*2); ctx.fill();
       ctx.font=`${Math.round(DRAGON_R*2.2)}px sans-serif`; ctx.textAlign='center';
-      ctx.fillText('🐉',s.headX,s.headY+DRAGON_R*0.8); ctx.restore();
+      ctx.fillText('🐉',s.headX,s.headY,DRAGON_R*0.8); ctx.restore();
 
       animRef.current=requestAnimationFrame(loop);
     };

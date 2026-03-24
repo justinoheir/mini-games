@@ -217,14 +217,14 @@ export default function FaceMemoryGame() {
     const cellW = Math.min((W - 40) / cols, 100);
     const cellH = Math.min((H * 0.7) / rows, 110);
     const gridX = (W - cols * cellW) / 2;
-    const gridY = H * 0.2;
+    const gri = H * 0.2;
 
     s.gridFaces = allFaces.map((face, i) => {
       const col = i % cols, row = Math.floor(i / cols);
       return {
         face,
         x: gridX + col * cellW + cellW / 2,
-        y: gridY + row * cellH + cellH / 2,
+        y: gri + row * cellH + cellH / 2,
         isStudied: s.studyFaces.some(sf => sf.id === face.id),
       };
     });
