@@ -19,6 +19,10 @@ export interface Game {
 // ─── Game Data ────────────────────────────────────────────────────────────────
 
 export const SKILL_GAMES: Game[] = [
+  { id: 'paint-splash',    title: 'Paint Splash',    tagline: 'Shake and tilt to splatter paint. Cover the canvas!',     href: '/games/paint-splash',    accentColor: '#f43f5e', duration: '45s', icon: 'brush',               category: 'skill',     industries: ['cpg', 'retail', 'technology']            },
+  { id: 'web-weave',       title: 'Web Weave',       tagline: 'Drag between anchors to weave your web. Catch flies!',     href: '/games/web-weave',       accentColor: '#64748b', duration: '60s', icon: 'account_tree',        category: 'skill',     industries: ['technology', 'healthcare', 'retail']     },
+  { id: 'treasure-dive',   title: 'Treasure Dive',   tagline: 'Tilt to steer your diver. Grab treasure, dodge sharks!',  href: '/games/treasure-dive',   accentColor: '#0ea5e9', duration: '60s', icon: 'scuba_diving',        category: 'skill',     industries: ['sports', 'cpg', 'retail']                },
+  { id: 'frog-leap',       title: 'Frog Leap',       tagline: 'Tap left/right to leap to lily pads. Miss = splash!',     href: '/games/frog-leap',       accentColor: '#22c55e', duration: '45s', icon: 'sports',              category: 'skill',     industries: ['sports', 'food_bev', 'cpg']              },
   { id: 'wire-cross',      title: 'Wire Cross',       tagline: "Thread the ring. Don't touch the wire.",      href: '/games/wire-cross',      accentColor: '#00e5ff', duration: '45s', icon: 'electric_bolt',       category: 'skill',     industries: ['technology', 'automotive', 'healthcare'] },
   { id: 'balloon-pop',     title: 'Balloon Pop',      tagline: 'Pinch to pop before they overflow!',          href: '/games/balloon-pop',     accentColor: '#f43f5e', duration: '30s', icon: 'expand',              category: 'skill',     industries: ['cpg', 'retail', 'food_bev']              },
   { id: 'slingshot-smash', title: 'Slingshot Smash',  tagline: 'Stretch it. Aim it. Smash it.',               href: '/games/slingshot-smash', accentColor: '#f97316', duration: '45s', icon: 'sports_handball',     category: 'skill',     industries: ['sports', 'cpg', 'retail']                },
@@ -124,6 +128,9 @@ export const HOLIDAY_GAMES: Game[] = [
 ];
 
 export const BREATH_GAMES: Game[] = [
+  { id: 'echo-clap',       title: 'Echo Clap',       tagline: 'Clap in time with the echo pattern. It speeds up!',       href: '/games/echo-clap',       accentColor: '#ef4444', duration: '45s', icon: 'music_note',          category: 'breath',    industries: ['cpg', 'food_bev', 'sports']              },
+  { id: 'solar-charge',    title: 'Solar Charge',    tagline: 'Stay silent to charge the solar panel. Noise drains it!', href: '/games/solar-charge',    accentColor: '#facc15', duration: '45s', icon: 'sunny',               category: 'breath',    industries: ['technology', 'cpg', 'retail']            },
+  { id: 'aurora-wave',     title: 'Aurora Wave',     tagline: 'Breathe slowly to paint aurora waves. Erratic = broken!', href: '/games/aurora-wave',     accentColor: '#34d399', duration: '60s', icon: 'nights_stay',         category: 'breath',    industries: ['healthcare', 'technology', 'retail']     },
   { id: 'dragon-breath',   title: 'Dragon Breath',    tagline: 'Blow hard. Breathe fire!',                          href: '/games/dragon-breath',   accentColor: '#ef4444', duration: '30s', icon: 'local_fire_department', category: 'breath', industries: ['cpg','food_bev','sports']            },
   { id: 'voice-sculpt',    title: 'Voice Sculpt',     tagline: 'Hum to shape the clay.',                            href: '/games/voice-sculpt',    accentColor: '#d946ef', duration: '45s', icon: 'record_voice_over',   category: 'breath', industries: ['healthcare','retail','technology']    },
   { id: 'echo-match',      title: 'Echo Match',       tagline: 'Match the echo. Hold the note.',                    href: '/games/echo-match',      accentColor: '#06b6d4', duration: '45s', icon: 'graphic_eq',          category: 'breath', industries: ['healthcare','cpg','retail']           },
@@ -146,6 +153,9 @@ export const BREATH_GAMES: Game[] = [
 ];
 
 export const EXTRA_COGNITIVE_GAMES: Game[] = [
+  { id: 'pulse-jump',      title: 'Pulse Jump',      tagline: 'Tap in rhythm with the beat. Miss the pulse — fall!',     href: '/games/pulse-jump',      accentColor: '#a855f7', duration: '60s', icon: 'music_note',          category: 'cognitive', industries: ['sports', 'cpg', 'technology']            },
+  { id: 'domino-chain',    title: 'Domino Chain',    tagline: 'Tap the first domino at the perfect moment. Chain falls!', href: '/games/domino-chain',    accentColor: '#f97316', duration: '60s', icon: 'view_column',         category: 'cognitive', industries: ['technology', 'finance', 'retail']        },
+  { id: 'number-crunch',   title: 'Number Crunch',   tagline: 'Solve the math problem. Tap the right answer — fast!',    href: '/games/number-crunch',   accentColor: '#3b82f6', duration: '60s', icon: 'calculate',           category: 'cognitive', industries: ['finance', 'technology', 'healthcare']    },
   { id: 'mirror-mind',     title: 'Mirror Mind',      tagline: 'Both hands. Mirrored. Synchronized.',               href: '/games/mirror-mind',     accentColor: '#8b5cf6', duration: '45s', icon: 'flip',                category: 'cognitive', industries: ['technology','healthcare','finance']   },
   { id: 'number-path',     title: 'Number Path',      tagline: '1 to N. Fastest finger wins.',                      href: '/games/number-path',     accentColor: '#22c55e', duration: '45s', icon: '123',                 category: 'cognitive', industries: ['finance','technology','healthcare']   },
   { id: 'logic-gate',      title: 'Logic Gate',       tagline: 'Wire the circuit. Get the output.',                  href: '/games/logic-gate',      accentColor: '#64748b', duration: '60s', icon: 'device_hub',          category: 'cognitive', industries: ['technology','finance','automotive']   },
