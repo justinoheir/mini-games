@@ -5,175 +5,277 @@ import GameHUD from '@/components/GameHUD';
 import GameStartScreen from '@/components/GameStartScreen';
 import Countdown from '@/components/Countdown';
 import EndScreen from '@/components/EndScreen';
-import { initAudio, sfx, haptic, startMusic } from '@/lib/audio';
+import { initAudio, sfx } from '@/lib/audio';
+import { hapticScore, hapticFail, hapticVictory, hapticCombo } from '@/lib/haptics';
 import { useBrandTheme } from '@/lib/useBrandTheme';
-import { postWebhook } from '@/lib/webhook';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
 
-const GAME_ID = 'wormhole-dive';
-const ACCENT = '#7c3aed';
-const DURATION = 60;
+const GAME_ID    = 'wormhole-dive';
+const ACCENT     = '#7c3aed';
+const DURATION   = 60;
 const GAME_EMOJI = '🌀';
 const GAME_TITLE = 'Wormhole Dive';
 const GAME_TAGLINE = 'Survive the warp. Keep diving.';
-const BG_COLOR = '#0a0014';
-const MUSIC_PAT: import('@/lib/audio').MusicPattern = 'drive';
-const PB_KEY = 'mg_pb_wormhole-dive';
+
+interface Ring { z:number; x:number; y:number; r:number; gap:number; color:string; passed:boolean; }
 
 interface Signals {
-  score: number; hits: number; attempts: number;
-  reactionTimes: number[]; maxStreak: number; streakCurrent: number;
+  ringsHit: number;   // passed through ring
+  ringsMissed: number;
+  closePasses: number; // passed within 20% of ring center
+  maxStreak: number;
+  streakCurrent: number;
+  score: number;
 }
-function getPersonality(sig: Signals): string {
-  const acc = sig.attempts > 0 ? sig.hits / sig.attempts : 0;
-  const avg = sig.reactionTimes.length > 0 ? sig.reactionTimes.reduce((a,b)=>a+b,0)/sig.reactionTimes.length : 9999;
-  if (acc >= 0.75 && avg < 700) return 'Warp Pilot 🚀';
-  if (acc >= 0.55) return 'Deep Diver 🌀';
-  if (sig.maxStreak >= 4) return 'Smooth Traveler ✨';
-  return 'Lost in Space 🛸';
+
+function getPersonality(s: Signals): string {
+  if (s.ringsHit>=30&&s.closePasses>=10) return 'Wormhole Ace 🌟';
+  if (s.ringsHit>=25)                    return 'Space Diver 🚀';
+  if (s.ringsMissed>=10)                 return 'Wall Kisser 💥';
+  if (s.maxStreak>=12)                   return 'Tunnel Vision 🎯';
+  return 'Deep Space Cadet 🪐';
 }
-type Phase = 'start' | 'countdown' | 'playing' | 'done';
-function WebhookEmitter({ theme, sig, personality, player }: { theme: ReturnType<typeof useBrandTheme>; sig: Signals; personality: string; player: PlayerSession | null; }) {
-  const fired = useRef(false);
-  useEffect(() => { if (fired.current) return; fired.current = true; postWebhook(theme, GAME_ID, { personality, score: sig.score }, player); }, [theme, sig, personality, player]);
-  return null;
+
+type Phase = 'start'|'countdown'|'playing'|'done';
+interface GS {
+  running:boolean; timeLeft:number; sig:Signals; frame:number; accentColor:string;
+  shipX:number; shipY:number; targetX:number; targetY:number;
+  rings:Ring[]; ringTimer:number; speed:number;
+  stars:Array<{x:number;y:number;z:number}>;
+  particles:Array<{x:number;y:number;vx:number;vy:number;alpha:number;color:string}>;
+  shakeX:number; shakeY:number;
 }
+
+const RING_COLORS=['#7c3aed','#a855f7','#00ffff','#818cf8','#c084fc'];
 
 export default function WormholeDiveGame() {
   const theme = useBrandTheme();
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const animRef = useRef(0);
-  const timerRef = useRef<ReturnType<typeof setInterval>|null>(null);
-  const stopMusicRef = useRef<(()=>void)|null>(null);
-  const stateRef = useRef({ running:false, timeLeft:DURATION, sig:{score:0,hits:0,attempts:0,reactionTimes:[] as number[],maxStreak:0,streakCurrent:0}, proj:{x:0,y:0,vx:0,vy:0,active:false,spawnTime:0}, target:{x:0,y:0,r:30}, dragStart:{x:0,y:0}, dragging:false });
+  const animRef   = useRef(0);
+  const timerRef  = useRef<ReturnType<typeof setInterval>|null>(null);
 
-  const spawnTarget = useCallback(()=>{
-    const c=canvasRef.current; if(!c) return;
-    const s=stateRef.current; const m=60;
-    s.target={x:m+Math.random()*(c.width-m*2),y:60+Math.random()*(c.height*0.45),r:28};
-    s.sig.attempts++;
-  },[]);
+  const stateRef = useRef<GS>({
+    running:false,timeLeft:DURATION,
+    sig:{ringsHit:0,ringsMissed:0,closePasses:0,maxStreak:0,streakCurrent:0,score:0},
+    frame:0,accentColor:ACCENT,
+    shipX:200,shipY:300,targetX:200,targetY:300,
+    rings:[],ringTimer:0,speed:3,
+    stars:[],particles:[],shakeX:0,shakeY:0,
+  });
+
+  const [phase,setPhase]        = useState<Phase>('start');
+  const [timeLeft,setTimeLeft]  = useState(DURATION);
+  const [scoreDisplay,setScore] = useState(0);
+  const [finalSig,setFinalSig]  = useState<Signals|null>(null);
+  const playerSessionRef = useRef<PlayerSession|null>(null);
+  useEffect(()=>{ stateRef.current.accentColor=theme.colors.accent??ACCENT; },[theme]);
 
   const endGame = useCallback(()=>{
     const s=stateRef.current; s.running=false;
     cancelAnimationFrame(animRef.current);
-    if(timerRef.current){clearInterval(timerRef.current);timerRef.current=null;}
-    if(stopMusicRef.current){stopMusicRef.current();stopMusicRef.current=null;}
-    setFinalSig({...s.sig}); setPhase('done');
+    if(timerRef.current){ clearInterval(timerRef.current); timerRef.current=null; }
+    const pb=parseInt(localStorage.getItem('pb_'+GAME_ID)??"0");
+    if(s.sig.score>pb) localStorage.setItem('pb_'+GAME_ID,String(s.sig.score));
+    setFinalSig({...s.sig}); setPhase('done'); hapticVictory();
   },[]);
 
   const startLoop = useCallback(()=>{
-    const c=canvasRef.current; if(!c) return;
-    const ctx=c.getContext('2d'); if(!ctx) return;
-    const s=stateRef.current;
-    s.running=true; s.timeLeft=DURATION;
-    s.sig={score:0,hits:0,attempts:0,reactionTimes:[],maxStreak:0,streakCurrent:0};
-    s.proj={x:c.width/2,y:c.height*0.82,vx:0,vy:0,active:false,spawnTime:0};
-    setScoreDisplay(0); setTimeLeft(DURATION); setPhase('playing');
-    stopMusicRef.current=startMusic(MUSIC_PAT);
-    timerRef.current=setInterval(()=>{s.timeLeft--;setTimeLeft(s.timeLeft);if(s.timeLeft<=0){sfx.fail();haptic([100]);endGame();}},1000);
-    spawnTarget();
+    const canvas=canvasRef.current; if(!canvas) return;
+    const ctx=canvas.getContext('2d'); if(!ctx) return;
+    const s=stateRef.current; const W=canvas.width,H=canvas.height;
+    s.running=true; s.timeLeft=DURATION; s.frame=0; s.speed=3;
+    s.sig={ringsHit:0,ringsMissed:0,closePasses:0,maxStreak:0,streakCurrent:0,score:0};
+    s.shipX=W/2; s.shipY=H/2; s.targetX=W/2; s.targetY=H/2;
+    s.rings=[]; s.ringTimer=0; s.particles=[];
+    s.stars=Array.from({length:80},()=>({x:Math.random()*W,y:Math.random()*H,z:Math.random()*200+50}));
+    s.shakeX=0; s.shakeY=0;
+    setScore(0); setTimeLeft(DURATION); setPhase('playing');
+
+    timerRef.current=setInterval(()=>{
+      s.timeLeft--; setTimeLeft(s.timeLeft);
+      if(s.timeLeft<=0){ sfx.fail(); endGame(); }
+      if([45,30,15].includes(s.timeLeft)) s.speed+=0.5;
+    },1000);
+
     const loop=()=>{
-      if(!s.running) return;
-      const W=c.width,H=c.height;
-      ctx.fillStyle=BG_COLOR; ctx.fillRect(0,0,W,H);
-      // Target
-      ctx.shadowBlur=16; ctx.shadowColor=ACCENT;
-      ctx.strokeStyle=ACCENT; ctx.lineWidth=3;
-      ctx.beginPath(); ctx.arc(s.target.x,s.target.y,s.target.r,0,Math.PI*2); ctx.stroke();
-      ctx.fillStyle=ACCENT+'22'; ctx.fill();
-      ctx.shadowBlur=0; ctx.fillStyle=ACCENT+'cc';
-      ctx.beginPath(); ctx.arc(s.target.x,s.target.y,8,0,Math.PI*2); ctx.fill();
-      // Launch zone indicator
-      ctx.strokeStyle=ACCENT+'33'; ctx.lineWidth=2;
-      ctx.beginPath(); ctx.arc(W/2,H*0.82,20,0,Math.PI*2); ctx.stroke();
-      // Projectile
-      if(s.proj.active){
-        s.proj.x+=s.proj.vx; s.proj.y+=s.proj.vy; s.proj.vy+=0.35;
-        ctx.shadowBlur=10; ctx.shadowColor='#ffffff'; ctx.fillStyle='#ffffff';
-        ctx.beginPath(); ctx.arc(s.proj.x,s.proj.y,10,0,Math.PI*2); ctx.fill(); ctx.shadowBlur=0;
-        if(Math.hypot(s.proj.x-s.target.x,s.proj.y-s.target.y)<s.target.r+12){
-          s.sig.hits++; s.sig.streakCurrent++;
-          if(s.sig.streakCurrent>s.sig.maxStreak) s.sig.maxStreak=s.sig.streakCurrent;
-          s.sig.score+=s.sig.streakCurrent>=3?2:1; setScoreDisplay(s.sig.score);
-          sfx.collect(); haptic([30]); s.proj.active=false; spawnTarget();
-        }
-        if(s.proj.x<-60||s.proj.x>W+60||s.proj.y>H+60){
-          s.sig.streakCurrent=0; s.proj.active=false; sfx.nearMiss(); haptic([20,30,20]);
+      if(!s.running) return; s.frame++;
+      const W=canvas.width,H=canvas.height;
+
+      // Deep space background
+      ctx.fillStyle='#030010'; ctx.fillRect(0,0,W,H);
+
+      // Wormhole tunnel effect (concentric ellipses)
+      for(let i=0;i<8;i++){
+        const r=((s.frame*2+i*30)%240);
+        const alpha=1-r/240; const wr=r*(W/300), hr=r*(H/300);
+        ctx.save(); ctx.globalAlpha=alpha*0.15;
+        ctx.strokeStyle='#7c3aed'; ctx.lineWidth=2;
+        ctx.beginPath(); ctx.ellipse(W/2,H/2,wr,hr,0,0,Math.PI*2); ctx.stroke();
+        ctx.restore();
+      }
+
+      // Moving stars (parallax)
+      s.stars.forEach(st=>{
+        st.z-=s.speed*0.5; if(st.z<1) st.z=200;
+        const px=W/2+(st.x-W/2)*(100/st.z), py=H/2+(st.y-H/2)*(100/st.z);
+        const r=Math.max(0.5,(1-st.z/200)*3);
+        const alpha=1-st.z/200;
+        if(px<0||px>W||py<0||py>H) return;
+        ctx.fillStyle=`rgba(200,180,255,${alpha*0.8})`; ctx.beginPath(); ctx.arc(px,py,r,0,Math.PI*2); ctx.fill();
+      });
+
+      // Spawn rings
+      s.ringTimer++;
+      if(s.ringTimer>=55){
+        s.ringTimer=0;
+        const r=Math.min(W,H)*0.35;
+        const gap=r*(0.35+Math.random()*0.2);
+        s.rings.push({
+          z:500, x:W*0.15+Math.random()*W*0.7, y:H*0.15+Math.random()*H*0.7,
+          r, gap, color:RING_COLORS[s.rings.length%RING_COLORS.length], passed:false
+        });
+      }
+
+      // Move ship toward target
+      s.shipX+=(s.targetX-s.shipX)*0.12;
+      s.shipY+=(s.targetY-s.shipY)*0.12;
+
+      // Apply shake
+      s.shakeX*=0.8; s.shakeY*=0.8;
+
+      // Update and draw rings
+      for(let i=s.rings.length-1;i>=0;i--){
+        const ring=s.rings[i];
+        ring.z-=s.speed;
+        if(ring.z<0){ s.rings.splice(i,1); continue; }
+
+        const scale=Math.max(0.01,1-ring.z/500);
+        const rx=ring.x; const ry=ring.y;
+        const displayR=ring.r*scale;
+        const displayGap=ring.gap*scale;
+        const alpha=Math.min(1,scale*3);
+
+        // Draw ring (outer edge = wall, gap = passage)
+        ctx.save(); ctx.globalAlpha=alpha;
+        ctx.strokeStyle=ring.color; ctx.lineWidth=8*scale+2;
+        ctx.shadowBlur=20*scale; ctx.shadowColor=ring.color;
+        ctx.beginPath(); ctx.arc(rx,ry,displayR+displayGap*0.5+4,0,Math.PI*2); ctx.stroke();
+        ctx.restore();
+
+        // Ring hole
+        ctx.save(); ctx.globalAlpha=alpha*0.3;
+        ctx.fillStyle='rgba(0,0,30,0.5)';
+        ctx.beginPath(); ctx.arc(rx,ry,displayGap*0.5,0,Math.PI*2); ctx.fill();
+        ctx.restore();
+
+        // Check pass-through
+        const shipDist=Math.hypot(s.shipX+s.shakeX-rx, s.shipY+s.shakeY-ry);
+        if(!ring.passed&&ring.z<10&&ring.z>-10){
+          ring.passed=true;
+          if(shipDist<=displayGap*0.5){
+            s.sig.ringsHit++; s.sig.streakCurrent++;
+            if(s.sig.streakCurrent>s.sig.maxStreak) s.sig.maxStreak=s.sig.streakCurrent;
+            const center=shipDist<displayGap*0.2;
+            if(center) s.sig.closePasses++;
+            const pts=center?3:s.sig.streakCurrent>=4?2:1;
+            s.sig.score+=pts; sfx.collect(); hapticScore();
+            if(s.sig.streakCurrent>=4) hapticCombo(s.sig.streakCurrent);
+            setScore(s.sig.score);
+            for(let p=0;p<8;p++) s.particles.push({
+              x:s.shipX,y:s.shipY, vx:(Math.random()-0.5)*8, vy:(Math.random()-0.5)*8,
+              alpha:1, color:ring.color
+            });
+          } else {
+            s.sig.ringsMissed++; s.sig.streakCurrent=0;
+            s.shakeX=(Math.random()-0.5)*12; s.shakeY=(Math.random()-0.5)*12;
+            sfx.collision(); hapticFail();
+          }
         }
       }
-      // Drag guide
-      if(s.dragging&&!s.proj.active){
-        ctx.strokeStyle=ACCENT+'55'; ctx.lineWidth=2; ctx.setLineDash([6,4]);
-        ctx.beginPath(); ctx.moveTo(W/2,H*0.82); ctx.lineTo(s.dragStart.x,s.dragStart.y); ctx.stroke();
-        ctx.setLineDash([]);
+
+      // Particles
+      for(let i=s.particles.length-1;i>=0;i--){
+        const p=s.particles[i]; p.x+=p.vx; p.y+=p.vy; p.alpha*=0.9;
+        if(p.alpha<0.02){ s.particles.splice(i,1); continue; }
+        ctx.save(); ctx.globalAlpha=p.alpha; ctx.fillStyle=p.color;
+        ctx.beginPath(); ctx.arc(p.x,p.y,3,0,Math.PI*2); ctx.fill(); ctx.restore();
       }
-      if(s.sig.streakCurrent>=3){ctx.fillStyle=ACCENT;ctx.font='bold 16px sans-serif';ctx.textAlign='center';ctx.textBaseline='bottom';ctx.fillText('×'+s.sig.streakCurrent+' COMBO!',W/2,H-30);}
+
+      // Draw ship
+      const sx=s.shipX+s.shakeX, sy=s.shipY+s.shakeY;
+      ctx.save(); ctx.shadowBlur=16; ctx.shadowColor='#a855f7';
+      ctx.fillStyle='#818cf8';
+      ctx.beginPath();
+      ctx.moveTo(sx,sy-12); ctx.lineTo(sx-8,sy+10); ctx.lineTo(sx+8,sy+10); ctx.closePath(); ctx.fill();
+      ctx.fillStyle='#c084fc';
+      ctx.beginPath(); ctx.arc(sx,sy-2,5,0,Math.PI*2); ctx.fill();
+      ctx.restore();
+
+      // Speed indicator
+      const sp=Math.round((s.speed-3)/0.5);
+      if(sp>0){
+        ctx.fillStyle='rgba(160,100,255,0.6)'; ctx.font='12px sans-serif'; ctx.textAlign='right';
+        ctx.fillText(`Warp ${sp+1}`,W-10,30);
+      }
+
       animRef.current=requestAnimationFrame(loop);
     };
     animRef.current=requestAnimationFrame(loop);
-  },[endGame,spawnTarget]);
+  },[endGame]);
 
   useEffect(()=>{
-    const c=canvasRef.current; if(!c) return;
-    const resize=()=>{c.width=c.offsetWidth;c.height=c.offsetHeight;};
+    const canvas=canvasRef.current; if(!canvas) return;
+    const resize=()=>{ canvas.width=canvas.offsetWidth; canvas.height=canvas.offsetHeight; };
     resize(); window.addEventListener('resize',resize);
-    const onDown=(e:PointerEvent)=>{
+
+    const onPM=(e:PointerEvent)=>{
       if(phase!=='playing') return;
-      const s=stateRef.current; s.dragging=true; s.dragStart={x:e.clientX,y:e.clientY};
+      const s=stateRef.current;
+      const rect=canvas.getBoundingClientRect();
+      s.targetX=(e.clientX-rect.left)*(canvas.width/rect.width);
+      s.targetY=(e.clientY-rect.top)*(canvas.height/rect.height);
     };
-    const onUp=(e:PointerEvent)=>{
+    const onPD=(e:PointerEvent)=>{
       if(phase!=='playing') return;
-      const s=stateRef.current; if(!s.dragging||s.proj.active) return;
-      s.dragging=false;
-      const dx=s.dragStart.x-e.clientX,dy=s.dragStart.y-e.clientY;
-      const spd=Math.min(Math.hypot(dx,dy)*0.11,18);
-      const a=Math.atan2(dy,dx);
-      s.proj={x:c.width/2,y:c.height*0.82,vx:Math.cos(a)*spd,vy:Math.sin(a)*spd,active:true,spawnTime:Date.now()};
-      sfx.whoosh(); haptic([20]);
+      const s=stateRef.current;
+      const rect=canvas.getBoundingClientRect();
+      s.targetX=(e.clientX-rect.left)*(canvas.width/rect.width);
+      s.targetY=(e.clientY-rect.top)*(canvas.height/rect.height);
     };
-    c.addEventListener('pointerdown',onDown); window.addEventListener('pointerup',onUp);
-    return()=>{window.removeEventListener('resize',resize);c.removeEventListener('pointerdown',onDown);window.removeEventListener('pointerup',onUp);};
+    canvas.addEventListener('pointermove',onPM);
+    canvas.addEventListener('pointerdown',onPD);
+    return()=>{ window.removeEventListener('resize',resize);
+      canvas.removeEventListener('pointermove',onPM); canvas.removeEventListener('pointerdown',onPD); };
   },[phase]);
 
-  useEffect(()=>()=>{cancelAnimationFrame(animRef.current);if(timerRef.current)clearInterval(timerRef.current);if(stopMusicRef.current)stopMusicRef.current();},[]);
+  useEffect(()=>()=>{ cancelAnimationFrame(animRef.current); if(timerRef.current) clearInterval(timerRef.current); },[]);
 
-  
-  const [phase, setPhase] = useState<Phase>('start');
-  const [timeLeft, setTimeLeft] = useState(DURATION);
-  const [scoreDisplay, setScoreDisplay] = useState(0);
-  const [finalSig, setFinalSig] = useState<Signals|null>(null);
-  const playerSessionRef = useRef<PlayerSession|null>(null);
-  
-  const handleStart = useCallback((name: string, avatar: string) => { initAudio(); playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar); setPhase('countdown'); }, []);
-  const handleCountdownDone = useCallback(() => { startLoop(); }, [startLoop]);
-  const handlePlayAgain = useCallback(() => { setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null); }, []);
-  const buildInsights = (sig: Signals) => {
-    const acc = sig.attempts > 0 ? Math.round((sig.hits/sig.attempts)*100) : 0;
-    const avg = sig.reactionTimes.length > 0 ? Math.round(sig.reactionTimes.reduce((a,b)=>a+b,0)/sig.reactionTimes.length) : 0;
-    const pb = parseInt(localStorage.getItem(PB_KEY) ?? '0');
-    if (sig.score > pb) localStorage.setItem(PB_KEY, String(sig.score));
-    return [
-      { label: 'Accuracy', value: acc + '%', color: acc>=70?'#4ade80':acc>=40?'#facc15':'#ef4444' },
-      { label: 'Avg React', value: avg + 'ms', color: ACCENT },
-      { label: 'Best Streak', value: '×' + sig.maxStreak, color: ACCENT },
-      { label: 'Score', value: String(sig.score), color: 'var(--color-text)' },
-    ];
-  };
-  
+  const handleStart=useCallback(async(n:string,a:string)=>{
+    playerSessionRef.current=savePlayerSession(GAME_ID,n,a); await initAudio(); setPhase('countdown');
+  },[]);
+  const handlePlayAgain=useCallback(()=>{ setPhase('start'); setScore(0); setTimeLeft(DURATION); setFinalSig(null); },[]);
+
   return (
     <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent??ACCENT}>
-      {phase==='start'&&<GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description={GAME_TAGLINE} ctaLabel="Start" accentColor={theme.colors.accent??ACCENT} onStart={handleStart}/>}
-      {phase==='countdown'&&<Countdown onComplete={handleCountdownDone} accentColor={theme.colors.accent??ACCENT}/>}
-      {(phase==='playing'||phase==='countdown')&&<>
-        <canvas ref={canvasRef} aria-label="Wormhole Dive game canvas" role="img" style={{position:'absolute',inset:0,width:'100%',height:'100%',touchAction:'none'}}/>
-        {phase==='playing'&&<GameHUD accentColor={theme.colors.accent??ACCENT} items={[{label:'TIME',value:timeLeft,danger:timeLeft<=5},{label:'SCORE',value:scoreDisplay}]}/>}
-      </>}
-      {phase==='done'&&finalSig&&<>
-        <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI} score={String(finalSig.score)} personality={getPersonality(finalSig)} insights={buildInsights(finalSig)} accentColor={theme.colors.accent??ACCENT} onPlayAgain={handlePlayAgain} didWin={finalSig.score>=5}/>
-        <WebhookEmitter theme={theme} sig={finalSig} personality={getPersonality(finalSig)} player={playerSessionRef.current}/>
-      </>}
+      {phase==='start'&&<GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description={GAME_TAGLINE}
+        ctaLabel="Enter the Wormhole 🌀" accentColor={theme.colors.accent??ACCENT} onStart={handleStart}/>}
+      {phase==='countdown'&&<Countdown onComplete={startLoop} accentColor={theme.colors.accent??ACCENT}/>}
+      {(phase==='playing'||phase==='countdown')&&(
+        <><canvas ref={canvasRef} style={{position:'absolute',inset:0,width:'100%',height:'100%',touchAction:'none'}}
+            role="img" aria-label="Wormhole diving game canvas"/>
+          {phase==='playing'&&<GameHUD accentColor={theme.colors.accent??ACCENT}
+            items={[{label:'TIME',value:timeLeft,danger:timeLeft<=10},{label:'SCORE',value:scoreDisplay}]}/>}
+        </>
+      )}
+      {phase==='done'&&finalSig&&<EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI}
+        score={String(finalSig.score)} personality={getPersonality(finalSig)}
+        insights={[
+          {label:'Rings Hit',value:`${finalSig.ringsHit}`,color:'#4ade80'},
+          {label:'Missed',value:`${finalSig.ringsMissed}`,color:finalSig.ringsMissed===0?'#4ade80':'#ef4444'},
+          {label:'Close Passes',value:`${finalSig.closePasses}`,color:ACCENT},
+          {label:'Best Streak',value:`×${finalSig.maxStreak}`,color:'#fbbf24'},
+        ]}
+        accentColor={theme.colors.accent??ACCENT} onPlayAgain={handlePlayAgain} didWin={finalSig.ringsHit>=20}/>}
     </GameShell>
   );
-}
 }
