@@ -48,6 +48,13 @@ export default function ColorWordGame() {
   const QUESTIONS: {q:string,opts:string[],c:number}[] = [{"q":"RED written in BLUE ink. Tap the ink color.","opts":["Red","Blue","Green","Yellow"],"c":1},{"q":"BLUE written in GREEN. Tap the ink color.","opts":["Blue","Green","Yellow","Red"],"c":1},{"q":"GREEN written in RED. Tap the ink color.","opts":["Blue","Red","Green","Purple"],"c":1},{"q":"YELLOW in PURPLE ink. Tap the ink color.","opts":["Yellow","Green","Purple","Blue"],"c":2}];
   const stateRef = useRef({ running:false, timeLeft:DURATION, sig:{score:0,hits:0,attempts:0,reactionTimes:[] as number[],maxStreak:0,streakCurrent:0}, cur:{q:'',opts:[] as string[],c:0,spawnTime:0}, btns:[] as {x:number,y:number,w:number,h:number,label:string,ok:boolean,flash:number}[] });
 
+const [phase, setPhase] = useState<Phase>('start');
+  const [timeLeft, setTimeLeft] = useState(DURATION);
+  const [scoreDisplay, setScoreDisplay] = useState(0);
+  const [finalSig, setFinalSig] = useState<Signals|null>(null);
+  const playerSessionRef = useRef<PlayerSession|null>(null);
+  
+
   const newQ = useCallback((W:number,H:number)=>{
     const s=stateRef.current; const q=QUESTIONS[Math.floor(Math.random()*QUESTIONS.length)];
     const opts=[...q.opts]; const ans=opts[q.c];
@@ -128,12 +135,7 @@ export default function ColorWordGame() {
   useEffect(()=>()=>{cancelAnimationFrame(animRef.current);if(timerRef.current)clearInterval(timerRef.current);if(stopMusicRef.current)stopMusicRef.current();},[]);
 
   
-  const [phase, setPhase] = useState<Phase>('start');
-  const [timeLeft, setTimeLeft] = useState(DURATION);
-  const [scoreDisplay, setScoreDisplay] = useState(0);
-  const [finalSig, setFinalSig] = useState<Signals|null>(null);
-  const playerSessionRef = useRef<PlayerSession|null>(null);
-  
+ 
   const handleStart = useCallback((name: string, avatar: string) => { initAudio(); playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar); setPhase('countdown'); }, []);
   const handleCountdownDone = useCallback(() => { startLoop(); }, [startLoop]);
   const handlePlayAgain = useCallback(() => { setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null); }, []);

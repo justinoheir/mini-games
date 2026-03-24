@@ -49,6 +49,13 @@ export default function WhistleLaunchGame() {
   const streamRef = useRef<MediaStream|null>(null);
   const stateRef = useRef({ running:false, timeLeft:DURATION, sig:{score:0,hits:0,attempts:0,reactionTimes:[] as number[],maxStreak:0,streakCurrent:0}, pitchNorm:0.5, targetPitch:0.5, holdTime:0, hasMic:false });
 
+const [phase, setPhase] = useState<Phase>('start');
+  const [timeLeft, setTimeLeft] = useState(DURATION);
+  const [scoreDisplay, setScoreDisplay] = useState(0);
+  const [finalSig, setFinalSig] = useState<Signals|null>(null);
+  const playerSessionRef = useRef<PlayerSession|null>(null);
+  
+
   const getPitch = () => {
     const a=analyserRef.current; if(!a) return 0.5;
     const buf=new Float32Array(a.fftSize); a.getFloatTimeDomainData(buf);
@@ -125,12 +132,7 @@ export default function WhistleLaunchGame() {
   useEffect(()=>()=>{cancelAnimationFrame(animRef.current);if(timerRef.current)clearInterval(timerRef.current);if(stopMusicRef.current)stopMusicRef.current();if(streamRef.current)streamRef.current.getTracks().forEach(t=>t.stop());},[]);
 
   
-  const [phase, setPhase] = useState<Phase>('start');
-  const [timeLeft, setTimeLeft] = useState(DURATION);
-  const [scoreDisplay, setScoreDisplay] = useState(0);
-  const [finalSig, setFinalSig] = useState<Signals|null>(null);
-  const playerSessionRef = useRef<PlayerSession|null>(null);
-  
+ 
   const handleStart = useCallback((name: string, avatar: string) => { initAudio(); playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar); setPhase('countdown'); }, []);
   const handleCountdownDone = useCallback(() => { startLoop(); }, [startLoop]);
   const handlePlayAgain = useCallback(() => { setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null); }, []);

@@ -47,6 +47,13 @@ export default function TableTennisGame() {
   const stopMusicRef = useRef<(()=>void)|null>(null);
   const stateRef = useRef({ running:false, timeLeft:DURATION, sig:{score:0,hits:0,attempts:0,reactionTimes:[] as number[],maxStreak:0,streakCurrent:0}, meter:0, dir:1, speed:0.012, zone:{min:0.38,max:0.62}, spawnTime:0 });
 
+const [phase, setPhase] = useState<Phase>('start');
+  const [timeLeft, setTimeLeft] = useState(DURATION);
+  const [scoreDisplay, setScoreDisplay] = useState(0);
+  const [finalSig, setFinalSig] = useState<Signals|null>(null);
+  const playerSessionRef = useRef<PlayerSession|null>(null);
+  
+
   const nextRound = useCallback(()=>{
     const s=stateRef.current; s.meter=Math.random()*0.3;
     s.dir=Math.random()>0.5?1:-1; s.speed=0.01+s.sig.hits*0.0007;
@@ -120,12 +127,7 @@ export default function TableTennisGame() {
   useEffect(()=>()=>{cancelAnimationFrame(animRef.current);if(timerRef.current)clearInterval(timerRef.current);if(stopMusicRef.current)stopMusicRef.current();},[]);
 
   
-  const [phase, setPhase] = useState<Phase>('start');
-  const [timeLeft, setTimeLeft] = useState(DURATION);
-  const [scoreDisplay, setScoreDisplay] = useState(0);
-  const [finalSig, setFinalSig] = useState<Signals|null>(null);
-  const playerSessionRef = useRef<PlayerSession|null>(null);
-  
+ 
   const handleStart = useCallback((name: string, avatar: string) => { initAudio(); playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar); setPhase('countdown'); }, []);
   const handleCountdownDone = useCallback(() => { startLoop(); }, [startLoop]);
   const handlePlayAgain = useCallback(() => { setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null); }, []);

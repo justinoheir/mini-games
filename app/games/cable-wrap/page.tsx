@@ -47,6 +47,13 @@ export default function CableWrapGame() {
   const stopMusicRef = useRef<(()=>void)|null>(null);
   const stateRef = useRef({ running:false, timeLeft:DURATION, sig:{score:0,hits:0,attempts:0,reactionTimes:[] as number[],maxStreak:0,streakCurrent:0}, targets:[] as {x:number,y:number,r:number,alpha:number,spawnTime:number,id:number}[], nextId:0, speedMult:1 });
 
+const [phase, setPhase] = useState<Phase>('start');
+  const [timeLeft, setTimeLeft] = useState(DURATION);
+  const [scoreDisplay, setScoreDisplay] = useState(0);
+  const [finalSig, setFinalSig] = useState<Signals|null>(null);
+  const playerSessionRef = useRef<PlayerSession|null>(null);
+  
+
   const spawnTarget = useCallback(() => {
     const c=canvasRef.current; if(!c) return;
     const s=stateRef.current;
@@ -133,12 +140,7 @@ export default function CableWrapGame() {
   useEffect(()=>()=>{cancelAnimationFrame(animRef.current);if(timerRef.current)clearInterval(timerRef.current);if(stopMusicRef.current)stopMusicRef.current();},[]);
 
   
-  const [phase, setPhase] = useState<Phase>('start');
-  const [timeLeft, setTimeLeft] = useState(DURATION);
-  const [scoreDisplay, setScoreDisplay] = useState(0);
-  const [finalSig, setFinalSig] = useState<Signals|null>(null);
-  const playerSessionRef = useRef<PlayerSession|null>(null);
-  
+ 
   const handleStart = useCallback((name: string, avatar: string) => { initAudio(); playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar); setPhase('countdown'); }, []);
   const handleCountdownDone = useCallback(() => { startLoop(); }, [startLoop]);
   const handlePlayAgain = useCallback(() => { setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null); }, []);

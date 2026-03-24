@@ -47,6 +47,13 @@ export default function KarateChopGame() {
   const stopMusicRef = useRef<(()=>void)|null>(null);
   const stateRef = useRef({ running:false, timeLeft:DURATION, sig:{score:0,hits:0,attempts:0,reactionTimes:[] as number[],maxStreak:0,streakCurrent:0}, zones:[] as {x:number,y:number,r:number,flash:number}[], sequence:[] as number[], progress:0, showing:true, showIdx:0, showTimer:0 });
 
+const [phase, setPhase] = useState<Phase>('start');
+  const [timeLeft, setTimeLeft] = useState(DURATION);
+  const [scoreDisplay, setScoreDisplay] = useState(0);
+  const [finalSig, setFinalSig] = useState<Signals|null>(null);
+  const playerSessionRef = useRef<PlayerSession|null>(null);
+  
+
   const buildZones = useCallback((W:number,H:number)=>{
     const s=stateRef.current; const N=4; const cx=W/2,cy=H*0.52; const R=Math.min(W,H)*0.31;
     s.zones=Array.from({length:N},(_,i)=>{ const a=(i/N)*Math.PI*2-Math.PI/2; return {x:cx+Math.cos(a)*R,y:cy+Math.sin(a)*R,r:38,flash:0}; });
@@ -137,12 +144,7 @@ export default function KarateChopGame() {
   useEffect(()=>()=>{cancelAnimationFrame(animRef.current);if(timerRef.current)clearInterval(timerRef.current);if(stopMusicRef.current)stopMusicRef.current();},[]);
 
   
-  const [phase, setPhase] = useState<Phase>('start');
-  const [timeLeft, setTimeLeft] = useState(DURATION);
-  const [scoreDisplay, setScoreDisplay] = useState(0);
-  const [finalSig, setFinalSig] = useState<Signals|null>(null);
-  const playerSessionRef = useRef<PlayerSession|null>(null);
-  
+ 
   const handleStart = useCallback((name: string, avatar: string) => { initAudio(); playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar); setPhase('countdown'); }, []);
   const handleCountdownDone = useCallback(() => { startLoop(); }, [startLoop]);
   const handlePlayAgain = useCallback(() => { setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null); }, []);

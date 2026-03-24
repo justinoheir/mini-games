@@ -9,14 +9,14 @@ import { initAudio, sfx } from '@/lib/audio';
 import { hapticScore, hapticFail, hapticVictory, hapticImpact } from '@/lib/haptics';
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
-const GAME_ID = 'archery-draw'; const ACCENT = '#16a34a'; const DURATION = 60; const GAME_EMOJI = '🏹'; const GAME_TITLE = 'Archery Draw'; const GAME_TAGLINE = 'Pull back. Wait. Release.';
+const GAME_ID = 'archery-draw'; const ACCENT = '#16a34a'; const DURATION = 60; const GAME_EMOJI = 'ðŸ¹'; const GAME_TITLE = 'Archery Draw'; const GAME_TAGLINE = 'Pull back. Wait. Release.';
 interface Signals { shots: number; bullseyes: number; inners: number; outers: number; maxStreak: number; streakCurrent: number; score: number; }
 function getPersonality(sig: Signals): string {
   const bull = sig.shots > 0 ? sig.bullseyes / sig.shots : 0;
-  if (bull >= 0.7) return 'Robin Hood 🏹';
-  if (sig.maxStreak >= 5) return 'Arrow Master ⚡';
-  if (bull >= 0.4) return 'Steady Archer 🎯';
-  return 'Learning the Draw 🌱';
+  if (bull >= 0.7) return 'Robin Hood ðŸ¹';
+  if (sig.maxStreak >= 5) return 'Arrow Master âš¡';
+  if (bull >= 0.4) return 'Steady Archer ðŸŽ¯';
+  return 'Learning the Draw ðŸŒ±';
 }
 type Phase = 'start' | 'countdown' | 'playing' | 'done';
 interface GameState {
@@ -78,7 +78,7 @@ export default function ArcheryDraw() {
             s.sig.streakCurrent++;if(s.sig.streakCurrent>s.sig.maxStreak)s.sig.maxStreak=s.sig.streakCurrent;
             const mult=s.sig.streakCurrent>=3?2:1;s.sig.score+=pts*mult;s.scorePop=Date.now()+400;setScoreDisplay(s.sig.score);
             sfx.success();hapticScore();
-            s.floats.push({x:s.targetX,y:s.targetY-40,text:isBull?`+${pts*mult} 🎯 BULL!`:`+${pts*mult}`,alpha:1,vy:-2,color:isBull?'#fbbf24':'#4ade80'});
+            s.floats.push({x:s.targetX,y:s.targetY-40,text:isBull?`+${pts*mult} ðŸŽ¯ BULL!`:`+${pts*mult}`,alpha:1,vy:-2,color:isBull?'#fbbf24':'#4ade80'});
           }
           s.arrowFlight=false;
         }
@@ -113,7 +113,7 @@ export default function ArcheryDraw() {
     const onDown=(e:PointerEvent)=>{if(phase!=='playing')return;const s=stateRef.current;if(s.arrowFlight)return;s.drawing=true;s.drawStart=Date.now();s.drawLevel=0;s.aimLocked=false;s.aimOscillation=0;};
     const onMove=(e:PointerEvent)=>{if(phase!=='playing')return;const s=stateRef.current;if(!s.drawing)return;s.drawLevel=Math.min(1,(Date.now()-s.drawStart)/1500);if(s.drawLevel>=0.8)s.aimLocked=true;};
     const onUp=()=>{if(phase!=='playing')return;const s=stateRef.current;if(!s.drawing)return;s.drawing=false;
-      if(s.drawLevel>0.2){const dx=s.aimX-W/2,dy=s.aimY-(canvas.height-50);const dist=Math.sqrt(dx*dx+dy*dy);const speed=8+s.drawLevel*8;s.arrowX=W/2;s.arrowY=canvas.height-80;s.arrowVX=(dx/dist)*speed;s.arrowVY=(dy/dist)*speed;s.arrowFlight=true;sfx.click();hapticImpact();}
+      if(s.drawLevel>0.2){const dx=s.aimX-canvas.width/2,dy=s.aimY-(canvas.height-50);const dist=Math.sqrt(dx*dx+dy*dy);const speed=8+s.drawLevel*8;s.arrowX=canvas.width/2;s.arrowY=canvas.height-80;s.arrowVX=(dx/dist)*speed;s.arrowVY=(dy/dist)*speed;s.arrowFlight=true;sfx.click();hapticImpact();}
       s.drawLevel=0;};
     canvas.addEventListener('pointerdown',onDown);canvas.addEventListener('pointermove',onMove);canvas.addEventListener('pointerup',onUp);
     return()=>{window.removeEventListener('resize',resize);canvas.removeEventListener('pointerdown',onDown);canvas.removeEventListener('pointermove',onMove);canvas.removeEventListener('pointerup',onUp);};
@@ -123,12 +123,12 @@ export default function ArcheryDraw() {
   const handlePlayAgain=useCallback(()=>{setPhase('start');setScoreDisplay(0);setTimeLeft(DURATION);setFinalSig(null);},[]);
   return(
     <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent??ACCENT}>
-      {phase==='start'&&<GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description="Hold to draw the bow. Aim settles when fully drawn. Release for glory!" ctaLabel="Draw! 🏹" accentColor={theme.colors.accent??ACCENT} onStart={handleStart}/>}
+      {phase==='start'&&<GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description="Hold to draw the bow. Aim settles when fully drawn. Release for glory!" ctaLabel="Draw! ðŸ¹" accentColor={theme.colors.accent??ACCENT} onStart={handleStart}/>}
       {phase==='countdown'&&<Countdown onComplete={startLoop} accentColor={theme.colors.accent??ACCENT}/>}
       {(phase==='playing'||phase==='countdown')&&(<><canvas ref={canvasRef} style={{position:'absolute',inset:0,width:'100%',height:'100%',touchAction:'none'}} role="img" aria-label="Archery bow game canvas"/>
       {phase==='playing'&&<GameHUD accentColor={theme.colors.accent??ACCENT} items={[{label:'TIME',value:timeLeft,danger:timeLeft<=10},{label:'SCORE',value:scoreDisplay}]}/>}</>)}
       {phase==='done'&&finalSig&&(<EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI} score={String(finalSig.score)} personality={getPersonality(finalSig)}
-        insights={[{label:'Bullseyes',value:String(finalSig.bullseyes),color:'#ef4444'},{label:'Inner Ring',value:String(finalSig.inners),color:ACCENT},{label:'Best Streak',value:`×${finalSig.maxStreak}`,color:'#fbbf24'},{label:'Total Shots',value:String(finalSig.shots),color:'#06b6d4'}]}
+        insights={[{label:'Bullseyes',value:String(finalSig.bullseyes),color:'#ef4444'},{label:'Inner Ring',value:String(finalSig.inners),color:ACCENT},{label:'Best Streak',value:`Ã—${finalSig.maxStreak}`,color:'#fbbf24'},{label:'Total Shots',value:String(finalSig.shots),color:'#06b6d4'}]}
         accentColor={theme.colors.accent??ACCENT} onPlayAgain={handlePlayAgain} didWin={finalSig.bullseyes>=3}/>)}
     </GameShell>
   );

@@ -48,6 +48,13 @@ export default function DiyaLightGame() {
   const COLORS = ['#ef4444','#3b82f6','#22c55e','#fbbf24','#a855f7','#f97316'];
   const stateRef = useRef({ running:false, timeLeft:DURATION, sig:{score:0,hits:0,attempts:0,reactionTimes:[] as number[],maxStreak:0,streakCurrent:0}, cells:[] as {x:number,y:number,w:number,h:number,lit:number,color:string}[], sequence:[] as number[], playerSeq:[] as number[], phase:'showing'as'showing'|'input', showIdx:0, showTimer:0 });
 
+const [phase, setPhase] = useState<Phase>('start');
+  const [timeLeft, setTimeLeft] = useState(DURATION);
+  const [scoreDisplay, setScoreDisplay] = useState(0);
+  const [finalSig, setFinalSig] = useState<Signals|null>(null);
+  const playerSessionRef = useRef<PlayerSession|null>(null);
+  
+
   const buildGrid = useCallback((W:number,H:number)=>{
     const s=stateRef.current; const N=6,cols=3,cw=(W-56)/3,ch=72,sX=28,sY=H/2-ch;
     s.cells=Array.from({length:N},(_,i)=>({x:sX+(i%cols)*(cw+4),y:sY+Math.floor(i/cols)*(ch+8),w:cw,h:ch,lit:0,color:COLORS[i]}));
@@ -133,12 +140,7 @@ export default function DiyaLightGame() {
   useEffect(()=>()=>{cancelAnimationFrame(animRef.current);if(timerRef.current)clearInterval(timerRef.current);if(stopMusicRef.current)stopMusicRef.current();},[]);
 
   
-  const [phase, setPhase] = useState<Phase>('start');
-  const [timeLeft, setTimeLeft] = useState(DURATION);
-  const [scoreDisplay, setScoreDisplay] = useState(0);
-  const [finalSig, setFinalSig] = useState<Signals|null>(null);
-  const playerSessionRef = useRef<PlayerSession|null>(null);
-  
+ 
   const handleStart = useCallback((name: string, avatar: string) => { initAudio(); playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar); setPhase('countdown'); }, []);
   const handleCountdownDone = useCallback(() => { startLoop(); }, [startLoop]);
   const handlePlayAgain = useCallback(() => { setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null); }, []);

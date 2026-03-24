@@ -28,7 +28,7 @@ function getPersonality(sig: Signals): string {
   const acc = sig.attempts > 0 ? sig.hits / sig.attempts : 0;
   const avg = sig.reactionTimes.length > 0 ? sig.reactionTimes.reduce((a,b)=>a+b,0)/sig.reactionTimes.length : 9999;
   if (acc >= 0.75 && avg < 700) return 'Grill Master 🏆';
-  if (acc >= 0.55) return 'Dad's Helper 👨‍🍳';
+  if (acc >= 0.55) return "Dad's Helper 👨‍🍳";
   if (sig.maxStreak >= 4) return 'Flipper 🍔';
   return 'Char Artist 🔥';
 }
@@ -46,6 +46,13 @@ export default function BbqMasterGame() {
   const timerRef = useRef<ReturnType<typeof setInterval>|null>(null);
   const stopMusicRef = useRef<(()=>void)|null>(null);
   const stateRef = useRef({ running:false, timeLeft:DURATION, sig:{score:0,hits:0,attempts:0,reactionTimes:[] as number[],maxStreak:0,streakCurrent:0}, meter:0, dir:1, speed:0.012, zone:{min:0.38,max:0.62}, spawnTime:0 });
+
+const [phase, setPhase] = useState<Phase>('start');
+  const [timeLeft, setTimeLeft] = useState(DURATION);
+  const [scoreDisplay, setScoreDisplay] = useState(0);
+  const [finalSig, setFinalSig] = useState<Signals|null>(null);
+  const playerSessionRef = useRef<PlayerSession|null>(null);
+  
 
   const nextRound = useCallback(()=>{
     const s=stateRef.current; s.meter=Math.random()*0.3;
@@ -87,7 +94,7 @@ export default function BbqMasterGame() {
       ctx.roundRect(iX,bY-6,10,bH+12,5); ctx.fill(); ctx.shadowBlur=0;
       ctx.fillStyle='rgba(255,255,255,0.45)'; ctx.font='14px monospace'; ctx.textAlign='center'; ctx.textBaseline='bottom';
       ctx.fillText('TAP IN THE ZONE',W/2,bY-12);
-      if(s.sig.streakCurrent>=3){ctx.fillStyle=ACCENT;ctx.font='bold 17px sans-serif';ctx.textBaseline='top';ctx.fillText('×'+s.sig.streakCurrent+' COMBO!',W/2,bY+bH+16);}
+      if(s.sig.streakCurrent>=3){ctx.fillStyle=ACCENT;ctx.font='bold 17px sans-serif';ctx.textBaseline='top';ctx.fillText('Ã—'+s.sig.streakCurrent+' COMBO!',W/2,bY+bH+16);}
       animRef.current=requestAnimationFrame(loop);
     };
     animRef.current=requestAnimationFrame(loop);
@@ -120,12 +127,7 @@ export default function BbqMasterGame() {
   useEffect(()=>()=>{cancelAnimationFrame(animRef.current);if(timerRef.current)clearInterval(timerRef.current);if(stopMusicRef.current)stopMusicRef.current();},[]);
 
   
-  const [phase, setPhase] = useState<Phase>('start');
-  const [timeLeft, setTimeLeft] = useState(DURATION);
-  const [scoreDisplay, setScoreDisplay] = useState(0);
-  const [finalSig, setFinalSig] = useState<Signals|null>(null);
-  const playerSessionRef = useRef<PlayerSession|null>(null);
-  
+ 
   const handleStart = useCallback((name: string, avatar: string) => { initAudio(); playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar); setPhase('countdown'); }, []);
   const handleCountdownDone = useCallback(() => { startLoop(); }, [startLoop]);
   const handlePlayAgain = useCallback(() => { setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null); }, []);
@@ -137,7 +139,7 @@ export default function BbqMasterGame() {
     return [
       { label: 'Accuracy', value: acc + '%', color: acc>=70?'#4ade80':acc>=40?'#facc15':'#ef4444' },
       { label: 'Avg React', value: avg + 'ms', color: ACCENT },
-      { label: 'Best Streak', value: '×' + sig.maxStreak, color: ACCENT },
+      { label: 'Best Streak', value: 'Ã—' + sig.maxStreak, color: ACCENT },
       { label: 'Score', value: String(sig.score), color: 'var(--color-text)' },
     ];
   };

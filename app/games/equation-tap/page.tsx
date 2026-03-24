@@ -48,6 +48,13 @@ export default function EquationTapGame() {
   const QUESTIONS: {q:string,opts:string[],c:number}[] = [{"q":"3 + 8 = ?","opts":["9","10","11","12"],"c":2},{"q":"15 - 7 = ?","opts":["6","7","8","9"],"c":2},{"q":"4 � 4 = ?","opts":["12","14","16","18"],"c":2},{"q":"20 / 5 = ?","opts":["3","4","5","6"],"c":1},{"q":"9 + 6 = ?","opts":["13","14","15","16"],"c":1}];
   const stateRef = useRef({ running:false, timeLeft:DURATION, sig:{score:0,hits:0,attempts:0,reactionTimes:[] as number[],maxStreak:0,streakCurrent:0}, cur:{q:'',opts:[] as string[],c:0,spawnTime:0}, btns:[] as {x:number,y:number,w:number,h:number,label:string,ok:boolean,flash:number}[] });
 
+const [phase, setPhase] = useState<Phase>('start');
+  const [timeLeft, setTimeLeft] = useState(DURATION);
+  const [scoreDisplay, setScoreDisplay] = useState(0);
+  const [finalSig, setFinalSig] = useState<Signals|null>(null);
+  const playerSessionRef = useRef<PlayerSession|null>(null);
+  
+
   const newQ = useCallback((W:number,H:number)=>{
     const s=stateRef.current; const q=QUESTIONS[Math.floor(Math.random()*QUESTIONS.length)];
     const opts=[...q.opts]; const ans=opts[q.c];
@@ -128,12 +135,7 @@ export default function EquationTapGame() {
   useEffect(()=>()=>{cancelAnimationFrame(animRef.current);if(timerRef.current)clearInterval(timerRef.current);if(stopMusicRef.current)stopMusicRef.current();},[]);
 
   
-  const [phase, setPhase] = useState<Phase>('start');
-  const [timeLeft, setTimeLeft] = useState(DURATION);
-  const [scoreDisplay, setScoreDisplay] = useState(0);
-  const [finalSig, setFinalSig] = useState<Signals|null>(null);
-  const playerSessionRef = useRef<PlayerSession|null>(null);
-  
+ 
   const handleStart = useCallback((name: string, avatar: string) => { initAudio(); playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar); setPhase('countdown'); }, []);
   const handleCountdownDone = useCallback(() => { startLoop(); }, [startLoop]);
   const handlePlayAgain = useCallback(() => { setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null); }, []);
