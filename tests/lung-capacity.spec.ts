@@ -6,7 +6,7 @@ const GAME_ID = 'lung-capacity'
 const GAME_PATH = '/games/lung-capacity'
 const ACCENT = '#4ade80'
 const GAME_DURATION_MS = 30000
-const SENSOR = 'touch'
+const SENSOR         = 'mic'
 
 test('1.1 â€” page loads without JS errors', async ({ page }) => {
   const errors: string[] = []

@@ -6,7 +6,7 @@ const GAME_ID = 'dragon-breath'
 const GAME_PATH = '/games/dragon-breath'
 const ACCENT = '#ef4444'
 const GAME_DURATION_MS = 30000
-const SENSOR = 'touch'
+const SENSOR         = 'mic'
 
 test('1.1 â€” page loads without JS errors', async ({ page }) => {
   const errors: string[] = []

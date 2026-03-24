@@ -6,7 +6,7 @@ const GAME_ID = 'sing-along'
 const GAME_PATH = '/games/sing-along'
 const ACCENT = '#fb7185'
 const GAME_DURATION_MS = 45000
-const SENSOR = 'touch'
+const SENSOR         = 'mic'
 
 test('1.1 â€” page loads without JS errors', async ({ page }) => {
   const errors: string[] = []

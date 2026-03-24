@@ -6,7 +6,7 @@ const GAME_ID = 'vocal-shield'
 const GAME_PATH = '/games/vocal-shield'
 const ACCENT = '#818cf8'
 const GAME_DURATION_MS = 30000
-const SENSOR = 'touch'
+const SENSOR         = 'mic'
 
 test('1.1 â€” page loads without JS errors', async ({ page }) => {
   const errors: string[] = []

@@ -6,7 +6,7 @@ const GAME_ID = 'voice-sculpt'
 const GAME_PATH = '/games/voice-sculpt'
 const ACCENT = '#d946ef'
 const GAME_DURATION_MS = 45000
-const SENSOR = 'touch'
+const SENSOR         = 'mic'
 
 test('1.1 â€” page loads without JS errors', async ({ page }) => {
   const errors: string[] = []

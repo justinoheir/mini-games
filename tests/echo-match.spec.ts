@@ -6,7 +6,7 @@ const GAME_ID = 'echo-match'
 const GAME_PATH = '/games/echo-match'
 const ACCENT = '#06b6d4'
 const GAME_DURATION_MS = 45000
-const SENSOR = 'touch'
+const SENSOR         = 'mic'
 
 test('1.1 â€” page loads without JS errors', async ({ page }) => {
   const errors: string[] = []

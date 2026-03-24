@@ -6,7 +6,7 @@ const GAME_ID = 'beat-box'
 const GAME_PATH = '/games/beat-box'
 const ACCENT = '#f97316'
 const GAME_DURATION_MS = 60000
-const SENSOR = 'touch'
+const SENSOR         = 'mic'
 
 test('1.1 â€” page loads without JS errors', async ({ page }) => {
   const errors: string[] = []
