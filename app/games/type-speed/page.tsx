@@ -5,169 +5,244 @@ import GameHUD from '@/components/GameHUD';
 import GameStartScreen from '@/components/GameStartScreen';
 import Countdown from '@/components/Countdown';
 import EndScreen from '@/components/EndScreen';
-import { initAudio, sfx, haptic, startMusic } from '@/lib/audio';
+import { initAudio, sfx } from '@/lib/audio';
+import { hapticScore, hapticFail, hapticVictory, hapticCombo } from '@/lib/haptics';
 import { useBrandTheme } from '@/lib/useBrandTheme';
-import { postWebhook } from '@/lib/webhook';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
 
-const GAME_ID = 'type-speed';
-const ACCENT = '#e879f9';
-const DURATION = 30;
-const GAME_EMOJI = '??';
+const GAME_ID    = 'type-speed';
+const ACCENT     = '#e879f9';
+const DURATION   = 30;
+const GAME_EMOJI = '⌨️';
 const GAME_TITLE = 'Type Speed';
-const GAME_TAGLINE = 'How fast are your fingers?';
-const BG_COLOR = '#0d001a';
-const MUSIC_PAT: import('@/lib/audio').MusicPattern = 'minimal';
-const PB_KEY = 'mg_pb_type-speed';
+const GAME_TAGLINE = 'Type it fast. Beat the buzzer.';
+
+const WORDS = [
+  'cat','dog','sun','run','hot','big','red','fly','sky','fun',
+  'map','cup','hat','pen','zip','fog','joy','gem','dew','fix',
+  'data','code','fast','play','neon','glow','tech','sync','loop','byte',
+  'swift','sharp','click','flash','pulse','sonic','pixel','cyber','turbo',
+];
+
+const KEYBOARD_ROWS = [
+  ['Q','W','E','R','T','Y','U','I','O','P'],
+  ['A','S','D','F','G','H','J','K','L'],
+  ['⌫','Z','X','C','V','B','N','M','↵'],
+];
 
 interface Signals {
-  score: number; hits: number; attempts: number;
-  reactionTimes: number[]; maxStreak: number; streakCurrent: number;
+  wordsTyped: number;
+  wrongKeys: number;
+  accuracy: number;
+  wpm: number;
+  maxStreak: number;
+  streakCurrent: number;
+  score: number;
 }
-function getPersonality(sig: Signals): string {
-  const acc = sig.attempts > 0 ? sig.hits / sig.attempts : 0;
-  const avg = sig.reactionTimes.length > 0 ? sig.reactionTimes.reduce((a,b)=>a+b,0)/sig.reactionTimes.length : 9999;
-  if (acc >= 0.75 && avg < 700) return 'Speed Typer ??';
-  if (acc >= 0.55) return 'Fast Fingers ??';
-  if (sig.maxStreak >= 4) return 'Steady Pace ??';
-  return 'Hunt & Peck ??';
+
+function getPersonality(s: Signals): string {
+  if (s.wpm>=40&&s.wrongKeys<=3) return 'Speed Typist ⚡';
+  if (s.wordsTyped>=10)          return 'Keyboard Warrior 💪';
+  if (s.wrongKeys>=8)            return 'Hunt & Pecker 🔍';
+  if (s.accuracy>=90)            return 'Precision Typer 🎯';
+  return 'Two-Finger Hero 🖐️';
 }
-type Phase = 'start' | 'countdown' | 'playing' | 'done';
-function WebhookEmitter({ theme, sig, personality, player }: { theme: ReturnType<typeof useBrandTheme>; sig: Signals; personality: string; player: PlayerSession | null; }) {
-  const fired = useRef(false);
-  useEffect(() => { if (fired.current) return; fired.current = true; postWebhook(theme, GAME_ID, { personality, score: sig.score }, player); }, [theme, sig, personality, player]);
-  return null;
+
+type Phase = 'start'|'countdown'|'playing'|'done';
+
+interface GS {
+  running: boolean; timeLeft: number; sig: Signals; startTime: number;
+  currentWord: string; typedSoFar: string;
+  wordIdx: number; totalKeyPresses: number;
+  shakeTimer: number; correctFlash: number;
 }
 
 export default function TypeSpeedGame() {
   const theme = useBrandTheme();
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const animRef = useRef(0);
+  const stateRef = useRef<GS>({
+    running:false,timeLeft:DURATION,
+    sig:{wordsTyped:0,wrongKeys:0,accuracy:0,wpm:0,maxStreak:0,streakCurrent:0,score:0},
+    startTime:0,currentWord:'',typedSoFar:'',wordIdx:0,totalKeyPresses:0,
+    shakeTimer:0,correctFlash:0,
+  });
   const timerRef = useRef<ReturnType<typeof setInterval>|null>(null);
-  const stopMusicRef = useRef<(()=>void)|null>(null);
-  const stateRef = useRef({ running:false, timeLeft:DURATION, sig:{score:0,hits:0,attempts:0,reactionTimes:[] as number[],maxStreak:0,streakCurrent:0}, targets:[] as {x:number,y:number,r:number,alpha:number,spawnTime:number,id:number}[], nextId:0, speedMult:1 });
+  const animRef  = useRef(0);
 
-  const spawnTarget = useCallback(() => {
-    const c=canvasRef.current; if(!c) return;
-    const s=stateRef.current;
-    const r=26+Math.random()*20, m=r+8;
-    s.targets.push({x:m+Math.random()*(c.width-m*2),y:m+Math.random()*(c.height-m*2),r,alpha:1,spawnTime:Date.now(),id:s.nextId++});
-    s.sig.attempts++;
-  },[]);
-
-  const endGame = useCallback(() => {
-    const s=stateRef.current; s.running=false;
-    cancelAnimationFrame(animRef.current);
-    if(timerRef.current){clearInterval(timerRef.current);timerRef.current=null;}
-    if(stopMusicRef.current){stopMusicRef.current();stopMusicRef.current=null;}
-    setFinalSig({...s.sig}); setPhase('done');
-  },[]);
-
-  const startLoop = useCallback(() => {
-    const c=canvasRef.current; if(!c) return;
-    const ctx=c.getContext('2d'); if(!ctx) return;
-    const s=stateRef.current;
-    s.running=true; s.timeLeft=DURATION; s.targets=[]; s.nextId=0; s.speedMult=1;
-    s.sig={score:0,hits:0,attempts:0,reactionTimes:[],maxStreak:0,streakCurrent:0};
-    setScoreDisplay(0); setTimeLeft(DURATION); setPhase('playing');
-    stopMusicRef.current=startMusic(MUSIC_PAT);
-    timerRef.current=setInterval(()=>{s.timeLeft--;setTimeLeft(s.timeLeft);if(s.timeLeft<=0){sfx.fail();haptic([100]);endGame();}},1000);
-    for(let i=0;i<3;i++) spawnTarget();
-    const loop=()=>{
-      if(!s.running) return;
-      const W=c.width,H=c.height,now=Date.now();
-      ctx.fillStyle=BG_COLOR; ctx.fillRect(0,0,W,H);
-      ctx.strokeStyle='rgba(255,255,255,0.03)'; ctx.lineWidth=1;
-      for(let x=0;x<W;x+=52){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke();}
-      for(let y=0;y<H;y+=52){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke();}
-      s.targets=s.targets.filter(t=>{
-        t.alpha=Math.max(0,1-(now-t.spawnTime)/2800);
-        if(t.alpha<=0){s.sig.streakCurrent=0;sfx.nearMiss();haptic([20,30,20]);return false;}
-        ctx.save(); ctx.globalAlpha=t.alpha;
-        ctx.shadowBlur=18; ctx.shadowColor=ACCENT;
-        ctx.strokeStyle=ACCENT; ctx.lineWidth=3;
-        ctx.beginPath(); ctx.arc(t.x,t.y,t.r,0,Math.PI*2); ctx.stroke();
-        ctx.fillStyle=ACCENT+'18'; ctx.fill();
-        ctx.shadowBlur=0; ctx.fillStyle=ACCENT;
-        ctx.beginPath(); ctx.arc(t.x,t.y,t.r*0.22,0,Math.PI*2); ctx.fill();
-        const pulse=0.4+0.4*Math.sin(now*0.004+t.id*1.3);
-        ctx.strokeStyle=ACCENT+'55'; ctx.lineWidth=1; ctx.globalAlpha=t.alpha*pulse;
-        ctx.beginPath(); ctx.arc(t.x,t.y,t.r*1.38,0,Math.PI*2); ctx.stroke();
-        ctx.restore(); return true;
-      });
-      if(s.targets.length<4&&Math.random()<0.018*s.speedMult) spawnTarget();
-      if(s.sig.streakCurrent>=3){ctx.fillStyle=ACCENT;ctx.font='bold 16px sans-serif';ctx.textAlign='center';ctx.textBaseline='top';ctx.fillText('×'+s.sig.streakCurrent+' COMBO!',W/2,68);}
-      animRef.current=requestAnimationFrame(loop);
-    };
-    animRef.current=requestAnimationFrame(loop);
-  },[endGame,spawnTarget]);
-
-  const handleTap = useCallback((cx:number,cy:number)=>{
-    const c=canvasRef.current; if(!c) return;
-    const s=stateRef.current; if(!s.running) return;
-    const rect=c.getBoundingClientRect();
-    const x=(cx-rect.left)*(c.width/rect.width),y=(cy-rect.top)*(c.height/rect.height);
-    let hit=false;
-    s.targets=s.targets.filter(t=>{
-      if(hit) return true;
-      if(Math.hypot(x-t.x,y-t.y)<=t.r+10){
-        hit=true; s.sig.hits++; s.sig.reactionTimes.push(Date.now()-t.spawnTime);
-        s.sig.streakCurrent++; if(s.sig.streakCurrent>s.sig.maxStreak) s.sig.maxStreak=s.sig.streakCurrent;
-        s.sig.score+=s.sig.streakCurrent>=3?2:1; s.speedMult=Math.min(2.5,1+s.sig.hits*0.05);
-        setScoreDisplay(s.sig.score); sfx.collect(); haptic([30]); return false;
-      }
-      return true;
-    });
-    if(!hit){s.sig.streakCurrent=0;}
-  },[]);
-
-  useEffect(()=>{
-    const c=canvasRef.current; if(!c) return;
-    const resize=()=>{c.width=c.offsetWidth;c.height=c.offsetHeight;};
-    resize(); window.addEventListener('resize',resize);
-    const onDown=(e:PointerEvent)=>{if(phase==='playing')handleTap(e.clientX,e.clientY);};
-    c.addEventListener('pointerdown',onDown);
-    return()=>{window.removeEventListener('resize',resize);c.removeEventListener('pointerdown',onDown);};
-  },[phase,handleTap]);
-
-  useEffect(()=>()=>{cancelAnimationFrame(animRef.current);if(timerRef.current)clearInterval(timerRef.current);if(stopMusicRef.current)stopMusicRef.current();},[]);
-
-  
-  const [phase, setPhase] = useState<Phase>('start');
-  const [timeLeft, setTimeLeft] = useState(DURATION);
-  const [scoreDisplay, setScoreDisplay] = useState(0);
-  const [finalSig, setFinalSig] = useState<Signals|null>(null);
+  const [phase,setPhase]        = useState<Phase>('start');
+  const [timeLeft,setTimeLeft]  = useState(DURATION);
+  const [scoreDisplay,setScore] = useState(0);
+  const [finalSig,setFinalSig]  = useState<Signals|null>(null);
+  const [currentWord,setCurrentWord] = useState('');
+  const [typedSoFar,setTyped]   = useState('');
+  const [shake,setShake]        = useState(false);
+  const [flashOk,setFlashOk]    = useState(false);
   const playerSessionRef = useRef<PlayerSession|null>(null);
-  
-  const handleStart = useCallback((name: string, avatar: string) => { initAudio(); playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar); setPhase('countdown'); }, []);
-  const handleCountdownDone = useCallback(() => { startLoop(); }, [startLoop]);
-  const handlePlayAgain = useCallback(() => { setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null); }, []);
-  const buildInsights = (sig: Signals) => {
-    const acc = sig.attempts > 0 ? Math.round((sig.hits/sig.attempts)*100) : 0;
-    const avg = sig.reactionTimes.length > 0 ? Math.round(sig.reactionTimes.reduce((a,b)=>a+b,0)/sig.reactionTimes.length) : 0;
-    const pb = parseInt(localStorage.getItem(PB_KEY) ?? '0');
-    if (sig.score > pb) localStorage.setItem(PB_KEY, String(sig.score));
-    return [
-      { label: 'Accuracy', value: acc + '%', color: acc>=70?'#4ade80':acc>=40?'#facc15':'#ef4444' },
-      { label: 'Avg React', value: avg + 'ms', color: ACCENT },
-      { label: 'Best Streak', value: '×' + sig.maxStreak, color: ACCENT },
-      { label: 'Score', value: String(sig.score), color: 'var(--color-text)' },
-    ];
-  };
-  
+
+  const shuffledWords = useRef([...WORDS].sort(()=>Math.random()-0.5));
+
+  const endGame = useCallback(()=>{
+    const s=stateRef.current; s.running=false;
+    if(timerRef.current){ clearInterval(timerRef.current); timerRef.current=null; }
+    const elapsed=(Date.now()-s.startTime)/60000;
+    s.sig.wpm=elapsed>0?Math.round(s.sig.wordsTyped/elapsed):0;
+    s.sig.accuracy=s.totalKeyPresses>0?Math.round(((s.totalKeyPresses-s.sig.wrongKeys)/s.totalKeyPresses)*100):100;
+    const pb=parseInt(localStorage.getItem('pb_'+GAME_ID)??"0");
+    if(s.sig.score>pb) localStorage.setItem('pb_'+GAME_ID,String(s.sig.score));
+    setFinalSig({...s.sig}); setPhase('done'); hapticVictory();
+  },[]);
+
+  const pickNextWord = useCallback(()=>{
+    const s=stateRef.current;
+    s.wordIdx=(s.wordIdx+1)%shuffledWords.current.length;
+    s.currentWord=shuffledWords.current[s.wordIdx].toUpperCase();
+    s.typedSoFar='';
+    setCurrentWord(s.currentWord);
+    setTyped('');
+  },[]);
+
+  const handleKeyPress = useCallback((key:string)=>{
+    const s=stateRef.current; if(!s.running) return;
+    s.totalKeyPresses++;
+
+    if(key==='⌫'){
+      s.typedSoFar=s.typedSoFar.slice(0,-1);
+      setTyped(s.typedSoFar); return;
+    }
+    if(key==='↵'){
+      if(s.typedSoFar===s.currentWord){
+        // Word complete
+        s.sig.wordsTyped++; s.sig.streakCurrent++;
+        if(s.sig.streakCurrent>s.sig.maxStreak) s.sig.maxStreak=s.sig.streakCurrent;
+        const pts=s.sig.streakCurrent>=3?3:2; s.sig.score+=pts;
+        setScore(s.sig.score); sfx.collect(); hapticScore();
+        if(s.sig.streakCurrent>=3) hapticCombo(s.sig.streakCurrent);
+        s.correctFlash=1; setFlashOk(true);
+        setTimeout(()=>setFlashOk(false),200);
+        pickNextWord();
+      } else {
+        s.sig.wrongKeys++; s.sig.streakCurrent=0;
+        sfx.collision(); hapticFail();
+        setShake(true); setTimeout(()=>setShake(false),300);
+      }
+      return;
+    }
+
+    const expected=s.currentWord[s.typedSoFar.length];
+    if(key===expected){
+      s.typedSoFar+=key;
+      setTyped(s.typedSoFar);
+      sfx.click();
+      // Auto-complete when last letter typed
+      if(s.typedSoFar===s.currentWord){
+        s.sig.wordsTyped++; s.sig.streakCurrent++;
+        if(s.sig.streakCurrent>s.sig.maxStreak) s.sig.maxStreak=s.sig.streakCurrent;
+        const pts=s.sig.streakCurrent>=3?3:2; s.sig.score+=pts;
+        setScore(s.sig.score); sfx.success(); hapticScore();
+        if(s.sig.streakCurrent>=3) hapticCombo(s.sig.streakCurrent);
+        s.correctFlash=1; setFlashOk(true);
+        setTimeout(()=>setFlashOk(false),300);
+        setTimeout(()=>pickNextWord(),180);
+      }
+    } else {
+      s.sig.wrongKeys++; s.sig.streakCurrent=0;
+      sfx.collision(); hapticFail();
+      setShake(true); setTimeout(()=>setShake(false),300);
+    }
+  },[pickNextWord]);
+
+  const startGame = useCallback(()=>{
+    const s=stateRef.current;
+    s.running=true; s.timeLeft=DURATION;
+    s.sig={wordsTyped:0,wrongKeys:0,accuracy:0,wpm:0,maxStreak:0,streakCurrent:0,score:0};
+    s.wordIdx=0; s.totalKeyPresses=0; s.startTime=Date.now();
+    shuffledWords.current=[...WORDS].sort(()=>Math.random()-0.5);
+    s.currentWord=shuffledWords.current[0].toUpperCase();
+    s.typedSoFar='';
+    setCurrentWord(s.currentWord); setTyped(''); setScore(0); setTimeLeft(DURATION);
+    setPhase('playing');
+
+    timerRef.current=setInterval(()=>{
+      s.timeLeft--; setTimeLeft(s.timeLeft);
+      if(s.timeLeft<=0){ sfx.fail(); endGame(); }
+    },1000);
+  },[endGame]);
+
+  useEffect(()=>()=>{ if(timerRef.current) clearInterval(timerRef.current); },[]);
+
+  const handleStart=useCallback(async(n:string,a:string)=>{
+    playerSessionRef.current=savePlayerSession(GAME_ID,n,a); await initAudio(); setPhase('countdown');
+  },[]);
+  const handlePlayAgain=useCallback(()=>{ setPhase('start'); setScore(0); setTimeLeft(DURATION); setFinalSig(null); setCurrentWord(''); setTyped(''); },[]);
+
+  const ACCENT_USE = theme.colors.accent ?? ACCENT;
+
   return (
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent??ACCENT}>
-      {phase==='start'&&<GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description={GAME_TAGLINE} ctaLabel="Start" accentColor={theme.colors.accent??ACCENT} onStart={handleStart}/>}
-      {phase==='countdown'&&<Countdown onComplete={handleCountdownDone} accentColor={theme.colors.accent??ACCENT}/>}
-      {(phase==='playing'||phase==='countdown')&&<>
-        <canvas ref={canvasRef} aria-label="Type Speed game canvas" role="img" style={{position:'absolute',inset:0,width:'100%',height:'100%',touchAction:'none'}}/>
-        {phase==='playing'&&<GameHUD accentColor={theme.colors.accent??ACCENT} items={[{label:'TIME',value:timeLeft,danger:timeLeft<=5},{label:'SCORE',value:scoreDisplay}]}/>}
-      </>}
-      {phase==='done'&&finalSig&&<>
-        <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI} score={String(finalSig.score)} personality={getPersonality(finalSig)} insights={buildInsights(finalSig)} accentColor={theme.colors.accent??ACCENT} onPlayAgain={handlePlayAgain} didWin={finalSig.score>=5}/>
-        <WebhookEmitter theme={theme} sig={finalSig} personality={getPersonality(finalSig)} player={playerSessionRef.current}/>
-      </>}
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={ACCENT_USE}>
+      {phase==='start'&&<GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description={GAME_TAGLINE}
+        ctaLabel="Start Typing ⌨️" accentColor={ACCENT_USE} onStart={handleStart}/>}
+      {phase==='countdown'&&<Countdown onComplete={startGame} accentColor={ACCENT_USE}/>}
+
+      {phase==='playing'&&(
+        <div style={{position:'absolute',inset:0,background:'#0a0015',display:'flex',flexDirection:'column',padding:'0',overflow:'hidden'}}>
+          <GameHUD accentColor={ACCENT_USE} items={[{label:'TIME',value:timeLeft,danger:timeLeft<=10},{label:'SCORE',value:scoreDisplay}]}/>
+
+          {/* Word display */}
+          <div style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:'16px',padding:'0 16px'}}>
+            <div style={{
+              fontSize:'clamp(28px,8vw,52px)',fontWeight:'bold',letterSpacing:'0.12em',
+              color: flashOk?'#4ade80':ACCENT_USE,
+              transition:'color 0.1s',
+              filter:`drop-shadow(0 0 12px ${flashOk?'#4ade80':ACCENT_USE})`,
+              animation: shake?'shake 0.3s ease':'none',
+            }}>
+              {currentWord.split('').map((ch,i)=>(
+                <span key={i} style={{color:i<typedSoFar.length?'#4ade80':i===typedSoFar.length?'#fff':'rgba(255,255,255,0.3)'}}>
+                  {ch}
+                </span>
+              ))}
+            </div>
+            <div style={{color:'rgba(255,255,255,0.4)',fontSize:'14px'}}>
+              {typedSoFar.length}/{currentWord.length} letters
+            </div>
+          </div>
+
+          {/* On-screen keyboard */}
+          <div style={{padding:'8px 4px 12px',background:'rgba(0,0,0,0.4)'}}>
+            {KEYBOARD_ROWS.map((row,ri)=>(
+              <div key={ri} style={{display:'flex',justifyContent:'center',gap:'4px',marginBottom:'4px'}}>
+                {row.map(key=>{
+                  const isTyped=typedSoFar.includes(key);
+                  const isNext=key===currentWord[typedSoFar.length];
+                  return (
+                    <button key={key} onClick={()=>handleKeyPress(key)}
+                      style={{
+                        minWidth:key.length>1?'44px':'36px',height:'44px',
+                        background:isNext?ACCENT_USE+'44':'rgba(255,255,255,0.07)',
+                        border:`1px solid ${isNext?ACCENT_USE:'rgba(255,255,255,0.1)'}`,
+                        borderRadius:'6px',color:isNext?ACCENT_USE:'rgba(255,255,255,0.8)',
+                        fontSize:key.length>1?'13px':'16px',fontWeight:'bold',
+                        boxShadow:isNext?`0 0 8px ${ACCENT_USE}66`:'none',
+                        cursor:'pointer',transition:'all 0.1s',
+                      }}>
+                      {key}
+                    </button>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {phase==='done'&&finalSig&&<EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI}
+        score={String(finalSig.score)} personality={getPersonality(finalSig)}
+        insights={[
+          {label:'Words Typed',value:`${finalSig.wordsTyped}`,color:'#4ade80'},
+          {label:'WPM',value:`${finalSig.wpm}`,color:ACCENT_USE},
+          {label:'Accuracy',value:`${finalSig.accuracy}%`,color:finalSig.accuracy>=90?'#4ade80':'#fbbf24'},
+          {label:'Best Streak',value:`×${finalSig.maxStreak}`,color:'#fbbf24'},
+        ]}
+        accentColor={ACCENT_USE} onPlayAgain={handlePlayAgain} didWin={finalSig.wordsTyped>=8}/>}
     </GameShell>
   );
-}
 }
