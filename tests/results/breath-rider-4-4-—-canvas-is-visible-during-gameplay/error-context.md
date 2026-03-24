@@ -17,14 +17,13 @@
         - button "Allow Mic & Play →" [active] [ref=e24] [cursor=pointer]
         - paragraph [ref=e25]: Uses microphone
       - generic [ref=e28]:
-        - generic [ref=e29]: 🔒
-        - heading "One last thing" [level=2] [ref=e30]
-        - paragraph [ref=e31]: Your gameplay data will be collected to measure the impact of this experience. We don't sell your data.
-        - button "I Agree & Play" [ref=e32] [cursor=pointer]:
-          - text: I Agree & Play
-          - img [ref=e33]
-        - button "← Go back" [ref=e35] [cursor=pointer]
-  - button "Open Next.js Dev Tools" [ref=e46] [cursor=pointer]:
-    - img [ref=e47]
-  - alert [ref=e52]
+        - paragraph [ref=e29]: Welcome back,
+        - heading "Test" [level=2] [ref=e30]
+        - button "Continue" [ref=e31] [cursor=pointer]:
+          - text: Continue
+          - img [ref=e32]
+        - button "Edit info" [ref=e34] [cursor=pointer]
+  - button "Open Next.js Dev Tools" [ref=e40] [cursor=pointer]:
+    - img [ref=e41]
+  - alert [ref=e46]
 ```

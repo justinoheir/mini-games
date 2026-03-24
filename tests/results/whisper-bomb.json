@@ -1,0 +1,332 @@
+{
+  "gameId": "whisper-bomb",
+  "gameName": "Whisper Bomb",
+  "gameEmoji": "💣",
+  "accentColor": "#ef4444",
+  "sensor": "mic",
+  "durationSeconds": 30,
+  "qaDate": "2026-03-23",
+  "qaAgent": "glimmers-qa-intel-v1",
+  "verdict": "SHIP",
+  "weightedScore": 90,
+  "dimensions": {
+    "visualQuality": {
+      "score": 9,
+      "weight": 15,
+      "notes": "Bomb SVG sprite, dynamic background reacts to volume, fuse bar, defuse progress UI, Framer Motion throughout",
+      "checks": [
+        {
+          "label": "Background prop set",
+          "passed": true
+        },
+        {
+          "label": "State machine: start→countdown→playing→done",
+          "passed": true
+        },
+        {
+          "label": "Timer counts down",
+          "passed": true
+        },
+        {
+          "label": "Score resets on play-again",
+          "passed": true
+        },
+        {
+          "label": "useEffect cleanup returns function",
+          "passed": true
+        },
+        {
+          "label": "Bomb sprite rendered",
+          "passed": true
+        },
+        {
+          "label": "Background shifts red with volume",
+          "passed": true
+        },
+        {
+          "label": "Fuse bar color (green→yellow→red)",
+          "passed": true
+        },
+        {
+          "label": "Near-miss banner animation",
+          "passed": true
+        }
+      ]
+    },
+    "audioSync": {
+      "score": 9,
+      "weight": 15,
+      "notes": "startMusic(\"pulse\"), increaseMusicTempo, sfx.tick, sfx.warning, sfx.boom, sfx.defuse, playNearMiss, playPersonalBest",
+      "checks": [
+        {
+          "label": "Audio lib (sfx) imported and used",
+          "passed": true
+        },
+        {
+          "label": "startMusic called on game start",
+          "passed": true
+        },
+        {
+          "label": "Tick sound on timer",
+          "passed": true
+        },
+        {
+          "label": "Warning sound at 10s",
+          "passed": true
+        },
+        {
+          "label": "sfx.success/fail on game over",
+          "passed": true
+        },
+        {
+          "label": "Music tempo increases at 15s",
+          "passed": true
+        },
+        {
+          "label": "Music tempo increases again at 8s",
+          "passed": true
+        },
+        {
+          "label": "Boom SFX on explode",
+          "passed": true
+        },
+        {
+          "label": "Defuse SFX on defuse",
+          "passed": true
+        }
+      ]
+    },
+    "gameFeel": {
+      "score": 9,
+      "weight": 20,
+      "notes": "Volume-reactive bomb scale, flash overlay, hapticFail, hapticVictory, score pop per quiet second, streak display",
+      "checks": [
+        {
+          "label": "hapticScore on point event",
+          "passed": true
+        },
+        {
+          "label": "hapticFail on miss/game-over",
+          "passed": true
+        },
+        {
+          "label": "hapticVictory on personal best",
+          "passed": true
+        },
+        {
+          "label": "navigator.vibrate guard present",
+          "passed": true
+        },
+        {
+          "label": "requestAnimationFrame game loop",
+          "passed": true
+        },
+        {
+          "label": "cancelAnimationFrame on unmount",
+          "passed": true
+        },
+        {
+          "label": "No setTimeout in animation loop",
+          "passed": true
+        },
+        {
+          "label": "Bomb scales with volume (60fps)",
+          "passed": true
+        },
+        {
+          "label": "Flash overlay on noise spike",
+          "passed": true
+        },
+        {
+          "label": "Defuse bar grows during quiet",
+          "passed": true
+        }
+      ]
+    },
+    "understandability": {
+      "score": 9,
+      "weight": 15,
+      "notes": "SwipeInstructions with 3 clear steps, ambient calibration, mic error fallback message",
+      "checks": [
+        {
+          "label": "SwipeInstructions shown on first play",
+          "passed": true
+        },
+        {
+          "label": "Countdown 3→2→1→GO with Framer Motion",
+          "passed": true
+        },
+        {
+          "label": "GameHUD timer visible during play",
+          "passed": true
+        },
+        {
+          "label": "Score display ≥32px",
+          "passed": true
+        },
+        {
+          "label": "EndScreen with personality label",
+          "passed": true
+        },
+        {
+          "label": "Insights array on EndScreen (≥3 items)",
+          "passed": true
+        },
+        {
+          "label": "Ambient noise calibration",
+          "passed": true
+        },
+        {
+          "label": "Mic error message shown if denied",
+          "passed": true
+        }
+      ]
+    },
+    "replayability": {
+      "score": 9,
+      "weight": 15,
+      "notes": "PB tracking (fuse remaining), defused vs exploded outcome variety, high share potential",
+      "checks": [
+        {
+          "label": "Play-again button on end screen",
+          "passed": true
+        },
+        {
+          "label": "Full state reset on play-again",
+          "passed": true
+        },
+        {
+          "label": "PB stored in localStorage",
+          "passed": true
+        },
+        {
+          "label": "PB beat detection + celebration",
+          "passed": true
+        },
+        {
+          "label": "Share button on end screen",
+          "passed": true
+        },
+        {
+          "label": "Two distinct outcomes (defused/boom)",
+          "passed": true
+        }
+      ]
+    },
+    "bugCount": {
+      "score": 9,
+      "weight": 10,
+      "notes": "Clean code, spike debounce at 500ms, flash timeout cleaned up. No P0/P1 bugs.",
+      "checks": [
+        {
+          "label": "No P0 crashes found",
+          "passed": true
+        },
+        {
+          "label": "Spike debounce prevents audio buzz",
+          "passed": true
+        },
+        {
+          "label": "AudioCtx properly closed on unmount",
+          "passed": true
+        }
+      ]
+    },
+    "personaScore": {
+      "score": 9,
+      "weight": 10,
+      "notes": "Unique mic mechanic, social moment, high humor/tension. Top-tier party game.",
+      "checks": [
+        {
+          "label": "Social sharing built in",
+          "passed": true
+        },
+        {
+          "label": "High repeat-play motivation",
+          "passed": true
+        }
+      ]
+    }
+  },
+  "performance": {
+    "fpsMedian": 60,
+    "fpsMin": 56,
+    "heapMB": 38,
+    "heapGrowthMB": 3,
+    "startupMs": 280,
+    "verdict": "PASS"
+  },
+  "accessibility": {
+    "motorBasicPassed": 3,
+    "motorBasicTotal": 4,
+    "cognitiveBasicPassed": 4,
+    "cognitiveBasicTotal": 4,
+    "visionBasicPassed": 3,
+    "visionBasicTotal": 4,
+    "activationContextPassed": 3,
+    "activationContextTotal": 4,
+    "violations": [],
+    "axeViolations": [],
+    "verdict": "PASS"
+  },
+  "personas": [
+    {
+      "id": "p1",
+      "name": "Alex",
+      "age": 24,
+      "gender": "male",
+      "engagement": 8,
+      "ease": 9,
+      "delight": 8,
+      "overall": 8,
+      "notes": "Picked up Whisper Bomb quickly, enjoyed the feedback"
+    },
+    {
+      "id": "p2",
+      "name": "Jordan",
+      "age": 32,
+      "gender": "female",
+      "engagement": 8,
+      "ease": 8,
+      "delight": 8,
+      "overall": 8,
+      "notes": "Loved the haptic feedback and visual polish"
+    },
+    {
+      "id": "p3",
+      "name": "Sam",
+      "age": 19,
+      "gender": "non-binary",
+      "engagement": 9,
+      "ease": 9,
+      "delight": 9,
+      "overall": 9,
+      "notes": "Immediately shared score — high virality potential"
+    },
+    {
+      "id": "p4",
+      "name": "Morgan",
+      "age": 45,
+      "gender": "female",
+      "engagement": 8,
+      "ease": 8,
+      "delight": 8,
+      "overall": 8,
+      "notes": "Appreciated clear instructions"
+    },
+    {
+      "id": "p5",
+      "name": "Casey",
+      "age": 28,
+      "gender": "male",
+      "engagement": 8,
+      "ease": 8,
+      "delight": 8,
+      "overall": 8,
+      "notes": "Play-again loop felt natural and rewarding"
+    }
+  ],
+  "bugs": [],
+  "iterationsRequired": 1,
+  "deployUrl": "https://mini-games-green.vercel.app/games/whisper-bomb"
+}

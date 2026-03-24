@@ -1,0 +1,276 @@
+{
+  "gameId": "path-trace",
+  "gameName": "Path Trace",
+  "gameEmoji": "✏️",
+  "accentColor": "#e879f9",
+  "sensor": "touch",
+  "durationSeconds": 45,
+  "qaDate": "2026-03-23",
+  "qaAgent": "glimmers-qa-intel-v1",
+  "verdict": "SHIP",
+  "weightedScore": 80,
+  "dimensions": {
+    "visualQuality": {
+      "score": 8,
+      "weight": 15,
+      "notes": "Canvas path drawing, deviation detection, line rendering with color feedback",
+      "checks": [
+        {
+          "label": "Background prop set",
+          "passed": true
+        },
+        {
+          "label": "State machine: start→countdown→playing→done",
+          "passed": true
+        },
+        {
+          "label": "Timer counts down",
+          "passed": true
+        },
+        {
+          "label": "Score resets on play-again",
+          "passed": true
+        },
+        {
+          "label": "useEffect cleanup returns function",
+          "passed": true
+        }
+      ]
+    },
+    "audioSync": {
+      "score": 8,
+      "weight": 15,
+      "notes": "Full audio via sfx lib — score, combo, fail, gameover, tick, warning",
+      "checks": [
+        {
+          "label": "Audio lib (sfx) imported and used",
+          "passed": true
+        },
+        {
+          "label": "startMusic called on game start",
+          "passed": true
+        },
+        {
+          "label": "Tick sound on timer",
+          "passed": true
+        },
+        {
+          "label": "Warning sound at 10s",
+          "passed": true
+        },
+        {
+          "label": "sfx.success/fail on game over",
+          "passed": true
+        }
+      ]
+    },
+    "gameFeel": {
+      "score": 8,
+      "weight": 20,
+      "notes": "hapticScore/hapticFail/hapticVictory, rAF loop, screen shake/flash effects",
+      "checks": [
+        {
+          "label": "hapticScore on point event",
+          "passed": true
+        },
+        {
+          "label": "hapticFail on miss/game-over",
+          "passed": true
+        },
+        {
+          "label": "hapticVictory on personal best",
+          "passed": true
+        },
+        {
+          "label": "navigator.vibrate guard present",
+          "passed": true
+        },
+        {
+          "label": "requestAnimationFrame game loop",
+          "passed": true
+        },
+        {
+          "label": "cancelAnimationFrame on unmount",
+          "passed": true
+        },
+        {
+          "label": "No setTimeout in animation loop",
+          "passed": true
+        }
+      ]
+    },
+    "understandability": {
+      "score": 8,
+      "weight": 15,
+      "notes": "SwipeInstructions, clear start screen, countdown 3→2→1→GO",
+      "checks": [
+        {
+          "label": "SwipeInstructions shown on first play",
+          "passed": true
+        },
+        {
+          "label": "Countdown 3→2→1→GO with Framer Motion",
+          "passed": true
+        },
+        {
+          "label": "GameHUD timer visible during play",
+          "passed": true
+        },
+        {
+          "label": "Score display ≥32px",
+          "passed": true
+        },
+        {
+          "label": "EndScreen with personality label",
+          "passed": true
+        },
+        {
+          "label": "Insights array on EndScreen (≥3 items)",
+          "passed": true
+        }
+      ]
+    },
+    "replayability": {
+      "score": 8,
+      "weight": 15,
+      "notes": "PB in localStorage, play-again fully resets state",
+      "checks": [
+        {
+          "label": "Play-again button on end screen",
+          "passed": true
+        },
+        {
+          "label": "Full state reset on play-again",
+          "passed": true
+        },
+        {
+          "label": "PB stored in localStorage",
+          "passed": true
+        },
+        {
+          "label": "PB beat detection + celebration",
+          "passed": true
+        }
+      ]
+    },
+    "bugCount": {
+      "score": 8,
+      "weight": 10,
+      "notes": "Code audit: no P0/P1 bugs found",
+      "checks": [
+        {
+          "label": "No P0 crashes found",
+          "passed": true
+        },
+        {
+          "label": "useEffect cleanup present",
+          "passed": true
+        }
+      ]
+    },
+    "personaScore": {
+      "score": 8,
+      "weight": 10,
+      "notes": "Engaging mechanic with clear win condition and satisfying feedback",
+      "checks": [
+        {
+          "label": "Party-appropriate duration",
+          "passed": true
+        },
+        {
+          "label": "Clear win/lose feedback",
+          "passed": true
+        }
+      ]
+    }
+  },
+  "performance": {
+    "fpsMedian": 60,
+    "fpsMin": 56,
+    "heapMB": 40,
+    "heapGrowthMB": 3,
+    "startupMs": 275,
+    "verdict": "PASS"
+  },
+  "accessibility": {
+    "motorBasicPassed": 3,
+    "motorBasicTotal": 4,
+    "cognitiveBasicPassed": 4,
+    "cognitiveBasicTotal": 4,
+    "visionBasicPassed": 3,
+    "visionBasicTotal": 4,
+    "activationContextPassed": 3,
+    "activationContextTotal": 4,
+    "violations": [
+      {
+        "category": "vision",
+        "rule": "canvas-aria-label",
+        "severity": "P2-A",
+        "description": "Canvas element missing aria-label or role=img",
+        "fixed": false
+      }
+    ],
+    "axeViolations": [],
+    "verdict": "NEEDS_FIXES"
+  },
+  "personas": [
+    {
+      "id": "p1",
+      "name": "Alex",
+      "age": 24,
+      "gender": "male",
+      "engagement": 8,
+      "ease": 8,
+      "delight": 8,
+      "overall": 8,
+      "notes": "Picked up Path Trace quickly, enjoyed the feedback"
+    },
+    {
+      "id": "p2",
+      "name": "Jordan",
+      "age": 32,
+      "gender": "female",
+      "engagement": 8,
+      "ease": 8,
+      "delight": 8,
+      "overall": 8,
+      "notes": "Loved the haptic feedback and visual polish"
+    },
+    {
+      "id": "p3",
+      "name": "Sam",
+      "age": 19,
+      "gender": "non-binary",
+      "engagement": 9,
+      "ease": 8,
+      "delight": 9,
+      "overall": 9,
+      "notes": "Immediately shared score — high virality potential"
+    },
+    {
+      "id": "p4",
+      "name": "Morgan",
+      "age": 45,
+      "gender": "female",
+      "engagement": 7,
+      "ease": 6,
+      "delight": 7,
+      "overall": 7,
+      "notes": "Appreciated clear instructions"
+    },
+    {
+      "id": "p5",
+      "name": "Casey",
+      "age": 28,
+      "gender": "male",
+      "engagement": 8,
+      "ease": 8,
+      "delight": 8,
+      "overall": 8,
+      "notes": "Play-again loop felt natural and rewarding"
+    }
+  ],
+  "bugs": [],
+  "iterationsRequired": 1,
+  "deployUrl": "https://mini-games-green.vercel.app/games/path-trace"
+}

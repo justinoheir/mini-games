@@ -1,0 +1,133 @@
+{
+  "gameId": "orbit-control",
+  "gameName": "Orbit Control",
+  "gameEmoji": "🪐",
+  "accentColor": "#818cf8",
+  "sensor": "motion",
+  "durationSeconds": 60,
+  "qaDate": "2026-03-23",
+  "qaAgent": "glimmers-qa-intel-v1",
+  "verdict": "BLOCKED",
+  "weightedScore": 0,
+  "dimensions": {
+    "visualQuality": {
+      "score": 0,
+      "weight": 15,
+      "notes": "Game not implemented — no page.tsx found",
+      "checks": [
+        {
+          "label": "Game directory exists",
+          "passed": false,
+          "note": "Missing: app/games/orbit-control/"
+        }
+      ]
+    },
+    "audioSync": {
+      "score": 0,
+      "weight": 15,
+      "notes": "Not implemented",
+      "checks": [
+        {
+          "label": "Audio not auditable",
+          "passed": false
+        }
+      ]
+    },
+    "gameFeel": {
+      "score": 0,
+      "weight": 20,
+      "notes": "Not implemented",
+      "checks": [
+        {
+          "label": "Feel not auditable",
+          "passed": false
+        }
+      ]
+    },
+    "understandability": {
+      "score": 0,
+      "weight": 15,
+      "notes": "Not implemented",
+      "checks": [
+        {
+          "label": "UI not auditable",
+          "passed": false
+        }
+      ]
+    },
+    "replayability": {
+      "score": 0,
+      "weight": 15,
+      "notes": "Not implemented",
+      "checks": [
+        {
+          "label": "Replay not auditable",
+          "passed": false
+        }
+      ]
+    },
+    "bugCount": {
+      "score": 0,
+      "weight": 10,
+      "notes": "Cannot audit — no code",
+      "checks": [
+        {
+          "label": "No code to audit",
+          "passed": false
+        }
+      ]
+    },
+    "personaScore": {
+      "score": 0,
+      "weight": 10,
+      "notes": "Not implemented",
+      "checks": [
+        {
+          "label": "Cannot score",
+          "passed": false
+        }
+      ]
+    }
+  },
+  "performance": {
+    "fpsMedian": 0,
+    "fpsMin": 0,
+    "heapMB": 0,
+    "heapGrowthMB": 0,
+    "startupMs": 0,
+    "verdict": "FAIL",
+    "notes": "Game not implemented"
+  },
+  "accessibility": {
+    "motorBasicPassed": 0,
+    "motorBasicTotal": 4,
+    "cognitiveBasicPassed": 0,
+    "cognitiveBasicTotal": 4,
+    "visionBasicPassed": 0,
+    "visionBasicTotal": 4,
+    "activationContextPassed": 0,
+    "activationContextTotal": 4,
+    "violations": [
+      {
+        "category": "vision",
+        "rule": "game-missing",
+        "severity": "P0-A",
+        "description": "Game not implemented",
+        "fixed": false
+      }
+    ],
+    "axeViolations": [],
+    "verdict": "BLOCKED"
+  },
+  "personas": [],
+  "bugs": [
+    {
+      "severity": "P0",
+      "description": "Game not implemented — app/games/orbit-control/page.tsx missing",
+      "fixed": false,
+      "fixNote": "Build the game following GAME_DESIGN_RULES.md"
+    }
+  ],
+  "iterationsRequired": 0,
+  "deployUrl": "https://mini-games-green.vercel.app/games/orbit-control"
+}
