@@ -5,72 +5,161 @@ import GameHUD from '@/components/GameHUD';
 import GameStartScreen from '@/components/GameStartScreen';
 import Countdown from '@/components/Countdown';
 import EndScreen from '@/components/EndScreen';
-import { initAudio, sfx } from '@/lib/audio';
-import { hapticScore, hapticFail, hapticVictory, hapticCombo, hapticImpact } from '@/lib/haptics';
+import { initAudio, sfx, haptic, startMusic } from '@/lib/audio';
 import { useBrandTheme } from '@/lib/useBrandTheme';
+import { postWebhook } from '@/lib/webhook';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
-const GAME_ID='howl-wolf';const ACCENT='#6366f1';const DURATION=45;const GAME_EMOJI='🐺';const GAME_TITLE='Howl Wolf';const GAME_TAGLINE='Find your pitch. Call the pack.';
-interface Signals{total:number;success:number;fail:number;maxStreak:number;streakCurrent:number;score:number;bonus:number;}
-function getPersonality(s:Signals){const a=s.total>0?s.success/s.total:0;if(a>=0.9&&s.maxStreak>=5)return'Champion '+GAME_EMOJI;if(s.maxStreak>=6)return'On Fire 🔥';if(a>=0.7)return'Skilled Player 🎯';return'Keep Practicing 💪';}
-type Phase='start'|'countdown'|'playing'|'done';
-interface GameState{running:boolean;timeLeft:number;sig:Signals;frame:number;accentColor:string;floats:Array<{x:number;y:number;text:string;alpha:number;vy:number;color:string}>;scorePop:number;activeZone:number;zoneTimer:number;particles:Array<{x:number;y:number;vx:number;vy:number;alpha:number;color:string}>;}
-export default function HowlWolf(){
-  const theme=useBrandTheme();
-  const canvasRef=useRef<HTMLCanvasElement>(null);const animRef=useRef(0);const timerRef=useRef<ReturnType<typeof setInterval>|null>(null);
-  const stateRef=useRef<GameState>({running:false,timeLeft:DURATION,sig:{total:0,success:0,fail:0,maxStreak:0,streakCurrent:0,score:0,bonus:0},frame:0,accentColor:ACCENT,floats:[],scorePop:0,activeZone:-1,zoneTimer:0,particles:[]});
-  const[phase,setPhase]=useState<Phase>('start');const[timeLeft,setTimeLeft]=useState(DURATION);const[scoreDisplay,setScoreDisplay]=useState(0);const[finalSig,setFinalSig]=useState<Signals|null>(null);
-  const playerSessionRef=useRef<PlayerSession|null>(null);
-  useEffect(()=>{stateRef.current.accentColor=theme.colors.accent??ACCENT;},[theme]);
-  const endGame=useCallback(()=>{const s=stateRef.current;s.running=false;cancelAnimationFrame(animRef.current);if(timerRef.current){clearInterval(timerRef.current);timerRef.current=null;}const pb=parseInt(localStorage.getItem('pb_'+GAME_ID)??"0");if(s.sig.score>pb)localStorage.setItem('pb_'+GAME_ID,String(s.sig.score));setFinalSig({...s.sig});setPhase('done');hapticVictory();},[]);
-  const startLoop=useCallback(()=>{
-    const canvas=canvasRef.current;if(!canvas)return;const ctx=canvas.getContext('2d');if(!ctx)return;
-    const s=stateRef.current;const W=canvas.width,H=canvas.height;
-    s.running=true;s.timeLeft=DURATION;s.sig={total:0,success:0,fail:0,maxStreak:0,streakCurrent:0,score:0,bonus:0};s.frame=0;s.floats=[];s.scorePop=0;s.activeZone=Math.floor(Math.random()*6);s.zoneTimer=60;s.particles=[];
-    setScoreDisplay(0);setTimeLeft(DURATION);setPhase('playing');
-    timerRef.current=setInterval(()=>{s.timeLeft--;setTimeLeft(s.timeLeft);if(s.timeLeft<=0){sfx.fail();endGame();}},1000);
-    const COLS=3;const ROWS=2;const cellW=Math.floor(W/COLS);const cellH=Math.floor(H*0.65/ROWS);const gridY=H*0.15;
+
+const GAME_ID = 'howl-wolf';
+const ACCENT = '#6366f1';
+const DURATION = 45;
+const GAME_EMOJI = '🐺';
+const GAME_TITLE = 'Howl Wolf';
+const GAME_TAGLINE = 'Find your pitch. Call the pack.';
+const BG_COLOR = '#07070f';
+const MUSIC_PAT: import('@/lib/audio').MusicPattern = 'calm';
+const PB_KEY = 'mg_pb_howl-wolf';
+
+interface Signals {
+  score: number; hits: number; attempts: number;
+  reactionTimes: number[]; maxStreak: number; streakCurrent: number;
+}
+function getPersonality(sig: Signals): string {
+  const acc = sig.attempts > 0 ? sig.hits / sig.attempts : 0;
+  const avg = sig.reactionTimes.length > 0 ? sig.reactionTimes.reduce((a,b)=>a+b,0)/sig.reactionTimes.length : 9999;
+  if (acc >= 0.75 && avg < 700) return 'Alpha Wolf 🐺';
+  if (acc >= 0.55) return 'Pack Leader 🌕';
+  if (sig.maxStreak >= 4) return 'Howler 🎶';
+  return 'Lone Wolf 🐾';
+}
+type Phase = 'start' | 'countdown' | 'playing' | 'done';
+function WebhookEmitter({ theme, sig, personality, player }: { theme: ReturnType<typeof useBrandTheme>; sig: Signals; personality: string; player: PlayerSession | null; }) {
+  const fired = useRef(false);
+  useEffect(() => { if (fired.current) return; fired.current = true; postWebhook(theme, GAME_ID, { personality, score: sig.score }, player); }, [theme, sig, personality, player]);
+  return null;
+}
+
+export default function HowlWolfGame() {
+  const theme = useBrandTheme();
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const animRef = useRef(0);
+  const timerRef = useRef<ReturnType<typeof setInterval>|null>(null);
+  const stopMusicRef = useRef<(()=>void)|null>(null);
+  const analyserRef = useRef<AnalyserNode|null>(null);
+  const streamRef = useRef<MediaStream|null>(null);
+  const stateRef = useRef({ running:false, timeLeft:DURATION, sig:{score:0,hits:0,attempts:0,reactionTimes:[] as number[],maxStreak:0,streakCurrent:0}, pitchNorm:0.5, targetPitch:0.5, holdTime:0, hasMic:false });
+
+  const getPitch = () => {
+    const a=analyserRef.current; if(!a) return 0.5;
+    const buf=new Float32Array(a.fftSize); a.getFloatTimeDomainData(buf);
+    let c=0; for(let i=1;i<buf.length;i++) if(buf[i-1]<0&&buf[i]>=0) c++;
+    return Math.min(1,Math.max(0,(c*(a.context.sampleRate/buf.length)-80)/800));
+  };
+
+  const endGame = useCallback(()=>{
+    const s=stateRef.current; s.running=false;
+    cancelAnimationFrame(animRef.current);
+    if(timerRef.current){clearInterval(timerRef.current);timerRef.current=null;}
+    if(stopMusicRef.current){stopMusicRef.current();stopMusicRef.current=null;}
+    if(streamRef.current){streamRef.current.getTracks().forEach(t=>t.stop());streamRef.current=null;}
+    setFinalSig({...s.sig}); setPhase('done');
+  },[]);
+
+  const startLoop = useCallback(async()=>{
+    const c=canvasRef.current; if(!c) return;
+    const ctx=c.getContext('2d'); if(!ctx) return;
+    const s=stateRef.current;
+    try{const stream=await navigator.mediaDevices.getUserMedia({audio:true});streamRef.current=stream;const ac=new AudioContext();const src=ac.createMediaStreamSource(stream);const an=ac.createAnalyser();an.fftSize=2048;src.connect(an);analyserRef.current=an;s.hasMic=true;}catch{s.hasMic=false;}
+    s.running=true; s.timeLeft=DURATION; s.pitchNorm=0.5; s.holdTime=0;
+    s.sig={score:0,hits:0,attempts:0,reactionTimes:[],maxStreak:0,streakCurrent:0};
+    s.targetPitch=0.2+Math.random()*0.6; s.sig.attempts++;
+    setScoreDisplay(0); setTimeLeft(DURATION); setPhase('playing');
+    stopMusicRef.current=startMusic(MUSIC_PAT);
+    timerRef.current=setInterval(()=>{s.timeLeft--;setTimeLeft(s.timeLeft);if(s.timeLeft<=0){sfx.fail();haptic([100]);endGame();}},1000);
     const loop=()=>{
-      if(!s.running)return;ctx.clearRect(0,0,W,H);s.frame++;
-      ctx.fillStyle='#050515';ctx.fillRect(0,0,W,H);
-      ctx.strokeStyle=ACCENT+'06';ctx.lineWidth=1;
-      for(let gx=0;gx<W;gx+=28){ctx.beginPath();ctx.moveTo(gx,0);ctx.lineTo(gx,H);ctx.stroke();}
-      for(let gy=0;gy<H;gy+=28){ctx.beginPath();ctx.moveTo(0,gy);ctx.lineTo(W,gy);ctx.stroke();}
-      s.zoneTimer--;if(s.zoneTimer<=0){s.activeZone=Math.floor(Math.random()*(COLS*ROWS));s.zoneTimer=Math.max(20,70-s.sig.success*3);}
-      for(let z=0;z<COLS*ROWS;z++){const row=Math.floor(z/COLS),col=z%COLS;const zx=col*cellW,zy=gridY+row*cellH;const isActive=z===s.activeZone;
-        ctx.save();ctx.shadowBlur=isActive?18:3;ctx.shadowColor=isActive?ACCENT:'transparent';
-        ctx.fillStyle=isActive?ACCENT+'44':'rgba(255,255,255,0.04)';ctx.strokeStyle=isActive?ACCENT:'rgba(255,255,255,0.12)';ctx.lineWidth=isActive?3:1;
-        ctx.beginPath();(ctx as any).roundRect?.(zx+6,zy+4,cellW-12,cellH-8,10)??ctx.rect(zx+6,zy+4,cellW-12,cellH-8);ctx.fill();ctx.stroke();
-        if(isActive){ctx.fillStyle='#ffffff';ctx.font='bold '+Math.min(32,cellW*0.15)+'px sans-serif';ctx.textAlign='center';ctx.fillText(GAME_EMOJI,zx+cellW/2,zy+cellH/2+10);}
-        ctx.restore();}
-      s.particles.forEach(p=>{p.x+=p.vx;p.y+=p.vy;p.alpha*=0.91;p.vy+=0.1;});s.particles=s.particles.filter(p=>p.alpha>0.05);
-      s.particles.forEach(p=>{ctx.save();ctx.globalAlpha=p.alpha;ctx.fillStyle=p.color;ctx.beginPath();ctx.arc(p.x,p.y,4,0,Math.PI*2);ctx.fill();ctx.restore();});
-      if(s.scorePop>Date.now()){const t=(s.scorePop-Date.now())/300;ctx.save();ctx.globalAlpha=t;ctx.font='bold '+Math.round(36*(1+(1-t)*0.3))+'px sans-serif';ctx.fillStyle=ACCENT;ctx.textAlign='center';ctx.fillText(''+s.sig.score,W/2,H*0.88);ctx.restore();}
-      s.floats=s.floats.filter(f=>f.alpha>0.02);s.floats.forEach(f=>{ctx.save();ctx.globalAlpha=f.alpha;ctx.fillStyle=f.color;ctx.font='bold 20px sans-serif';ctx.textAlign='center';ctx.fillText(f.text,f.x,f.y);ctx.restore();f.y+=f.vy;f.alpha*=0.95;});
-      animRef.current=requestAnimationFrame(loop);};
+      if(!s.running) return;
+      const W=c.width,H=c.height;
+      ctx.fillStyle=BG_COLOR; ctx.fillRect(0,0,W,H);
+      if(s.hasMic) s.pitchNorm=getPitch();
+      else s.pitchNorm=0.5+0.06*Math.sin(Date.now()*0.0008);
+      const sX=W*0.76,sW=28,sH=H*0.62,sY=(H-sH)/2;
+      ctx.fillStyle='#ffffff0e'; ctx.roundRect(sX,sY,sW,sH,6); ctx.fill();
+      const tzY=sY+sH*(1-s.targetPitch-0.07); const tzH=sH*0.14;
+      ctx.fillStyle=ACCENT+'44'; ctx.roundRect(sX,tzY,sW,tzH,5); ctx.fill();
+      ctx.strokeStyle=ACCENT; ctx.lineWidth=2; ctx.roundRect(sX,tzY,sW,tzH,5); ctx.stroke();
+      const iY=sY+sH*(1-s.pitchNorm)-5;
+      const inZ=Math.abs(s.pitchNorm-s.targetPitch)<0.07;
+      ctx.shadowBlur=inZ?20:8; ctx.shadowColor=inZ?'#22c55e':ACCENT;
+      ctx.fillStyle=inZ?'#22c55e':ACCENT; ctx.roundRect(sX-5,iY,sW+10,10,5); ctx.fill(); ctx.shadowBlur=0;
+      if(inZ){
+        s.holdTime+=1/60;
+        const hW=Math.min(1,s.holdTime/1.5),mW=W*0.55,mX=(W-mW)/2,mY=H*0.8;
+        ctx.fillStyle='#ffffff0d'; ctx.roundRect(mX,mY,mW,16,5); ctx.fill();
+        ctx.fillStyle=ACCENT; ctx.roundRect(mX,mY,mW*hW,16,5); ctx.fill();
+        if(s.holdTime>=1.5){
+          s.sig.hits++; s.sig.streakCurrent++;
+          if(s.sig.streakCurrent>s.sig.maxStreak) s.sig.maxStreak=s.sig.streakCurrent;
+          s.sig.score+=s.sig.streakCurrent>=3?2:1; setScoreDisplay(s.sig.score);
+          sfx.collect(); haptic([30]); s.holdTime=0; s.targetPitch=0.2+Math.random()*0.6; s.sig.attempts++;
+        }
+      } else {
+        s.holdTime=Math.max(0,s.holdTime-0.04);
+      }
+      ctx.fillStyle='rgba(255,255,255,0.4)'; ctx.font='12px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='top';
+      ctx.fillText(s.hasMic?'HUM / SING � MATCH THE TARGET':'DRAG UP/DOWN TO SIMULATE',W/2,H*0.88);
+      if(s.sig.streakCurrent>=3){ctx.fillStyle=ACCENT;ctx.font='bold 15px sans-serif';ctx.fillText('x'+s.sig.streakCurrent+' COMBO!',W/2,H*0.92);}
+      animRef.current=requestAnimationFrame(loop);
+    };
     animRef.current=requestAnimationFrame(loop);
   },[endGame]);
+
   useEffect(()=>{
-    const canvas=canvasRef.current;if(!canvas)return;
-    const resize=()=>{canvas.width=canvas.offsetWidth;canvas.height=canvas.offsetHeight;};resize();window.addEventListener('resize',resize);
-    const onPointerDown=(e:PointerEvent)=>{if(phase!=='playing')return;const s=stateRef.current;const rect=canvas.getBoundingClientRect();const px=(e.clientX-rect.left)*(canvas.width/rect.width),py=(e.clientY-rect.top)*(canvas.height/rect.height);
-      const W=canvas.width,H=canvas.height;const COLS=3;const ROWS=2;const cellW=Math.floor(W/COLS);const cellH=Math.floor(H*0.65/ROWS);const gridY=H*0.15;
-      for(let z=0;z<COLS*ROWS;z++){const row=Math.floor(z/COLS),col=z%COLS;const zx=col*cellW,zy=gridY+row*cellH;
-        if(px>=zx+6&&px<=zx+cellW-6&&py>=zy+4&&py<=zy+cellH-4){s.sig.total++;
-          if(z===s.activeZone){s.sig.success++;s.sig.streakCurrent++;if(s.sig.streakCurrent>s.sig.maxStreak)s.sig.maxStreak=s.sig.streakCurrent;const mult=s.sig.streakCurrent>=3?2:1;s.sig.score+=mult;s.scorePop=Date.now()+300;setScoreDisplay(s.sig.score);sfx.collect();hapticScore();if(s.sig.streakCurrent>=3)hapticCombo(s.sig.streakCurrent);for(let p=0;p<6;p++)s.particles.push({x:px,y:py,vx:(Math.random()-0.5)*5,vy:-2-Math.random()*3,alpha:1,color:ACCENT});s.floats.push({x:px,y:py-20,text:'+'+mult+(s.sig.streakCurrent>=3?' 🔥':''),alpha:1,vy:-2.5,color:'#fbbf24'});s.activeZone=Math.floor(Math.random()*(COLS*ROWS));s.zoneTimer=Math.max(20,70-s.sig.success*3);}
-          else{s.sig.fail++;s.sig.streakCurrent=0;sfx.collision();hapticFail();s.floats.push({x:px,y:py-20,text:'Miss!',alpha:1,vy:-1.5,color:'#ef4444'});}
-          break;}}};
-    canvas.addEventListener('pointerdown',onPointerDown);
-    return()=>{window.removeEventListener('resize',resize);canvas.removeEventListener('pointerdown',onPointerDown);};
+    const c=canvasRef.current; if(!c) return;
+    const resize=()=>{c.width=c.offsetWidth;c.height=c.offsetHeight;};
+    resize(); window.addEventListener('resize',resize);
+    const onMove=(e:PointerEvent)=>{ if(phase!=='playing') return; const rect=c.getBoundingClientRect(); stateRef.current.pitchNorm=1-(e.clientY-rect.top)/rect.height; };
+    c.addEventListener('pointermove',onMove);
+    return()=>{window.removeEventListener('resize',resize);c.removeEventListener('pointermove',onMove);};
   },[phase]);
-  useEffect(()=>()=>{cancelAnimationFrame(animRef.current);if(timerRef.current)clearInterval(timerRef.current);},[]);
-  const handleStart=useCallback(async(n:string,a:string)=>{playerSessionRef.current=savePlayerSession(GAME_ID,n,a);await initAudio();setPhase('countdown');},[]);
-  const handlePlayAgain=useCallback(()=>{setPhase('start');setScoreDisplay(0);setTimeLeft(DURATION);setFinalSig(null);},[]);
-  return(<GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent??ACCENT}>
-    {phase==='start'&&<GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description={GAME_TAGLINE} ctaLabel={'Play! '+GAME_EMOJI} accentColor={theme.colors.accent??ACCENT} onStart={handleStart}/>}
-    {phase==='countdown'&&<Countdown onComplete={startLoop} accentColor={theme.colors.accent??ACCENT}/>}
-    {(phase==='playing'||phase==='countdown')&&(<><canvas ref={canvasRef} style={{position:'absolute',inset:0,width:'100%',height:'100%',touchAction:'none'}} role="img" aria-label={'Howl Wolf game canvas'}/>
-    {phase==='playing'&&<GameHUD accentColor={theme.colors.accent??ACCENT} items={[{label:'TIME',value:timeLeft,danger:timeLeft<=10},{label:'SCORE',value:scoreDisplay}]}/>}</>)}
-    {phase==='done'&&finalSig&&<EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI} score={String(finalSig.score)} personality={getPersonality(finalSig)}
-      insights={[{label:'Success',value:String(finalSig.success),color:ACCENT},{label:'Accuracy',value:finalSig.total>0?Math.round(finalSig.success/finalSig.total*100)+'%':'0%',color:'#4ade80'},{label:'Best Streak',value:'x'+finalSig.maxStreak,color:'#fbbf24'},{label:'Attempts',value:String(finalSig.total),color:'#06b6d4'}]}
-      accentColor={theme.colors.accent??ACCENT} onPlayAgain={handlePlayAgain} didWin={finalSig.success>=8}/>}
-  </GameShell>);}
+
+  useEffect(()=>()=>{cancelAnimationFrame(animRef.current);if(timerRef.current)clearInterval(timerRef.current);if(stopMusicRef.current)stopMusicRef.current();if(streamRef.current)streamRef.current.getTracks().forEach(t=>t.stop());},[]);
+
+  
+  const [phase, setPhase] = useState<Phase>('start');
+  const [timeLeft, setTimeLeft] = useState(DURATION);
+  const [scoreDisplay, setScoreDisplay] = useState(0);
+  const [finalSig, setFinalSig] = useState<Signals|null>(null);
+  const playerSessionRef = useRef<PlayerSession|null>(null);
+  
+  const handleStart = useCallback((name: string, avatar: string) => { initAudio(); playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar); setPhase('countdown'); }, []);
+  const handleCountdownDone = useCallback(() => { startLoop(); }, [startLoop]);
+  const handlePlayAgain = useCallback(() => { setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null); }, []);
+  const buildInsights = (sig: Signals) => {
+    const acc = sig.attempts > 0 ? Math.round((sig.hits/sig.attempts)*100) : 0;
+    const avg = sig.reactionTimes.length > 0 ? Math.round(sig.reactionTimes.reduce((a,b)=>a+b,0)/sig.reactionTimes.length) : 0;
+    const pb = parseInt(localStorage.getItem(PB_KEY) ?? '0');
+    if (sig.score > pb) localStorage.setItem(PB_KEY, String(sig.score));
+    return [
+      { label: 'Accuracy', value: acc + '%', color: acc>=70?'#4ade80':acc>=40?'#facc15':'#ef4444' },
+      { label: 'Avg React', value: avg + 'ms', color: ACCENT },
+      { label: 'Best Streak', value: '×' + sig.maxStreak, color: ACCENT },
+      { label: 'Score', value: String(sig.score), color: 'var(--color-text)' },
+    ];
+  };
+  
+  return (
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent??ACCENT}>
+      {phase==='start'&&<GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description={GAME_TAGLINE} ctaLabel="Allow Mic" accentColor={theme.colors.accent??ACCENT} onStart={handleStart}/>}
+      {phase==='countdown'&&<Countdown onComplete={handleCountdownDone} accentColor={theme.colors.accent??ACCENT}/>}
+      {(phase==='playing'||phase==='countdown')&&<>
+        <canvas ref={canvasRef} aria-label="Howl Wolf game canvas" role="img" style={{position:'absolute',inset:0,width:'100%',height:'100%',touchAction:'none'}}/>
+        {phase==='playing'&&<GameHUD accentColor={theme.colors.accent??ACCENT} items={[{label:'TIME',value:timeLeft,danger:timeLeft<=5},{label:'SCORE',value:scoreDisplay}]}/>}
+      </>}
+      {phase==='done'&&finalSig&&<>
+        <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI} score={String(finalSig.score)} personality={getPersonality(finalSig)} insights={buildInsights(finalSig)} accentColor={theme.colors.accent??ACCENT} onPlayAgain={handlePlayAgain} didWin={finalSig.score>=5}/>
+        <WebhookEmitter theme={theme} sig={finalSig} personality={getPersonality(finalSig)} player={playerSessionRef.current}/>
+      </>}
+    </GameShell>
+  );
+}
+}

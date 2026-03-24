@@ -5,78 +5,164 @@ import GameHUD from '@/components/GameHUD';
 import GameStartScreen from '@/components/GameStartScreen';
 import Countdown from '@/components/Countdown';
 import EndScreen from '@/components/EndScreen';
-import { initAudio, sfx } from '@/lib/audio';
-import { hapticScore, hapticFail, hapticVictory, hapticCombo, hapticImpact } from '@/lib/haptics';
+import { initAudio, sfx, haptic, startMusic } from '@/lib/audio';
 import { useBrandTheme } from '@/lib/useBrandTheme';
+import { postWebhook } from '@/lib/webhook';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
-const GAME_ID='binary-decode';const ACCENT='#22c55e';const DURATION=45;const GAME_EMOJI='💻';const GAME_TITLE='Binary Decode';const GAME_TAGLINE='Flip the bits. Find the number.';
-interface Signals{total:number;success:number;fail:number;maxStreak:number;streakCurrent:number;score:number;bonus:number;}
-function getPersonality(s:Signals){const a=s.total>0?s.success/s.total:0;if(a>=0.9&&s.maxStreak>=5)return'Champion ✨';if(s.maxStreak>=6)return'On Fire 🔥';if(a>=0.7)return'Skilled Player 🎯';return'Keep Practicing 💪';}
-type Phase='start'|'countdown'|'playing'|'done';
-interface GameState{running:boolean;timeLeft:number;sig:Signals;frame:number;phase2:number;accentColor:string;floats:Array<{x:number;y:number;text:string;alpha:number;vy:number;color:string}>;scorePop:number;activeZone:number;zoneTimer:number;particles:Array<{x:number;y:number;vx:number;vy:number;alpha:number;color:string}>;}
-export default function BinaryDecode(){
-  const theme=useBrandTheme();
-  const canvasRef=useRef<HTMLCanvasElement>(null);const animRef=useRef(0);const timerRef=useRef<ReturnType<typeof setInterval>|null>(null);
-  const stateRef=useRef<GameState>({running:false,timeLeft:DURATION,sig:{total:0,success:0,fail:0,maxStreak:0,streakCurrent:0,score:0,bonus:0},frame:0,phase2:0,accentColor:ACCENT,floats:[],scorePop:0,activeZone:-1,zoneTimer:0,particles:[]});
-  const[phase,setPhase]=useState<Phase>('start');const[timeLeft,setTimeLeft]=useState(DURATION);const[scoreDisplay,setScoreDisplay]=useState(0);const[finalSig,setFinalSig]=useState<Signals|null>(null);
-  const playerSessionRef=useRef<PlayerSession|null>(null);
-  useEffect(()=>{stateRef.current.accentColor=theme.colors.accent??ACCENT;},[theme]);
-  const endGame=useCallback(()=>{const s=stateRef.current;s.running=false;cancelAnimationFrame(animRef.current);if(timerRef.current){clearInterval(timerRef.current);timerRef.current=null;}const pb=parseInt(localStorage.getItem('pb_'+GAME_ID)??"0");if(s.sig.score>pb)localStorage.setItem('pb_'+GAME_ID,String(s.sig.score));setFinalSig({...s.sig});setPhase('done');hapticVictory();},[]);
-  const startLoop=useCallback(()=>{
-    const canvas=canvasRef.current;if(!canvas)return;const ctx=canvas.getContext('2d');if(!ctx)return;
-    const s=stateRef.current;const W=canvas.width,H=canvas.height;
-    s.running=true;s.timeLeft=DURATION;s.sig={total:0,success:0,fail:0,maxStreak:0,streakCurrent:0,score:0,bonus:0};s.frame=0;s.phase2=0;s.floats=[];s.scorePop=0;s.activeZone=Math.floor(Math.random()*5);s.zoneTimer=60;s.particles=[];
-    setScoreDisplay(0);setTimeLeft(DURATION);setPhase('playing');
-    timerRef.current=setInterval(()=>{s.timeLeft--;setTimeLeft(s.timeLeft);if(s.timeLeft<=0){sfx.fail();endGame();}},1000);
-    const ZONES=5;const zoneH=Math.floor((H*0.7)/ZONES);const startY=H*0.1;
+
+const GAME_ID = 'binary-decode';
+const ACCENT = '#22c55e';
+const DURATION = 45;
+const GAME_EMOJI = '🧙';
+const GAME_TITLE = 'Binary Decode';
+const GAME_TAGLINE = 'Flip the bits. Find the number.';
+const BG_COLOR = '#001407';
+const MUSIC_PAT: import('@/lib/audio').MusicPattern = 'minimal';
+const PB_KEY = 'mg_pb_binary-decode';
+
+interface Signals {
+  score: number; hits: number; attempts: number;
+  reactionTimes: number[]; maxStreak: number; streakCurrent: number;
+}
+function getPersonality(sig: Signals): string {
+  const acc = sig.attempts > 0 ? sig.hits / sig.attempts : 0;
+  const avg = sig.reactionTimes.length > 0 ? sig.reactionTimes.reduce((a,b)=>a+b,0)/sig.reactionTimes.length : 9999;
+  if (acc >= 0.75 && avg < 700) return 'Bit Wizard 🧙';
+  if (acc >= 0.55) return 'Code Breaker 💻';
+  if (sig.maxStreak >= 4) return 'Binary Mind 🔢';
+  return 'Bit Confused 😵';
+}
+type Phase = 'start' | 'countdown' | 'playing' | 'done';
+function WebhookEmitter({ theme, sig, personality, player }: { theme: ReturnType<typeof useBrandTheme>; sig: Signals; personality: string; player: PlayerSession | null; }) {
+  const fired = useRef(false);
+  useEffect(() => { if (fired.current) return; fired.current = true; postWebhook(theme, GAME_ID, { personality, score: sig.score }, player); }, [theme, sig, personality, player]);
+  return null;
+}
+
+export default function BinaryDecodeGame() {
+  const theme = useBrandTheme();
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const animRef = useRef(0);
+  const timerRef = useRef<ReturnType<typeof setInterval>|null>(null);
+  const stopMusicRef = useRef<(()=>void)|null>(null);
+  const QUESTIONS: {q:string,opts:string[],c:number}[] = [{"q":"0101 in decimal?","opts":["3","4","5","6"],"c":2},{"q":"1000 in decimal?","opts":["6","7","8","9"],"c":2},{"q":"1111 in decimal?","opts":["13","14","15","16"],"c":2},{"q":"0011 in decimal?","opts":["1","2","3","4"],"c":2},{"q":"1010 in decimal?","opts":["8","9","10","11"],"c":2}];
+  const stateRef = useRef({ running:false, timeLeft:DURATION, sig:{score:0,hits:0,attempts:0,reactionTimes:[] as number[],maxStreak:0,streakCurrent:0}, cur:{q:'',opts:[] as string[],c:0,spawnTime:0}, btns:[] as {x:number,y:number,w:number,h:number,label:string,ok:boolean,flash:number}[] });
+
+  const newQ = useCallback((W:number,H:number)=>{
+    const s=stateRef.current; const q=QUESTIONS[Math.floor(Math.random()*QUESTIONS.length)];
+    const opts=[...q.opts]; const ans=opts[q.c];
+    for(let i=opts.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[opts[i],opts[j]]=[opts[j],opts[i]];}
+    const nc=opts.indexOf(ans); s.cur={q:q.q,opts,c:nc,spawnTime:Date.now()}; s.sig.attempts++;
+    const N=opts.length,bW=Math.min((W-60)/2,155),bH=52,gap=10;
+    const sX=(W-2*bW-gap)/2, sY=H*0.54;
+    s.btns=Array.from({length:N},(_,i)=>({x:sX+(i%2)*(bW+gap),y:sY+Math.floor(i/2)*(bH+gap),w:bW,h:bH,label:opts[i],ok:i===nc,flash:0}));
+  },[]);
+
+  const endGame = useCallback(()=>{
+    const s=stateRef.current; s.running=false;
+    cancelAnimationFrame(animRef.current);
+    if(timerRef.current){clearInterval(timerRef.current);timerRef.current=null;}
+    if(stopMusicRef.current){stopMusicRef.current();stopMusicRef.current=null;}
+    setFinalSig({...s.sig}); setPhase('done');
+  },[]);
+
+  const startLoop = useCallback(()=>{
+    const c=canvasRef.current; if(!c) return;
+    const ctx=c.getContext('2d'); if(!ctx) return;
+    const s=stateRef.current;
+    s.running=true; s.timeLeft=DURATION;
+    s.sig={score:0,hits:0,attempts:0,reactionTimes:[],maxStreak:0,streakCurrent:0};
+    setScoreDisplay(0); setTimeLeft(DURATION); setPhase('playing');
+    stopMusicRef.current=startMusic(MUSIC_PAT);
+    timerRef.current=setInterval(()=>{s.timeLeft--;setTimeLeft(s.timeLeft);if(s.timeLeft<=0){sfx.fail();haptic([100]);endGame();}},1000);
+    newQ(c.width,c.height);
     const loop=()=>{
-      if(!s.running)return;ctx.clearRect(0,0,W,H);s.frame++;
-      // Background: #010a01
-      ctx.fillStyle='#010a01';ctx.fillRect(0,0,W,H);
-      // Accent grid overlay
-      ctx.strokeStyle=ACCENT+'08';ctx.lineWidth=1;
-      for(let gx=0;gx<W;gx+=32){ctx.beginPath();ctx.moveTo(gx,0);ctx.lineTo(gx,H);ctx.stroke();}
-      for(let gy=0;gy<H;gy+=32){ctx.beginPath();ctx.moveTo(0,gy);ctx.lineTo(W,gy);ctx.stroke();}
-      // Zone flash
-      s.zoneTimer--;if(s.zoneTimer<=0){s.activeZone=Math.floor(Math.random()*ZONES);s.zoneTimer=Math.max(25,80-s.sig.success*2);}
-      // Draw zones
-      for(let z=0;z<ZONES;z++){const zy=startY+z*zoneH;const isActive=z===s.activeZone;
-        ctx.save();ctx.shadowBlur=isActive?20:4;ctx.shadowColor=isActive?ACCENT:'transparent';
-        ctx.fillStyle=isActive?ACCENT+'33':'rgba(255,255,255,0.05)';
-        ctx.strokeStyle=isActive?ACCENT:'rgba(255,255,255,0.15)';ctx.lineWidth=isActive?3:1;
-        ctx.beginPath();(ctx as any).roundRect?.(20,zy,W-40,zoneH-4,8)??ctx.rect(20,zy,W-40,zoneH-4);ctx.fill();ctx.stroke();
-        if(isActive){ctx.fillStyle=ACCENT;ctx.font='bold 16px sans-serif';ctx.textAlign='center';ctx.fillText('TAP! '+GAME_EMOJI,W/2,zy+zoneH/2+6);}
-        ctx.restore();}
-      // Particles
-      s.particles.forEach(p=>{p.x+=p.vx;p.y+=p.vy;p.alpha*=0.92;p.vy+=0.1;});s.particles=s.particles.filter(p=>p.alpha>0.05);
-      s.particles.forEach(p=>{ctx.save();ctx.globalAlpha=p.alpha;ctx.fillStyle=p.color;ctx.beginPath();ctx.arc(p.x,p.y,4,0,Math.PI*2);ctx.fill();ctx.restore();});
-      if(s.scorePop>Date.now()){const t=(s.scorePop-Date.now())/300;ctx.save();ctx.globalAlpha=t;ctx.font='bold '+Math.round(38*(1+(1-t)*0.3))+'px sans-serif';ctx.fillStyle=ACCENT;ctx.textAlign='center';ctx.fillText(''+s.sig.score,W/2,90);ctx.restore();}
-      s.floats=s.floats.filter(f=>f.alpha>0.02);s.floats.forEach(f=>{ctx.save();ctx.globalAlpha=f.alpha;ctx.fillStyle=f.color;ctx.font='bold 22px sans-serif';ctx.textAlign='center';ctx.fillText(f.text,f.x,f.y);ctx.restore();f.y+=f.vy;f.alpha*=0.95;});
-      animRef.current=requestAnimationFrame(loop);};
+      if(!s.running) return;
+      const W=c.width,H=c.height;
+      ctx.fillStyle=BG_COLOR; ctx.fillRect(0,0,W,H);
+      ctx.fillStyle='rgba(255,255,255,0.88)'; ctx.font='bold 16px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+      const words=s.cur.q.split(' '),mW=W-40,lines:string[]=[]; let line='';
+      words.forEach(w=>{const t=line+w+' ';if(ctx.measureText(t).width>mW&&line){lines.push(line.trim());line=w+' ';}else line=t;}); lines.push(line.trim());
+      lines.forEach((l,i)=>ctx.fillText(l,W/2,H*0.33+(i-lines.length/2+0.5)*24));
+      s.btns.forEach(b=>{
+        const bright=b.flash>0;
+        ctx.shadowBlur=bright?16:0; ctx.shadowColor=bright?(b.ok?'#22c55e':'#ef4444'):'transparent';
+        ctx.fillStyle=bright?(b.ok?'#22c55e33':'#ef444433'):ACCENT+'20';
+        ctx.strokeStyle=bright?(b.ok?'#22c55e':ACCENT):ACCENT+'55'; ctx.lineWidth=bright?2.5:1.5;
+        ctx.roundRect(b.x,b.y,b.w,b.h,10); ctx.fill(); ctx.stroke(); ctx.shadowBlur=0;
+        ctx.fillStyle='rgba(255,255,255,0.82)'; ctx.font='12px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+        ctx.fillText(b.label,b.x+b.w/2,b.y+b.h/2);
+        if(b.flash>0) b.flash--;
+      });
+      if(s.sig.streakCurrent>=3){ctx.fillStyle=ACCENT;ctx.font='bold 15px sans-serif';ctx.textAlign='center';ctx.textBaseline='bottom';ctx.fillText('×'+s.sig.streakCurrent+' STREAK!',W/2,H-30);}
+      animRef.current=requestAnimationFrame(loop);
+    };
     animRef.current=requestAnimationFrame(loop);
-  },[endGame]);
+  },[endGame,newQ]);
+
+  const handleTap = useCallback((cx:number,cy:number)=>{
+    const c=canvasRef.current; if(!c) return;
+    const s=stateRef.current; if(!s.running) return;
+    const rect=c.getBoundingClientRect();
+    const x=(cx-rect.left)*(c.width/rect.width),y=(cy-rect.top)*(c.height/rect.height);
+    for(const b of s.btns){
+      if(x>=b.x&&x<=b.x+b.w&&y>=b.y&&y<=b.y+b.h){
+        b.flash=18; s.sig.reactionTimes.push(Date.now()-s.cur.spawnTime);
+        if(b.ok){s.sig.hits++;s.sig.streakCurrent++;if(s.sig.streakCurrent>s.sig.maxStreak)s.sig.maxStreak=s.sig.streakCurrent;s.sig.score+=s.sig.streakCurrent>=3?2:1;setScoreDisplay(s.sig.score);sfx.collect();haptic([30]);}
+        else{s.sig.streakCurrent=0;sfx.fail();haptic([40,30,40]);}
+        setTimeout(()=>{if(s.running&&c)newQ(c.width,c.height);},360);
+        break;
+      }
+    }
+  },[newQ]);
+
   useEffect(()=>{
-    const canvas=canvasRef.current;if(!canvas)return;
-    const resize=()=>{canvas.width=canvas.offsetWidth;canvas.height=canvas.offsetHeight;};resize();window.addEventListener('resize',resize);
-    const onPointerDown=(e:PointerEvent)=>{if(phase!=='playing')return;const s=stateRef.current;const rect=canvas.getBoundingClientRect();const px=(e.clientX-rect.left)*(canvas.width/rect.width),py=(e.clientY-rect.top)*(canvas.height/rect.height);
-      const W=canvas.width,H=canvas.height;const ZONES=5;const zoneH=Math.floor((H*0.7)/ZONES);const startY=H*0.1;
-      for(let z=0;z<ZONES;z++){const zy=startY+z*zoneH;if(py>=zy&&py<=zy+zoneH&&px>=20&&px<=W-20){
-        const isActive=z===s.activeZone;s.sig.total++;
-        if(isActive){s.sig.success++;s.sig.streakCurrent++;if(s.sig.streakCurrent>s.sig.maxStreak)s.sig.maxStreak=s.sig.streakCurrent;const mult=s.sig.streakCurrent>=3?2:1;s.sig.score+=mult;s.scorePop=Date.now()+300;setScoreDisplay(s.sig.score);sfx.collect();hapticScore();if(s.sig.streakCurrent>=3)hapticCombo(s.sig.streakCurrent);for(let p=0;p<8;p++)s.particles.push({x:px,y:py,vx:(Math.random()-0.5)*6,vy:-3-Math.random()*3,alpha:1,color:ACCENT});s.floats.push({x:W/2,y:py-30,text:'+'+mult+(s.sig.streakCurrent>=3?' 🔥':''),alpha:1,vy:-2.5,color:'#fbbf24'});s.activeZone=Math.floor(Math.random()*ZONES);s.zoneTimer=Math.max(25,80-s.sig.success*2);}
-        else{s.sig.fail++;s.sig.streakCurrent=0;sfx.collision();hapticFail();s.floats.push({x:W/2,y:py-30,text:'Miss!',alpha:1,vy:-1.5,color:'#ef4444'});}
-        break;}}};
-    canvas.addEventListener('pointerdown',onPointerDown);
-    return()=>{window.removeEventListener('resize',resize);canvas.removeEventListener('pointerdown',onPointerDown);};
-  },[phase]);
-  useEffect(()=>()=>{cancelAnimationFrame(animRef.current);if(timerRef.current)clearInterval(timerRef.current);},[]);
-  const handleStart=useCallback(async(n:string,a:string)=>{playerSessionRef.current=savePlayerSession(GAME_ID,n,a);await initAudio();setPhase('countdown');},[]);
-  const handlePlayAgain=useCallback(()=>{setPhase('start');setScoreDisplay(0);setTimeLeft(DURATION);setFinalSig(null);},[]);
-  return(<GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent??ACCENT}>
-    {phase==='start'&&<GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description={GAME_TAGLINE} ctaLabel={'Play! '+GAME_EMOJI} accentColor={theme.colors.accent??ACCENT} onStart={handleStart}/>}
-    {phase==='countdown'&&<Countdown onComplete={startLoop} accentColor={theme.colors.accent??ACCENT}/>}
-    {(phase==='playing'||phase==='countdown')&&(<><canvas ref={canvasRef} style={{position:'absolute',inset:0,width:'100%',height:'100%',touchAction:'none'}} role="img" aria-label={'Binary Decode game canvas'}/>
-    {phase==='playing'&&<GameHUD accentColor={theme.colors.accent??ACCENT} items={[{label:'TIME',value:timeLeft,danger:timeLeft<=10},{label:'SCORE',value:scoreDisplay}]}/>}</>)}
-    {phase==='done'&&finalSig&&<EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI} score={String(finalSig.score)} personality={getPersonality(finalSig)}
-      insights={[{label:'Success',value:String(finalSig.success),color:ACCENT},{label:'Accuracy',value:finalSig.total>0?Math.round(finalSig.success/finalSig.total*100)+'%':'0%',color:'#4ade80'},{label:'Best Streak',value:'x'+finalSig.maxStreak,color:'#fbbf24'},{label:'Attempts',value:String(finalSig.total),color:'#06b6d4'}]}
-      accentColor={theme.colors.accent??ACCENT} onPlayAgain={handlePlayAgain} didWin={finalSig.success>=8}/>}
-  </GameShell>);}
+    const c=canvasRef.current; if(!c) return;
+    const resize=()=>{c.width=c.offsetWidth;c.height=c.offsetHeight;};
+    resize(); window.addEventListener('resize',resize);
+    const onDown=(e:PointerEvent)=>{if(phase==='playing')handleTap(e.clientX,e.clientY);};
+    c.addEventListener('pointerdown',onDown);
+    return()=>{window.removeEventListener('resize',resize);c.removeEventListener('pointerdown',onDown);};
+  },[phase,handleTap]);
+
+  useEffect(()=>()=>{cancelAnimationFrame(animRef.current);if(timerRef.current)clearInterval(timerRef.current);if(stopMusicRef.current)stopMusicRef.current();},[]);
+
+  
+  const [phase, setPhase] = useState<Phase>('start');
+  const [timeLeft, setTimeLeft] = useState(DURATION);
+  const [scoreDisplay, setScoreDisplay] = useState(0);
+  const [finalSig, setFinalSig] = useState<Signals|null>(null);
+  const playerSessionRef = useRef<PlayerSession|null>(null);
+  
+  const handleStart = useCallback((name: string, avatar: string) => { initAudio(); playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar); setPhase('countdown'); }, []);
+  const handleCountdownDone = useCallback(() => { startLoop(); }, [startLoop]);
+  const handlePlayAgain = useCallback(() => { setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null); }, []);
+  const buildInsights = (sig: Signals) => {
+    const acc = sig.attempts > 0 ? Math.round((sig.hits/sig.attempts)*100) : 0;
+    const avg = sig.reactionTimes.length > 0 ? Math.round(sig.reactionTimes.reduce((a,b)=>a+b,0)/sig.reactionTimes.length) : 0;
+    const pb = parseInt(localStorage.getItem(PB_KEY) ?? '0');
+    if (sig.score > pb) localStorage.setItem(PB_KEY, String(sig.score));
+    return [
+      { label: 'Accuracy', value: acc + '%', color: acc>=70?'#4ade80':acc>=40?'#facc15':'#ef4444' },
+      { label: 'Avg React', value: avg + 'ms', color: ACCENT },
+      { label: 'Best Streak', value: '×' + sig.maxStreak, color: ACCENT },
+      { label: 'Score', value: String(sig.score), color: 'var(--color-text)' },
+    ];
+  };
+  
+  return (
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent??ACCENT}>
+      {phase==='start'&&<GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description={GAME_TAGLINE} ctaLabel="Start" accentColor={theme.colors.accent??ACCENT} onStart={handleStart}/>}
+      {phase==='countdown'&&<Countdown onComplete={handleCountdownDone} accentColor={theme.colors.accent??ACCENT}/>}
+      {(phase==='playing'||phase==='countdown')&&<>
+        <canvas ref={canvasRef} aria-label="Binary Decode game canvas" role="img" style={{position:'absolute',inset:0,width:'100%',height:'100%',touchAction:'none'}}/>
+        {phase==='playing'&&<GameHUD accentColor={theme.colors.accent??ACCENT} items={[{label:'TIME',value:timeLeft,danger:timeLeft<=5},{label:'SCORE',value:scoreDisplay}]}/>}
+      </>}
+      {phase==='done'&&finalSig&&<>
+        <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI} score={String(finalSig.score)} personality={getPersonality(finalSig)} insights={buildInsights(finalSig)} accentColor={theme.colors.accent??ACCENT} onPlayAgain={handlePlayAgain} didWin={finalSig.score>=5}/>
+        <WebhookEmitter theme={theme} sig={finalSig} personality={getPersonality(finalSig)} player={playerSessionRef.current}/>
+      </>}
+    </GameShell>
+  );
+}
+}

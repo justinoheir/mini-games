@@ -5,317 +5,164 @@ import GameHUD from '@/components/GameHUD';
 import GameStartScreen from '@/components/GameStartScreen';
 import Countdown from '@/components/Countdown';
 import EndScreen from '@/components/EndScreen';
-import { initAudio, sfx } from '@/lib/audio';
-import { hapticScore, hapticFail, hapticVictory, hapticCombo } from '@/lib/haptics';
+import { initAudio, sfx, haptic, startMusic } from '@/lib/audio';
 import { useBrandTheme } from '@/lib/useBrandTheme';
+import { postWebhook } from '@/lib/webhook';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
 
 const GAME_ID = 'mirror-mind';
 const ACCENT = '#8b5cf6';
 const DURATION = 45;
-const GAME_EMOJI = '🔮';
+const GAME_EMOJI = '🪞';
 const GAME_TITLE = 'Mirror Mind';
 const GAME_TAGLINE = 'Both hands. Mirrored. Synchronized.';
+const BG_COLOR = '#07000f';
+const MUSIC_PAT: import('@/lib/audio').MusicPattern = 'minimal';
+const PB_KEY = 'mg_pb_mirror-mind';
 
 interface Signals {
-  attempts: number;         // total target pairs shown
-  synced: number;           // successfully tapped both sides
-  avgDeltaMs: number;       // avg time between L and R taps
-  totalDeltaMs: number;
-  missedPairs: number;
-  score: number;
-  maxStreak: number;
-  streakCurrent: number;
+  score: number; hits: number; attempts: number;
+  reactionTimes: number[]; maxStreak: number; streakCurrent: number;
 }
-
 function getPersonality(sig: Signals): string {
-  const syncRate = sig.attempts > 0 ? sig.synced / sig.attempts : 0;
-  const avgDelta = sig.synced > 0 ? sig.totalDeltaMs / sig.synced : 9999;
-  if (syncRate >= 0.85 && avgDelta < 80) return 'Neural Sync 🧠';
-  if (sig.synced >= 12 && avgDelta < 120) return 'Mirror Master 🔮';
-  if (syncRate >= 0.7) return 'Both-Handed 🤝';
-  if (avgDelta < 150) return 'Quick Reflex ⚡';
-  return 'Finding Rhythm 🎵';
+  const acc = sig.attempts > 0 ? sig.hits / sig.attempts : 0;
+  const avg = sig.reactionTimes.length > 0 ? sig.reactionTimes.reduce((a,b)=>a+b,0)/sig.reactionTimes.length : 9999;
+  if (acc >= 0.75 && avg < 700) return 'Synchronized 🪞';
+  if (acc >= 0.55) return 'Bilateral Brain 🧠';
+  if (sig.maxStreak >= 4) return 'Focused 🎯';
+  return 'Off-Sync 🔀';
 }
-
 type Phase = 'start' | 'countdown' | 'playing' | 'done';
-
-interface Target {
-  y: number;     // Y position (same for both sides)
-  leftX: number; // X on left half
-  rightX: number;// X on right half (mirrored)
-  radius: number;
-  alpha: number; // fades from 1 to 0
-  spawnTime: number;
-  leftTapped: boolean;
-  rightTapped: boolean;
-  leftTapTime: number;
-  rightTapTime: number;
-}
-
-interface GameState {
-  running: boolean; timeLeft: number;
-  sig: Signals; frame: number; accentColor: string;
-  floats: Array<{ x: number; y: number; text: string; alpha: number; vy: number; color: string }>;
-  targets: Target[];
-  spawnInterval: number; // frames between spawns
-  nextSpawn: number;
-  speed: number;
+function WebhookEmitter({ theme, sig, personality, player }: { theme: ReturnType<typeof useBrandTheme>; sig: Signals; personality: string; player: PlayerSession | null; }) {
+  const fired = useRef(false);
+  useEffect(() => { if (fired.current) return; fired.current = true; postWebhook(theme, GAME_ID, { personality, score: sig.score }, player); }, [theme, sig, personality, player]);
+  return null;
 }
 
 export default function MirrorMindGame() {
   const theme = useBrandTheme();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const animRef = useRef(0);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const timerRef = useRef<ReturnType<typeof setInterval>|null>(null);
+  const stopMusicRef = useRef<(()=>void)|null>(null);
+  const QUESTIONS: {q:string,opts:string[],c:number}[] = [{"q":"Mirror the LEFT tap position","opts":["Same","Opposite side","Rotated 90°","Inverted"],"c":1},{"q":"Both sides must match?","opts":["Yes","No","Sometimes","Never"],"c":0},{"q":"Mirror means?","opts":["Copy","Flip","Rotate","Invert"],"c":1},{"q":"Synchronized means?","opts":["Fast","Together","Slow","Random"],"c":1}];
+  const stateRef = useRef({ running:false, timeLeft:DURATION, sig:{score:0,hits:0,attempts:0,reactionTimes:[] as number[],maxStreak:0,streakCurrent:0}, cur:{q:'',opts:[] as string[],c:0,spawnTime:0}, btns:[] as {x:number,y:number,w:number,h:number,label:string,ok:boolean,flash:number}[] });
 
-  const stateRef = useRef<GameState>({
-    running: false, timeLeft: DURATION,
-    sig: { attempts: 0, synced: 0, avgDeltaMs: 0, totalDeltaMs: 0, missedPairs: 0, score: 0, maxStreak: 0, streakCurrent: 0 },
-    frame: 0, accentColor: ACCENT, floats: [],
-    targets: [], spawnInterval: 90, nextSpawn: 60, speed: 1,
-  });
+  const newQ = useCallback((W:number,H:number)=>{
+    const s=stateRef.current; const q=QUESTIONS[Math.floor(Math.random()*QUESTIONS.length)];
+    const opts=[...q.opts]; const ans=opts[q.c];
+    for(let i=opts.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[opts[i],opts[j]]=[opts[j],opts[i]];}
+    const nc=opts.indexOf(ans); s.cur={q:q.q,opts,c:nc,spawnTime:Date.now()}; s.sig.attempts++;
+    const N=opts.length,bW=Math.min((W-60)/2,155),bH=52,gap=10;
+    const sX=(W-2*bW-gap)/2, sY=H*0.54;
+    s.btns=Array.from({length:N},(_,i)=>({x:sX+(i%2)*(bW+gap),y:sY+Math.floor(i/2)*(bH+gap),w:bW,h:bH,label:opts[i],ok:i===nc,flash:0}));
+  },[]);
 
+  const endGame = useCallback(()=>{
+    const s=stateRef.current; s.running=false;
+    cancelAnimationFrame(animRef.current);
+    if(timerRef.current){clearInterval(timerRef.current);timerRef.current=null;}
+    if(stopMusicRef.current){stopMusicRef.current();stopMusicRef.current=null;}
+    setFinalSig({...s.sig}); setPhase('done');
+  },[]);
+
+  const startLoop = useCallback(()=>{
+    const c=canvasRef.current; if(!c) return;
+    const ctx=c.getContext('2d'); if(!ctx) return;
+    const s=stateRef.current;
+    s.running=true; s.timeLeft=DURATION;
+    s.sig={score:0,hits:0,attempts:0,reactionTimes:[],maxStreak:0,streakCurrent:0};
+    setScoreDisplay(0); setTimeLeft(DURATION); setPhase('playing');
+    stopMusicRef.current=startMusic(MUSIC_PAT);
+    timerRef.current=setInterval(()=>{s.timeLeft--;setTimeLeft(s.timeLeft);if(s.timeLeft<=0){sfx.fail();haptic([100]);endGame();}},1000);
+    newQ(c.width,c.height);
+    const loop=()=>{
+      if(!s.running) return;
+      const W=c.width,H=c.height;
+      ctx.fillStyle=BG_COLOR; ctx.fillRect(0,0,W,H);
+      ctx.fillStyle='rgba(255,255,255,0.88)'; ctx.font='bold 16px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+      const words=s.cur.q.split(' '),mW=W-40,lines:string[]=[]; let line='';
+      words.forEach(w=>{const t=line+w+' ';if(ctx.measureText(t).width>mW&&line){lines.push(line.trim());line=w+' ';}else line=t;}); lines.push(line.trim());
+      lines.forEach((l,i)=>ctx.fillText(l,W/2,H*0.33+(i-lines.length/2+0.5)*24));
+      s.btns.forEach(b=>{
+        const bright=b.flash>0;
+        ctx.shadowBlur=bright?16:0; ctx.shadowColor=bright?(b.ok?'#22c55e':'#ef4444'):'transparent';
+        ctx.fillStyle=bright?(b.ok?'#22c55e33':'#ef444433'):ACCENT+'20';
+        ctx.strokeStyle=bright?(b.ok?'#22c55e':ACCENT):ACCENT+'55'; ctx.lineWidth=bright?2.5:1.5;
+        ctx.roundRect(b.x,b.y,b.w,b.h,10); ctx.fill(); ctx.stroke(); ctx.shadowBlur=0;
+        ctx.fillStyle='rgba(255,255,255,0.82)'; ctx.font='12px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+        ctx.fillText(b.label,b.x+b.w/2,b.y+b.h/2);
+        if(b.flash>0) b.flash--;
+      });
+      if(s.sig.streakCurrent>=3){ctx.fillStyle=ACCENT;ctx.font='bold 15px sans-serif';ctx.textAlign='center';ctx.textBaseline='bottom';ctx.fillText('×'+s.sig.streakCurrent+' STREAK!',W/2,H-30);}
+      animRef.current=requestAnimationFrame(loop);
+    };
+    animRef.current=requestAnimationFrame(loop);
+  },[endGame,newQ]);
+
+  const handleTap = useCallback((cx:number,cy:number)=>{
+    const c=canvasRef.current; if(!c) return;
+    const s=stateRef.current; if(!s.running) return;
+    const rect=c.getBoundingClientRect();
+    const x=(cx-rect.left)*(c.width/rect.width),y=(cy-rect.top)*(c.height/rect.height);
+    for(const b of s.btns){
+      if(x>=b.x&&x<=b.x+b.w&&y>=b.y&&y<=b.y+b.h){
+        b.flash=18; s.sig.reactionTimes.push(Date.now()-s.cur.spawnTime);
+        if(b.ok){s.sig.hits++;s.sig.streakCurrent++;if(s.sig.streakCurrent>s.sig.maxStreak)s.sig.maxStreak=s.sig.streakCurrent;s.sig.score+=s.sig.streakCurrent>=3?2:1;setScoreDisplay(s.sig.score);sfx.collect();haptic([30]);}
+        else{s.sig.streakCurrent=0;sfx.fail();haptic([40,30,40]);}
+        setTimeout(()=>{if(s.running&&c)newQ(c.width,c.height);},360);
+        break;
+      }
+    }
+  },[newQ]);
+
+  useEffect(()=>{
+    const c=canvasRef.current; if(!c) return;
+    const resize=()=>{c.width=c.offsetWidth;c.height=c.offsetHeight;};
+    resize(); window.addEventListener('resize',resize);
+    const onDown=(e:PointerEvent)=>{if(phase==='playing')handleTap(e.clientX,e.clientY);};
+    c.addEventListener('pointerdown',onDown);
+    return()=>{window.removeEventListener('resize',resize);c.removeEventListener('pointerdown',onDown);};
+  },[phase,handleTap]);
+
+  useEffect(()=>()=>{cancelAnimationFrame(animRef.current);if(timerRef.current)clearInterval(timerRef.current);if(stopMusicRef.current)stopMusicRef.current();},[]);
+
+  
   const [phase, setPhase] = useState<Phase>('start');
   const [timeLeft, setTimeLeft] = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
-  const [finalSig, setFinalSig] = useState<Signals | null>(null);
-  const playerSessionRef = useRef<PlayerSession | null>(null);
-
-  useEffect(() => { stateRef.current.accentColor = theme.colors.accent ?? ACCENT; }, [theme]);
-
-  const endGame = useCallback(() => {
-    const s = stateRef.current;
-    s.running = false;
-    cancelAnimationFrame(animRef.current);
-    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
-    const pb = parseInt(localStorage.getItem('pb_' + GAME_ID) ?? '0');
-    if (s.sig.score > pb) localStorage.setItem('pb_' + GAME_ID, String(s.sig.score));
-    setFinalSig({ ...s.sig });
-    setPhase('done');
-    hapticVictory();
-  }, []);
-
-  const startLoop = useCallback(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    const s = stateRef.current;
-
-    s.running = true; s.timeLeft = DURATION;
-    s.sig = { attempts: 0, synced: 0, avgDeltaMs: 0, totalDeltaMs: 0, missedPairs: 0, score: 0, maxStreak: 0, streakCurrent: 0 };
-    s.frame = 0; s.floats = []; s.targets = [];
-    s.spawnInterval = 90; s.nextSpawn = 40; s.speed = 1;
-    setScoreDisplay(0); setTimeLeft(DURATION); setPhase('playing');
-
-    timerRef.current = setInterval(() => {
-      s.timeLeft--; setTimeLeft(s.timeLeft);
-      if (s.timeLeft <= 0) { sfx.fail(); endGame(); }
-    }, 1000);
-
-    const loop = () => {
-      if (!s.running) return;
-      const W = canvas.width, H = canvas.height;
-      ctx.clearRect(0, 0, W, H);
-      s.frame++;
-
-      // Background - deep purple split
-      ctx.fillStyle = '#0d0618'; ctx.fillRect(0, 0, W, H);
-      // Left half tint
-      ctx.fillStyle = 'rgba(139,92,246,0.06)'; ctx.fillRect(0, 0, W / 2, H);
-      // Right half tint
-      ctx.fillStyle = 'rgba(168,85,247,0.06)'; ctx.fillRect(W / 2, 0, W / 2, H);
-      // Center divider
-      ctx.strokeStyle = 'rgba(139,92,246,0.4)'; ctx.lineWidth = 2; ctx.setLineDash([8, 8]);
-      ctx.beginPath(); ctx.moveTo(W / 2, 0); ctx.lineTo(W / 2, H); ctx.stroke();
-      ctx.setLineDash([]);
-
-      // Mirror guides (faint vertical lines)
-      ctx.strokeStyle = 'rgba(139,92,246,0.1)'; ctx.lineWidth = 1;
-      for (let x = 40; x < W / 2; x += 50) {
-        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
-        ctx.beginPath(); ctx.moveTo(W - x, 0); ctx.lineTo(W - x, H); ctx.stroke();
-      }
-
-      // Side labels
-      ctx.fillStyle = 'rgba(139,92,246,0.5)'; ctx.font = 'bold 13px sans-serif';
-      ctx.textAlign = 'center'; ctx.fillText('L', W * 0.15, H - 15);
-      ctx.fillText('R', W * 0.85, H - 15);
-
-      // Spawn targets
-      s.nextSpawn--;
-      if (s.nextSpawn <= 0) {
-        const margin = 50;
-        const halfW = W / 2;
-        const lx = margin + Math.random() * (halfW - margin * 2);
-        const ry = margin * 2 + Math.random() * (H - margin * 3);
-        s.targets.push({
-          y: ry,
-          leftX: lx, rightX: W - lx, // perfect mirror
-          radius: 32,
-          alpha: 1, spawnTime: Date.now(),
-          leftTapped: false, rightTapped: false,
-          leftTapTime: 0, rightTapTime: 0,
-        });
-        s.sig.attempts++;
-        s.nextSpawn = s.spawnInterval;
-        s.spawnInterval = Math.max(45, 90 - s.sig.attempts * 2);
-      }
-
-      // Update and draw targets
-      const lifetime = 2200;
-      s.targets = s.targets.filter(t => {
-        const age = Date.now() - t.spawnTime;
-        t.alpha = Math.max(0, 1 - age / lifetime);
-
-        // Check if both tapped
-        if (t.leftTapped && t.rightTapped) {
-          const delta = Math.abs(t.leftTapTime - t.rightTapTime);
-          const pts = delta < 80 ? 3 : delta < 150 ? 2 : 1;
-          s.sig.synced++;
-          s.sig.totalDeltaMs += delta;
-          s.sig.streakCurrent++;
-          if (s.sig.streakCurrent > s.sig.maxStreak) s.sig.maxStreak = s.sig.streakCurrent;
-          s.sig.score += pts + (s.sig.streakCurrent >= 3 ? 1 : 0);
-          setScoreDisplay(s.sig.score);
-          const label = delta < 80 ? '🔥 PERFECT SYNC!' : delta < 150 ? '⚡ SYNCED' : '👍 OK';
-          s.floats.push({ x: W / 2, y: t.y - 30, text: label, alpha: 1, vy: -2.5, color: delta < 80 ? '#fbbf24' : ACCENT });
-          sfx.collect(); hapticScore();
-          if (s.sig.streakCurrent >= 3) hapticCombo(s.sig.streakCurrent);
-          return false; // remove
-        }
-
-        // Missed (faded out without both taps)
-        if (t.alpha <= 0 && !(t.leftTapped && t.rightTapped)) {
-          s.sig.missedPairs++;
-          s.sig.streakCurrent = 0;
-          sfx.collision(); hapticFail();
-          return false;
-        }
-
-        if (t.alpha <= 0) return false;
-
-        // Draw left target
-        const pulseR = t.radius + Math.sin(s.frame * 0.15) * 3;
-        ctx.save(); ctx.globalAlpha = t.alpha;
-
-        // Left
-        ctx.shadowBlur = t.leftTapped ? 0 : 16; ctx.shadowColor = ACCENT;
-        ctx.strokeStyle = t.leftTapped ? '#4ade80' : ACCENT;
-        ctx.lineWidth = 3;
-        ctx.beginPath(); ctx.arc(t.leftX, t.y, pulseR, 0, Math.PI * 2);
-        if (t.leftTapped) { ctx.fillStyle = '#4ade8044'; ctx.fill(); }
-        ctx.stroke();
-
-        // Right (mirror)
-        ctx.shadowColor = ACCENT;
-        ctx.strokeStyle = t.rightTapped ? '#4ade80' : ACCENT;
-        ctx.beginPath(); ctx.arc(t.rightX, t.y, pulseR, 0, Math.PI * 2);
-        if (t.rightTapped) { ctx.fillStyle = '#4ade8044'; ctx.fill(); }
-        ctx.stroke();
-
-        // Inner dots
-        ctx.shadowBlur = 0;
-        ctx.fillStyle = t.leftTapped ? '#4ade80' : ACCENT;
-        ctx.beginPath(); ctx.arc(t.leftX, t.y, 6, 0, Math.PI * 2); ctx.fill();
-        ctx.fillStyle = t.rightTapped ? '#4ade80' : ACCENT;
-        ctx.beginPath(); ctx.arc(t.rightX, t.y, 6, 0, Math.PI * 2); ctx.fill();
-
-        // Connecting line (dashed)
-        ctx.strokeStyle = `rgba(139,92,246,${t.alpha * 0.3})`; ctx.lineWidth = 1; ctx.setLineDash([4, 4]);
-        ctx.beginPath(); ctx.moveTo(t.leftX + pulseR, t.y); ctx.lineTo(t.rightX - pulseR, t.y); ctx.stroke();
-        ctx.setLineDash([]);
-        ctx.restore();
-
-        return true;
-      });
-
-      // Floats
-      s.floats = s.floats.filter(f => f.alpha > 0.02);
-      s.floats.forEach(f => {
-        ctx.save(); ctx.globalAlpha = f.alpha;
-        ctx.fillStyle = f.color; ctx.font = 'bold 18px sans-serif'; ctx.textAlign = 'center';
-        ctx.fillText(f.text, f.x, f.y); ctx.restore();
-        f.y += f.vy; f.alpha *= 0.95;
-      });
-
-      animRef.current = requestAnimationFrame(loop);
-    };
-    animRef.current = requestAnimationFrame(loop);
-  }, [endGame]);
-
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const resize = () => { canvas.width = canvas.offsetWidth; canvas.height = canvas.offsetHeight; };
-    resize();
-    window.addEventListener('resize', resize);
-
-    const onPointerDown = (e: PointerEvent) => {
-      if (phase !== 'playing') return;
-      const s = stateRef.current;
-      const rect = canvas.getBoundingClientRect();
-      const px = (e.clientX - rect.left) * (canvas.width / rect.width);
-      const py = (e.clientY - rect.top) * (canvas.height / rect.height);
-      const W = canvas.width;
-      const isLeft = px < W / 2;
-
-      // Find closest target on appropriate side
-      let bestDist = 60, bestIdx = -1;
-      s.targets.forEach((t, i) => {
-        const tx = isLeft ? t.leftX : t.rightX;
-        const already = isLeft ? t.leftTapped : t.rightTapped;
-        if (already) return;
-        const d = Math.hypot(px - tx, py - t.y);
-        if (d < bestDist) { bestDist = d; bestIdx = i; }
-      });
-
-      if (bestIdx >= 0) {
-        const t = s.targets[bestIdx];
-        if (isLeft) { t.leftTapped = true; t.leftTapTime = Date.now(); }
-        else { t.rightTapped = true; t.rightTapTime = Date.now(); }
-      }
-    };
-
-    canvas.addEventListener('pointerdown', onPointerDown);
-    return () => {
-      window.removeEventListener('resize', resize);
-      canvas.removeEventListener('pointerdown', onPointerDown);
-    };
-  }, [phase]);
-
-  useEffect(() => () => {
-    cancelAnimationFrame(animRef.current);
-    if (timerRef.current) clearInterval(timerRef.current);
-  }, []);
-
-  const handleStart = useCallback(async (n: string, a: string) => {
-    playerSessionRef.current = savePlayerSession(GAME_ID, n, a);
-    await initAudio(); setPhase('countdown');
-  }, []);
+  const [finalSig, setFinalSig] = useState<Signals|null>(null);
+  const playerSessionRef = useRef<PlayerSession|null>(null);
+  
+  const handleStart = useCallback((name: string, avatar: string) => { initAudio(); playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar); setPhase('countdown'); }, []);
+  const handleCountdownDone = useCallback(() => { startLoop(); }, [startLoop]);
   const handlePlayAgain = useCallback(() => { setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null); }, []);
-
+  const buildInsights = (sig: Signals) => {
+    const acc = sig.attempts > 0 ? Math.round((sig.hits/sig.attempts)*100) : 0;
+    const avg = sig.reactionTimes.length > 0 ? Math.round(sig.reactionTimes.reduce((a,b)=>a+b,0)/sig.reactionTimes.length) : 0;
+    const pb = parseInt(localStorage.getItem(PB_KEY) ?? '0');
+    if (sig.score > pb) localStorage.setItem(PB_KEY, String(sig.score));
+    return [
+      { label: 'Accuracy', value: acc + '%', color: acc>=70?'#4ade80':acc>=40?'#facc15':'#ef4444' },
+      { label: 'Avg React', value: avg + 'ms', color: ACCENT },
+      { label: 'Best Streak', value: '×' + sig.maxStreak, color: ACCENT },
+      { label: 'Score', value: String(sig.score), color: 'var(--color-text)' },
+    ];
+  };
+  
   return (
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
-      {phase === 'start' && <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description="Tap both sides simultaneously — the circles are mirrored!" ctaLabel="Sync! 🔮" accentColor={theme.colors.accent ?? ACCENT} onStart={handleStart} />}
-      {phase === 'countdown' && <Countdown onComplete={startLoop} accentColor={theme.colors.accent ?? ACCENT} />}
-      {(phase === 'playing' || phase === 'countdown') && (
-        <>
-          <canvas ref={canvasRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none' }} role="img" aria-label="Mirror Mind game canvas" />
-          {phase === 'playing' && <GameHUD accentColor={theme.colors.accent ?? ACCENT} items={[{ label: 'TIME', value: timeLeft, danger: timeLeft <= 10 }, { label: 'SCORE', value: scoreDisplay }]} />}
-        </>
-      )}
-      {phase === 'done' && finalSig && (
-        <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI} score={String(finalSig.score)} personality={getPersonality(finalSig)}
-          insights={[
-            { label: 'Synced', value: `${finalSig.synced}/${finalSig.attempts}`, color: ACCENT },
-            { label: 'Avg Delta', value: `${finalSig.synced > 0 ? Math.round(finalSig.totalDeltaMs / finalSig.synced) : 0}ms`, color: '#fbbf24' },
-            { label: 'Best Streak', value: `×${finalSig.maxStreak}`, color: '#4ade80' },
-            { label: 'Missed', value: String(finalSig.missedPairs), color: finalSig.missedPairs === 0 ? '#4ade80' : '#ef4444' },
-          ]}
-          accentColor={theme.colors.accent ?? ACCENT} onPlayAgain={handlePlayAgain} didWin={finalSig.synced >= 10} />
-      )}
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent??ACCENT}>
+      {phase==='start'&&<GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description={GAME_TAGLINE} ctaLabel="Start" accentColor={theme.colors.accent??ACCENT} onStart={handleStart}/>}
+      {phase==='countdown'&&<Countdown onComplete={handleCountdownDone} accentColor={theme.colors.accent??ACCENT}/>}
+      {(phase==='playing'||phase==='countdown')&&<>
+        <canvas ref={canvasRef} aria-label="Mirror Mind game canvas" role="img" style={{position:'absolute',inset:0,width:'100%',height:'100%',touchAction:'none'}}/>
+        {phase==='playing'&&<GameHUD accentColor={theme.colors.accent??ACCENT} items={[{label:'TIME',value:timeLeft,danger:timeLeft<=5},{label:'SCORE',value:scoreDisplay}]}/>}
+      </>}
+      {phase==='done'&&finalSig&&<>
+        <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI} score={String(finalSig.score)} personality={getPersonality(finalSig)} insights={buildInsights(finalSig)} accentColor={theme.colors.accent??ACCENT} onPlayAgain={handlePlayAgain} didWin={finalSig.score>=5}/>
+        <WebhookEmitter theme={theme} sig={finalSig} personality={getPersonality(finalSig)} player={playerSessionRef.current}/>
+      </>}
     </GameShell>
   );
+}
 }

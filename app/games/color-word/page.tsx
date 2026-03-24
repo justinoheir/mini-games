@@ -5,338 +5,164 @@ import GameHUD from '@/components/GameHUD';
 import GameStartScreen from '@/components/GameStartScreen';
 import Countdown from '@/components/Countdown';
 import EndScreen from '@/components/EndScreen';
-import { initAudio, sfx } from '@/lib/audio';
-import { hapticScore, hapticFail, hapticVictory, hapticCombo } from '@/lib/haptics';
+import { initAudio, sfx, haptic, startMusic } from '@/lib/audio';
 import { useBrandTheme } from '@/lib/useBrandTheme';
+import { postWebhook } from '@/lib/webhook';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
 
 const GAME_ID = 'color-word';
 const ACCENT = '#f43f5e';
 const DURATION = 30;
-const GAME_EMOJI = '🎨';
+const GAME_EMOJI = '🌈';
 const GAME_TITLE = 'Color Word';
 const GAME_TAGLINE = 'Ignore the meaning. Trust your eyes.';
+const BG_COLOR = '#14000a';
+const MUSIC_PAT: import('@/lib/audio').MusicPattern = 'minimal';
+const PB_KEY = 'mg_pb_color-word';
 
 interface Signals {
-  total: number;
-  correct: number;
-  wrong: number;
-  congruent: number;      // word matches ink color (easier)
-  incongruent: number;    // word doesn't match (harder — Stroop effect)
-  incongruentCorrect: number;
-  avgReactionMs: number;
-  totalMs: number;
-  score: number;
-  maxStreak: number;
-  streakCurrent: number;
+  score: number; hits: number; attempts: number;
+  reactionTimes: number[]; maxStreak: number; streakCurrent: number;
 }
-
 function getPersonality(sig: Signals): string {
-  const acc = sig.total > 0 ? sig.correct / sig.total : 0;
-  const incongruent = sig.incongruent > 0 ? sig.incongruentCorrect / sig.incongruent : 0;
-  if (acc >= 0.9 && incongruent >= 0.85) return 'Stroop Master 🧠';
-  if (incongruent >= 0.75) return 'Interference Proof 🛡️';
-  if (acc >= 0.8) return 'Color Reader 🎨';
-  if (sig.avgReactionMs < 600) return 'Fast Fingers ⚡';
-  return 'Still Processing 🤔';
+  const acc = sig.attempts > 0 ? sig.hits / sig.attempts : 0;
+  const avg = sig.reactionTimes.length > 0 ? sig.reactionTimes.reduce((a,b)=>a+b,0)/sig.reactionTimes.length : 9999;
+  if (acc >= 0.75 && avg < 700) return 'Stroop Master 🧠';
+  if (acc >= 0.55) return 'Focused Mind 🔍';
+  if (sig.maxStreak >= 4) return 'Consistent ✅';
+  return 'Color Confused 🌈';
 }
-
 type Phase = 'start' | 'countdown' | 'playing' | 'done';
-
-const COLORS = [
-  { name: 'RED', hex: '#ef4444' },
-  { name: 'BLUE', hex: '#3b82f6' },
-  { name: 'GREEN', hex: '#22c55e' },
-  { name: 'YELLOW', hex: '#eab308' },
-];
-
-interface Question {
-  word: string;       // The word written (e.g., "RED")
-  inkColor: string;   // The ink hex color (e.g., "#3b82f6" = blue)
-  inkName: string;    // What the ink color IS (e.g., "BLUE")
-  isCongruent: boolean;
-}
-
-function makeQuestion(): Question {
-  const word = COLORS[Math.floor(Math.random() * COLORS.length)];
-  const isCongruent = Math.random() < 0.3; // 30% congruent
-  const ink = isCongruent ? word : COLORS.filter(c => c.name !== word.name)[Math.floor(Math.random() * 3)];
-  return { word: word.name, inkColor: ink.hex, inkName: ink.name, isCongruent };
-}
-
-interface GameState {
-  running: boolean; timeLeft: number;
-  sig: Signals; frame: number; accentColor: string;
-  floats: Array<{ x: number; y: number; text: string; alpha: number; vy: number; color: string }>;
-  question: Question | null;
-  shownAt: number;
-  feedback: 'correct' | 'wrong' | null;
-  feedbackTimer: number;
-  level: number;
+function WebhookEmitter({ theme, sig, personality, player }: { theme: ReturnType<typeof useBrandTheme>; sig: Signals; personality: string; player: PlayerSession | null; }) {
+  const fired = useRef(false);
+  useEffect(() => { if (fired.current) return; fired.current = true; postWebhook(theme, GAME_ID, { personality, score: sig.score }, player); }, [theme, sig, personality, player]);
+  return null;
 }
 
 export default function ColorWordGame() {
   const theme = useBrandTheme();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const animRef = useRef(0);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const timerRef = useRef<ReturnType<typeof setInterval>|null>(null);
+  const stopMusicRef = useRef<(()=>void)|null>(null);
+  const QUESTIONS: {q:string,opts:string[],c:number}[] = [{"q":"RED written in BLUE ink. Tap the ink color.","opts":["Red","Blue","Green","Yellow"],"c":1},{"q":"BLUE written in GREEN. Tap the ink color.","opts":["Blue","Green","Yellow","Red"],"c":1},{"q":"GREEN written in RED. Tap the ink color.","opts":["Blue","Red","Green","Purple"],"c":1},{"q":"YELLOW in PURPLE ink. Tap the ink color.","opts":["Yellow","Green","Purple","Blue"],"c":2}];
+  const stateRef = useRef({ running:false, timeLeft:DURATION, sig:{score:0,hits:0,attempts:0,reactionTimes:[] as number[],maxStreak:0,streakCurrent:0}, cur:{q:'',opts:[] as string[],c:0,spawnTime:0}, btns:[] as {x:number,y:number,w:number,h:number,label:string,ok:boolean,flash:number}[] });
 
-  const stateRef = useRef<GameState>({
-    running: false, timeLeft: DURATION,
-    sig: { total: 0, correct: 0, wrong: 0, congruent: 0, incongruent: 0, incongruentCorrect: 0, avgReactionMs: 0, totalMs: 0, score: 0, maxStreak: 0, streakCurrent: 0 },
-    frame: 0, accentColor: ACCENT, floats: [],
-    question: null, shownAt: 0, feedback: null, feedbackTimer: 0, level: 1,
-  });
+  const newQ = useCallback((W:number,H:number)=>{
+    const s=stateRef.current; const q=QUESTIONS[Math.floor(Math.random()*QUESTIONS.length)];
+    const opts=[...q.opts]; const ans=opts[q.c];
+    for(let i=opts.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[opts[i],opts[j]]=[opts[j],opts[i]];}
+    const nc=opts.indexOf(ans); s.cur={q:q.q,opts,c:nc,spawnTime:Date.now()}; s.sig.attempts++;
+    const N=opts.length,bW=Math.min((W-60)/2,155),bH=52,gap=10;
+    const sX=(W-2*bW-gap)/2, sY=H*0.54;
+    s.btns=Array.from({length:N},(_,i)=>({x:sX+(i%2)*(bW+gap),y:sY+Math.floor(i/2)*(bH+gap),w:bW,h:bH,label:opts[i],ok:i===nc,flash:0}));
+  },[]);
 
+  const endGame = useCallback(()=>{
+    const s=stateRef.current; s.running=false;
+    cancelAnimationFrame(animRef.current);
+    if(timerRef.current){clearInterval(timerRef.current);timerRef.current=null;}
+    if(stopMusicRef.current){stopMusicRef.current();stopMusicRef.current=null;}
+    setFinalSig({...s.sig}); setPhase('done');
+  },[]);
+
+  const startLoop = useCallback(()=>{
+    const c=canvasRef.current; if(!c) return;
+    const ctx=c.getContext('2d'); if(!ctx) return;
+    const s=stateRef.current;
+    s.running=true; s.timeLeft=DURATION;
+    s.sig={score:0,hits:0,attempts:0,reactionTimes:[],maxStreak:0,streakCurrent:0};
+    setScoreDisplay(0); setTimeLeft(DURATION); setPhase('playing');
+    stopMusicRef.current=startMusic(MUSIC_PAT);
+    timerRef.current=setInterval(()=>{s.timeLeft--;setTimeLeft(s.timeLeft);if(s.timeLeft<=0){sfx.fail();haptic([100]);endGame();}},1000);
+    newQ(c.width,c.height);
+    const loop=()=>{
+      if(!s.running) return;
+      const W=c.width,H=c.height;
+      ctx.fillStyle=BG_COLOR; ctx.fillRect(0,0,W,H);
+      ctx.fillStyle='rgba(255,255,255,0.88)'; ctx.font='bold 16px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+      const words=s.cur.q.split(' '),mW=W-40,lines:string[]=[]; let line='';
+      words.forEach(w=>{const t=line+w+' ';if(ctx.measureText(t).width>mW&&line){lines.push(line.trim());line=w+' ';}else line=t;}); lines.push(line.trim());
+      lines.forEach((l,i)=>ctx.fillText(l,W/2,H*0.33+(i-lines.length/2+0.5)*24));
+      s.btns.forEach(b=>{
+        const bright=b.flash>0;
+        ctx.shadowBlur=bright?16:0; ctx.shadowColor=bright?(b.ok?'#22c55e':'#ef4444'):'transparent';
+        ctx.fillStyle=bright?(b.ok?'#22c55e33':'#ef444433'):ACCENT+'20';
+        ctx.strokeStyle=bright?(b.ok?'#22c55e':ACCENT):ACCENT+'55'; ctx.lineWidth=bright?2.5:1.5;
+        ctx.roundRect(b.x,b.y,b.w,b.h,10); ctx.fill(); ctx.stroke(); ctx.shadowBlur=0;
+        ctx.fillStyle='rgba(255,255,255,0.82)'; ctx.font='12px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+        ctx.fillText(b.label,b.x+b.w/2,b.y+b.h/2);
+        if(b.flash>0) b.flash--;
+      });
+      if(s.sig.streakCurrent>=3){ctx.fillStyle=ACCENT;ctx.font='bold 15px sans-serif';ctx.textAlign='center';ctx.textBaseline='bottom';ctx.fillText('×'+s.sig.streakCurrent+' STREAK!',W/2,H-30);}
+      animRef.current=requestAnimationFrame(loop);
+    };
+    animRef.current=requestAnimationFrame(loop);
+  },[endGame,newQ]);
+
+  const handleTap = useCallback((cx:number,cy:number)=>{
+    const c=canvasRef.current; if(!c) return;
+    const s=stateRef.current; if(!s.running) return;
+    const rect=c.getBoundingClientRect();
+    const x=(cx-rect.left)*(c.width/rect.width),y=(cy-rect.top)*(c.height/rect.height);
+    for(const b of s.btns){
+      if(x>=b.x&&x<=b.x+b.w&&y>=b.y&&y<=b.y+b.h){
+        b.flash=18; s.sig.reactionTimes.push(Date.now()-s.cur.spawnTime);
+        if(b.ok){s.sig.hits++;s.sig.streakCurrent++;if(s.sig.streakCurrent>s.sig.maxStreak)s.sig.maxStreak=s.sig.streakCurrent;s.sig.score+=s.sig.streakCurrent>=3?2:1;setScoreDisplay(s.sig.score);sfx.collect();haptic([30]);}
+        else{s.sig.streakCurrent=0;sfx.fail();haptic([40,30,40]);}
+        setTimeout(()=>{if(s.running&&c)newQ(c.width,c.height);},360);
+        break;
+      }
+    }
+  },[newQ]);
+
+  useEffect(()=>{
+    const c=canvasRef.current; if(!c) return;
+    const resize=()=>{c.width=c.offsetWidth;c.height=c.offsetHeight;};
+    resize(); window.addEventListener('resize',resize);
+    const onDown=(e:PointerEvent)=>{if(phase==='playing')handleTap(e.clientX,e.clientY);};
+    c.addEventListener('pointerdown',onDown);
+    return()=>{window.removeEventListener('resize',resize);c.removeEventListener('pointerdown',onDown);};
+  },[phase,handleTap]);
+
+  useEffect(()=>()=>{cancelAnimationFrame(animRef.current);if(timerRef.current)clearInterval(timerRef.current);if(stopMusicRef.current)stopMusicRef.current();},[]);
+
+  
   const [phase, setPhase] = useState<Phase>('start');
   const [timeLeft, setTimeLeft] = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
-  const [finalSig, setFinalSig] = useState<Signals | null>(null);
-  const playerSessionRef = useRef<PlayerSession | null>(null);
-
-  useEffect(() => { stateRef.current.accentColor = theme.colors.accent ?? ACCENT; }, [theme]);
-
-  const nextQuestion = useCallback(() => {
-    const s = stateRef.current;
-    s.question = makeQuestion();
-    s.shownAt = Date.now();
-    s.feedback = null;
-    s.feedbackTimer = 0;
-  }, []);
-
-  const endGame = useCallback(() => {
-    const s = stateRef.current;
-    s.running = false;
-    cancelAnimationFrame(animRef.current);
-    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
-    const pb = parseInt(localStorage.getItem('pb_' + GAME_ID) ?? '0');
-    if (s.sig.score > pb) localStorage.setItem('pb_' + GAME_ID, String(s.sig.score));
-    setFinalSig({ ...s.sig });
-    setPhase('done');
-    hapticVictory();
-  }, []);
-
-  const startLoop = useCallback(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    const s = stateRef.current;
-
-    s.running = true; s.timeLeft = DURATION;
-    s.sig = { total: 0, correct: 0, wrong: 0, congruent: 0, incongruent: 0, incongruentCorrect: 0, avgReactionMs: 0, totalMs: 0, score: 0, maxStreak: 0, streakCurrent: 0 };
-    s.frame = 0; s.floats = []; s.level = 1;
-    nextQuestion();
-    setScoreDisplay(0); setTimeLeft(DURATION); setPhase('playing');
-
-    timerRef.current = setInterval(() => {
-      s.timeLeft--; setTimeLeft(s.timeLeft);
-      if (s.timeLeft <= 0) { sfx.fail(); endGame(); }
-    }, 1000);
-
-    const loop = () => {
-      if (!s.running) return;
-      const W = canvas.width, H = canvas.height;
-      ctx.clearRect(0, 0, W, H);
-      s.frame++;
-
-      // Background
-      const bg = ctx.createLinearGradient(0, 0, 0, H);
-      bg.addColorStop(0, '#1a0810'); bg.addColorStop(1, '#0a0508');
-      ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
-
-      if (s.feedbackTimer > 0) s.feedbackTimer--;
-
-      // Feedback flash
-      if (s.feedback && s.feedbackTimer > 0) {
-        const a = (s.feedbackTimer / 12) * 0.25;
-        ctx.fillStyle = s.feedback === 'correct' ? `rgba(74,222,128,${a})` : `rgba(239,68,68,${a})`;
-        ctx.fillRect(0, 0, W, H);
-      }
-
-      const q = s.question;
-      if (!q) return;
-
-      // Instruction
-      ctx.fillStyle = 'rgba(255,255,255,0.6)'; ctx.font = '14px sans-serif'; ctx.textAlign = 'center';
-      ctx.fillText('Tap the INK COLOR of the word below:', W / 2, H * 0.12);
-
-      // Main word (drawn in its ink color)
-      ctx.save();
-      ctx.shadowBlur = 20; ctx.shadowColor = q.inkColor;
-      ctx.fillStyle = q.inkColor;
-      ctx.font = `bold ${Math.min(72, W * 0.18)}px sans-serif`;
-      ctx.textAlign = 'center';
-      ctx.fillText(q.word, W / 2, H * 0.35);
-      ctx.restore();
-
-      // Color buttons
-      const btnW = Math.min((W - 40) / 2 - 10, 140);
-      const btnH = 56;
-      const cols = 2, rows = 2;
-      const gridW = cols * (btnW + 10) - 10;
-      const gridX = (W - gridW) / 2;
-      const gridY = H * 0.5;
-
-      COLORS.forEach((color, i) => {
-        const col = i % 2, row = Math.floor(i / 2);
-        const bx = gridX + col * (btnW + 10);
-        const by = gridY + row * (btnH + 10);
-
-        const isCorrectColor = color.hex === q.inkColor;
-        const isSelected = s.feedback !== null && isCorrectColor;
-
-        ctx.save();
-        ctx.shadowBlur = 12;
-        ctx.shadowColor = color.hex;
-        ctx.fillStyle = isSelected
-          ? (s.feedback === 'correct' ? color.hex : '#7f1d1d')
-          : color.hex + '33';
-        ctx.strokeStyle = color.hex;
-        ctx.lineWidth = 2.5;
-        ctx.beginPath();
-        (ctx as any).roundRect?.(bx, by, btnW, btnH, 10) ?? ctx.rect(bx, by, btnW, btnH);
-        ctx.fill(); ctx.stroke();
-
-        ctx.fillStyle = '#ffffff';
-        ctx.font = `bold ${Math.min(22, W * 0.055)}px sans-serif`;
-        ctx.textAlign = 'center';
-        ctx.fillText(color.name, bx + btnW / 2, by + btnH / 2 + 8);
-        ctx.restore();
-      });
-
-      // Reaction time hint
-      const elapsed = (Date.now() - s.shownAt) / 1000;
-      const timeLimit = 3;
-      const remaining = Math.max(0, timeLimit - elapsed);
-      ctx.fillStyle = 'rgba(255,255,255,0.3)';
-      ctx.fillRect(20, H * 0.43, (W - 40) * (remaining / timeLimit), 4);
-
-      // Auto-fail if too slow
-      if (elapsed > timeLimit && s.feedback === null) {
-        s.sig.total++; s.sig.wrong++;
-        if (!q.isCongruent) s.sig.incongruent++;
-        s.sig.streakCurrent = 0;
-        s.feedback = 'wrong'; s.feedbackTimer = 12;
-        sfx.collision(); hapticFail();
-        setTimeout(() => { if (s.running) nextQuestion(); }, 500);
-      }
-
-      // Floats
-      s.floats = s.floats.filter(f => f.alpha > 0.02);
-      s.floats.forEach(f => {
-        ctx.save(); ctx.globalAlpha = f.alpha;
-        ctx.fillStyle = f.color; ctx.font = 'bold 20px sans-serif'; ctx.textAlign = 'center';
-        ctx.fillText(f.text, f.x, f.y); ctx.restore();
-        f.y += f.vy; f.alpha *= 0.95;
-      });
-
-      animRef.current = requestAnimationFrame(loop);
-    };
-    animRef.current = requestAnimationFrame(loop);
-  }, [endGame, nextQuestion]);
-
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const resize = () => { canvas.width = canvas.offsetWidth; canvas.height = canvas.offsetHeight; };
-    resize();
-    window.addEventListener('resize', resize);
-
-    const onPointerDown = (e: PointerEvent) => {
-      if (phase !== 'playing') return;
-      const s = stateRef.current;
-      if (s.feedback !== null || !s.question) return;
-      const rect = canvas.getBoundingClientRect();
-      const px = (e.clientX - rect.left) * (canvas.width / rect.width);
-      const py = (e.clientY - rect.top) * (canvas.height / rect.height);
-      const W = canvas.width, H = canvas.height;
-
-      const btnW = Math.min((W - 40) / 2 - 10, 140);
-      const btnH = 56;
-      const gridW = 2 * (btnW + 10) - 10;
-      const gridX = (W - gridW) / 2;
-      const gridY = H * 0.5;
-
-      for (let i = 0; i < COLORS.length; i++) {
-        const col = i % 2, row = Math.floor(i / 2);
-        const bx = gridX + col * (btnW + 10);
-        const by = gridY + row * (btnH + 10);
-        if (px >= bx && px <= bx + btnW && py >= by && py <= by + btnH) {
-          const chosen = COLORS[i];
-          const ms = Date.now() - s.shownAt;
-          s.sig.total++;
-          s.sig.totalMs += ms;
-          const q = s.question!;
-
-          if (!q.isCongruent) s.sig.incongruent++;
-          else s.sig.congruent++;
-
-          if (chosen.hex === q.inkColor) {
-            // Correct! Tap the ink color
-            s.sig.correct++;
-            if (!q.isCongruent) s.sig.incongruentCorrect++;
-            s.sig.streakCurrent++;
-            if (s.sig.streakCurrent > s.sig.maxStreak) s.sig.maxStreak = s.sig.streakCurrent;
-            const speedBonus = ms < 600 ? 2 : ms < 1200 ? 1 : 0;
-            const stroopBonus = !q.isCongruent ? 1 : 0;
-            const pts = 1 + speedBonus + stroopBonus;
-            s.sig.score += pts; setScoreDisplay(s.sig.score);
-            s.feedback = 'correct'; s.feedbackTimer = 12;
-            sfx.collect(); hapticScore();
-            if (s.sig.streakCurrent >= 3) hapticCombo(s.sig.streakCurrent);
-            const label = pts >= 3 ? `+${pts} ⚡ FAST!` : pts === 2 ? `+${pts} 🎨` : '+1';
-            s.floats.push({ x: W / 2, y: H * 0.45, text: label, alpha: 1, vy: -2.5, color: '#fbbf24' });
-          } else {
-            s.sig.wrong++; s.sig.streakCurrent = 0;
-            s.feedback = 'wrong'; s.feedbackTimer = 12;
-            sfx.collision(); hapticFail();
-            s.floats.push({ x: W / 2, y: H * 0.45, text: `${q.inkName}!`, alpha: 1, vy: -2, color: '#ef4444' });
-          }
-          setTimeout(() => { if (s.running) nextQuestion(); }, 450);
-          break;
-        }
-      }
-    };
-
-    canvas.addEventListener('pointerdown', onPointerDown);
-    return () => {
-      window.removeEventListener('resize', resize);
-      canvas.removeEventListener('pointerdown', onPointerDown);
-    };
-  }, [phase, nextQuestion]);
-
-  useEffect(() => () => {
-    cancelAnimationFrame(animRef.current);
-    if (timerRef.current) clearInterval(timerRef.current);
-  }, []);
-
-  const handleStart = useCallback(async (n: string, a: string) => {
-    playerSessionRef.current = savePlayerSession(GAME_ID, n, a);
-    await initAudio(); setPhase('countdown');
-  }, []);
+  const [finalSig, setFinalSig] = useState<Signals|null>(null);
+  const playerSessionRef = useRef<PlayerSession|null>(null);
+  
+  const handleStart = useCallback((name: string, avatar: string) => { initAudio(); playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar); setPhase('countdown'); }, []);
+  const handleCountdownDone = useCallback(() => { startLoop(); }, [startLoop]);
   const handlePlayAgain = useCallback(() => { setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null); }, []);
-
+  const buildInsights = (sig: Signals) => {
+    const acc = sig.attempts > 0 ? Math.round((sig.hits/sig.attempts)*100) : 0;
+    const avg = sig.reactionTimes.length > 0 ? Math.round(sig.reactionTimes.reduce((a,b)=>a+b,0)/sig.reactionTimes.length) : 0;
+    const pb = parseInt(localStorage.getItem(PB_KEY) ?? '0');
+    if (sig.score > pb) localStorage.setItem(PB_KEY, String(sig.score));
+    return [
+      { label: 'Accuracy', value: acc + '%', color: acc>=70?'#4ade80':acc>=40?'#facc15':'#ef4444' },
+      { label: 'Avg React', value: avg + 'ms', color: ACCENT },
+      { label: 'Best Streak', value: '×' + sig.maxStreak, color: ACCENT },
+      { label: 'Score', value: String(sig.score), color: 'var(--color-text)' },
+    ];
+  };
+  
   return (
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
-      {phase === 'start' && <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description="Tap the color of the INK — not what the word says!" ctaLabel="Focus! 🎨" accentColor={theme.colors.accent ?? ACCENT} onStart={handleStart} />}
-      {phase === 'countdown' && <Countdown onComplete={startLoop} accentColor={theme.colors.accent ?? ACCENT} />}
-      {(phase === 'playing' || phase === 'countdown') && (
-        <>
-          <canvas ref={canvasRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none' }} role="img" aria-label="Color Word Stroop game canvas" />
-          {phase === 'playing' && <GameHUD accentColor={theme.colors.accent ?? ACCENT} items={[{ label: 'TIME', value: timeLeft, danger: timeLeft <= 10 }, { label: 'SCORE', value: scoreDisplay }]} />}
-        </>
-      )}
-      {phase === 'done' && finalSig && (
-        <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI} score={String(finalSig.score)} personality={getPersonality(finalSig)}
-          insights={[
-            { label: 'Accuracy', value: `${finalSig.total > 0 ? Math.round(finalSig.correct / finalSig.total * 100) : 0}%`, color: ACCENT },
-            { label: 'Stroop %', value: `${finalSig.incongruent > 0 ? Math.round(finalSig.incongruentCorrect / finalSig.incongruent * 100) : 0}%`, color: '#fbbf24' },
-            { label: 'Avg Speed', value: `${finalSig.total > 0 ? Math.round(finalSig.totalMs / finalSig.total) : 0}ms`, color: '#4ade80' },
-            { label: 'Streak', value: `×${finalSig.maxStreak}`, color: '#06b6d4' },
-          ]}
-          accentColor={theme.colors.accent ?? ACCENT} onPlayAgain={handlePlayAgain} didWin={finalSig.correct >= 15} />
-      )}
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent??ACCENT}>
+      {phase==='start'&&<GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description={GAME_TAGLINE} ctaLabel="Start" accentColor={theme.colors.accent??ACCENT} onStart={handleStart}/>}
+      {phase==='countdown'&&<Countdown onComplete={handleCountdownDone} accentColor={theme.colors.accent??ACCENT}/>}
+      {(phase==='playing'||phase==='countdown')&&<>
+        <canvas ref={canvasRef} aria-label="Color Word game canvas" role="img" style={{position:'absolute',inset:0,width:'100%',height:'100%',touchAction:'none'}}/>
+        {phase==='playing'&&<GameHUD accentColor={theme.colors.accent??ACCENT} items={[{label:'TIME',value:timeLeft,danger:timeLeft<=5},{label:'SCORE',value:scoreDisplay}]}/>}
+      </>}
+      {phase==='done'&&finalSig&&<>
+        <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI} score={String(finalSig.score)} personality={getPersonality(finalSig)} insights={buildInsights(finalSig)} accentColor={theme.colors.accent??ACCENT} onPlayAgain={handlePlayAgain} didWin={finalSig.score>=5}/>
+        <WebhookEmitter theme={theme} sig={finalSig} personality={getPersonality(finalSig)} player={playerSessionRef.current}/>
+      </>}
     </GameShell>
   );
+}
 }
