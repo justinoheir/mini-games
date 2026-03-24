@@ -1,8 +1,7 @@
-import fs from 'fs';
-import path from 'path';
 import { Suspense } from 'react';
-import type { QAResult, GameInfo, GameWithResult } from './types';
+import type { GameInfo, GameWithResult } from './types';
 import QaDashboardClient from './QaDashboardClient';
+import { QA_RESULTS } from '@/lib/qaResults';
 
 const ALL_GAMES: GameInfo[] = [
   // Skill Games
@@ -228,25 +227,9 @@ const ALL_GAMES: GameInfo[] = [
 ];
 
 export default function QaDashboard() {
-  const resultsMap: Record<string, QAResult> = {};
-
-  try {
-    const resultsDir = path.join(process.cwd(), 'tests', 'results');
-    const files = fs.readdirSync(resultsDir);
-    for (const file of files) {
-      if (file.endsWith('.json') && !file.startsWith('__')) {
-        const content = fs.readFileSync(path.join(resultsDir, file), 'utf-8');
-        const data = JSON.parse(content) as QAResult;
-        resultsMap[data.gameId] = data;
-      }
-    }
-  } catch {
-    // No results directory yet — renders empty state gracefully
-  }
-
   const gamesWithResults: GameWithResult[] = ALL_GAMES.map((game) => ({
     game,
-    result: resultsMap[game.id] ?? null,
+    result: QA_RESULTS[game.id] ?? null,
   }));
 
   return (
