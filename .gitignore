@@ -12,6 +12,9 @@
 
 # testing
 /coverage
+/tests/results-post-fix/
+/pw-*.txt
+/pw-*.json
 
 # next.js
 /.next/

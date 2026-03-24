@@ -1,10 +1,6 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  // Include QA result JSON files in the Vercel serverless bundle
-  outputFileTracingIncludes: {
-    '/qa': ['./tests/results/**/*.json'],
-  },
   async rewrites() {
     return [
       {

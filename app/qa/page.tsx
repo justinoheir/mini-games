@@ -1,7 +1,66 @@
 import { Suspense } from 'react';
-import type { GameInfo, GameWithResult } from './types';
+import type { GameInfo, GameWithResult, QAResult } from './types';
 import QaDashboardClient from './QaDashboardClient';
-import { QA_RESULTS } from '@/lib/qaResults';
+
+// Re-fetch from Supabase every 60 seconds
+export const revalidate = 60;
+
+const SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY ?? '';
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? 'https://ccioqoakdexiblnjrbhs.supabase.co';
+
+// Snake_case row from Supabase → camelCase QAResult
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function rowToQAResult(row: any): QAResult {
+  return {
+    gameId: row.game_id,
+    gameName: row.game_name,
+    gameEmoji: row.game_emoji,
+    accentColor: row.accent_color,
+    sensor: row.sensor,
+    durationSeconds: row.duration_seconds,
+    qaDate: row.qa_date,
+    qaAgent: row.qa_agent,
+    verdict: row.verdict,
+    weightedScore: row.weighted_score,
+    dimensions: row.dimensions,
+    performance: row.performance,
+    accessibility: row.accessibility,
+    personas: row.personas ?? [],
+    bugs: row.bugs ?? [],
+    iterationsRequired: row.iterations_required ?? 0,
+    deployUrl: row.deploy_url,
+  };
+}
+
+async function fetchQAResults(): Promise<Record<string, QAResult>> {
+  try {
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/glimmer_qa_results?select=*`,
+      {
+        headers: {
+          apikey: SERVICE_KEY,
+          Authorization: `Bearer ${SERVICE_KEY}`,
+        },
+        next: { revalidate: 60 },
+      }
+    );
+
+    if (!res.ok) {
+      console.error('[QA] Supabase fetch failed:', res.status, await res.text());
+      return {};
+    }
+
+    const rows = await res.json();
+    const map: Record<string, QAResult> = {};
+    for (const row of rows) {
+      map[row.game_id] = rowToQAResult(row);
+    }
+    return map;
+  } catch (err) {
+    console.error('[QA] Failed to fetch QA results from Supabase:', err);
+    return {};
+  }
+}
 
 const ALL_GAMES: GameInfo[] = [
   // Skill Games
@@ -226,10 +285,12 @@ const ALL_GAMES: GameInfo[] = [
   { id: 'harvest-catch',   emoji: '🍁',  title: 'Harvest Catch',   tagline: 'Tilt to catch. Skip the Brussels sprouts.', href: '/games/harvest-catch',   accentColor: '#d97706', duration: '45s' },
 ];
 
-export default function QaDashboard() {
+export default async function QaDashboard() {
+  const qaResultsMap = await fetchQAResults();
+
   const gamesWithResults: GameWithResult[] = ALL_GAMES.map((game) => ({
     game,
-    result: QA_RESULTS[game.id] ?? null,
+    result: qaResultsMap[game.id] ?? null,
   }));
 
   return (

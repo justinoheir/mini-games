@@ -8,7 +8,52 @@
 
 **Any time you modify games — environments, logic, UI, audio, haptics, anything — you MUST run QA before announcing completion.**
 
-### How to trigger QA
+---
+
+## QA Intel: Supabase (LIVE DATA — do not use JSON files)
+
+**As of 2026-03-23, QA results are stored in Supabase, NOT in JSON files.**
+
+### Writing QA results
+
+After running the QA suite, upsert results into the `glimmer_qa_results` table:
+
+```
+POST https://ccioqoakdexiblnjrbhs.supabase.co/rest/v1/glimmer_qa_results
+Headers:
+  apikey: <SUPABASE_SERVICE_KEY from TOOLS.md>
+  Authorization: Bearer <SUPABASE_SERVICE_KEY from TOOLS.md>
+  Content-Type: application/json
+  Prefer: resolution=merge-duplicates
+```
+
+Map QAResult fields to snake_case columns (camelCase → snake_case).
+Use `game_id` as the upsert key (UNIQUE constraint).
+
+### ⛔ DEPRECATED: JSON file approach
+
+Writing to `tests/results/*.json` is **deprecated**. Do NOT use `lib/qaResults.ts` or the gen-qa-index script.
+The `/qa` portal reads from Supabase (`glimmer_qa_results`) and revalidates every 60 seconds.
+
+### QA intel table schema
+
+| Column | Type | Notes |
+|--------|------|-------|
+| game_id | text UNIQUE | e.g. "balance-beam" |
+| game_name | text | e.g. "Balance Beam" |
+| verdict | text | SHIP / FIX_REQUIRED / BLOCKED / NOT_RUN |
+| weighted_score | numeric | 0-100 |
+| dimensions | jsonb | visualQuality, audioSync, gameFeel, etc. |
+| performance | jsonb | fpsMedian, heapMB, etc. |
+| accessibility | jsonb | axe results, motor/vision/cognitive checks |
+| personas | jsonb | array of persona scores |
+| bugs | jsonb | array of bugs |
+| qa_date | text | YYYY-MM-DD |
+| qa_agent | text | agent label |
+
+---
+
+## How to trigger QA
 
 After your changes are committed and deployed, run the Playwright suite:
 
@@ -89,4 +134,4 @@ Path/Skill: path-trace, stack-drop
 
 ---
 
-_Last updated: 2026-03-23 — QA-after-every-update rule added by Justin_
+_Last updated: 2026-03-24 — QA intel migrated to Supabase (glimmer_qa_results table); JSON file approach deprecated_
