@@ -4,8 +4,9 @@ import { NextRequest, NextResponse } from 'next/server';
 // Protected with a secret to prevent unauthorized access
 export async function GET(req: NextRequest) {
   const secret = req.nextUrl.searchParams.get('secret');
-  if (secret !== process.env.QA_SETUP_SECRET) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  const expectedSecret = (process.env.QA_SETUP_SECRET ?? '').trim();
+  if (!expectedSecret || secret !== expectedSecret) {
+    return NextResponse.json({ error: 'Unauthorized', debug: `expected_len=${expectedSecret.length}` }, { status: 401 });
   }
 
   const dbUrl = process.env.SUPABASE_DB_URL;
