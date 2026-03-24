@@ -181,6 +181,8 @@ test('5.3 — play-again resets score to 0', async ({ page }) => {
   await game.start()
   await game.waitForEnd(GAME_DURATION_MS / 10 + 8000)
   await game.playAgain()
+  // pitch-match returns to start screen on play-again; need to start again
+  await game.start()
   await game.waitForPlaying()
 
   const scoreText = await game.scoreEl.textContent().catch(() => '0')
@@ -203,6 +205,8 @@ test('5.4 — timer resets to 30s after play-again', async ({ page }) => {
   await game.start()
   await game.waitForEnd(GAME_DURATION_MS / 10 + 8000)
   await game.playAgain()
+  // pitch-match returns to start screen on play-again; need to start again
+  await game.start()
   await game.waitForPlaying()
 
   const timerText = await game.timerEl.textContent().catch(() => '0')
@@ -225,7 +229,7 @@ test('5.5 — end screen shows personality classification', async ({ page }) => 
   await game.start()
   await game.waitForEnd(GAME_DURATION_MS / 10 + 8000)
 
-  const personality = page.locator('[data-testid="personality"], .personality-label, text=/Perfect Pitch|Tone Explorer|Pitch Wanderer|Steady Hummer|Off-Key/').first()
+  const personality = page.locator('[data-testid="personality"], .personality-label, text=/Natural Pitch|Sustained Voice|Close Enough|Finding Voice/').first()
   await expect(personality).toBeVisible({ timeout: 3000 })
 })
 
