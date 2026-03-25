@@ -2,13 +2,18 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
+import { ALL_GAMES } from '@/lib/games';
 
-const VERDICT_CONFIG: Record<string, { label: string; color: string; bg: string }> = {
+const VERDICT_CONFIG: Record<string, { label: string; color: string; bg: string; border?: string; opacity?: number }> = {
   SHIP:         { label: '✅ SHIP',         color: '#22c55e', bg: 'rgba(34,197,94,0.12)'  },
   FIX_REQUIRED: { label: '⚠️ FIX REQUIRED', color: '#f59e0b', bg: 'rgba(245,158,11,0.12)' },
   BLOCKED:      { label: '🚫 BLOCKED',      color: '#ef4444', bg: 'rgba(239,68,68,0.12)'  },
-  NOT_RUN:      { label: '⬜ NOT RUN',      color: '#6b7280', bg: 'rgba(107,114,128,0.12)' },
+  NOT_RUN:      { label: 'NOT RUN',         color: '#6b7280', bg: 'transparent', border: 'none', opacity: 0.45 },
 };
+
+const TAGLINE_MAP: Record<string, string> = Object.fromEntries(
+  ALL_GAMES.map(g => [g.id, g.tagline])
+);
 
 type Verdict = 'SHIP' | 'FIX_REQUIRED' | 'BLOCKED' | 'NOT_RUN';
 
@@ -129,17 +134,28 @@ export default function IntelIndexClient({ records, counts }: Props) {
                     (e.currentTarget as HTMLDivElement).style.background = 'rgba(255,255,255,0.03)';
                   }}
                 >
-                  {/* Emoji + name */}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                    <span style={{ fontSize: 24 }}>{r.game_emoji ?? '🎮'}</span>
-                    <div style={{
-                      fontSize: 14,
-                      fontWeight: 700,
-                      color: '#e5e2e1',
-                      lineHeight: 1.3,
-                      flex: 1,
-                    }}>
-                      {r.game_name ?? r.game_id}
+                  {/* Emoji + name + tagline */}
+                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+                    <span style={{ fontSize: 24, lineHeight: 1.2, flexShrink: 0 }}>{r.game_emoji ?? '🎮'}</span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{
+                        fontSize: 14,
+                        fontWeight: 700,
+                        color: '#e5e2e1',
+                        lineHeight: 1.3,
+                      }}>
+                        {r.game_name ?? r.game_id}
+                      </div>
+                      {TAGLINE_MAP[r.game_id] && (
+                        <div style={{
+                          fontSize: 11,
+                          color: 'rgba(255,255,255,0.35)',
+                          marginTop: 3,
+                          lineHeight: 1.4,
+                        }}>
+                          {TAGLINE_MAP[r.game_id]}
+                        </div>
+                      )}
                     </div>
                   </div>
 
@@ -153,27 +169,30 @@ export default function IntelIndexClient({ records, counts }: Props) {
                     color: vCfg.color,
                     fontSize: 10,
                     fontWeight: 700,
-                    border: `1px solid ${vCfg.color}40`,
+                    border: vCfg.border !== undefined ? vCfg.border : `1px solid ${vCfg.color}40`,
+                    opacity: vCfg.opacity !== undefined ? vCfg.opacity : 1,
                   }}>
                     {vCfg.label}
                   </div>
 
-                  {/* Score bar */}
-                  <div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 5, alignItems: 'center' }}>
-                      <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.35)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>Score</span>
-                      <span style={{ fontSize: 14, fontWeight: 700, color: accent }}>{Math.round(r.weighted_score ?? 0)}</span>
+                  {/* Score bar — hidden for NOT_RUN */}
+                  {r.verdict !== 'NOT_RUN' && (r.weighted_score ?? 0) > 0 && (
+                    <div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 5, alignItems: 'center' }}>
+                        <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.35)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>Score</span>
+                        <span style={{ fontSize: 14, fontWeight: 700, color: accent }}>{Math.round(r.weighted_score ?? 0)}</span>
+                      </div>
+                      <div style={{ height: 4, background: 'rgba(255,255,255,0.08)', borderRadius: 2 }}>
+                        <div style={{
+                          height: '100%',
+                          width: `${Math.min(r.weighted_score ?? 0, 100)}%`,
+                          background: accent,
+                          borderRadius: 2,
+                          boxShadow: `0 0 6px ${accent}60`,
+                        }} />
+                      </div>
                     </div>
-                    <div style={{ height: 4, background: 'rgba(255,255,255,0.08)', borderRadius: 2 }}>
-                      <div style={{
-                        height: '100%',
-                        width: `${Math.min(r.weighted_score ?? 0, 100)}%`,
-                        background: accent,
-                        borderRadius: 2,
-                        boxShadow: `0 0 6px ${accent}60`,
-                      }} />
-                    </div>
-                  </div>
+                  )}
 
                   {/* Date */}
                   {r.qa_date && (
