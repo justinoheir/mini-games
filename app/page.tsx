@@ -1361,7 +1361,7 @@ function AllGamesSection() {
               </div>
 
               {/* Intel button */}
-              <NextLink href={`/qa?game=${game.id}`} onClick={(e) => e.stopPropagation()} style={{ textDecoration: 'none', display: 'block' }}>
+              <NextLink href={`/intel/${game.id}`} onClick={(e) => e.stopPropagation()} style={{ textDecoration: 'none', display: 'block' }}>
                 <div style={{
                   background: 'rgba(132,208,249,0.07)',
                   border: '1px solid rgba(132,208,249,0.15)',
@@ -1375,7 +1375,7 @@ function AllGamesSection() {
                   letterSpacing: '0.12em',
                   textTransform: 'uppercase',
                 }}>
-                  VIEW INTEL
+                  📊 INTEL
                 </div>
               </NextLink>
             </div>

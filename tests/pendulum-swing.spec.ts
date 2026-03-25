@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test'
+﻿import { test, expect } from '@playwright/test'
 import AxeBuilder from '@axe-core/playwright'
 import { GamePage } from './pages/GamePage'
 
@@ -8,7 +8,7 @@ const ACCENT = '#a855f7'
 const GAME_DURATION_MS = 60000
 const SENSOR = 'touch'
 
-test('1.1 — page loads without JS errors', async ({ page }) => {
+test('1.1 â€” page loads without JS errors', async ({ page }) => {
   const errors: string[] = []
   page.on('pageerror', err => errors.push(err.message))
   const game = new GamePage(page, GAME_PATH, ACCENT)
@@ -16,26 +16,26 @@ test('1.1 — page loads without JS errors', async ({ page }) => {
   expect(errors).toHaveLength(0)
 })
 
-test('2.1 — start screen renders', async ({ page }) => {
+test('2.1 â€” start screen renders', async ({ page }) => {
   const game = new GamePage(page, GAME_PATH, ACCENT)
   await game.goto()
   await expect(game.ctaButton).toBeVisible({ timeout: 3000 })
 })
 
-test('2.3 — CTA meets 44px minimum', async ({ page }) => {
+test('2.3 â€” CTA meets 44px minimum', async ({ page }) => {
   const game = new GamePage(page, GAME_PATH, ACCENT)
   await game.goto()
   await game.expectTouchTargetSize(game.ctaButton, 44, 'CTA button')
 })
 
-test('3.1 — countdown appears after start', async ({ page }) => {
+test('3.1 â€” countdown appears after start', async ({ page }) => {
   const game = new GamePage(page, GAME_PATH, ACCENT)
   await game.goto()
   await game.start()
   await game.waitForCountdown()
 })
 
-test('4.1 — timer visible during gameplay', async ({ page }) => {
+test('4.1 â€” timer visible during gameplay', async ({ page }) => {
   const game = new GamePage(page, GAME_PATH, ACCENT)
   await game.goto()
   await game.start()
@@ -43,7 +43,7 @@ test('4.1 — timer visible during gameplay', async ({ page }) => {
   await expect(game.timerEl).toBeVisible()
 })
 
-test('4.2 — timer decreases', async ({ page }) => {
+test('4.2 â€” timer decreases', async ({ page }) => {
   const game = new GamePage(page, GAME_PATH, ACCENT)
   await game.goto()
   await game.start()
@@ -51,7 +51,7 @@ test('4.2 — timer decreases', async ({ page }) => {
   await game.expectTimerDecreasing(3000)
 })
 
-test('5.1 — score starts at 0', async ({ page }) => {
+test('5.1 â€” score starts at 0', async ({ page }) => {
   const game = new GamePage(page, GAME_PATH, ACCENT)
   await game.goto()
   await game.start()
@@ -60,7 +60,7 @@ test('5.1 — score starts at 0', async ({ page }) => {
   expect(parseInt(scoreText ?? '0')).toBe(0)
 })
 
-test('5.2 — game ends at timer 0', async ({ page }) => {
+test('5.2 â€” game ends at timer 0', async ({ page }) => {
   await page.addInitScript(() => {
     const orig = window.setInterval.bind(window)
     ;(window as any).setInterval = (fn: () => void, ms: number, ...args: unknown[]) => {
@@ -75,7 +75,7 @@ test('5.2 — game ends at timer 0', async ({ page }) => {
   await expect(game.playAgainButton).toBeVisible()
 })
 
-test('6.1 — end screen has play-again', async ({ page }) => {
+test('6.1 â€” end screen has play-again', async ({ page }) => {
   await page.addInitScript(() => {
     const orig = window.setInterval.bind(window)
     ;(window as any).setInterval = (fn: () => void, ms: number, ...args: unknown[]) => {
@@ -90,14 +90,14 @@ test('6.1 — end screen has play-again', async ({ page }) => {
   await expect(game.playAgainButton).toBeVisible()
 })
 
-test('7.1 — no horizontal scroll 375px', async ({ page }) => {
+test('7.1 â€” no horizontal scroll 375px', async ({ page }) => {
   await page.setViewportSize({ width: 375, height: 667 })
   const game = new GamePage(page, GAME_PATH, ACCENT)
   await game.goto()
   await game.expectNoHorizontalScroll()
 })
 
-test('9.1 — axe-core accessibility scan', async ({ page }) => {
+test('9.1 â€” axe-core accessibility scan', async ({ page }) => {
   const game = new GamePage(page, GAME_PATH, ACCENT)
   await game.goto()
   const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).exclude('canvas').analyze()
@@ -105,12 +105,12 @@ test('9.1 — axe-core accessibility scan', async ({ page }) => {
   expect(critical).toHaveLength(0)
 })
 
-test('12.1 — haptics during gameplay', async ({ page }) => {
+test('12.1 â€” haptics during gameplay', async ({ page }) => {
   const game = new GamePage(page, GAME_PATH, ACCENT)
   await game.goto()
   await game.start()
   await game.waitForPlaying()
   await page.waitForTimeout(3000)
   const log = await game.getVibrateLog()
-  console.log($(System.Collections.Hashtable.id) haptics fired: +log.length)
+  console.log(`haptics fired: ${log.length}`)
 })

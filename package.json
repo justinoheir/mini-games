@@ -13,6 +13,7 @@
     "prepare": "husky"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.100.0",
     "@types/canvas-confetti": "^1.9.0",
     "@types/three": "^0.183.1",
     "canvas-confetti": "^1.9.4",

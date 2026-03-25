@@ -1,6 +1,7 @@
 'use client';
 import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { ThemeContext } from '@/lib/ThemeContext';
 import { BrandTheme, DEFAULT_THEME, buildDynamicTheme } from '@/lib/brands';
 import { applyTheme } from '@/lib/theme';
@@ -19,9 +20,11 @@ interface GameShellProps {
   mobileOnly?: boolean;
   /** Rich environment background (CSS background shorthand). Overrides the default --color-bg fill. */
   background?: string;
+  /** When provided, renders a subtle 📊 Intel link in the top-right area */
+  gameId?: string;
 }
 
-export default function GameShell({ title, emoji, titleIcon, accentColor, children, theme, mobileOnly = true, background }: GameShellProps) {
+export default function GameShell({ title, emoji, titleIcon, accentColor, children, theme, mobileOnly = true, background, gameId }: GameShellProps) {
   const router = useRouter();
 
   // Read dynamic brand params from URL (client-side only to avoid SSR issues)
@@ -148,8 +151,32 @@ export default function GameShell({ title, emoji, titleIcon, accentColor, childr
             )}
           </div>
 
-          {/* Right: mute */}
-          <div style={{ display: 'flex', alignItems: 'center', flexShrink: 0 }}>
+          {/* Right: intel link + mute */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+            {gameId && (
+              <Link
+                href={`/intel/${gameId}`}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 4,
+                  padding: '6px 10px',
+                  borderRadius: 8,
+                  textDecoration: 'none',
+                  color: 'rgba(255,255,255,0.55)',
+                  fontSize: 11,
+                  fontWeight: 600,
+                  opacity: 0.35,
+                  transition: 'opacity 0.2s',
+                  fontFamily: 'var(--font-display)',
+                }}
+                onMouseEnter={e => { (e.currentTarget as HTMLAnchorElement).style.opacity = '0.7'; }}
+                onMouseLeave={e => { (e.currentTarget as HTMLAnchorElement).style.opacity = '0.35'; }}
+                aria-label="View QA Intel"
+              >
+                📊
+              </Link>
+            )}
             <MuteButton />
           </div>
         </div>
