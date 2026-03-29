@@ -436,7 +436,7 @@ export default function EndScreen({
           opacity: 0.35,
         }}
       >
-        <img src="/brand/ether-wordmark-transparent-light.png" alt="Ether" style={{ height: 16, display: 'inline-block', verticalAlign: 'middle' }} />
+        <img src="/brand/ether-wordmark-transparent-light.png" alt="Ether" style={{ height: 16, display: 'inline-block', verticalAlign: 'middle', opacity: 0.6 }} />
       </p>
       </div>{/* end scrollable content */}
 
@@ -450,6 +450,7 @@ export default function EndScreen({
           padding: '12px 20px 20px',
           background: `linear-gradient(transparent, ${accentColor}12 0%, #08090f 40%)`,
           backgroundColor: '#08090f',
+          pointerEvents: 'auto',
         }}
       >
         <motion.button
