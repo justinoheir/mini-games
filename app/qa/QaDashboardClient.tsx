@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import Link from 'next/link';
+import { ALL_GAMES } from '@/lib/games';
 import type {
   GameWithResult,
   QAResult,
@@ -790,10 +791,12 @@ function GameCard({
         width: '100%',
       }}
     >
-      {/* Top row: emoji + name + verdict */}
+      {/* Top row: icon + name + verdict */}
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8, marginBottom: 8 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ fontSize: 22 }}>{game.emoji}</span>
+          <span className="material-symbols-outlined" style={{ fontSize: 22, color: accentColor, opacity: 0.9, flexShrink: 0 }}>
+            {ALL_GAMES.find(g => g.id === game.id)?.icon ?? 'sports_esports'}
+          </span>
           <span style={{ color: 'white', fontSize: 14, fontWeight: 700, lineHeight: 1.2 }}>
             {game.title}
           </span>
@@ -885,7 +888,9 @@ function DetailPanel({
           textAlign: 'center',
         }}
       >
-        <div style={{ fontSize: 40, marginBottom: 12 }}>{game.emoji}</div>
+        <span className="material-symbols-outlined" style={{ fontSize: 40, marginBottom: 12, display: 'block', color: accentColor }}>
+          {ALL_GAMES.find(g => g.id === game.id)?.icon ?? 'sports_esports'}
+        </span>
         <div style={{ color: 'white', fontSize: 18, fontWeight: 700, marginBottom: 8 }}>{game.title}</div>
         <div
           style={{
@@ -924,7 +929,9 @@ function DetailPanel({
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-          <span style={{ fontSize: 24 }}>{result.gameEmoji || game.emoji}</span>
+          <span className="material-symbols-outlined" style={{ fontSize: 24, color: accentColor, opacity: 0.9 }}>
+            {ALL_GAMES.find(g => g.id === game.id)?.icon ?? 'sports_esports'}
+          </span>
           <div>
             <div style={{ color: 'white', fontSize: 16, fontWeight: 700 }}>{result.gameName || game.title}</div>
             <div style={{ color: 'rgba(255,255,255,0.35)', fontSize: 11 }}>
