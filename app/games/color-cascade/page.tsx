@@ -17,7 +17,7 @@ import GameStartScreen from '@/components/GameStartScreen';
 import Countdown from '@/components/Countdown';
 import EndScreen from '@/components/EndScreen';
 import { initAudio, sfx, haptic, startMusic } from '@/lib/audio';
-import { playScoreHit, playVictoryFanfare, playNearMiss } from '@/lib/audio';
+import { playScoreHit } from '@/lib/audio';
 import { hapticScore, hapticFail, hapticVictory } from '@/lib/haptics';
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
@@ -122,6 +122,7 @@ interface GameState {
   lastColorSection: number; // tracks which 10-second block we're in
   flashAlpha: number;       // 0–1 for color-change flash overlay
   missFlashAlpha: number;   // 0–1 for red flash on wrong tap
+  nearMissFlashAlpha: number; // 0–1 for brief dim flash when correct drop missed
   comboFlashAlpha: number;  // 0–1 for accent flash on combo milestone
   lastSpawnTime: number;    // timestamp of last drop spawn
   particles: Particle[];    // tap burst particles (correct hits)
@@ -148,9 +149,10 @@ export default function ColorCascadeGame() {
     nextDropId:       0,
     targetColorIndex: 0,
     lastColorSection: 0,
-    flashAlpha:       0,
-    missFlashAlpha:   0,
-    comboFlashAlpha:  0,
+    flashAlpha:          0,
+    missFlashAlpha:      0,
+    nearMissFlashAlpha:  0,
+    comboFlashAlpha:     0,
     lastSpawnTime:    0,
     sig: {
       correctTaps: 0, wrongTaps: 0, reactionTimes: [],
@@ -258,9 +260,10 @@ export default function ColorCascadeGame() {
     s.nextDropId       = 0;
     s.targetColorIndex = Math.floor(Math.random() * COLORS.length);
     s.lastColorSection = 0;
-    s.flashAlpha       = 0;
-    s.missFlashAlpha   = 0;
-    s.comboFlashAlpha  = 0;
+    s.flashAlpha          = 0;
+    s.missFlashAlpha      = 0;
+    s.nearMissFlashAlpha  = 0;
+    s.comboFlashAlpha     = 0;
     s.lastSpawnTime    = 0;
     s.particles        = [];
     s.sig = {
@@ -311,8 +314,7 @@ export default function ColorCascadeGame() {
     let fpsFrameCount = 0;
     let fpsWindowStart = performance.now();
     if (typeof window !== 'undefined') {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (window as any).__raf_fps = 0;
+      (window as unknown as Record<string, unknown>).__raf_fps = 0;
     }
 
     // ── rAF loop ──────────────────────────────────────────────────────────────
@@ -324,8 +326,7 @@ export default function ColorCascadeGame() {
       const fpsElapsed = rafTs - fpsWindowStart;
       if (fpsElapsed >= 1000) {
         if (typeof window !== 'undefined') {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          (window as any).__raf_fps = Math.round(fpsFrameCount * 1000 / fpsElapsed);
+          (window as unknown as Record<string, unknown>).__raf_fps = Math.round(fpsFrameCount * 1000 / fpsElapsed);
         }
         fpsFrameCount = 0;
         fpsWindowStart = rafTs;
@@ -415,6 +416,16 @@ export default function ColorCascadeGame() {
         s.missFlashAlpha = Math.max(0, s.missFlashAlpha - 0.14);
       }
 
+      // ── Near-miss flash overlay (dim white — correct drop slipped by) ───────
+      if (s.nearMissFlashAlpha > 0) {
+        ctx.save();
+        ctx.globalAlpha = s.nearMissFlashAlpha * 0.18;
+        ctx.fillStyle   = '#ffffff';
+        ctx.fillRect(0, 0, W, H);
+        ctx.restore();
+        s.nearMissFlashAlpha = Math.max(0, s.nearMissFlashAlpha - 0.06);
+      }
+
       // ── Combo flash overlay (accent — streak milestone) ─────────────────────
       if (s.comboFlashAlpha > 0) {
         ctx.save();
@@ -465,8 +476,9 @@ export default function ColorCascadeGame() {
           if (!drop.missed) {
             drop.missed = true;
             if (drop.colorIndex === s.targetColorIndex) {
-              // Missed a correct drop: reset streak (no point deduction per spec)
+              // Missed a correct drop: reset streak + near-miss flash (no point deduction per spec)
               s.sig.streakCurrent = 0;
+              s.nearMissFlashAlpha = 0.5; // subtle pulse — "you should have tapped that"
               sfx.collision();
             }
           }
@@ -581,9 +593,9 @@ export default function ColorCascadeGame() {
         // Particle burst at tap point (correct hit) — spec requires lib/particles.ts
         const tapHex = COLORS[bestDrop.colorIndex].hex;
         spawnBurst(s.particles, x, bestDropY, tapHex, 12, 5);
-        // Escalating audio + visual on combo milestones
-        if (s.sig.streakCurrent === 5)  { setTimeout(() => sfx.success(), 100); s.comboFlashAlpha = 1.0; }  // ×1.5 milestone
-        if (s.sig.streakCurrent === 10) { setTimeout(() => sfx.powerOn(), 100); s.comboFlashAlpha = 1.0; }  // ×2.0 milestone
+        // Escalating audio + visual on combo milestones (synchronous — fires same handler as hit)
+        if (s.sig.streakCurrent === 5)  { sfx.success(); s.comboFlashAlpha = 1.0; }  // ×1.5 milestone
+        if (s.sig.streakCurrent === 10) { sfx.powerOn(); s.comboFlashAlpha = 1.0; }  // ×2.0 milestone
       } else {
         // ❌ WRONG COLOR
         s.sig.wrongTaps++;
@@ -655,14 +667,15 @@ export default function ColorCascadeGame() {
   }, [startLoop]);
 
   const handlePlayAgain = useCallback(() => {
-    setPhase('start');
+    // Skip start screen on play-again — player already registered + consented.
+    // Go directly to countdown for a fast replay experience.
     setScoreDisplay(0);
     setTimeLeft(DURATION);
     setFinalSig(null);
-  
     setIsNewBest(false);
     setStreak(0);
     prevScoreRef.current = 0;
+    setPhase('countdown');
   }, []);
 
   // ─── END SCREEN INSIGHTS ─────────────────────────────────────────────────

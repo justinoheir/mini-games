@@ -1,9 +1,9 @@
 /**
- * QA Spec — Pulse Sphere
+ * QA Spec - Pulse Sphere
  * GAME_ID:       pulse-sphere
  * GAME_PATH:     /games/pulse-sphere
  * ACCENT:        #a855f7
- * DURATION:      60s
+ * DURATION:      45s
  * SENSOR:        mic + motion + touch (multi-sensor)
  * PERSONALITIES: Verbal, Kinetic, Tactile, Balanced
  */
@@ -15,12 +15,12 @@ import { GamePage } from './pages/GamePage'
 const GAME_ID         = 'pulse-sphere'
 const GAME_PATH       = '/games/pulse-sphere'
 const ACCENT          = '#a855f7'
-const GAME_DURATION_MS = 60000
+const GAME_DURATION_MS = 45000
 const SENSOR          = 'mic'
 
 // ─── 1. PAGE LOAD ─────────────────────────────────────────────────────────────
 
-test('1.1 — page loads without JS errors', async ({ page }) => {
+test('1.1 - page loads without JS errors', async ({ page }) => {
   const errors: string[] = []
   page.on('pageerror', err => errors.push(err.message))
   page.on('console', msg => { if (msg.type() === 'error') errors.push(msg.text()) })
@@ -31,7 +31,7 @@ test('1.1 — page loads without JS errors', async ({ page }) => {
   expect(errors, `JS errors on load: ${errors.join(', ')}`).toHaveLength(0)
 })
 
-test('1.2 — page title is set', async ({ page }) => {
+test('1.2 - page title is set', async ({ page }) => {
   const game = new GamePage(page, GAME_PATH, ACCENT)
   await game.goto()
   const title = await page.title()
@@ -40,31 +40,31 @@ test('1.2 — page title is set', async ({ page }) => {
 
 // ─── 2. START SCREEN ──────────────────────────────────────────────────────────
 
-test('2.1 — start screen renders', async ({ page }) => {
+test('2.1 - start screen renders', async ({ page }) => {
   const game = new GamePage(page, GAME_PATH, ACCENT)
   await game.goto()
   await expect(game.ctaButton).toBeVisible({ timeout: 5000 })
 })
 
-test('2.2 — name input visible on start screen', async ({ page }) => {
+test('2.2 - name input visible on start screen', async ({ page }) => {
   const game = new GamePage(page, GAME_PATH, ACCENT)
   await game.goto({ skipUser: true })
   await expect(game.nameInput).toBeVisible({ timeout: 5000 })
 })
 
-test('2.3 — CTA button meets 44×44px minimum', async ({ page }) => {
+test('2.3 - CTA button meets 44×44px minimum', async ({ page }) => {
   const game = new GamePage(page, GAME_PATH, ACCENT)
   await game.goto()
   await game.expectTouchTargetSize(game.ctaButton, 44, 'CTA button')
 })
 
-test('2.4 — back button meets 44×44px minimum', async ({ page }) => {
+test('2.4 - back button meets 44×44px minimum', async ({ page }) => {
   const game = new GamePage(page, GAME_PATH, ACCENT)
   await game.goto()
   await game.expectTouchTargetSize(game.backButton, 44, 'back button')
 })
 
-test('2.5 — back button navigates to home', async ({ page }) => {
+test('2.5 - back button navigates to home', async ({ page }) => {
   const game = new GamePage(page, GAME_PATH, ACCENT)
   await game.goto()
   await game.backButton.click()
@@ -73,14 +73,14 @@ test('2.5 — back button navigates to home', async ({ page }) => {
 
 // ─── 3. COUNTDOWN ────────────────────────────────────────────────────────────
 
-test('3.1 — countdown appears after tapping start', async ({ page }) => {
+test('3.1 - countdown appears after tapping start', async ({ page }) => {
   const game = new GamePage(page, GAME_PATH, ACCENT)
   await game.goto({ sensors: { mic: true } })
   await game.start()
   await game.waitForCountdown()
 })
 
-test('3.2 — countdown progresses to GO', async ({ page }) => {
+test('3.2 - countdown progresses to GO', async ({ page }) => {
   const game = new GamePage(page, GAME_PATH, ACCENT)
   await game.goto({ sensors: { mic: true } })
   await game.start()
@@ -90,7 +90,7 @@ test('3.2 — countdown progresses to GO', async ({ page }) => {
 
 // ─── 4. PLAYING PHASE ────────────────────────────────────────────────────────
 
-test('4.1 — timer visible during gameplay', async ({ page }) => {
+test('4.1 - timer visible during gameplay', async ({ page }) => {
   const game = new GamePage(page, GAME_PATH, ACCENT)
   await game.goto({ sensors: { mic: true } })
   await game.start()
@@ -98,7 +98,7 @@ test('4.1 — timer visible during gameplay', async ({ page }) => {
   await expect(game.timerEl).toBeVisible({ timeout: 3000 })
 })
 
-test('4.2 — timer decreases during gameplay', async ({ page }) => {
+test('4.2 - timer decreases during gameplay', async ({ page }) => {
   const game = new GamePage(page, GAME_PATH, ACCENT)
   await game.goto({ sensors: { mic: true } })
   await game.start()
@@ -106,7 +106,7 @@ test('4.2 — timer decreases during gameplay', async ({ page }) => {
   await game.expectTimerDecreasing(3000)
 })
 
-test('4.3 — no crash during 10 seconds of gameplay', async ({ page }) => {
+test('4.3 - no crash during 10 seconds of gameplay', async ({ page }) => {
   const errors: string[] = []
   page.on('pageerror', err => errors.push(err.message))
 
@@ -121,18 +121,19 @@ test('4.3 — no crash during 10 seconds of gameplay', async ({ page }) => {
 
 // ─── 5. BOUNDARY VALUES ──────────────────────────────────────────────────────
 
-test('5.1 — timer starts at 60s', async ({ page }) => {
+test('5.1 - timer starts at 45s', async ({ page }) => {
   const game = new GamePage(page, GAME_PATH, ACCENT)
   await game.goto({ sensors: { mic: true } })
   await game.start()
   await game.waitForPlaying()
 
-  const timerText = await game.timerEl.textContent().catch(() => '60s')
-  const timer = parseInt(timerText ?? '60')
-  expect(timer, `Timer should start at ~60, got ${timer}`).toBeGreaterThanOrEqual(57)
+  const timerText = await game.timerEl.textContent().catch(() => '45s')
+  const timer = parseInt(timerText ?? '45')
+  const expectedDuration = Math.round(GAME_DURATION_MS / 1000)
+  expect(timer, `Timer should start at ~${expectedDuration}, got ${timer}`).toBeGreaterThanOrEqual(expectedDuration - 3)
 })
 
-test('5.2 — game ends when timer reaches 0', async ({ page }) => {
+test('5.2 - game ends when timer reaches 0', async ({ page }) => {
   await page.addInitScript(() => {
     const orig = window.setInterval.bind(window)
     ;(window as any).setInterval = (fn: () => void, ms: number, ...args: unknown[]) => {
@@ -151,7 +152,7 @@ test('5.2 — game ends when timer reaches 0', async ({ page }) => {
   await expect(game.playAgainButton).toBeVisible()
 })
 
-test('5.3 — play-again resets state', async ({ page }) => {
+test('5.3 - play-again resets state', async ({ page }) => {
   await page.addInitScript(() => {
     const orig = window.setInterval.bind(window)
     ;(window as any).setInterval = (fn: () => void, ms: number, ...args: unknown[]) => {
@@ -170,7 +171,7 @@ test('5.3 — play-again resets state', async ({ page }) => {
   await expect(game.ctaButton).toBeVisible({ timeout: 5000 })
 })
 
-test('5.4 — end screen shows personality classification', async ({ page }) => {
+test('5.4 - end screen shows personality classification', async ({ page }) => {
   await page.addInitScript(() => {
     const orig = window.setInterval.bind(window)
     ;(window as any).setInterval = (fn: () => void, ms: number, ...args: unknown[]) => {
@@ -190,7 +191,7 @@ test('5.4 — end screen shows personality classification', async ({ page }) => 
 
 // ─── 6. END SCREEN ───────────────────────────────────────────────────────────
 
-test('6.1 — end screen has play-again button', async ({ page }) => {
+test('6.1 - end screen has play-again button', async ({ page }) => {
   await page.addInitScript(() => {
     const orig = window.setInterval.bind(window)
     ;(window as any).setInterval = (fn: () => void, ms: number, ...args: unknown[]) => {
@@ -205,7 +206,7 @@ test('6.1 — end screen has play-again button', async ({ page }) => {
   await expect(game.playAgainButton).toBeVisible()
 })
 
-test('6.2 — end screen visible on iPhone SE (375×667)', async ({ page }) => {
+test('6.2 - end screen visible on iPhone SE (375×667)', async ({ page }) => {
   await page.setViewportSize({ width: 375, height: 667 })
   await page.addInitScript(() => {
     const orig = window.setInterval.bind(window)
@@ -225,21 +226,21 @@ test('6.2 — end screen visible on iPhone SE (375×667)', async ({ page }) => {
 
 // ─── 7. MOBILE VIEWPORT ──────────────────────────────────────────────────────
 
-test('7.1 — no horizontal scroll on 375px', async ({ page }) => {
+test('7.1 - no horizontal scroll on 375px', async ({ page }) => {
   await page.setViewportSize({ width: 375, height: 667 })
   const game = new GamePage(page, GAME_PATH, ACCENT)
   await game.goto()
   await game.expectNoHorizontalScroll()
 })
 
-test('7.2 — no horizontal scroll on 430px', async ({ page }) => {
+test('7.2 - no horizontal scroll on 430px', async ({ page }) => {
   await page.setViewportSize({ width: 430, height: 932 })
   const game = new GamePage(page, GAME_PATH, ACCENT)
   await game.goto()
   await game.expectNoHorizontalScroll()
 })
 
-test('7.3 — layout intact on 375px', async ({ page }) => {
+test('7.3 - layout intact on 375px', async ({ page }) => {
   await page.setViewportSize({ width: 375, height: 667 })
   const game = new GamePage(page, GAME_PATH, ACCENT)
   await game.goto()
@@ -249,7 +250,7 @@ test('7.3 — layout intact on 375px', async ({ page }) => {
 
 // ─── 8. PERFORMANCE ──────────────────────────────────────────────────────────
 
-test('8.1 — FPS ≥ 55 during gameplay', async ({ page }) => {
+test('8.1 - FPS ≥ 55 during gameplay', async ({ page }) => {
   const game = new GamePage(page, GAME_PATH, ACCENT)
   await game.goto({ sensors: { mic: true } })
   await game.start()
@@ -260,7 +261,7 @@ test('8.1 — FPS ≥ 55 during gameplay', async ({ page }) => {
   expect(fps, `FPS too low: ${fps} (target ≥ 55)`).toBeGreaterThanOrEqual(55)
 })
 
-test('8.2 — heap stays below 150MB', async ({ page }) => {
+test('8.2 - heap stays below 150MB', async ({ page }) => {
   const game = new GamePage(page, GAME_PATH, ACCENT)
   await game.goto({ sensors: { mic: true } })
   await game.start()
@@ -273,7 +274,7 @@ test('8.2 — heap stays below 150MB', async ({ page }) => {
   }
 })
 
-test('8.3 — no memory leak across 3 play-agains', async ({ page }) => {
+test('8.3 - no memory leak across 3 play-agains', async ({ page }) => {
   await page.addInitScript(() => {
     const orig = window.setInterval.bind(window)
     ;(window as any).setInterval = (fn: () => void, ms: number, ...args: unknown[]) => {
@@ -297,13 +298,13 @@ test('8.3 — no memory leak across 3 play-agains', async ({ page }) => {
   const memAfter = await game.measureMemoryMB()
   if (memBefore !== null && memAfter !== null) {
     const growth = memAfter - memBefore
-    expect(growth, `Memory grew by ${growth}MB — possible leak`).toBeLessThan(30)
+    expect(growth, `Memory grew by ${growth}MB - possible leak`).toBeLessThan(30)
   }
 })
 
 // ─── 9. ACCESSIBILITY ────────────────────────────────────────────────────────
 
-test('9.1 — start screen passes axe-core scan', async ({ page }) => {
+test('9.1 - start screen passes axe-core scan', async ({ page }) => {
   const game = new GamePage(page, GAME_PATH, ACCENT)
   await game.goto()
 
@@ -316,7 +317,7 @@ test('9.1 — start screen passes axe-core scan', async ({ page }) => {
   expect(critical, `Critical a11y violations: ${critical.map(v => v.id).join(', ')}`).toHaveLength(0)
 })
 
-test('9.2 — interactive elements have accessible labels', async ({ page }) => {
+test('9.2 - interactive elements have accessible labels', async ({ page }) => {
   const game = new GamePage(page, GAME_PATH, ACCENT)
   await game.goto()
 
@@ -327,7 +328,7 @@ test('9.2 — interactive elements have accessible labels', async ({ page }) => 
   expect(results.violations, `Unlabeled elements: ${results.violations.map(v => v.id).join(', ')}`).toHaveLength(0)
 })
 
-test('9.3 — text contrast meets WCAG AA', async ({ page }) => {
+test('9.3 - text contrast meets WCAG AA', async ({ page }) => {
   const game = new GamePage(page, GAME_PATH, ACCENT)
   await game.goto()
 
@@ -339,7 +340,7 @@ test('9.3 — text contrast meets WCAG AA', async ({ page }) => {
   expect(results.violations, `Contrast violations: ${results.violations.map(v => v.id).join(', ')}`).toHaveLength(0)
 })
 
-test('9.4 — end screen passes axe-core scan', async ({ page }) => {
+test('9.4 - end screen passes axe-core scan', async ({ page }) => {
   await page.addInitScript(() => {
     const orig = window.setInterval.bind(window)
     ;(window as any).setInterval = (fn: () => void, ms: number, ...args: unknown[]) => {
@@ -362,7 +363,7 @@ test('9.4 — end screen passes axe-core scan', async ({ page }) => {
   expect(critical, `End screen a11y violations: ${critical.map(v => v.id).join(', ')}`).toHaveLength(0)
 })
 
-test('10.1 — haptics fire at least once', async ({ page }) => {
+test('10.1 - haptics fire at least once', async ({ page }) => {
   const game = new GamePage(page, GAME_PATH, ACCENT)
   await game.goto({ sensors: { mic: true } })
   await game.start()

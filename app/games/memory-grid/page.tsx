@@ -19,7 +19,7 @@ import GameStartScreen from '@/components/GameStartScreen';
 import Countdown from '@/components/Countdown';
 import EndScreen from '@/components/EndScreen';
 import { initAudio, sfx, haptic, startMusic } from '@/lib/audio';
-import { playScoreHit, playVictoryFanfare, playNearMiss } from '@/lib/audio';
+import { playScoreHit, playVictoryFanfare } from '@/lib/audio';
 import { hapticScore, hapticFail, hapticVictory } from '@/lib/haptics';
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
@@ -192,6 +192,7 @@ function startWatchPhase(s: GameState): void {
 }
 
 function startRecallPhase(s: GameState): void {
+  sfx.shimmer(); // transition cue — high glassy bell signals the shift from watching to recalling
   s.subPhase = 'recall';
   s.recallIdx = 0;
   s.recallStartTime = performance.now();
@@ -207,6 +208,7 @@ function drawFrame(
   H: number,
   s: GameState,
 ): void {
+  ctx.imageSmoothingEnabled = true; // anti-aliased rounded rect edges on all pixel densities
   const now = performance.now();
   const accent = s.accentColor;
   const { cellSize, gap, startX, startY, totalH } = getGridLayout(W, H);
@@ -612,7 +614,7 @@ export default function MemoryGridGame() {
         if (s.sequenceLength - 1 >= 7) {
           sfx.success(); sfx.success(); // double pop for milestone
           haptic([30, 50, 80, 50, 30]);
-          playNearMiss(); // victory shimmer cue
+          sfx.defuse(); // ascending chord burst — Memory Master territory (correct celebratory character)
         } else {
           sfx.success();
           haptic([30, 50, 30]);

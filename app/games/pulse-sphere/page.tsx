@@ -100,7 +100,7 @@ export default function PulseSphere() {
     stream: null as MediaStream | null,
     analyser: null as AnalyserNode | null,
     audioCtx: null as AudioContext | null,
-    timeLeft: 60, intervalId: null as ReturnType<typeof setInterval> | null,
+    timeLeft: 45, intervalId: null as ReturnType<typeof setInterval> | null,
     // Tracking
     volumeSamples: [] as number[],
     tiltMagnitudes: [] as number[],
@@ -117,7 +117,7 @@ export default function PulseSphere() {
   });
   const [gameState, setGameState] = useState<GameState>('start');
   const [showInstructions, setShowInstructions] = useState(true);
-  const [timeLeft, setTimeLeft] = useState(60);
+  const [timeLeft, setTimeLeft] = useState(45);
   const [behavior, setBehavior] = useState<BehaviorData | null>(null);
   const [joystickEnabled, setJoystickEnabled] = useState(false);
   const [joystickThumb, setJoystickThumb] = useState({ x: 0, y: 0 });
@@ -184,11 +184,11 @@ export default function PulseSphere() {
   const startLoop = useCallback(() => {
     const s = stateRef.current;
     s.volumeSamples = []; s.tiltMagnitudes = []; s.touchCount = 0;
-    s.timeLeft = 60; s.running = true; s.hue = 280;
+    s.timeLeft = 45; s.running = true; s.hue = 280;
     s.joystickX = 0; s.joystickY = 0;
     streakRef.current = 0; lastMilestoneRef.current = 0;
     setStreak(0); setNearMissMsg(false); setIsNewBest(false);
-    setTimeLeft(60); setLiveActivity(0); setGameState('playing');
+    setTimeLeft(45); setLiveActivity(0); setGameState('playing');
     stopMusicRef.current = startMusic('ambient');
     const capturedTheme = theme;
 
@@ -276,7 +276,7 @@ export default function PulseSphere() {
       const win5t = s.tiltMagnitudes.slice(-5);
       const recentVol  = win5v.length ? win5v.reduce((a, b) => a + b, 0) / win5v.length : 0;
       const recentTilt = win5t.length ? (win5t.reduce((a, b) => a + b, 0) / win5t.length) * 100 : 0;
-      const elapsed    = 60 - s.timeLeft;
+      const elapsed    = 45 - s.timeLeft;
       const touchRate  = elapsed > 0 ? Math.min(100, (s.touchCount / elapsed) * 6) : 0;
       setLiveActivity(Math.min(100, Math.round((recentVol + Math.min(100, recentTilt) + touchRate) / 3)));
       if (s.timeLeft <= 0) {
@@ -285,7 +285,7 @@ export default function PulseSphere() {
         endGame(capturedTheme);
       }
       // Milestone score pops every 10s
-      const survived = 60 - s.timeLeft;
+      const survived = 45 - s.timeLeft;
       if (survived > 0 && survived % 10 === 0 && survived !== lastMilestoneRef.current) {
         lastMilestoneRef.current = survived;
         if (hapticsEnabled) hapticScore();
