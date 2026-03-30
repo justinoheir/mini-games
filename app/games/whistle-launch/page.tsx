@@ -9,158 +9,584 @@ import { initAudio, sfx, haptic, startMusic } from '@/lib/audio';
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
+import { Particle, spawnBurst, updateAndDrawParticles } from '@/lib/particles';
+import { hapticScore, hapticFail, hapticVictory } from '@/lib/haptics';
+import { motion, AnimatePresence } from 'framer-motion';
 
 const GAME_ID = 'whistle-launch';
-const ACCENT = '#fbbf24';
+const ACCENT = '#f59e0b';
 const DURATION = 45;
-const GAME_EMOJI = '🚀';
+const GAME_EMOJI = '🎯';
 const GAME_TITLE = 'Whistle Launch';
-const GAME_TAGLINE = 'Whistle to launch. Pitch to steer.';
-const BG_COLOR = '#14100a';
-const MUSIC_PAT: import('@/lib/audio').MusicPattern = 'calm';
+const GAME_TAGLINE = 'Sharp spike fires. Hit every target!';
 const PB_KEY = 'mg_pb_whistle-launch';
+// Volume must jump by SPIKE_DELTA in one frame, exceeding SPIKE_MIN to count
+const SPIKE_MIN = 0.45;
+const SPIKE_DELTA = 0.22;
+const TARGET_COUNT = 6;
 
 interface Signals {
-  score: number; hits: number; attempts: number;
-  reactionTimes: number[]; maxStreak: number; streakCurrent: number;
+  score: number;
+  hits: number;
+  misses: number;
+  maxStreak: number;
+  peakVolume: number;
 }
+
 function getPersonality(sig: Signals): string {
-  const acc = sig.attempts > 0 ? sig.hits / sig.attempts : 0;
-  const avg = sig.reactionTimes.length > 0 ? sig.reactionTimes.reduce((a,b)=>a+b,0)/sig.reactionTimes.length : 9999;
-  if (acc >= 0.75 && avg < 700) return 'Rocket Pilot 🚀';
-  if (acc >= 0.55) return 'Astronaut 🌟';
-  if (sig.maxStreak >= 4) return 'High Flyer ✈️';
-  return 'Ground Control 📡';
+  const acc = (sig.hits + sig.misses) > 0 ? sig.hits / (sig.hits + sig.misses) : 0;
+  if (acc >= 0.85 && sig.maxStreak >= 4) return 'Dead Eye 🎯';
+  if (sig.hits >= 18) return 'Marksman 🏹';
+  if (acc >= 0.75) return 'Sharpshooter ⚡';
+  if (sig.peakVolume > 0.85) return 'Thundervoice 🌩️';
+  return 'Training Day 🌱';
 }
+
+interface Target {
+  x: number;
+  y: number;
+  r: number;
+  hp: number;
+  hitAt: number;
+  spawnAt: number;
+  id: number;
+  vx: number;
+  vy: number;
+  pulseT: number;
+}
+
+interface Projectile {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  tx: number;   // target x at fire time
+  ty: number;
+  id: number;
+  born: number;
+}
+
 type Phase = 'start' | 'countdown' | 'playing' | 'done';
-function WebhookEmitter({ theme, sig, personality, player }: { theme: ReturnType<typeof useBrandTheme>; sig: Signals; personality: string; player: PlayerSession | null; }) {
+
+function WebhookEmitter({ theme, sig, personality, player }: {
+  theme: ReturnType<typeof useBrandTheme>;
+  sig: Signals;
+  personality: string;
+  player: PlayerSession | null;
+}) {
   const fired = useRef(false);
-  useEffect(() => { if (fired.current) return; fired.current = true; postWebhook(theme, GAME_ID, { personality, score: sig.score }, player); }, [theme, sig, personality, player]);
+  useEffect(() => {
+    if (fired.current) return;
+    fired.current = true;
+    postWebhook(theme, GAME_ID, { personality, score: sig.score }, player);
+  }, [theme, sig, personality, player]);
   return null;
 }
 
-export default function WhistleLaunchGame() {
+export default function WhistleLaunch() {
   const theme = useBrandTheme();
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const animRef = useRef(0);
-  const timerRef = useRef<ReturnType<typeof setInterval>|null>(null);
-  const stopMusicRef = useRef<(()=>void)|null>(null);
-  const analyserRef = useRef<AnalyserNode|null>(null);
-  const streamRef = useRef<MediaStream|null>(null);
-  const stateRef = useRef({ running:false, timeLeft:DURATION, sig:{score:0,hits:0,attempts:0,reactionTimes:[] as number[],maxStreak:0,streakCurrent:0}, pitchNorm:0.5, targetPitch:0.5, holdTime:0, hasMic:false });
+  const stopMusicRef = useRef<(() => void) | null>(null);
 
-const [phase, setPhase] = useState<Phase>('start');
+  const stateRef = useRef({
+    running: false,
+    timeLeft: DURATION,
+    score: 0,
+    hits: 0,
+    misses: 0,
+    streak: 0,
+    maxStreak: 0,
+    peakVol: 0,
+    targets: [] as Target[],
+    projectiles: [] as Projectile[],
+    particles: [] as Particle[],
+    analyser: null as AnalyserNode | null,
+    audioCtx: null as AudioContext | null,
+    stream: null as MediaStream | null,
+    animId: 0,
+    timerIntervalId: null as ReturnType<typeof setInterval> | null,
+    prevVol: 0,
+    spikeThrottle: 0,
+    targetIdCounter: 0,
+    projIdCounter: 0,
+    launchFlash: 0,
+    hitFlash: 0,
+    launcherY: 0,
+    launcherX: 0,
+  });
+
+  const [phase, setPhase] = useState<Phase>('start');
   const [timeLeft, setTimeLeft] = useState(DURATION);
-  const [scoreDisplay, setScoreDisplay] = useState(0);
-  const [finalSig, setFinalSig] = useState<Signals|null>(null);
-  const playerSessionRef = useRef<PlayerSession|null>(null);
-  
+  const [displayScore, setDisplayScore] = useState(0);
+  const [finalSig, setFinalSig] = useState<Signals | null>(null);
+  const playerSessionRef = useRef<PlayerSession | null>(null);
+  const [isNewBest, setIsNewBest] = useState(false);
+  const accent = theme.colors.accent ?? ACCENT;
 
-  const getPitch = () => {
-    const a=analyserRef.current; if(!a) return 0.5;
-    const buf=new Float32Array(a.fftSize); a.getFloatTimeDomainData(buf);
-    let c=0; for(let i=1;i<buf.length;i++) if(buf[i-1]<0&&buf[i]>=0) c++;
-    return Math.min(1,Math.max(0,(c*(a.context.sampleRate/buf.length)-80)/800));
-  };
+  const getVolume = useCallback((): number => {
+    const s = stateRef.current;
+    if (!s.analyser) return 0;
+    const data = new Uint8Array(s.analyser.frequencyBinCount);
+    s.analyser.getByteFrequencyData(data);
+    return data.reduce((a, b) => a + b, 0) / data.length / 255;
+  }, []);
 
-  const endGame = useCallback(()=>{
-    const s=stateRef.current; s.running=false;
-    cancelAnimationFrame(animRef.current);
-    if(timerRef.current){clearInterval(timerRef.current);timerRef.current=null;}
-    if(stopMusicRef.current){stopMusicRef.current();stopMusicRef.current=null;}
-    if(streamRef.current){streamRef.current.getTracks().forEach(t=>t.stop());streamRef.current=null;}
-    setFinalSig({...s.sig}); setPhase('done');
-  },[]);
+  const spawnTarget = useCallback((W: number, H: number) => {
+    const s = stateRef.current;
+    const margin = 60;
+    const lx = s.launcherX;
+    const ly = s.launcherY;
+    let x = 0, y = 0, attempts = 0;
+    do {
+      x = margin + Math.random() * (W - margin * 2);
+      y = 100 + Math.random() * (H - 180);
+      attempts++;
+    } while (Math.hypot(x - lx, y - ly) < W * 0.25 && attempts < 15);
 
-  const startLoop = useCallback(async()=>{
-    const c=canvasRef.current; if(!c) return;
-    const ctx=c.getContext('2d'); if(!ctx) return;
-    const s=stateRef.current;
-    try{const stream=await navigator.mediaDevices.getUserMedia({audio:true});streamRef.current=stream;const ac=new AudioContext();const src=ac.createMediaStreamSource(stream);const an=ac.createAnalyser();an.fftSize=2048;src.connect(an);analyserRef.current=an;s.hasMic=true;}catch{s.hasMic=false;}
-    s.running=true; s.timeLeft=DURATION; s.pitchNorm=0.5; s.holdTime=0;
-    s.sig={score:0,hits:0,attempts:0,reactionTimes:[],maxStreak:0,streakCurrent:0};
-    s.targetPitch=0.2+Math.random()*0.6; s.sig.attempts++;
-    setScoreDisplay(0); setTimeLeft(DURATION); setPhase('playing');
-    stopMusicRef.current=startMusic(MUSIC_PAT);
-    timerRef.current=setInterval(()=>{s.timeLeft--;setTimeLeft(s.timeLeft);if(s.timeLeft<=0){sfx.fail();haptic([100]);endGame();}},1000);
-    const loop=()=>{
-      if(!s.running) return;
-      const W=c.width,H=c.height;
-      ctx.fillStyle=BG_COLOR; ctx.fillRect(0,0,W,H);
-      if(s.hasMic) s.pitchNorm=getPitch();
-      else s.pitchNorm=0.5+0.06*Math.sin(Date.now()*0.0008);
-      const sX=W*0.76,sW=28,sH=H*0.62,sY=(H-sH)/2;
-      ctx.fillStyle='#ffffff0e'; ctx.roundRect(sX,sY,sW,sH,6); ctx.fill();
-      const tzY=sY+sH*(1-s.targetPitch-0.07); const tzH=sH*0.14;
-      ctx.fillStyle=ACCENT+'44'; ctx.roundRect(sX,tzY,sW,tzH,5); ctx.fill();
-      ctx.strokeStyle=ACCENT; ctx.lineWidth=2; ctx.roundRect(sX,tzY,sW,tzH,5); ctx.stroke();
-      const iY=sY+sH*(1-s.pitchNorm)-5;
-      const inZ=Math.abs(s.pitchNorm-s.targetPitch)<0.07;
-      ctx.shadowBlur=inZ?20:8; ctx.shadowColor=inZ?'#22c55e':ACCENT;
-      ctx.fillStyle=inZ?'#22c55e':ACCENT; ctx.roundRect(sX-5,iY,sW+10,10,5); ctx.fill(); ctx.shadowBlur=0;
-      if(inZ){
-        s.holdTime+=1/60;
-        const hW=Math.min(1,s.holdTime/1.5),mW=W*0.55,mX=(W-mW)/2,mY=H*0.8;
-        ctx.fillStyle='#ffffff0d'; ctx.roundRect(mX,mY,mW,16,5); ctx.fill();
-        ctx.fillStyle=ACCENT; ctx.roundRect(mX,mY,mW*hW,16,5); ctx.fill();
-        if(s.holdTime>=1.5){
-          s.sig.hits++; s.sig.streakCurrent++;
-          if(s.sig.streakCurrent>s.sig.maxStreak) s.sig.maxStreak=s.sig.streakCurrent;
-          s.sig.score+=s.sig.streakCurrent>=3?2:1; setScoreDisplay(s.sig.score);
-          sfx.collect(); haptic([30]); s.holdTime=0; s.targetPitch=0.2+Math.random()*0.6; s.sig.attempts++;
-        }
-      } else {
-        s.holdTime=Math.max(0,s.holdTime-0.04);
-      }
-      ctx.fillStyle='rgba(255,255,255,0.4)'; ctx.font='12px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='top';
-      ctx.fillText(s.hasMic?'HUM / SING � MATCH THE TARGET':'DRAG UP/DOWN TO SIMULATE',W/2,H*0.88);
-      if(s.sig.streakCurrent>=3){ctx.fillStyle=ACCENT;ctx.font='bold 15px sans-serif';ctx.fillText('x'+s.sig.streakCurrent+' COMBO!',W/2,H*0.92);}
-      animRef.current=requestAnimationFrame(loop);
+    const moving = s.score >= 5;
+    const speed = moving ? (0.5 + Math.random() * 0.8) : 0;
+    const angle = Math.random() * Math.PI * 2;
+    s.targets.push({
+      x, y,
+      r: 22 + Math.random() * 10,
+      hp: 1,
+      hitAt: 0,
+      spawnAt: Date.now(),
+      id: s.targetIdCounter++,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      pulseT: Math.random() * Math.PI * 2,
+    });
+  }, []);
+
+  const endGame = useCallback(() => {
+    const s = stateRef.current;
+    s.running = false;
+    cancelAnimationFrame(s.animId);
+    if (s.timerIntervalId) clearInterval(s.timerIntervalId);
+    if (s.stream) s.stream.getTracks().forEach(t => t.stop());
+    if (s.audioCtx) s.audioCtx.close().catch(() => {});
+    if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
+    sfx.success();
+    hapticVictory();
+    const sig: Signals = {
+      score: s.score,
+      hits: s.hits,
+      misses: s.misses,
+      maxStreak: s.maxStreak,
+      peakVolume: s.peakVol,
     };
-    animRef.current=requestAnimationFrame(loop);
-  },[endGame]);
+    try {
+      const prev = parseInt(localStorage.getItem(PB_KEY) || '0', 10);
+      if (sig.score > prev) { localStorage.setItem(PB_KEY, String(sig.score)); setIsNewBest(true); }
+    } catch { /* ignore */ }
+    setFinalSig(sig);
+    setPhase('done');
+  }, []);
 
-  useEffect(()=>{
-    const c=canvasRef.current; if(!c) return;
-    const resize=()=>{c.width=c.offsetWidth;c.height=c.offsetHeight;};
-    resize(); window.addEventListener('resize',resize);
-    const onMove=(e:PointerEvent)=>{ if(phase!=='playing') return; const rect=c.getBoundingClientRect(); stateRef.current.pitchNorm=1-(e.clientY-rect.top)/rect.height; };
-    c.addEventListener('pointermove',onMove);
-    return()=>{window.removeEventListener('resize',resize);c.removeEventListener('pointermove',onMove);};
-  },[phase]);
+  const startLoop = useCallback(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    const s = stateRef.current;
+    s.running = true;
+    s.timeLeft = DURATION;
+    s.score = 0;
+    s.hits = 0;
+    s.misses = 0;
+    s.streak = 0;
+    s.maxStreak = 0;
+    s.peakVol = 0;
+    s.targets = [];
+    s.projectiles = [];
+    s.particles = [];
+    s.prevVol = 0;
+    s.spikeThrottle = 0;
+    s.targetIdCounter = 0;
+    s.projIdCounter = 0;
+    s.launchFlash = 0;
+    s.hitFlash = 0;
+    setDisplayScore(0);
+    setTimeLeft(DURATION);
+    setIsNewBest(false);
+    setPhase('playing');
+    stopMusicRef.current = startMusic('pulse');
 
-  useEffect(()=>()=>{cancelAnimationFrame(animRef.current);if(timerRef.current)clearInterval(timerRef.current);if(stopMusicRef.current)stopMusicRef.current();if(streamRef.current)streamRef.current.getTracks().forEach(t=>t.stop());},[]);
+    const W = window.innerWidth;
+    const H = window.innerHeight;
+    s.launcherX = W / 2;
+    s.launcherY = H - 60;
+    for (let i = 0; i < TARGET_COUNT; i++) spawnTarget(W, H);
 
-  
- 
-  const handleStart = useCallback((name: string, avatar: string) => { initAudio(); playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar); setPhase('countdown'); }, []);
-  const handleCountdownDone = useCallback(() => { startLoop(); }, [startLoop]);
-  const handlePlayAgain = useCallback(() => { setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null); }, []);
-  const buildInsights = (sig: Signals) => {
-    const acc = sig.attempts > 0 ? Math.round((sig.hits/sig.attempts)*100) : 0;
-    const avg = sig.reactionTimes.length > 0 ? Math.round(sig.reactionTimes.reduce((a,b)=>a+b,0)/sig.reactionTimes.length) : 0;
-    const pb = parseInt(localStorage.getItem(PB_KEY) ?? '0');
-    if (sig.score > pb) localStorage.setItem(PB_KEY, String(sig.score));
-    return [
-      { label: 'Accuracy', value: acc + '%', color: acc>=70?'#4ade80':acc>=40?'#facc15':'#ef4444' },
-      { label: 'Avg React', value: avg + 'ms', color: ACCENT },
-      { label: 'Best Streak', value: '×' + sig.maxStreak, color: ACCENT },
-      { label: 'Score', value: String(sig.score), color: 'var(--color-text)' },
-    ];
-  };
-  
+    s.timerIntervalId = setInterval(() => {
+      if (!s.running) return;
+      s.timeLeft--;
+      setTimeLeft(s.timeLeft);
+      setDisplayScore(s.score);
+      sfx.tick();
+      if (s.timeLeft === 10) sfx.warning();
+      if (s.timeLeft <= 0) endGame();
+    }, 1000);
+
+    const loop = () => {
+      if (!s.running) return;
+      const W2 = window.innerWidth;
+      const H2 = window.innerHeight;
+      const vol = getVolume();
+      if (vol > s.peakVol) s.peakVol = vol;
+      const now = Date.now();
+      s.launcherX = W2 / 2;
+      s.launcherY = H2 - 60;
+
+      // Spike detection
+      s.spikeThrottle--;
+      const delta = vol - s.prevVol;
+      if (vol >= SPIKE_MIN && delta >= SPIKE_DELTA && s.spikeThrottle <= 0) {
+        // Find nearest live target
+        let nearest: Target | null = null;
+        let nearDist = Infinity;
+        for (const t of s.targets) {
+          if (t.hitAt > 0) continue;
+          const d = Math.hypot(t.x - s.launcherX, t.y - s.launcherY);
+          if (d < nearDist) { nearDist = d; nearest = t; }
+        }
+        if (nearest) {
+          const dx = nearest.x - s.launcherX;
+          const dy = nearest.y - s.launcherY;
+          const len = Math.hypot(dx, dy);
+          const speed = 9 + nearDist / 80;
+          s.projectiles.push({
+            x: s.launcherX,
+            y: s.launcherY,
+            vx: (dx / len) * speed,
+            vy: (dy / len) * speed,
+            tx: nearest.x,
+            ty: nearest.y,
+            id: s.projIdCounter++,
+            born: now,
+          });
+          s.launchFlash = now;
+          s.spikeThrottle = 20;
+        }
+      }
+      s.prevVol = vol;
+
+      // Background
+      ctx.fillStyle = '#08060e';
+      ctx.fillRect(0, 0, W2, H2);
+
+      // Update and draw targets
+      for (let i = s.targets.length - 1; i >= 0; i--) {
+        const t = s.targets[i];
+        if (t.hitAt > 0 && now - t.hitAt > 700) {
+          s.targets.splice(i, 1);
+          spawnTarget(W2, H2);
+          continue;
+        }
+        if (t.hitAt === 0 && t.vx !== 0) {
+          t.x += t.vx; t.y += t.vy;
+          if (t.x < t.r || t.x > W2 - t.r) t.vx *= -1;
+          if (t.y < 90 || t.y > H2 - 90) t.vy *= -1;
+        }
+        t.pulseT += 0.06;
+        const isHit = t.hitAt > 0;
+        const hitAge = isHit ? (now - t.hitAt) / 700 : 0;
+        const alpha = isHit ? Math.max(0, 1 - hitAge * 1.4) : (0.7 + Math.sin(t.pulseT) * 0.3);
+        const scale = isHit ? 1 + hitAge * 2 : 1;
+
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        ctx.translate(t.x, t.y);
+        ctx.scale(scale, scale);
+        // Outer ring
+        ctx.shadowBlur = isHit ? 30 : 12;
+        ctx.shadowColor = isHit ? '#fbbf24' : '#f59e0b88';
+        // Outer halo
+        ctx.strokeStyle = isHit ? '#fbbf24' : `rgba(245,158,11,${0.3 + Math.sin(t.pulseT) * 0.2})`;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(0, 0, t.r + 8, 0, Math.PI * 2);
+        ctx.stroke();
+        // Target circle
+        ctx.fillStyle = isHit ? 'rgba(251,191,36,0.4)' : 'rgba(245,158,11,0.15)';
+        ctx.beginPath();
+        ctx.arc(0, 0, t.r, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = isHit ? '#fbbf24' : '#f59e0b';
+        ctx.lineWidth = 2.5;
+        ctx.stroke();
+        // Inner ring
+        ctx.strokeStyle = 'rgba(255,255,255,0.4)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.arc(0, 0, t.r * 0.5, 0, Math.PI * 2);
+        ctx.stroke();
+        // Bullseye
+        ctx.fillStyle = isHit ? '#fbbf24' : '#f59e0b';
+        ctx.shadowBlur = 0;
+        ctx.beginPath();
+        ctx.arc(0, 0, 5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+
+      // Update and draw projectiles
+      for (let i = s.projectiles.length - 1; i >= 0; i--) {
+        const p = s.projectiles[i];
+        p.x += p.vx;
+        p.y += p.vy;
+        const age = (now - p.born) / 1000;
+
+        // Remove if off-screen or old
+        if (p.x < -20 || p.x > W2 + 20 || p.y < -20 || p.y > H2 + 20 || age > 3) {
+          s.projectiles.splice(i, 1);
+          continue;
+        }
+
+        // Check target collision
+        let hit = false;
+        for (const t of s.targets) {
+          if (t.hitAt > 0) continue;
+          if (Math.hypot(p.x - t.x, p.y - t.y) < t.r + 8) {
+            t.hitAt = now;
+            s.score++;
+            s.hits++;
+            s.streak++;
+            if (s.streak > s.maxStreak) s.maxStreak = s.streak;
+            sfx.collect();
+            hapticScore();
+            spawnBurst(s.particles, t.x, t.y, '#fbbf24', 14, 5);
+            s.hitFlash = now;
+            hit = true;
+            break;
+          }
+        }
+        if (hit) { s.projectiles.splice(i, 1); continue; }
+
+        // Draw projectile trail
+        const trailLen = 4;
+        for (let ti = 0; ti < trailLen; ti++) {
+          const ta = (ti / trailLen) * 0.6;
+          const tx2 = p.x - p.vx * ti * 0.8;
+          const ty2 = p.y - p.vy * ti * 0.8;
+          ctx.save();
+          ctx.globalAlpha = ta;
+          ctx.fillStyle = '#fbbf24';
+          ctx.beginPath();
+          ctx.arc(tx2, ty2, 5 - ti * 0.8, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+        }
+        // Projectile head
+        ctx.save();
+        ctx.shadowBlur = 18;
+        ctx.shadowColor = '#fbbf24';
+        ctx.fillStyle = '#fffbeb';
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 6, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+
+      // Particles
+      updateAndDrawParticles(ctx, s.particles);
+
+      // Launcher (bottom center)
+      const lx = s.launcherX;
+      const ly = s.launcherY;
+      const launchAge = now - s.launchFlash;
+      const launchGlow = launchAge < 200 ? (1 - launchAge / 200) : 0;
+      ctx.save();
+      ctx.shadowBlur = 15 + launchGlow * 30;
+      ctx.shadowColor = '#f59e0b';
+      ctx.fillStyle = `rgba(245,158,11,${0.8 + launchGlow * 0.2})`;
+      // Triangle launcher
+      ctx.beginPath();
+      ctx.moveTo(lx, ly - 24);
+      ctx.lineTo(lx - 16, ly + 10);
+      ctx.lineTo(lx + 16, ly + 10);
+      ctx.closePath();
+      ctx.fill();
+      // Base
+      ctx.fillStyle = 'rgba(245,158,11,0.4)';
+      ctx.beginPath();
+      ctx.arc(lx, ly + 10, 18, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+
+      // Vol indicator
+      const bW = 60, bH = 4;
+      ctx.fillStyle = 'rgba(255,255,255,0.1)';
+      ctx.fillRect(lx - bW / 2, ly + 28, bW, bH);
+      ctx.fillStyle = vol >= SPIKE_MIN ? '#fbbf24' : 'rgba(255,255,255,0.25)';
+      ctx.fillRect(lx - bW / 2, ly + 28, bW * Math.min(1, vol), bH);
+
+      // Launch flash overlay
+      if (launchAge < 200) {
+        ctx.fillStyle = `rgba(245,158,11,${launchGlow * 0.12})`;
+        ctx.fillRect(0, 0, W2, H2);
+      }
+      if (now - s.hitFlash < 250) {
+        const ha = (1 - (now - s.hitFlash) / 250) * 0.15;
+        ctx.fillStyle = `rgba(251,191,36,${ha})`;
+        ctx.fillRect(0, 0, W2, H2);
+      }
+
+      s.animId = requestAnimationFrame(loop);
+    };
+    s.animId = requestAnimationFrame(loop);
+  }, [getVolume, endGame, spawnTarget]);
+
+  const handleStart = useCallback(async (name: string, avatar: string) => {
+    playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar);
+    await initAudio();
+    sfx.click();
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const audioCtx = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
+      const src = audioCtx.createMediaStreamSource(stream);
+      const analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 256;
+      analyser.smoothingTimeConstant = 0.2;  // fast response for spike detection
+      src.connect(analyser);
+      const s = stateRef.current;
+      s.stream = stream;
+      s.analyser = analyser;
+      s.audioCtx = audioCtx;
+    } catch { /* mic denied */ }
+    setPhase('countdown');
+  }, []);
+
+  const handlePlayAgain = useCallback(() => {
+    setIsNewBest(false);
+    setFinalSig(null);
+    setPhase('start');
+  }, []);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const dpr = window.devicePixelRatio || 1;
+    const resize = () => {
+      canvas.width = window.innerWidth * dpr;
+      canvas.height = window.innerHeight * dpr;
+      canvas.style.width = window.innerWidth + 'px';
+      canvas.style.height = window.innerHeight + 'px';
+      const c = canvas.getContext('2d');
+      if (c) c.setTransform(dpr, 0, 0, dpr, 0, 0);
+    };
+    resize();
+    window.addEventListener('resize', resize);
+    return () => {
+      window.removeEventListener('resize', resize);
+      const s = stateRef.current;
+      s.running = false;
+      cancelAnimationFrame(s.animId);
+      if (s.timerIntervalId) clearInterval(s.timerIntervalId);
+      if (s.stream) s.stream.getTracks().forEach(t => t.stop());
+      if (s.audioCtx) s.audioCtx.close().catch(() => {});
+      if (stopMusicRef.current) stopMusicRef.current();
+    };
+  }, []);
+
+  // suppress unused
+  void haptic;
+  void startMusic;
+  void hapticFail;
+
   return (
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent??ACCENT}>
-      {phase==='start'&&<GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description={GAME_TAGLINE} ctaLabel="Allow Mic" accentColor={theme.colors.accent??ACCENT} onStart={handleStart}/>}
-      {phase==='countdown'&&<Countdown onComplete={handleCountdownDone} accentColor={theme.colors.accent??ACCENT}/>}
-      {(phase==='playing'||phase==='countdown')&&<>
-        <canvas ref={canvasRef} aria-label="Whistle Launch game canvas" role="img" style={{position:'absolute',inset:0,width:'100%',height:'100%',touchAction:'none'}}/>
-        {phase==='playing'&&<GameHUD accentColor={theme.colors.accent??ACCENT} items={[{label:'TIME',value:timeLeft,danger:timeLeft<=5},{label:'SCORE',value:scoreDisplay}]}/>}
-      </>}
-      {phase==='done'&&finalSig&&<>
-        <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI} score={String(finalSig.score)} personality={getPersonality(finalSig)} insights={buildInsights(finalSig)} accentColor={theme.colors.accent??ACCENT} onPlayAgain={handlePlayAgain} didWin={finalSig.score>=5}/>
-        <WebhookEmitter theme={theme} sig={finalSig} personality={getPersonality(finalSig)} player={playerSessionRef.current}/>
-      </>}
+    <GameShell
+      title={GAME_TITLE}
+      emoji={GAME_EMOJI}
+      accentColor={accent}
+      theme={theme}
+      background="radial-gradient(ellipse at 50% 50%, #100800 0%, #080500 60%, #000 100%)"
+    >
+      <canvas
+        ref={canvasRef}
+        style={{ display: phase === 'playing' ? 'block' : 'none', position: 'absolute', top: 0, left: 0, touchAction: 'none' }}
+        role="img"
+        aria-label="Whistle Launch game canvas — sharp volume spike fires a projectile"
+      />
+
+      {phase === 'playing' && (
+        <GameHUD
+          accentColor={accent}
+          items={[
+            { label: 'HITS', value: displayScore, testId: 'score' },
+            { label: 'TIME', value: timeLeft, danger: timeLeft <= 10, testId: 'timer' },
+          ]}
+        />
+      )}
+
+      <AnimatePresence mode="wait">
+        {phase === 'start' && (
+          <motion.div key="start" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} style={{ height: '100%' }}>
+            <GameStartScreen
+              emoji={GAME_EMOJI}
+              title={GAME_TITLE}
+              description={GAME_TAGLINE + ' Whistle or shout sharply into the mic — each sharp spike launches a projectile at the nearest target.'}
+              sensorNote="🎤 Uses microphone"
+              ctaLabel="Allow Mic & Fire →"
+              accentColor={accent}
+              onStart={handleStart}
+              gradient="radial-gradient(ellipse 80% 70% at 50% 30%, #100800 0%, #080500 55%, #000 100%)"
+            />
+          </motion.div>
+        )}
+        {phase === 'countdown' && (
+          <motion.div key="countdown" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+            <Countdown onComplete={startLoop} accentColor={accent} />
+          </motion.div>
+        )}
+        {phase === 'done' && finalSig && (
+          <motion.div key="done" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} style={{ height: '100%' }}>
+            <EndScreen
+              gameId={GAME_ID}
+              title={getPersonality(finalSig)}
+              emoji={GAME_EMOJI}
+              score={String(finalSig.score)}
+              personality={getPersonality(finalSig)}
+              insights={[
+                { label: 'Targets hit', value: String(finalSig.hits), color: '#f59e0b' },
+                { label: 'Best streak', value: String(finalSig.maxStreak), color: '#fbbf24' },
+                { label: 'Peak volume', value: `${Math.round(finalSig.peakVolume * 100)}%`, color: '#ef4444' },
+              ]}
+              accentColor={accent}
+              onPlayAgain={handlePlayAgain}
+              didWin={finalSig.score >= 6}
+              finalScore={finalSig.score}
+            />
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {phase === 'done' && finalSig && (
+        <WebhookEmitter theme={theme} sig={finalSig} personality={getPersonality(finalSig)} player={playerSessionRef.current} />
+      )}
+
+      <AnimatePresence>
+        {isNewBest && phase === 'done' && (
+          <motion.div
+            key="new-best"
+            initial={{ opacity: 0, y: -20, scale: 0.8 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -20 }}
+            transition={{ duration: 0.4, delay: 0.5 }}
+            style={{
+              position: 'fixed', top: '10%', left: '50%', transform: 'translateX(-50%)',
+              zIndex: 90, pointerEvents: 'none',
+              background: 'linear-gradient(135deg, #fbbf24, #f59e0b)',
+              borderRadius: 20, padding: '8px 20px', fontSize: 20,
+              fontWeight: 900, color: '#000', whiteSpace: 'nowrap',
+              boxShadow: '0 4px 20px rgba(251,191,36,0.5)',
+            }}
+          >
+            🏆 New Best!
+          </motion.div>
+        )}
+      </AnimatePresence>
     </GameShell>
   );
 }
