@@ -275,6 +275,7 @@ test('8.2 - heap stays below 150MB', async ({ page }) => {
 })
 
 test('8.3 - no memory leak across 3 play-agains', async ({ page }) => {
+  test.setTimeout(90000)  // 3 play-agains with full start flow needs extra time
   await page.addInitScript(() => {
     const orig = window.setInterval.bind(window)
     ;(window as any).setInterval = (fn: () => void, ms: number, ...args: unknown[]) => {
