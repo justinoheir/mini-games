@@ -503,8 +503,8 @@ export default function WhisperBomb() {
         {gameState === 'start' && (
           <motion.div
             key="start"
-            initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -16 }}
-            transition={{ duration: 0.25 }}
+            initial={{ opacity: 1, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -12 }}
+            transition={{ duration: 0.2 }}
             style={{ position: 'absolute', inset: 0 }}
           >
             <GameStartScreen
@@ -727,7 +727,7 @@ export default function WhisperBomb() {
               { label: 'Noise spikes', value: String(behavior.noiseSpikes), color: '#ef4444' },
               { label: 'Avg volume',   value: `${behavior.avgVolume}/100`,   color: '#ffaa00' },
               { label: 'Danger time',  value: `${behavior.dangerSeconds}s`,  color: '#ff6666' },
-              { label: 'Fuse left',    value: `${behavior.fuseRemaining}%`,  color: behavior.defused ? '#00ff88' : '#555' },
+              { label: 'Fuse left',    value: `${behavior.fuseRemaining}%`,  color: behavior.defused ? '#00ff88' : '#aaa' },
             ]}
             accentColor={accent}
             ctaTextColor="#fff"
