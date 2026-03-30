@@ -147,7 +147,7 @@ export default function AuroraWaveGame() {
       let breathLevel = s.micLevel;
       if (micRef.current) {
         const { analyser, data } = micRef.current;
-        analyser.getByteTimeDomainData(data);
+        analyser.getByteTimeDomainData(data as Uint8Array<ArrayBuffer>);
         let sum = 0;
         for (const v of data) sum += Math.abs(v - 128);
         breathLevel = sum / data.length / 128;
@@ -391,3 +391,5 @@ function WebhookEmitter({ theme, gameId, sig, personality, player }: {
   }, [theme, gameId, sig, personality, player]);
   return null;
 }
+
+

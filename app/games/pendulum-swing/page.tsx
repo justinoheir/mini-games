@@ -212,7 +212,7 @@ export default function PendulumSwing() {
         const ampScore = Math.round(currentAmp * s.length / 10);
         if (ampScore > 0) {
           s.sig.score += ampScore;
-          s.sig.sig?.maxAmplitude; // no-op just reference
+          s.sig.maxAmplitude; // no-op just reference
           if (currentAmp * s.length > s.sig.maxAmplitude) s.sig.maxAmplitude = currentAmp * s.length;
           s.scorePop = Date.now() + 300;
           setScoreDisplay(s.sig.score);
@@ -333,3 +333,5 @@ export default function PendulumSwing() {
     </GameShell>
   );
 }
+
+

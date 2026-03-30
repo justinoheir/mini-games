@@ -1,11 +1,11 @@
-'use client';
+﻿'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
 import GameShell from '@/components/GameShell';
 import GameHUD from '@/components/GameHUD';
 import GameStartScreen from '@/components/GameStartScreen';
 import Countdown from '@/components/Countdown';
 import EndScreen from '@/components/EndScreen';
-import { initAudio, sfx, haptic, startMusic, playComboSfx } from '@/lib/audio';
+import { initAudio, sfx, haptic, startMusic, playComboSfx, playSuccess, playFail, playMusic, stopMusicFile, preloadGameAudio } from '@/lib/audio';
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
@@ -184,6 +184,7 @@ export default function ReactionChain() {
     cancelAnimationFrame(animRef.current);
     if (timerRef.current)   { clearInterval(timerRef.current);  timerRef.current  = null; }
     if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
+    stopMusicFile();
     if (respawnRef.current) { clearTimeout(respawnRef.current); respawnRef.current = null; }
     // Finalize longest chain in case a chain was still live at time-up
     if (s.sig.currentChain > s.sig.longestChain) s.sig.longestChain = s.sig.currentChain;
@@ -222,6 +223,7 @@ export default function ReactionChain() {
     setTimeLeft(DURATION);
     setPhase('playing');
     stopMusicRef.current = startMusic('drive');
+    playMusic(GAME_ID);
 
     // ⚠️ setInterval ONLY for 1-second countdown — never for animation
     timerRef.current = setInterval(() => {
@@ -233,6 +235,7 @@ export default function ReactionChain() {
       if (s.timeLeft <= 0) {
         // Spec endSound = "success" — the game always completes, never globally fails
         sfx.success();
+        playSuccess(GAME_ID);
         haptic([30, 50, 30, 50, 100]);
         endGame();
       }
@@ -517,6 +520,7 @@ export default function ReactionChain() {
     playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar);
     await initAudio();
     sfx.click();
+    preloadGameAudio(GAME_ID);
     setPhase('countdown');
   }, []);
 

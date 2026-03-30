@@ -72,7 +72,7 @@ interface GState {
     jumping: boolean;
     jumpVy: number;
     armAngle: number;     // arm spread
-    pose: 'stand' | 'jump' | 'fall' | 'celebrate';
+    pose: 'stand' | 'jump' | 'fall' | 'celebrate'; falling?: boolean;
     fallAngle: number;
   };
   wobbleIntensity: number; // increases over time
@@ -597,3 +597,4 @@ function WebhookEmitter({ theme, sig, personality, player }: {
   }, [theme, sig, personality, player]);
   return null;
 }
+

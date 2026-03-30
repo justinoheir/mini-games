@@ -25,8 +25,11 @@ let masterReverb: import('tone').Reverb
 // ─── Init (must be called inside a user gesture) ──────────────────────────────
 export async function initAudio(): Promise<void> {
   if (initialized || !isBrowser) return
-  // Test environment: skip Tone.js entirely so setPhase('countdown') fires immediately
-  if ((window as unknown as Record<string, unknown>).__DISABLE_AUDIO) { initialized = true; return; }
+  // Test environment: skip Tone.js entirely.
+  // Do NOT set initialized=true here — keep it false so all sfx calls return early
+  // via the `if (!initialized || muted) return` guard. This prevents .connect(null)
+  // errors when dryGain was never set up (which would block onClick handlers).
+  if ((window as unknown as Record<string, unknown>).__DISABLE_AUDIO) { return; }
   const T = await getTone()
   if (!T) return
   try {
@@ -368,6 +371,20 @@ export const sfx = {
     synth.triggerAttackRelease('F3', '8n')
     setTimeout(() => synth.dispose(), 700)
   },
+
+  gameOver: () => {
+    if (!initialized || muted) return
+    const T = Tone; if (!T) return
+    const reverb = new T.Reverb({ decay: 1.2, wet: 0.35 }).connect(dryGain)
+    const synth = new T.Synth({
+      oscillator: { type: 'sawtooth' },
+      envelope: { attack: 0.01, decay: 0.4, sustain: 0.1, release: 0.5 }, volume: -8,
+    }).connect(reverb)
+    // Descending "game over" tone: C5 → A4 → F4 → C4
+    const notes: [string, number][] = [['C5', 0], ['A4', 0.18], ['F4', 0.36], ['C4', 0.56]]
+    notes.forEach(([note, time]) => synth.triggerAttackRelease(note, '8n', T.now() + time))
+    setTimeout(() => { synth.dispose(); reverb.dispose() }, 1400)
+  },
 }
 
 // ─── Defensive wrapper: catch any uncaught Web Audio API errors ───────────────
@@ -383,7 +400,7 @@ export const sfx = {
 })
 
 // ─── Music Patterns ───────────────────────────────────────────────────────────
-export type MusicPattern = 'tense' | 'calm' | 'pulse' | 'drive' | 'ambient' | 'minimal' | 'sports' | 'holiday'
+export type MusicPattern = 'tense' | 'calm' | 'pulse' | 'drive' | 'ambient' | 'minimal' | 'sports' | 'holiday' | 'chill'
 
 export function startMusic(pattern: MusicPattern): () => void {
   if (!initialized || muted || !Tone) return () => {}
@@ -402,6 +419,7 @@ export function startMusic(pattern: MusicPattern): () => void {
       case 'minimal': return startMinimalMusic()
       case 'sports':  return startDriveMusic()   // alias until sports track is implemented
       case 'holiday': return startAmbientMusic()  // alias until holiday track is implemented
+      case 'chill':   return startCalmMusic()     // alias for relaxed games
       default:        return () => {}
     }
   } catch {
@@ -1479,4 +1497,151 @@ export function playOrbitHum(proximity: number = 0.5): void {
     synth.triggerAttackRelease(freq, '8n', now)
     setTimeout(() => { synth.dispose(); reverb.dispose() }, 900)
   } catch { /* non-critical */ }
+}
+
+// --- File-based Audio System --------------------------------------------------
+// Loads pre-generated WAV files from /audio/{game-id}/ paths.
+// Falls back silently if files are unavailable (e.g. development without assets).
+
+type AudioFileType = 'success' | 'fail' | 'ambient' | 'music'
+
+const audioCache = new Map<string, HTMLAudioElement>()
+let currentAmbient: HTMLAudioElement | null = null
+let currentMusic: HTMLAudioElement | null = null
+
+function getAudioPath(gameId: string, type: AudioFileType): string {
+  return `/audio/${gameId}/${type}.wav`
+}
+
+function loadAudio(gameId: string, type: AudioFileType): HTMLAudioElement | null {
+  if (!isBrowser) return null
+  const key = `${gameId}/${type}`
+  if (audioCache.has(key)) return audioCache.get(key)!
+  const audio = new Audio(getAudioPath(gameId, type))
+  audio.preload = 'none'
+  audioCache.set(key, audio)
+  return audio
+}
+
+async function resumeAudioContext(): Promise<void> {
+  if (!isBrowser) return
+  // Attempt to unlock AudioContext if suspended (autoplay policy)
+  try {
+    const T = await getTone()
+    if (T && T.context.state === 'suspended') {
+      await T.context.resume()
+    }
+  } catch { /* ignore */ }
+}
+
+/**
+ * Play a success sound from the game's WAV assets.
+ * Falls back to sfx.success() if file unavailable or audio not initialized.
+ */
+export async function playSuccess(gameId: string): Promise<void> {
+  if (!isBrowser || muted) return
+  await resumeAudioContext()
+  const audio = loadAudio(gameId, 'success')
+  if (!audio) return
+  try {
+    audio.currentTime = 0
+    audio.volume = 0.8
+    await audio.play()
+  } catch {
+    // File not found or autoplay blocked � fall back to Tone.js
+    sfx.success()
+  }
+}
+
+/**
+ * Play a fail sound from the game's WAV assets.
+ * Falls back to sfx.fail() if file unavailable.
+ */
+export async function playFail(gameId: string): Promise<void> {
+  if (!isBrowser || muted) return
+  await resumeAudioContext()
+  const audio = loadAudio(gameId, 'fail')
+  if (!audio) return
+  try {
+    audio.currentTime = 0
+    audio.volume = 0.8
+    await audio.play()
+  } catch {
+    sfx.fail()
+  }
+}
+
+/**
+ * Play looping ambient sound for a game.
+ * Stops any previously playing ambient track.
+ */
+export async function playAmbient(gameId: string): Promise<void> {
+  if (!isBrowser || muted) return
+  stopAmbientFile()
+  await resumeAudioContext()
+  const audio = loadAudio(gameId, 'ambient')
+  if (!audio) return
+  try {
+    audio.currentTime = 0
+    audio.loop = true
+    audio.volume = 0.35
+    await audio.play()
+    currentAmbient = audio
+  } catch { /* autoplay blocked */ }
+}
+
+/**
+ * Play looping background music for a game.
+ * Stops any previously playing music.
+ */
+export async function playMusic(gameId: string): Promise<void> {
+  if (!isBrowser || muted) return
+  stopMusicFile()
+  await resumeAudioContext()
+  const audio = loadAudio(gameId, 'music')
+  if (!audio) return
+  try {
+    audio.currentTime = 0
+    audio.loop = true
+    audio.volume = 0.45
+    await audio.play()
+    currentMusic = audio
+  } catch { /* autoplay blocked */ }
+}
+
+/** Stop the currently playing ambient WAV. */
+export function stopAmbientFile(): void {
+  if (currentAmbient) {
+    currentAmbient.pause()
+    currentAmbient.currentTime = 0
+    currentAmbient = null
+  }
+}
+
+/** Stop the currently playing music WAV. */
+export function stopMusicFile(): void {
+  if (currentMusic) {
+    currentMusic.pause()
+    currentMusic.currentTime = 0
+    currentMusic = null
+  }
+}
+
+/** Stop all file-based audio (ambient + music). */
+export function stopAllFileAudio(): void {
+  stopAmbientFile()
+  stopMusicFile()
+}
+
+/** Preload audio files for a game (call after user gesture). */
+export function preloadGameAudio(gameId: string): void {
+  if (!isBrowser) return
+  const types: AudioFileType[] = ['success', 'fail', 'ambient', 'music']
+  for (const type of types) {
+    const audio = loadAudio(gameId, type)
+    if (audio) {
+      audio.preload = 'auto'
+      audio.load()
+    }
+  }
 }

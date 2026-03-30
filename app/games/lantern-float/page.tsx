@@ -170,7 +170,7 @@ export default function LanternFloatGame() {
         if(!l.reached&&l.y<=TARGET_Y){
           l.reached=true; l.vy=0.3; // drift slowly
           s.sig.lanternsReached++;
-          const pts=s.sig.sig_perfectLaunch?3:2;
+          const pts=s.sig.perfectLaunches?3:2;
           s.sig.score+=2; sfx.success(); hapticScore();
           setScore(s.sig.score);
           for(let p=0;p<12;p++) s.particles.push({
@@ -292,3 +292,4 @@ export default function LanternFloatGame() {
     </GameShell>
   );
 }
+

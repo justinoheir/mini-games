@@ -452,7 +452,7 @@ export default function RowingRhythmGame() {
       // Left/Right swipe zones
       const zoneH = H * 0.35, zoneW = W * 0.38;
       const zyT = H * 0.55;
-      const activeLeft = s.lastSide !== 'left' || s.lastSide === 'none';
+      const activeLeft = s.lastSide !== 'left';
       const activeRight = s.lastSide !== 'right';
 
       ctx.save();
@@ -667,3 +667,4 @@ function WebhookEmitter({ theme, sig, personality, player }: {
   }, [theme, sig, personality, player]);
   return null;
 }
+

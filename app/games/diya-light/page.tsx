@@ -24,7 +24,7 @@ const FILL_HI = 0.82;
 // Overfill
 const FILL_OVERFLOW = 0.92;
 
-interface Flame { x:number; y:number; phase:number; }
+interface Flame { x:number; y:number; phase:number; alpha?: number; }
 interface OilDrop { x:number; y:number; vy:number; alpha:number; }
 interface Signals {
   score: number; diyas: number;
@@ -124,7 +124,7 @@ function drawDiya(ctx: CanvasRenderingContext2D, cx: number, cy: number, fillLev
   if (lit && flamePower > 0) {
     for (const fl of flames) {
       ctx.save();
-      ctx.globalAlpha = flamePower * fl.alpha;
+      ctx.globalAlpha = flamePower * (fl.alpha ?? 1);
       const fy = cy - 16;
       const fh = 18 + Math.sin(fl.phase) * 5 + flamePower * 14;
       const fw = 8 + Math.sin(fl.phase * 1.3) * 3;
@@ -440,3 +440,4 @@ export default function DiyaLightGame() {
     </GameShell>
   );
 }
+

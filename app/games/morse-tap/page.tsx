@@ -341,7 +341,7 @@ export default function MorseTapGame() {
             <div style={{ display: 'flex', gap: 14, marginTop: 4 }}>
               <button onClick={() => handleInput('.')} aria-label="Dot"
                 style={{
-                  width: 80, height: 64, borderRadius: 14, border: 'none', cursor: 'pointer',
+                  width: 80, height: 64, borderRadius: 14, cursor: 'pointer',
                   background: `${accent}22`, border: `2px solid ${accent}`,
                   color: accent, fontSize: 26, fontWeight: 900,
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -353,7 +353,7 @@ export default function MorseTapGame() {
               </button>
               <button onClick={() => handleInput('-')} aria-label="Dash"
                 style={{
-                  width: 80, height: 64, borderRadius: 14, border: 'none', cursor: 'pointer',
+                  width: 80, height: 64, borderRadius: 14, cursor: 'pointer',
                   background: `${accent}22`, border: `2px solid ${accent}`,
                   color: accent, fontSize: 22, fontWeight: 900, letterSpacing: '-2px',
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -365,7 +365,7 @@ export default function MorseTapGame() {
               </button>
               <button onClick={handleBackspace} aria-label="Backspace"
                 style={{
-                  width: 60, height: 64, borderRadius: 14, border: 'none', cursor: 'pointer',
+                  width: 60, height: 64, borderRadius: 14, cursor: 'pointer',
                   background: 'rgba(255,255,255,0.06)', border: '2px solid rgba(255,255,255,0.15)',
                   color: 'rgba(255,255,255,0.55)', fontSize: 18,
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -422,3 +422,4 @@ function WebhookEmitter({ theme, sig, personality, player }: {
   }, [theme, sig, personality, player]);
   return null;
 }
+

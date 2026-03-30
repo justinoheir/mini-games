@@ -177,7 +177,7 @@ export default function SignalBoostGame() {
 
       // Read mic volume
       if (s.analyser && s.dataArray) {
-        s.analyser.getByteFrequencyData(s.dataArray);
+        s.analyser.getByteFrequencyData(s.dataArray as Uint8Array<ArrayBuffer>);
         let sum = 0;
         for (let i = 0; i < s.dataArray.length; i++) sum += s.dataArray[i];
         s.volume = sum / (s.dataArray.length * 255);
@@ -419,3 +419,6 @@ function WebhookEmitter({ theme, gameId, sig, personality, player }: {
   }, [theme, gameId, sig, personality, player]);
   return null;
 }
+
+
+

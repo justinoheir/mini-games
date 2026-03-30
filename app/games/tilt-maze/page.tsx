@@ -5,7 +5,7 @@ import GameHUD from '@/components/GameHUD';
 import GameStartScreen from '@/components/GameStartScreen';
 import Countdown from '@/components/Countdown';
 import EndScreen from '@/components/EndScreen';
-import { initAudio, sfx, startMusic } from '@/lib/audio';
+import { initAudio, sfx, startMusic, playSuccess, playFail, playAmbient, stopAmbientFile, stopMusicFile, preloadGameAudio } from '@/lib/audio';
 import { hapticScore, hapticFail, hapticVictory, hapticImpact } from '@/lib/haptics';
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
@@ -233,6 +233,7 @@ export default function TiltMaze() {
     halfTimeFiredRef.current = false;
     setGameState('playing'); setTimeLeft(60);
     stopMusicRef.current = startMusic('tense');
+    playAmbient(GAME_ID);
     const capturedTheme = theme;
 
     timerRef.current = setInterval(() => {
@@ -356,6 +357,7 @@ export default function TiltMaze() {
       if (s.celebrateUntil === 0 && distToExit < exitReach) {
         s.behavior.completionTime = Date.now() - s.startTime;
         sfx.success();
+        playSuccess(GAME_ID);
         if (hapticsEnabled) hapticVictory();
         const timeStr = `${(s.behavior.completionTime / 1000).toFixed(1)}s`;
         // Defer setState out of rAF to avoid React re-render during animation frame
@@ -373,6 +375,7 @@ export default function TiltMaze() {
     setPlayerAvatar(avatar);
     playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar);
     await initAudio();
+    preloadGameAudio(GAME_ID);
     // Create fresh controller each play
     const controller = createTiltController(() => {}, { sensitivity: 1.0, smoothing: 0.45, deadzone: 2, clamp: 22 });
     tiltControllerRef.current = controller;
@@ -395,6 +398,7 @@ export default function TiltMaze() {
 
   const handlePlayAgain = useCallback(() => {
     if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
+    stopAmbientFile();
     tiltControllerRef.current?.stop();
     tiltControllerRef.current = null;
     setJoystickEnabled(false);
@@ -449,6 +453,7 @@ export default function TiltMaze() {
       cancelAnimationFrame(stateRef.current.animId);
       tiltControllerRef.current?.stop();
       if (stopMusicRef.current) stopMusicRef.current();
+      stopAmbientFile();
     };
   }, []);
 

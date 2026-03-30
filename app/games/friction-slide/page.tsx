@@ -40,7 +40,7 @@ interface GameState {
 
 export default function FrictionSlide() {
   const theme = useBrandTheme();
-  const canvasRef = useRef<HTMLCanvasRef>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
   const animRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const stateRef = useRef<GameState>({
@@ -265,3 +265,4 @@ export default function FrictionSlide() {
     </GameShell>
   );
 }
+

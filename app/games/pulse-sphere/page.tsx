@@ -6,7 +6,7 @@ import GameHUD from '@/components/GameHUD';
 import GameStartScreen from '@/components/GameStartScreen';
 import Countdown from '@/components/Countdown';
 import EndScreen from '@/components/EndScreen';
-import { initAudio, sfx, haptic, startMusic } from '@/lib/audio';
+import { initAudio, sfx, haptic, startMusic, playSuccess, playFail, playMusic, stopMusicFile, preloadGameAudio } from '@/lib/audio';
 import { playScoreHit, playVictoryFanfare, playNearMiss } from '@/lib/audio';
 import { hapticScore, hapticFail, hapticVictory } from '@/lib/haptics';
 import { useBrandTheme } from '@/lib/useBrandTheme';
@@ -190,6 +190,7 @@ export default function PulseSphere() {
     setStreak(0); setNearMissMsg(false); setIsNewBest(false);
     setTimeLeft(45); setLiveActivity(0); setGameState('playing');
     stopMusicRef.current = startMusic('ambient');
+    playMusic(GAME_ID);
     const capturedTheme = theme;
 
     const W = window.innerWidth, H = window.innerHeight;
@@ -374,7 +375,7 @@ export default function PulseSphere() {
     setPlayerName(name);
     setPlayerAvatar(avatar);
     playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar);
-    await initAudio(); sfx.click();
+    await initAudio(); sfx.click(); preloadGameAudio(GAME_ID);
     setGameState('permissions');
     try {
       // Start tilt controller (handles iOS permission internally, must be from button click)
@@ -488,6 +489,7 @@ export default function PulseSphere() {
     if (s.audioCtx) s.audioCtx.close().catch(()=>{/* ignore */});
     if (s.renderer) { s.renderer.dispose(); s.renderer = null; }
     if (stopMusicRef.current) stopMusicRef.current();
+    stopMusicFile();
     (s as typeof s & { _resizeCleanup?: () => void })._resizeCleanup?.();
     tiltControllerRef.current?.stop();
   }, []);

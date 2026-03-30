@@ -172,9 +172,7 @@ export default function TypeSpeedGame() {
         wordTimesRef.current.push(wordMs);
         sigRef.current.wordsCompleted++;
         streakRef.current++;
-        if (streakRef.current > (sigRef.current as unknown as { maxStreak?: number }).maxStreak ?? 0) {
-          // no maxStreak in Signals, track via streak
-        }
+        // track streak — no maxStreak field in Signals
         const speedBonus = wordMs < 2500 ? 15 : wordMs < 4000 ? 8 : 0;
         const pts = word.length * 4 + speedBonus + (streakRef.current >= 3 ? 10 : 0);
         sigRef.current.score += pts;
@@ -306,7 +304,6 @@ export default function TypeSpeedGame() {
                         width: isBackspace ? 50 : 32,
                         height: 44,
                         borderRadius: 7,
-                        border: 'none',
                         cursor: 'pointer',
                         fontSize: isBackspace ? 16 : 14,
                         fontWeight: 700,

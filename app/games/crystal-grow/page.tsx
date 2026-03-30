@@ -66,7 +66,7 @@ interface GameState {
   accentColor: string;
   analyser: AnalyserNode | null;
   micStream: MediaStream | null;
-  dataArray: Uint8Array | null;
+  dataArray: Uint8Array<ArrayBuffer> | null;
   steadyTicks: number;
   volumeHistory: number[];
 }
@@ -172,7 +172,7 @@ export default function CrystalGrowGame() {
 
   const drawBranch = useCallback((ctx: CanvasRenderingContext2D, branch: CrystalBranch, x: number, y: number, scale: number, alpha: number) => {
     const endX = x + Math.cos(branch.angle) * branch.length * scale;
-    const en = y + Math.sin(branch.angle) * branch.length * scale;
+    const endY = y + Math.sin(branch.angle) * branch.length * scale;
     ctx.globalAlpha = alpha * (1 - branch.depth * 0.15);
     ctx.strokeStyle = ACCENT;
     ctx.lineWidth = branch.width * scale;
@@ -218,7 +218,7 @@ export default function CrystalGrowGame() {
       analyser.fftSize = 256;
       source.connect(analyser);
       s.analyser = analyser;
-      s.dataArray = new Uint8Array(analyser.frequencyBinCount);
+      s.dataArray = new Uint8Array(analyser.frequencyBinCount) as Uint8Array<ArrayBuffer>;
     } catch { /* fallback */ }
 
     timerRef.current = setInterval(() => {
