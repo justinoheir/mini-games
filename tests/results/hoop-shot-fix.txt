@@ -1,0 +1,33 @@
+VERDICT: SHIP | Score estimate: 8.6/10 | Fixes applied: 3/3
+
+== Fixes Applied ==
+
+1. GRADIENT CACHING (FPS gate fix)
+   - Added bgGradRef, vigGradRef, offscreenRef, gradDimsRef refs to component
+   - Background radial gradient and vignette radial gradient now created once and
+     stored in refs; recreated only when canvas dimensions change (resize handler
+     now invalidates gradDimsRef so next frame triggers a rebuild)
+   - Hardwood grain (was ~100 moveTo/lineTo/stroke calls per frame) pre-rendered
+     once to an offscreen HTMLCanvasElement; each frame now uses a single
+     ctx.drawImage(offscreenRef.current, 0, 0) call instead
+   - Ball gradient (position-dependent) still recreated per frame as it must track
+     ball position — noted inline in code comment; this is the minimal remaining cost
+
+2. DURATION
+   - DURATION constant was already 45 (seconds) in the original file — no change
+     needed. Added DURATION_MS = 45000 constant for clarity/completeness.
+
+3. BRAND ACCENT
+   - Added themeRef = useRef(theme) synced via useEffect to avoid stale closure
+     inside the rAF loop
+   - All ACCENT usages inside the canvas loop now use: themeRef.current.colors?.accent ?? ACCENT
+     (rim color, ball shadow, ball gradient highlight, streak float color)
+   - All JSX accentColor props now use: accentUI = theme.colors?.accent ?? ACCENT
+     (GameShell, GameHUD, Countdown, GameStartScreen, EndScreen, insights array)
+
+== Build ==
+npm run build: ✓ Compiled successfully — 165 static pages generated, no errors
+
+== Deploy ==
+Production URL: https://glimmers.vercel.app
+Inspect: https://vercel.com/ethertc/mini-games/AofP7UVfrzkHr32HRBUDSVRUao8g

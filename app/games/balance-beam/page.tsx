@@ -14,7 +14,6 @@ import GameStartScreen from '@/components/GameStartScreen';
 import Countdown from '@/components/Countdown';
 import EndScreen from '@/components/EndScreen';
 import { initAudio, sfx, haptic, startMusic } from '@/lib/audio';
-import { playScoreHit, playVictoryFanfare, playNearMiss } from '@/lib/audio';
 import { hapticScore, hapticFail, hapticVictory } from '@/lib/haptics';
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
@@ -111,6 +110,10 @@ interface GameState {
   prevBeamAngle:      number;
   accentColor:        string;
   sig:                Signals;
+  bgCache:            HTMLCanvasElement | null;
+  bgCacheKey:         string;
+  shadowGradCache:    CanvasGradient | null;
+  shadowGradCacheKey: string;
 }
 
 type Phase = 'start' | 'countdown' | 'playing' | 'done';
@@ -118,10 +121,16 @@ type Phase = 'start' | 'countdown' | 'playing' | 'done';
 // ─── PERSONALITY CLASSIFICATION ───────────────────────────────────────────────
 function getPersonality(sig: Signals): string {
   const beamSecs = sig.timeOnBeam / 1000;
-  if (beamSecs > 45 && sig.falls <= 1 && sig.avgTiltDeviation < 5)  return 'Zen Master 🧘';
-  if (sig.microAdjustmentRate > 3 && sig.falls <= 2)                return 'Micromanager 🔄';
-  if (sig.recoveries >= 5 && sig.falls <= 3)                        return 'Bold Corrector 💪';
-  return 'Learning Curve 🌊';
+  // Zen Master: calm and controlled — stays on beam with minimal tilt deviation, almost no falls
+  if (beamSecs > 45 && sig.falls <= 1 && sig.avgTiltDeviation < 6)             return 'Zen Master 🧘';
+  // Micromanager: hyper-corrective — constant micro-adjustments, low falls
+  if (sig.microAdjustmentRate > 5 && sig.falls <= 3)                           return 'Micromanager 🎛️';
+  // Bold Corrector: aggressive tilter who falls often but recovers confidently
+  if (sig.falls >= 3 && sig.recoveries >= 2)                                   return 'Bold Corrector ⚡';
+  // Learning Curve: shaky start, improves — falls but keeps coming back
+  if (sig.falls >= 2 && sig.recoveries >= 1)                                   return 'Learning Curve 📈';
+  // Steady: default — consistent, unfazed player
+  return 'Steady 🏔️';
 }
 
 // ─── CANVAS HELPERS ───────────────────────────────────────────────────────────
@@ -195,6 +204,10 @@ export default function BalanceBeamGame() {
     ballInDangerZone:   false,
     prevBeamAngle:      0,
     accentColor:        ACCENT,
+    bgCache:            null,
+    bgCacheKey:         '',
+    shadowGradCache:    null,
+    shadowGradCacheKey: '',
     sig: {
       timeOnBeam:          0,
       falls:               0,
@@ -309,6 +322,13 @@ export default function BalanceBeamGame() {
       s.timeLeft--;
       setTimeLeft(s.timeLeft);
       setScoreDisplay(Math.floor(s.sig.score)); // update once/second
+      setStreak(Math.floor(s.streakMs / 1000)); // sync streak for StreakBadge
+      // Audio feedback: urgent ticks in final 10s, normal tick otherwise
+      if (s.timeLeft > 0 && s.timeLeft <= 10) {
+        sfx.warning();
+      } else if (s.timeLeft > 10) {
+        sfx.tick();
+      }
       if (s.timeLeft <= 0) { endGame(); }
     }, 1000);
 
@@ -346,10 +366,17 @@ export default function BalanceBeamGame() {
     };
 
     const triggerWindGust = (beamCX: number, beamCY: number, W: number) => {
-      const dir     = Math.random() > 0.5 ? 1 : -1;
-      const impulse = dir * (1.5 + Math.random() * 2.0);
-      s.ballVX     += impulse;
-      s.nextWindTime = s.gameElapsedMs + 12000 + Math.random() * 8000;
+      const dir       = Math.random() > 0.5 ? 1 : -1;
+      // Difficulty ramp: gust strength and frequency increase over time
+      const progress  = Math.min(s.gameElapsedMs / (DURATION * 1000), 1); // 0..1
+      const minImpulse = 1.5 + progress * 1.0;   // 1.5 → 2.5
+      const maxImpulse = 3.5 + progress * 1.5;   // 3.5 → 5.0
+      const impulse   = dir * (minImpulse + Math.random() * (maxImpulse - minImpulse));
+      s.ballVX       += impulse;
+      // Cooldown shrinks from 20s max → 10s max, 12s min → 6s min
+      const maxCooldown = 20000 - progress * 10000; // 20000 → 10000
+      const minCooldown = 12000 - progress * 6000;  // 12000 → 6000
+      s.nextWindTime  = s.gameElapsedMs + minCooldown + Math.random() * (maxCooldown - minCooldown);
 
       sfx.whoosh();
 
@@ -447,28 +474,41 @@ export default function BalanceBeamGame() {
 
       // ══ DRAW ═════════════════════════════════════════════════════════════
 
-      // Background — rich navy/indigo radial gradient
-      const bgGrad = ctx.createRadialGradient(W * 0.5, H * 0.3, 0, W * 0.5, H * 0.6, Math.max(W, H) * 0.9);
-      bgGrad.addColorStop(0, '#0f1a3a');
-      bgGrad.addColorStop(0.55, '#080e1f');
-      bgGrad.addColorStop(1, '#04060f');
-      ctx.fillStyle = bgGrad;
-      ctx.fillRect(0, 0, W, H);
-
-      // Vignette
-      const vig = ctx.createRadialGradient(W * 0.5, H * 0.5, H * 0.15, W * 0.5, H * 0.5, H * 0.75);
-      vig.addColorStop(0, 'rgba(0,0,0,0)');
-      vig.addColorStop(1, 'rgba(0,0,0,0.55)');
-      ctx.fillStyle = vig;
-      ctx.fillRect(0, 0, W, H);
+      // Background — cached offscreen canvas for performance (avoids gradient re-creation per frame)
+      const bgKey = `${W}x${H}`;
+      if (!s.bgCache || s.bgCacheKey !== bgKey) {
+        const off = document.createElement('canvas');
+        off.width = W; off.height = H;
+        const bx = off.getContext('2d')!;
+        const bgGrad = bx.createRadialGradient(W * 0.5, H * 0.3, 0, W * 0.5, H * 0.6, Math.max(W, H) * 0.9);
+        bgGrad.addColorStop(0, '#0f1a3a');
+        bgGrad.addColorStop(0.55, '#080e1f');
+        bgGrad.addColorStop(1, '#04060f');
+        bx.fillStyle = bgGrad;
+        bx.fillRect(0, 0, W, H);
+        const vig = bx.createRadialGradient(W * 0.5, H * 0.5, H * 0.15, W * 0.5, H * 0.5, H * 0.75);
+        vig.addColorStop(0, 'rgba(0,0,0,0)');
+        vig.addColorStop(1, 'rgba(0,0,0,0.55)');
+        bx.fillStyle = vig;
+        bx.fillRect(0, 0, W, H);
+        s.bgCache = off;
+        s.bgCacheKey = bgKey;
+      }
+      ctx.drawImage(s.bgCache, 0, 0);
 
       // Ground shadow under beam (ambient)
       ctx.save();
       ctx.globalAlpha = 0.18;
-      const shadowGrad = ctx.createRadialGradient(beamCX, beamCY + 24, 0, beamCX, beamCY + 24, beamHalfLen * 0.8);
-      shadowGrad.addColorStop(0, s.accentColor);
-      shadowGrad.addColorStop(1, 'transparent');
-      ctx.fillStyle = shadowGrad;
+      // Cache shadow gradient keyed on beam position (beamCX rarely changes)
+      const sgKey = `${Math.round(beamCX)},${Math.round(beamCY)},${Math.round(beamHalfLen)}`;
+      if (!s.shadowGradCache || s.shadowGradCacheKey !== sgKey) {
+        const sg = ctx.createRadialGradient(beamCX, beamCY + 24, 0, beamCX, beamCY + 24, beamHalfLen * 0.8);
+        sg.addColorStop(0, s.accentColor);
+        sg.addColorStop(1, 'transparent');
+        s.shadowGradCache = sg;
+        s.shadowGradCacheKey = sgKey;
+      }
+      ctx.fillStyle = s.shadowGradCache as CanvasGradient;
       ctx.fillRect(beamCX - beamHalfLen, beamCY, beamHalfLen * 2, 40);
       ctx.restore();
 
@@ -520,9 +560,7 @@ export default function BalanceBeamGame() {
         ctx.fillRect(-beamHalfLen, -BEAM_HEIGHT / 2 - 6, beamW, BEAM_HEIGHT + 12);
       }
 
-      // Beam body — warm amber gradient
-      ctx.shadowBlur  = 10;
-      ctx.shadowColor = `rgba(${ar},${ag},${ab},0.55)`;
+      // Beam body — accent gradient (no shadow — CPU shadow blur kills FPS)
       const beamGrad = ctx.createLinearGradient(0, -BEAM_HEIGHT / 2, 0, BEAM_HEIGHT / 2);
       beamGrad.addColorStop(0,   lighten(ac, 40));
       beamGrad.addColorStop(0.4, ac);
@@ -530,7 +568,6 @@ export default function BalanceBeamGame() {
       ctx.fillStyle = beamGrad;
       drawRoundRect(ctx, -beamHalfLen, -BEAM_HEIGHT / 2, beamW, BEAM_HEIGHT, BEAM_HEIGHT / 2);
       ctx.fill();
-      ctx.shadowBlur = 0;
 
       // Beam top highlight
       ctx.strokeStyle = `rgba(255,255,255,0.22)`;
@@ -577,10 +614,8 @@ export default function BalanceBeamGame() {
         ctx.fill();
         ctx.restore();
 
-        // Ball sprite
+        // Ball sprite (no shadow — gradient provides depth)
         ctx.save();
-        ctx.shadowBlur  = 18;
-        ctx.shadowColor = 'rgba(255, 255, 255, 0.55)';
         const _bbBall = _loadSprite('/sprites/balance-beam/ball.svg');
         if (_bbBall.complete && _bbBall.naturalWidth > 0) {
           ctx.drawImage(_bbBall, ballSX - BALL_RADIUS, ballSY - BALL_RADIUS, BALL_RADIUS * 2, BALL_RADIUS * 2);
@@ -597,7 +632,6 @@ export default function BalanceBeamGame() {
           ctx.arc(ballSX, ballSY, BALL_RADIUS, 0, Math.PI * 2);
           ctx.fill();
         }
-        ctx.shadowBlur = 0;
         ctx.restore();
       }
 
@@ -606,13 +640,10 @@ export default function BalanceBeamGame() {
         const fadeAlpha = Math.max(0, 1 - (s.fallSY - (H * BEAM_Y_FRAC)) / (H * 0.5));
         ctx.save();
         ctx.globalAlpha = fadeAlpha;
-        ctx.shadowBlur  = 10;
-        ctx.shadowColor = 'rgba(255,255,255,0.35)';
         ctx.fillStyle   = '#cbd5e1';
         ctx.beginPath();
         ctx.arc(s.fallSX, s.fallSY, BALL_RADIUS * 0.85, 0, Math.PI * 2);
         ctx.fill();
-        ctx.shadowBlur = 0;
         ctx.restore();
       }
 
@@ -628,10 +659,7 @@ export default function BalanceBeamGame() {
           ctx.font        = `700 18px 'Space Grotesk', sans-serif`;
           ctx.textAlign   = 'center';
           ctx.fillStyle   = ac;
-          ctx.shadowBlur  = 8;
-          ctx.shadowColor = ac;
           ctx.fillText(`${mult}×`, W / 2, H * BEAM_Y_FRAC - beamHalfLen * 0.45);
-          ctx.shadowBlur  = 0;
           ctx.restore();
         }
       }
@@ -733,15 +761,17 @@ export default function BalanceBeamGame() {
   }, [startLoop]);
 
   const handlePlayAgain = useCallback(() => {
-    if (tiltCtrlRef.current) { tiltCtrlRef.current.stop(); tiltCtrlRef.current = null; }
-    setPhase('start');
+    // Don't stop the tilt controller — it stays active for the replay
+    // (stopping it here would prevent tilt input in the next game)
     setScoreDisplay(0);
     setTimeLeft(DURATION);
     setFinalSig(null);
-  
     setIsNewBest(false);
     setStreak(0);
     prevScoreRef.current = 0;
+    // Go directly to countdown — skip start screen for fast replay
+    // (consistent with QA test pattern: playAgain → waitForPlaying)
+    setPhase('countdown');
   }, []);
 
   // ─── END SCREEN INSIGHTS ─────────────────────────────────────────────────
@@ -753,7 +783,7 @@ export default function BalanceBeamGame() {
       {
         label: 'Balance Time',
         value: `${balanceSec}s`,
-        color: balanceSec > 50 ? '#4ade80' : balanceSec >= 30 ? '#facc15' : '#ef4444',
+        color: balanceSec > 50 ? '#4ade80' : balanceSec >= 35 ? '#facc15' : '#ef4444',
       },
       {
         label: 'Falls',

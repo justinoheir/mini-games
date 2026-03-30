@@ -18,6 +18,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import ScorePopEffect, { useScorePop } from '@/components/ScorePopEffect';
 import { CATEGORY_THEMES } from '@/lib/theme';
 import SwipeInstructions from '@/components/SwipeInstructions';
+import { Smartphone, Zap, TrendingUp, Rocket } from 'lucide-react';
 
 const CATEGORY_ACCENT = CATEGORY_THEMES.sports.primaryAccent;
 
@@ -281,8 +282,9 @@ export default function TunnelGame() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     const numScore = typeof survivedDisplay === 'number' ? survivedDisplay : 0;
-    if (numScore > prevScoreRef.current) {
-      triggerPop(`+${numScore - prevScoreRef.current}`, window.innerWidth / 2, 200);
+    // Only fire pop at 10-second milestones to avoid per-second visual noise
+    if (numScore > prevScoreRef.current && numScore % 10 === 0 && numScore > 0) {
+      triggerPop(`⚡ ${numScore}s`, window.innerWidth / 2, 200);
     }
     prevScoreRef.current = numScore;
   }, [survivedDisplay]); // triggerPop is stable
@@ -329,6 +331,8 @@ export default function TunnelGame() {
       }
     } catch { /* ignore */ }
     setBehavior(bData);
+    setNearMissVisible(false);
+    if (nearMissUITimeoutRef.current) { clearTimeout(nearMissUITimeoutRef.current); nearMissUITimeoutRef.current = null; }
     setGameState('done');
     postWebhook(capturedTheme, 'tunnel', { score: `${Math.round(s.distance)}m`, personality: getProfile(bData), signals: { collisions: bData.collisions, avgTiltMagnitude: bData.avgTiltMagnitude, distance: bData.distance, nearMisses: bData.nearMisses } }, playerSessionRef.current);
   }, []);
@@ -664,7 +668,11 @@ export default function TunnelGame() {
       {gameState === 'start' && showInstructions && (
         <SwipeInstructions
           gameId="tunnel"
-          steps={[{ icon: "📱", title: "Tilt to steer", body: "Tilt your phone left or right to steer through the tunnel." }, { icon: "⚡", title: "Dodge obstacles", body: "Rings, crosses, blades — stay in the gaps to fly farther." }, { icon: "🔥", title: "Go further", body: "The tunnel speeds up — how far can you fly?" }]}
+          steps={[
+            { icon: <Smartphone size={56} strokeWidth={1.5} color="#8b5cf6" />, title: "Tilt to steer", body: "Tilt your phone left or right to steer through the tunnel." },
+            { icon: <Zap size={56} strokeWidth={1.5} color="#00ffff" />, title: "Dodge obstacles", body: "Rings, crosses, blades — stay in the gaps to fly farther." },
+            { icon: <TrendingUp size={56} strokeWidth={1.5} color="#00ffff" />, title: "Go further", body: "The tunnel speeds up — how far can you fly?" },
+          ]}
           onDone={() => setShowInstructions(false)}
         />
       )}
@@ -730,7 +738,7 @@ export default function TunnelGame() {
         </div>
       )}
 
-      {/* Near-miss message */}
+      {/* Milestone warning message — fires 1s before each 10s milestone */}
       <AnimatePresence>
         {nearMissVisible && (
           <motion.div
@@ -747,7 +755,7 @@ export default function TunnelGame() {
               whiteSpace: 'nowrap',
             }}
           >
-            So close! 🎯
+            ⚡ Keep Going!
           </motion.div>
         )}
       </AnimatePresence>
@@ -789,6 +797,7 @@ export default function TunnelGame() {
           <motion.div key="start" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} style={{ height: '100%' }}>
             <GameStartScreen
               emoji="🚀"
+              iconNode={<Rocket size={72} strokeWidth={1.5} color={accent} />}
               title="Infinite Tunnel"
               description="Tilt to steer. Dodge rings, crosses, blades and asteroid fields. Survive 60 seconds."
               sensorNote="Uses motion sensors"
@@ -796,7 +805,7 @@ export default function TunnelGame() {
               accentColor={accent}
               ctaTextColor="#000"
               onStart={handleStart}
-              gradient="radial-gradient(ellipse 80% 70% at 50% 30%, #001a10 0%, #000e08 55%, #000604 100%)"
+              gradient="radial-gradient(ellipse 80% 70% at 50% 30%, #0d1520 0%, #080c18 55%, #030610 100%)"
             />
           </motion.div>
         )}
@@ -832,7 +841,7 @@ export default function TunnelGame() {
       `}</style>
       {gameState === 'playing' && (
         <>
-          <ScorePopEffect pops={pops} accentColor={CATEGORY_ACCENT} />
+          <ScorePopEffect pops={pops} accentColor={accent} />
         </>
       )}
     </GameShell>

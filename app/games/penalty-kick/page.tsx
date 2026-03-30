@@ -83,7 +83,8 @@ export default function PenaltyKick() {
     if (numScore > prevScoreRef.current) {
       triggerPop(`+${numScore - prevScoreRef.current}`, window.innerWidth / 2, 200);
       hapticScore();
-      playScoreHit('default', numScore - prevScoreRef.current);
+      // Note: sfx.collect() + sfx.success() already fire synchronously in the rAF goal handler.
+      // playScoreHit() is intentionally omitted here to avoid triple audio on goal.
       setStreak(Math.floor(numScore / 5));
     }
     prevScoreRef.current = numScore;
@@ -131,6 +132,14 @@ export default function PenaltyKick() {
     if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
     const finalSigSnap = { ...s.sig };
     setFinalSig(finalSigSnap);
+    // Personal best check
+    try {
+      const prev = parseInt(localStorage.getItem(PB_KEY) ?? '0', 10);
+      if (finalSigSnap.goals > prev) {
+        localStorage.setItem(PB_KEY, String(finalSigSnap.goals));
+        if (finalSigSnap.goals > 0) setIsNewBest(true);
+      }
+    } catch { /* storage unavailable */ }
     setPhase('done');
     postWebhook(theme, GAME_ID, {
       score: `${finalSigSnap.goals}/${MAX_SHOTS}`,
@@ -515,7 +524,7 @@ export default function PenaltyKick() {
       background="radial-gradient(ellipse at 20% 0%, rgba(255,255,220,0.08) 0%, transparent 50%), radial-gradient(ellipse at 80% 0%, rgba(255,255,220,0.08) 0%, transparent 50%), radial-gradient(ellipse at 50% 110%, #1a5c2a 0%, #0d2e14 40%, #051209 70%, #020808 100%)">
       <canvas
         ref={canvasRef}
-        style={{ display: phase === 'playing' ? 'block' : 'none', position: 'absolute', top: 0, left: 0 }}
+        style={{ display: phase === 'playing' ? 'block' : 'none', position: 'absolute', top: 0, left: 0, touchAction: 'none' }}
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}

@@ -12,6 +12,7 @@ import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
 import { motion, AnimatePresence } from 'framer-motion';
+import { Skull } from 'lucide-react';
 import ScorePopEffect, { useScorePop } from '@/components/ScorePopEffect';
 import StreakBadge from '@/components/StreakBadge';
 import { CATEGORY_THEMES } from '@/lib/theme';
@@ -22,8 +23,8 @@ const CATEGORY_ACCENT = CATEGORY_THEMES.holiday.primaryAccent;
 // ─── SPEC CONSTANTS ──────────────────────────────────────────────────────────
 const GAME_ID      = 'boo-blast';
 const PB_KEY       = 'pb_boo-blast';
-const ACCENT       = '#a855f7';
-const DURATION     = 30;
+const ACCENT       = '#7c3aed';
+const DURATION     = 45;
 const GAME_EMOJI   = '👻';
 const GAME_TITLE   = 'Boo Blast';
 const GAME_TAGLINE = "Tap the ghosts. They won't wait.";
@@ -31,8 +32,8 @@ const GAME_TAGLINE = "Tap the ghosts. They won't wait.";
 // ─── SPEED STAGE LABELS ──────────────────────────────────────────────────────
 const SPEED_STAGE_LABELS: Record<number, string> = {
   0:  "They're waking up...",
-  12: "They're multiplying!",
-  22: 'FULL HAUNTING',
+  15: "They're multiplying!",
+  30: 'FULL HAUNTING',
 };
 
 // ─── GHOST TYPES ─────────────────────────────────────────────────────────────
@@ -58,9 +59,13 @@ function pickGhostType(): typeof GHOST_TYPES[number] {
 // ─── SPEED STAGES ────────────────────────────────────────────────────────────
 const SPEED_STAGES = [
   { atSecond: 0,  intervalMs: 800 },
-  { atSecond: 12, intervalMs: 650 },
-  { atSecond: 22, intervalMs: 500 },
+  { atSecond: 15, intervalMs: 650 },
+  { atSecond: 30, intervalMs: 500 },
 ] as const;
+
+// Grace period: ghost expirations don't count toward haunting for the first few seconds.
+// This improves onboarding UX and prevents instant game-over before the player has a chance to tap.
+const GRACE_PERIOD_SEC = 5;
 
 // ─── DATA TYPES ───────────────────────────────────────────────────────────────
 interface Ghost {
@@ -303,7 +308,7 @@ export default function BooBlastGame() {
         if (elapsed >= SPEED_STAGES[i].atSecond) {
           newStageIdx = i;
           // Trigger stage-change label when crossing a new stage threshold
-          if (elapsed === SPEED_STAGES[i].atSecond && SPEED_STAGE_LABELS[SPEED_STAGES[i].atSecond]) {
+          if (elapsed === SPEED_STAGES[i].atSecond && elapsed > 0 && SPEED_STAGE_LABELS[SPEED_STAGES[i].atSecond]) {
             s.stageLabel = SPEED_STAGE_LABELS[SPEED_STAGES[i].atSecond];
             s.stageLabelUntil = Date.now() + 1800;
           }
@@ -314,11 +319,11 @@ export default function BooBlastGame() {
 
       if (s.timeLeft <= 0) {
         s.running = false;
-        // Clear the interval from within itself to prevent repeated sfx.fail() calls
+        // Clear the interval from within itself to prevent repeated calls
         const id = timerRef.current;
         if (id) { clearInterval(id); timerRef.current = null; }
         if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
-        sfx.fail();
+        playVictoryFanfare();
         haptic([300]);
     // Personal best tracking
     try {
@@ -391,6 +396,11 @@ export default function BooBlastGame() {
         } else {
           // MISS — ghost timed out
           s.ghosts.splice(i, 1);
+          const elapsed = DURATION - s.timeLeft;
+          if (elapsed < GRACE_PERIOD_SEC) {
+            // Grace period: don't penalise misses in the first few seconds
+            continue;
+          }
           s.sig.hauntingLevel = Math.min(5, s.sig.hauntingLevel + 1);
           s.sig.ghostsMissed++;
           s.sig.streakCurrent = 0;
@@ -741,8 +751,8 @@ export default function BooBlastGame() {
               <GameHUD
                 accentColor={accent}
                 items={[
-                  { label: 'TIME',       value: timeLeft,     danger: timeLeft <= 10, testId: 'timer' },
-                  { label: 'BLASTED 👻', value: scoreDisplay, testId: 'score' },
+                  { label: 'TIME',    value: timeLeft,     danger: timeLeft <= 10, testId: 'timer' },
+                  { label: 'BLASTED', value: scoreDisplay, testId: 'score' },
                 ]}
               />
 
@@ -775,18 +785,20 @@ export default function BooBlastGame() {
                 {Array.from({ length: 5 }, (_, i) => (
                   <span
                     key={i}
+                    data-testid="haunting-skull"
                     style={{
-                      fontSize:   22,
-                      lineHeight: 1,
+                      display:    'inline-flex',
+                      alignItems: 'center',
                       opacity:    i < hauntingLevel ? 1 : 0.22,
                       filter:     i < hauntingLevel
                         ? 'drop-shadow(0 0 8px #ef4444)'
                         : 'none',
                       transition: 'opacity 0.18s ease, filter 0.18s ease',
                       transform:  i < hauntingLevel ? 'scale(1.15)' : 'scale(1)',
+                      color:      i < hauntingLevel ? '#ef4444' : 'rgba(255,255,255,0.35)',
                     }}
                   >
-                    💀
+                    <Skull size={22} aria-hidden="true" />
                   </span>
                 ))}
               </div>

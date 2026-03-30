@@ -68,9 +68,13 @@ function getPersonality(sig: Signals): string {
       ? sig.recallTimes.reduce((a, b) => a + b, 0) / sig.recallTimes.length
       : 9999;
 
+  // Memory Master: deep working memory with high accuracy
   if (sig.maxSequenceLength >= 7 && sig.totalErrors <= 2) return 'Memory Master 🧩';
+  // Pattern Hunter: solid recall across multiple rounds
   if (sig.roundsCompleted >= 5 && sig.maxSequenceLength >= 5) return 'Pattern Hunter 🔍';
+  // Fast Guesser: speed over accuracy, impulsive recall style
   if (avgRecallTime < 2000 && sig.totalErrors > 5) return 'Fast Guesser ⚡';
+  // Steady Mind: methodical approach to pattern recall (fallback)
   return 'Steady Mind 🌊';
 }
 
@@ -208,11 +212,11 @@ function drawFrame(
   const { cellSize, gap, startX, startY, totalH } = getGridLayout(W, H);
   const cornerR = Math.max(8, cellSize * 0.12);
 
-  // ── Background — deep indigo/purple cognitive gradient ───────────────────
+  // ── Background — deep navy/blue cognitive gradient ────────────────────────
   const mgBg = ctx.createRadialGradient(W * 0.5, H * 0.35, 0, W * 0.5, H * 0.6, Math.max(W, H) * 0.9);
-  mgBg.addColorStop(0,   '#0f0820');
-  mgBg.addColorStop(0.55, '#080514');
-  mgBg.addColorStop(1,   '#040208');
+  mgBg.addColorStop(0,   '#071428');
+  mgBg.addColorStop(0.55, '#040d1c');
+  mgBg.addColorStop(1,   '#020610');
   ctx.fillStyle = mgBg;
   ctx.fillRect(0, 0, W, H);
 
@@ -346,7 +350,8 @@ function drawFrame(
     ctx.save();
     ctx.textAlign    = 'center';
     ctx.textBaseline = 'middle';
-    ctx.font         = `${Math.floor(W * 0.032)}px -apple-system, system-ui, sans-serif`;
+    // Minimum 14px for legibility (WCAG readable text threshold)
+    ctx.font         = `${Math.max(14, Math.floor(W * 0.032))}px -apple-system, system-ui, sans-serif`;
     ctx.fillStyle    = 'rgba(255,255,255,0.35)';
     ctx.fillText(`Sequence length: ${s.sequenceLength}`, W / 2, infoY);
     ctx.restore();
@@ -390,6 +395,8 @@ export default function MemoryGridGame() {
 
   const [phase, setPhase]             = useState<Phase>('start');
   const phaseRef                      = useRef<Phase>('start');
+  // Mirrors stateRef.current.subPhase for React rendering (SubphaseBanner sync fix)
+  const [subPhaseDisplay, setSubPhaseDisplay] = useState<SubPhase>('watch');
   const [showInstructions, setShowInstructions] = useState(true);
   // Suppress instructions if already seen (checked after mount to avoid SSR hydration mismatch)
   useEffect(() => {
@@ -421,9 +428,11 @@ export default function MemoryGridGame() {
 
 
 
-  // Sync brand theme accent into state ref
+  // Sync brand theme accent into state ref.
+  // When using the default Ether theme (no ?brand param), use the game-specific ACCENT.
+  // Brand overrides take priority for white-label deployments.
   useEffect(() => {
-    stateRef.current.accentColor = theme.colors.accent ?? ACCENT;
+    stateRef.current.accentColor = theme.id !== 'ether' ? (theme.colors.accent ?? ACCENT) : ACCENT;
   }, [theme]);
 
   // ─── END GAME ──────────────────────────────────────────────────────────────
@@ -464,7 +473,7 @@ export default function MemoryGridGame() {
     const s = stateRef.current;
     s.running       = true;
     s.timeLeft      = DURATION;
-    s.accentColor   = theme.colors.accent ?? ACCENT;
+    s.accentColor   = theme.id !== 'ether' ? (theme.colors.accent ?? ACCENT) : ACCENT;
     s.sig = {
       roundsCompleted: 0,
       maxSequenceLength: 0,
@@ -476,6 +485,7 @@ export default function MemoryGridGame() {
     s.sequenceLength = 3;
     setScoreDisplay(3);
     setTimeLeft(DURATION);
+    setSubPhaseDisplay('watch');
     phaseRef.current = 'playing';
     setPhase('playing');
 
@@ -503,6 +513,7 @@ export default function MemoryGridGame() {
     // Start first watch phase
     startWatchPhase(s);
 
+    let prevSubPhase: SubPhase = s.subPhase;
     const loop = (now: number) => {
       if (!s.running) return;
 
@@ -535,6 +546,12 @@ export default function MemoryGridGame() {
       // ── Pause → next watch phase ────────────────────────────────────────
       if (s.subPhase === 'paused' && now >= s.pauseUntil) {
         startWatchPhase(s);
+      }
+
+      // ── Sync SubphaseBanner with React when subPhase changes ─────────────
+      if (s.subPhase !== prevSubPhase) {
+        prevSubPhase = s.subPhase;
+        setSubPhaseDisplay(s.subPhase);
       }
 
       // ── Render ───────────────────────────────────────────────────────────
@@ -591,8 +608,15 @@ export default function MemoryGridGame() {
           s.cellFlashes[i] = { color: '#4ade80', start: now };
         }
 
-        sfx.success();
-        haptic([30, 50, 30]);
+        // Milestone celebration for 7+ sequence (Memory Master level)
+        if (s.sequenceLength - 1 >= 7) {
+          sfx.success(); sfx.success(); // double pop for milestone
+          haptic([30, 50, 80, 50, 30]);
+          playNearMiss(); // victory shimmer cue
+        } else {
+          sfx.success();
+          haptic([30, 50, 30]);
+        }
 
         s.subPhase    = 'paused';
         s.pauseUntil  = performance.now() + ROUND_PAUSE_MS;
@@ -748,7 +772,9 @@ export default function MemoryGridGame() {
 
   // ─── RENDER ───────────────────────────────────────────────────────────────
 
-  const accentColor = theme.colors.accent ?? ACCENT;
+  // For unbranded (default Ether) deployments: use game-specific ACCENT.
+  // For white-label brand activations: use the brand's accent color.
+  const accentColor = theme.id !== 'ether' ? (theme.colors.accent ?? ACCENT) : ACCENT;
 
   return (
     <>
@@ -763,7 +789,7 @@ export default function MemoryGridGame() {
         />
       )}
     <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accentColor}
-      background="radial-gradient(ellipse at 50% 0%, rgba(255,180,80,0.12) 0%, transparent 55%), linear-gradient(180deg, #120d06 0%, #1e1508 30%, #2a1c0a 55%, #1e1508 80%, #120d06 100%)">
+      background="radial-gradient(ellipse at 50% 0%, rgba(59,130,246,0.12) 0%, transparent 55%), linear-gradient(180deg, #040d1c 0%, #061525 30%, #071a30 55%, #061525 80%, #040d1c 100%)">
       {/* ── Start Screen ───────────────────────────────────────────────────── */}
       {phase === 'start' && (
         <GameStartScreen
@@ -774,7 +800,7 @@ export default function MemoryGridGame() {
           accentColor={accentColor}
           onStart={handleStart}
           iconNode={<Brain size={80} color={accentColor} strokeWidth={1.5} />}
-          gradient="radial-gradient(ellipse 80% 70% at 50% 30%, #0f0820 0%, #080514 55%, #040208 100%)"
+          gradient="radial-gradient(ellipse 80% 70% at 50% 30%, #071428 0%, #040d1c 55%, #020610 100%)"
         />
       )}
 
@@ -809,7 +835,7 @@ export default function MemoryGridGame() {
           {phase === 'playing' && (
             <AnimatePresence mode="wait">
               <motion.div
-                key={stateRef.current.subPhase}
+                key={subPhaseDisplay}
                 initial={{ opacity: 0, scale: 0.85 }}
                 animate={{ opacity: 1, scale: 1 }}
                 exit={{ opacity: 0, scale: 1.1 }}
@@ -825,7 +851,7 @@ export default function MemoryGridGame() {
                   zIndex: 20,
                 }}
               >
-                <SubphaseBanner subPhase={stateRef.current.subPhase} accentColor={accentColor} />
+                <SubphaseBanner subPhase={subPhaseDisplay} accentColor={accentColor} />
               </motion.div>
             </AnimatePresence>
           )}
@@ -907,7 +933,7 @@ function SubphaseBanner({ subPhase, accentColor }: { subPhase: SubPhase; accentC
         gap: 8,
       }}>
         <Eye size={18} color="rgba(255,255,255,0.9)" />
-        <span style={{ color: 'rgba(255,255,255,0.9)', fontWeight: 700, fontSize: 15, letterSpacing: '0.05em' }}>
+        <span style={{ color: 'rgba(255,255,255,0.9)', fontWeight: 700, fontSize: 18, letterSpacing: '0.05em' }}>
           MEMORIZE THE PATTERN
         </span>
       </div>
@@ -925,7 +951,7 @@ function SubphaseBanner({ subPhase, accentColor }: { subPhase: SubPhase; accentC
         boxShadow: `0 0 24px ${accentColor}88`,
       }}>
         <Hand size={18} color="#fff" />
-        <span style={{ color: '#fff', fontWeight: 800, fontSize: 15, letterSpacing: '0.05em' }}>
+        <span style={{ color: '#fff', fontWeight: 800, fontSize: 18, letterSpacing: '0.05em' }}>
           TAP THE SEQUENCE
         </span>
       </div>

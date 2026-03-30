@@ -14,6 +14,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
+import { Flame } from 'lucide-react';
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
@@ -27,10 +28,10 @@ interface StreakBadgeProps {
 // ─── Tier Config ──────────────────────────────────────────────────────────────
 
 function getStreakTier(streak: number) {
-  if (streak >= 20) return { label: '🔥🔥🔥', color: '#ff3d00', glow: 'rgba(255,61,0,0.6)',  textColor: '#fff',    pulse: true,  shake: true  };
-  if (streak >= 10) return { label: '🔥🔥',   color: '#ff6d00', glow: 'rgba(255,109,0,0.5)', textColor: '#fff',    pulse: true,  shake: false };
-  if (streak >= 5)  return { label: '🔥',     color: '#f97316', glow: 'rgba(249,115,22,0.45)', textColor: '#fff',  pulse: true,  shake: false };
-  return                   { label: '🔥',     color: '#facc15', glow: 'rgba(250,204,21,0.35)', textColor: '#1a1a1a', pulse: false, shake: false };
+  if (streak >= 20) return { flames: 3, color: '#ff3d00', glow: 'rgba(255,61,0,0.6)',  textColor: '#fff',    pulse: true,  shake: true  };
+  if (streak >= 10) return { flames: 2, color: '#ff6d00', glow: 'rgba(255,109,0,0.5)', textColor: '#fff',    pulse: true,  shake: false };
+  if (streak >= 5)  return { flames: 1, color: '#f97316', glow: 'rgba(249,115,22,0.45)', textColor: '#fff',  pulse: true,  shake: false };
+  return                   { flames: 1, color: '#facc15', glow: 'rgba(250,204,21,0.35)', textColor: '#1a1a1a', pulse: false, shake: false };
 }
 
 // ─── Fire flicker particles ───────────────────────────────────────────────────
@@ -161,9 +162,11 @@ export default function StreakBadge({
             </div>
           )}
 
-          {/* Fire label */}
-          <span style={{ fontSize: displayStreak >= 10 ? 18 : 16, lineHeight: 1 }}>
-            {tier.label}
+          {/* Fire label — Lucide Flame icons (no emoji per design rules) */}
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 1, lineHeight: 1 }}>
+            {Array.from({ length: tier.flames }).map((_, i) => (
+              <Flame key={i} size={displayStreak >= 10 ? 18 : 16} color={tier.textColor === '#fff' ? '#fff' : tier.color} />
+            ))}
           </span>
 
           {/* Count */}

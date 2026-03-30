@@ -14,10 +14,7 @@ import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
 import { motion, AnimatePresence } from 'framer-motion';
 import ScorePopEffect, { useScorePop } from '@/components/ScorePopEffect';
 import StreakBadge from '@/components/StreakBadge';
-import { CATEGORY_THEMES } from '@/lib/theme';
 import SwipeInstructions from '@/components/SwipeInstructions';
-
-const CATEGORY_ACCENT = CATEGORY_THEMES.cognitive.primaryAccent;
 
 
 // --- SPRITE CACHE -------------------------------------------------------------
@@ -78,10 +75,16 @@ interface Signals {
 
 function getPersonality(sig: Signals): string {
   const total = sig.blocksDropped;
-  if (sig.perfectDrops >= 8 && sig.maxHeight >= 10) return 'The Architect 🏛️';
-  if (total >= 20 && sig.maxHeight >= 8)             return 'Speed Stacker ⚡';
-  if (sig.perfectDrops >= 6 && total < 15)           return 'Perfectionist 🎯';
-  return 'Bold Builder 🌊';
+  // Perfectionist: precision-focused — high perfect drops with impressive height
+  if (sig.perfectDrops >= 8 && sig.maxHeight >= 8)               return 'Perfectionist 🎯';
+  // Speed Stacker: blazes ahead — high blocks dropped + impressive height
+  if (total >= 20 && sig.maxHeight >= 10)                        return 'Speed Stacker ⚡';
+  // The Architect: methodical builder — good precision + solid height
+  if (sig.perfectDrops >= 5 && sig.maxHeight >= 6)               return 'The Architect 🏗️';
+  // Bold Builder: goes for it regardless — high block count or aggressive style
+  if (total >= 12)                                               return 'Bold Builder 🧱';
+  // Bold Builder fallback
+  return 'Bold Builder 🧱';
 }
 
 type Phase = 'start' | 'countdown' | 'playing' | 'done';
@@ -332,7 +335,7 @@ export default function StackDropGame() {
       st.timeLeft = Math.max(0, st.timeLeft - 1);
       setTimeLeft(st.timeLeft);
       // Urgency cue at ≤5s
-      if (st.timeLeft <= 5 && st.timeLeft > 0) sfx.tick();
+      if (st.timeLeft <= 10 && st.timeLeft > 0) sfx.tick();
       if (st.timeLeft <= 0) {
         st.running = false;
         clearInterval(timerRef.current!);
@@ -675,6 +678,8 @@ export default function StackDropGame() {
           accentColor={theme.colors.accent ?? ACCENT}
           onPlayAgain={handlePlayAgain}
           didWin={finalSig.maxHeight >= 8}
+          finalScore={finalSig.score}
+          gameDurationMs={DURATION * 1000}
         />
       )}
 
@@ -683,8 +688,8 @@ export default function StackDropGame() {
       )}
       {phase === 'playing' && (
         <>
-          <ScorePopEffect pops={pops} accentColor={CATEGORY_ACCENT} />
-          <StreakBadge streak={streak} accentColor={CATEGORY_ACCENT} />
+          <ScorePopEffect pops={pops} accentColor={theme.colors.accent ?? ACCENT} />
+          <StreakBadge streak={streak} accentColor={theme.colors.accent ?? ACCENT} />
         </>
       )}
     </GameShell>

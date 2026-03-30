@@ -937,7 +937,7 @@ export default function HarvestCatch() {
       {phase === 'start' && showInstructions && (
         <SwipeInstructions
           gameId="harvest-catch"
-          steps={[{ icon: "🍎", title: "Catch the harvest", body: "Tilt your device to move the basket." }, { icon: "⭐", title: "Rare items = more", body: "Golden items are worth extra — don't miss them." }, { icon: "🚫", title: "Avoid rocks", body: "Catching rocks costs you a life." }]}
+          steps={[{ icon: "🍎", title: "Catch the harvest", body: "Tilt your device to move the basket." }, { icon: "⭐", title: "Rare items = more", body: "Golden items are worth extra — don't miss them." }, { icon: "🚫", title: "Avoid bad food", body: "Catching brussels sprouts, fruitcake, or bones costs you a life." }]}
           onDone={() => setShowInstructions(false)}
         />
       )}

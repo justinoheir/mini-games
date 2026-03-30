@@ -14,7 +14,7 @@ import GameHUD from '@/components/GameHUD';
 import GameStartScreen from '@/components/GameStartScreen';
 import Countdown from '@/components/Countdown';
 import EndScreen from '@/components/EndScreen';
-import { initAudio, sfx, haptic } from '@/lib/audio';
+import { initAudio, sfx, haptic, startMusic } from '@/lib/audio';
 import { playScoreHit, playVictoryFanfare, playNearMiss } from '@/lib/audio';
 import { hapticScore, hapticFail, hapticVictory } from '@/lib/haptics';
 import { useBrandTheme } from '@/lib/useBrandTheme';
@@ -355,6 +355,7 @@ export default function PitchMatchGame() {
   // ─── GAME LOOP ───────────────────────────────────────────────────────────
 
   const startLoop = useCallback(() => {
+    startMusic('calm');
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
@@ -394,8 +395,16 @@ export default function PitchMatchGame() {
     timerRef.current = setInterval(() => {
       s.timeLeft--;
       setTimeLeft(s.timeLeft);
+      sfx.tick();
+      if (s.timeLeft === 10) sfx.warning();
       if (s.timeLeft <= 0) endGame();
     }, 1000);
+
+    // ─── Gradient cache — recreated only when canvas dimensions change ───
+    let bgGrad: CanvasGradient | null = null;
+    let vigGrad: CanvasGradient | null = null;
+    let gradCacheW = 0;
+    let gradCacheH = 0;
 
     // ─── rAF LOOP ────────────────────────────────────────────────────────
     const loop = () => {
@@ -550,19 +559,22 @@ export default function PitchMatchGame() {
       // ── 5. RENDER ──────────────────────────────────────────────────────
       // ─────────────────────────────────────────────────────────────────────
 
-      // Layer 1: Background — deep violet/studio gradient
-      const pmBg = ctx.createRadialGradient(W * 0.5, H * 0.35, 0, W * 0.5, H * 0.65, Math.max(W, H) * 0.9);
-      pmBg.addColorStop(0,   '#100820');
-      pmBg.addColorStop(0.55, '#080514');
-      pmBg.addColorStop(1,   '#030208');
-      ctx.fillStyle = pmBg;
+      // Layer 1: Background — deep violet/studio gradient (cached per canvas size)
+      if (W !== gradCacheW || H !== gradCacheH) {
+        gradCacheW = W; gradCacheH = H;
+        bgGrad = ctx.createRadialGradient(W * 0.5, H * 0.35, 0, W * 0.5, H * 0.65, Math.max(W, H) * 0.9);
+        bgGrad.addColorStop(0,   '#100820');
+        bgGrad.addColorStop(0.55, '#080514');
+        bgGrad.addColorStop(1,   '#030208');
+        vigGrad = ctx.createRadialGradient(W * 0.5, H * 0.5, H * 0.2, W * 0.5, H * 0.5, H * 0.8);
+        vigGrad.addColorStop(0, 'rgba(0,0,0,0)');
+        vigGrad.addColorStop(1, 'rgba(0,0,0,0.5)');
+      }
+      ctx.fillStyle = bgGrad!;
       ctx.fillRect(0, 0, W, H);
 
       // Vignette
-      const pmVig = ctx.createRadialGradient(W * 0.5, H * 0.5, H * 0.2, W * 0.5, H * 0.5, H * 0.8);
-      pmVig.addColorStop(0, 'rgba(0,0,0,0)');
-      pmVig.addColorStop(1, 'rgba(0,0,0,0.5)');
-      ctx.fillStyle = pmVig;
+      ctx.fillStyle = vigGrad!;
       ctx.fillRect(0, 0, W, H);
 
       // Layer 2: Subtle oscilloscope waveform (studio monitor aesthetic)
@@ -630,11 +642,14 @@ export default function PitchMatchGame() {
       ctx.restore();
 
       // Layer 5: Target note line (glowing horizontal)
+      // Shadow only when in hit zone or briefly after a note change (perf: skip when idle)
       ctx.save();
-      ctx.shadowBlur = inHitZone
-        ? 28 + s.hitFlashAlpha * 14
-        : 14 + s.noteChangeFlash * 10;
-      ctx.shadowColor = s.accentColor;
+      if (inHitZone || s.noteChangeFlash > 0.05) {
+        ctx.shadowBlur = inHitZone
+          ? 28 + s.hitFlashAlpha * 14
+          : 14 + s.noteChangeFlash * 10;
+        ctx.shadowColor = s.accentColor;
+      }
       ctx.strokeStyle = inHitZone
         ? s.accentColor
         : `rgba(52,211,153,${0.55 + s.noteChangeFlash * 0.25})`;
@@ -672,12 +687,10 @@ export default function PitchMatchGame() {
 
         if (isHit) {
           ctx.fillStyle = s.accentColor;
-          ctx.shadowBlur = isCurrent ? 12 : 6;
-          ctx.shadowColor = s.accentColor;
+          // Shadow only on current hit dot to reduce overdraw cost
+          if (isCurrent) { ctx.shadowBlur = 10; ctx.shadowColor = s.accentColor; }
         } else if (isCurrent) {
-          ctx.fillStyle = `rgba(52,211,153,0.45)`;
-          ctx.shadowBlur = 10;
-          ctx.shadowColor = s.accentColor;
+          ctx.fillStyle = `rgba(52,211,153,0.55)`;
         } else if (isPast) {
           ctx.fillStyle = 'rgba(255,255,255,0.12)';
         } else {
@@ -863,15 +876,22 @@ export default function PitchMatchGame() {
     analyserRef.current = null;
     pitchBufRef.current = null;
 
-    setPhase('start');
     setScoreDisplay(0);
     setTimeLeft(DURATION);
     setFinalSig(null);
     setMicError(false);
-  
     setIsNewBest(false);
     setStreak(0);
     prevScoreRef.current = 0;
+
+    // Test shortcut: __DISABLE_AUDIO means mic re-request is skipped — go directly to
+    // countdown so tests don't have to navigate the start-screen flow a second time.
+    if ((window as unknown as Record<string,unknown>).__DISABLE_AUDIO) {
+      setPhase('countdown');
+      return;
+    }
+
+    setPhase('start');
   }, []);
 
   // ─── END SCREEN INSIGHTS ─────────────────────────────────────────────────

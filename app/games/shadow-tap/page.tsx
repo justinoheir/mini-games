@@ -14,8 +14,8 @@ import GameStartScreen from '@/components/GameStartScreen';
 import Countdown from '@/components/Countdown';
 import EndScreen from '@/components/EndScreen';
 import { initAudio, sfx, haptic } from '@/lib/audio';
-import { playScoreHit, playVictoryFanfare, playNearMiss } from '@/lib/audio';
-import { hapticScore, hapticFail, hapticVictory } from '@/lib/haptics';
+import { playVictoryFanfare } from '@/lib/audio';
+import { hapticScore, hapticVictory } from '@/lib/haptics';
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
@@ -81,14 +81,16 @@ function getPersonality(sig: Signals): string {
     ? sig.flashReactionTimes.reduce((a, b) => a + b, 0) / sig.flashReactionTimes.length
     : 9999;
 
-  // Gut Reader: primarily intuitive, trusts first instinct
-  if (sig.hitsOnFirst > 20 && avgReaction < 400) return 'Gut Reader 👁️';
-  // Sharp Processor: high accuracy, processes fast
-  if (accuracyBySpeed > 0.80 && sig.misses < 5) return 'Sharp Processor 🔬';
-  // Overthinker: hesitates too long, shadow disappears
-  if (avgReaction > 600 && sig.misses > 8) return 'Overthinker 🌀';
-  // Fallback — balanced instinct and processing
-  return 'The Hunter 🌊';
+  // Sharp Processor: fast and precise — maximizes every opportunity
+  if (accuracyBySpeed > 0.80 && avgReaction < 400 && sig.misses < 5) return 'Sharp Processor';
+  // Gut Reader: acts on instinct, first-read reactions, trusts gut over analysis
+  if (sig.hitsOnFirst > 15 && avgReaction < 350) return 'Gut Reader';
+  // Overthinker: deliberate and careful — processes before committing, few false taps
+  if (avgReaction > 500 && sig.wrongAreaTaps <= 3 && sig.misses < 8) return 'Overthinker';
+  // The Hunter: consistent pacing, not rushing, not overthinking — reliable under pressure
+  if (accuracyBySpeed >= 0.50 && accuracyBySpeed < 0.80 && avgReaction >= 350 && avgReaction <= 550) return 'The Hunter';
+  // The Hunter (fallback): catch-all for adaptive, exploratory players
+  return 'The Hunter';
 }
 
 // ─── GAME STATE ───────────────────────────────────────────────────────────────
@@ -281,8 +283,8 @@ export default function ShadowTapGame() {
     const numScore = typeof scoreDisplay === 'number' ? scoreDisplay : 0;
     if (numScore > prevScoreRef.current) {
       triggerPop(`+${numScore - prevScoreRef.current}`, window.innerWidth / 2, 200);
-      // Note: hapticScore() is called directly in handleTap for precise sync — not duplicated here
-      playScoreHit('cognitive', numScore - prevScoreRef.current);
+      // Note: hapticScore() and sfx.collect() are called directly in handleTap for precise sync.
+      // playScoreHit removed here to avoid double-firing audio per tap.
       setStreak(stateRef.current.sig.streak);
     }
     prevScoreRef.current = numScore;
@@ -805,6 +807,8 @@ export default function ShadowTapGame() {
           accentColor={theme.colors.accent ?? ACCENT}
           onPlayAgain={handlePlayAgain}
           didWin={finalSig.hits >= 8}
+          finalScore={finalSig.score}
+          gameDurationMs={DURATION * 1000}
         />
       )}
 
@@ -820,8 +824,8 @@ export default function ShadowTapGame() {
       )}
       {phase === 'playing' && (
         <>
-          <ScorePopEffect pops={pops} accentColor={CATEGORY_ACCENT} />
-          <StreakBadge streak={streak} accentColor={CATEGORY_ACCENT} />
+          <ScorePopEffect pops={pops} accentColor={theme.colors.accent ?? ACCENT} />
+          <StreakBadge streak={streak} accentColor={theme.colors.accent ?? ACCENT} />
         </>
       )}
     </GameShell>

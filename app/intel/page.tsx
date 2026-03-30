@@ -4,7 +4,7 @@ import IntelIndexClient from './IntelIndexClient';
 export const revalidate = 60;
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? 'https://ccioqoakdexiblnjrbhs.supabase.co';
-const SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY ?? process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? '';
+const SUPABASE_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? process.env.SUPABASE_SERVICE_KEY ?? process.env.SUPABASE_SERVICE_ROLE_KEY ?? '';
 
 interface IntelRecord {
   game_id: string;
@@ -69,11 +69,11 @@ export default async function IntelIndexPage() {
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
           <h1 style={{ margin: 0, fontSize: 32, fontWeight: 700, letterSpacing: '-0.03em' }}>
-            📊 Glimmers Intel
+            ⚡ Glimmers Intel
           </h1>
         </div>
-        <p style={{ margin: '8px 0 0', color: 'rgba(255,255,255,0.35)', fontSize: 14 }}>
-          Live QA dashboards for every game · {records.length} records loaded
+        <p style={{ margin: '8px 0 0', color: 'rgba(255,255,255,0.35)', fontSize: 14, lineHeight: 1.6, maxWidth: 520 }}>
+          Every Glimmer is a measurement instrument. Each one captures how a consumer feels about a brand — in the moment, through behavior. {records.length} experiences available.
         </p>
       </div>
 

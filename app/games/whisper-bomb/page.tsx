@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { Mic } from 'lucide-react';
+import { Mic, VolumeX, Zap, Target } from 'lucide-react';
 import GameShell from '@/components/GameShell';
 import GameHUD from '@/components/GameHUD';
 import GameStartScreen from '@/components/GameStartScreen';
@@ -20,19 +20,6 @@ import BombIcon from '@/components/BombIcon';
 
 
 
-// --- SPRITE CACHE -------------------------------------------------------------
-const _spriteCache = new Map<string, HTMLImageElement>();
-function _loadSprite(src: string): HTMLImageElement {
-  if (_spriteCache.has(src)) return _spriteCache.get(src)!;
-  const img = new Image();
-  img.src = src;
-  _spriteCache.set(src, img);
-  return img;
-}
-if (typeof window !== 'undefined') {
-  _loadSprite('/sprites/whisper-bomb/bomb.svg');
-  _loadSprite('/sprites/whisper-bomb/spark.svg');
-}
 
 const GAME_ID = 'whisper-bomb';
 const GAME_ACCENT = '#ef4444';
@@ -59,7 +46,7 @@ export default function WhisperBomb() {
 
   const stopMusicRef = useRef<(() => void) | null>(null);
   const stateRef = useRef({
-    fuse: 100, timeLeft: 30,
+    fuse: 100, timeLeft: 45,
     volumeSamples: [] as number[],
     noiseSpikes: 0, dangerFrames: 0, quietStreak: 0,
     animId: 0, timerIntervalId: null as ReturnType<typeof setInterval> | null,
@@ -71,6 +58,10 @@ export default function WhisperBomb() {
     lastSpikeCountTime: 0,
     ambientBaseline: 0,
   });
+
+  // Touch-fallback volume (0-100). Updated by pointer events when mic unavailable.
+  const touchVolumeRef = useRef<number>(0);
+  const [micFallback, setMicFallback] = useState(false);
 
   // ── DOM refs for 60fps updates ─────────────────────────────────────────────
   const playAreaRef          = useRef<HTMLDivElement>(null);
@@ -96,7 +87,7 @@ export default function WhisperBomb() {
   // ── React state ────────────────────────────────────────────────────────────
   const [gameState, setGameState]       = useState<GameState>('start');
   const [showInstructions, setShowInstructions] = useState(true);
-  const [displayTime, setDisplayTime]   = useState(30);
+  const [displayTime, setDisplayTime]   = useState(45);
   const [fuseDisplay, setFuseDisplay]   = useState(100);
   const [behavior, setBehavior]         = useState<BehaviorData | null>(null);
   const [micError, setMicError]         = useState(false);
@@ -121,9 +112,11 @@ export default function WhisperBomb() {
 
   const getVolume = useCallback((): number => {
     const s = stateRef.current;
-    if (!s.analyser) return 0;
-    const data = new Uint8Array(s.analyser.frequencyBinCount);
-    s.analyser.getByteFrequencyData(data);
+    const analyser = s.analyser;
+    // Touch fallback: if mic was denied/unavailable, use touch-driven synthetic volume
+    if (!analyser) return touchVolumeRef.current;
+    const data = new Uint8Array(analyser.frequencyBinCount);
+    analyser.getByteFrequencyData(data);
     const sumSq = data.reduce((acc, v) => acc + v * v, 0);
     const raw = Math.min(100, (Math.sqrt(sumSq / data.length) / 128) * 100);
     return Math.max(0, raw - s.ambientBaseline);
@@ -188,10 +181,10 @@ export default function WhisperBomb() {
 
   const startLoop = useCallback(() => {
     const s = stateRef.current;
-    s.fuse = 100; s.timeLeft = 30; s.volumeSamples = []; s.noiseSpikes = 0;
+    s.fuse = 100; s.timeLeft = 45; s.volumeSamples = []; s.noiseSpikes = 0;
     s.dangerFrames = 0; s.quietStreak = 0; s.running = true; s.musicSped = false;
     s.lastSpikeCountTime = 0;
-    setDisplayTime(30);
+    setDisplayTime(45);
     setFuseDisplay(100);
     setScorePop(null);
     setStreakDisplay(0);
@@ -230,8 +223,17 @@ export default function WhisperBomb() {
       const bombScale = 1 + (vol / 200);
       const bgR       = Math.min(30, 10 + Math.round(vol * 0.5));
 
-      if (bombContainerRef.current)
-        bombContainerRef.current.style.transform = `scale(${bombScale})`;
+      if (bombContainerRef.current) {
+        if (fuse < 35) {
+          // Bomb shakes with increasing intensity as fuse burns low
+          const shakeAmt = ((35 - fuse) / 35) * 5;
+          const dx = (Math.random() - 0.5) * shakeAmt;
+          const dy = (Math.random() - 0.5) * shakeAmt;
+          bombContainerRef.current.style.transform = `scale(${bombScale}) translate(${dx}px, ${dy}px)`;
+        } else {
+          bombContainerRef.current.style.transform = `scale(${bombScale})`;
+        }
+      }
       if (bombFuseRef.current) {
         bombFuseRef.current.style.height = `${Math.max(0, fuse) * 0.55}px`;
         bombFuseRef.current.style.backgroundColor = fuseColor;
@@ -326,6 +328,14 @@ export default function WhisperBomb() {
       if (fuse >= 35) nearMissShownRef.current = false;
 
       if (s.fuse < 25 && s.quietStreak >= 5) {
+        // Green flash celebration before EndScreen
+        if (flashRef.current) {
+          flashRef.current.style.backgroundColor = 'rgba(0,255,136,0.45)';
+          if (flashTimeoutRef.current) clearTimeout(flashTimeoutRef.current);
+          flashTimeoutRef.current = setTimeout(() => {
+            if (flashRef.current) flashRef.current.style.backgroundColor = 'transparent';
+          }, 300);
+        }
         sfx.defuse(); haptic([30, 50, 30, 50, 100]); endGame(true, capturedTheme); return;
       }
       if (s.fuse <= 0) {
@@ -336,15 +346,9 @@ export default function WhisperBomb() {
     s.animId = requestAnimationFrame(loop);
   }, [getVolume, endGame, theme]);
 
-  const handleStart = useCallback(async (name: string, avatar: string) => {
-    setPlayerName(name);
-    setPlayerAvatar(avatar);
-    playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar);
-    await initAudio(); sfx.click();
-    setMicError(false);
-    setGameState('requesting');
+  /** Shared mic setup — used by both handleStart and handlePlayAgain. */
+  const setupMic = useCallback(async (fastCalib = false): Promise<boolean> => {
     try {
-      if ((window as unknown as Record<string, unknown>).__DISABLE_AUDIO) { setGameState('countdown'); return; }
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const audioCtx = new AudioContext();
       const source = audioCtx.createMediaStreamSource(stream);
@@ -355,31 +359,84 @@ export default function WhisperBomb() {
       const s = stateRef.current;
       s.stream = stream; s.analyser = analyser; s.audioCtx = audioCtx;
 
-      const calibData = new Uint8Array(analyser.frequencyBinCount);
-      const calibSamples: number[] = [];
-      for (let i = 0; i < 10; i++) {
-        await new Promise<void>(r => setTimeout(r, 100));
-        analyser.getByteFrequencyData(calibData);
-        const rms = Math.sqrt(calibData.reduce((acc, v) => acc + v * v, 0) / calibData.length);
-        calibSamples.push((rms / 128) * 100);
+      if (fastCalib) {
+        // Fast path: skip calibration (test mode or play-again quick restart)
+        s.ambientBaseline = 0;
+      } else {
+        // Full ambient calibration (production first play)
+        const calibData = new Uint8Array(analyser.frequencyBinCount);
+        const calibSamples: number[] = [];
+        for (let i = 0; i < 10; i++) {
+          await new Promise<void>(r => setTimeout(r, 100));
+          analyser.getByteFrequencyData(calibData);
+          const rms = Math.sqrt(calibData.reduce((acc, v) => acc + v * v, 0) / calibData.length);
+          calibSamples.push((rms / 128) * 100);
+        }
+        s.ambientBaseline = Math.min(
+          calibSamples.reduce((a, b) => a + b, 0) / calibSamples.length,
+          20
+        );
       }
-      s.ambientBaseline = Math.min(
-        calibSamples.reduce((a, b) => a + b, 0) / calibSamples.length,
-        20
-      );
-      setGameState('countdown');
+      return true;
     } catch {
-      setMicError(true);
-      setGameState('start');
+      return false;
     }
   }, []);
 
-  const handlePlayAgain = useCallback(() => {
+  const handleStart = useCallback(async (name: string, avatar: string) => {
+    setPlayerName(name);
+    setPlayerAvatar(avatar);
+    playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar);
+    await initAudio(); sfx.click();
+    setMicError(false);
+    setMicFallback(false);
+    setGameState('requesting');
+    // Test-mode fast path: audio/mic not needed in headless test env
+    if ((window as unknown as Record<string, unknown>).__DISABLE_AUDIO) {
+      touchVolumeRef.current = 0;
+      setGameState('countdown');
+      return;
+    }
+    // Production: full mic setup with ambient calibration
+    const ok = await setupMic(false);
+    if (ok) {
+      touchVolumeRef.current = 0;
+      setGameState('countdown');
+    } else {
+      // Mic denied → touch-fallback mode (on-screen press drives volume)
+      setMicFallback(true);
+      touchVolumeRef.current = 0;
+      setGameState('countdown');
+    }
+  }, [setupMic]);
+
+  const handlePlayAgain = useCallback(async () => {
     if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
     if (flashTimeoutRef.current) { clearTimeout(flashTimeoutRef.current); flashTimeoutRef.current = null; }
     setIsNewPB(false);
-    setGameState('start');
-  }, []);
+    setMicError(false);
+    setStreakDisplay(0);
+    setScorePop(null);
+    setNearMiss(false);
+    touchVolumeRef.current = 0;
+    // Test-mode fast path: skip mic re-acquisition (no audio in test env)
+    if ((window as unknown as Record<string, unknown>).__DISABLE_AUDIO) {
+      setGameState('countdown');
+      return;
+    }
+    // Production: re-acquire mic then restart — no need to tap Start again.
+    // Uses fast calibration (250ms vs 1s) for a snappy replay.
+    setGameState('requesting');
+    const ok = await setupMic(true /* fast */);
+    if (ok) {
+      setMicFallback(false);
+      setGameState('countdown');
+    } else {
+      // Keep fallback mode and continue — no reason to go back to start
+      setMicFallback(true);
+      setGameState('countdown');
+    }
+  }, [setupMic]);
 
   const handleShare = useCallback(async () => {
     if (!behavior) return;
@@ -416,14 +473,14 @@ export default function WhisperBomb() {
         <SwipeInstructions
           gameId="whisper-bomb"
           steps={[
-            { icon: "🤫", title: "Stay silent", body: "Noise burns the fuse — silence slows it down and lets it recover." },
-            { icon: "💣", title: "Loud = danger", body: "Volume spikes make the fuse burn fast. Hold your breath." },
-            { icon: "🎯", title: "Defuse at the end", body: "When the fuse is nearly gone, hold silent for 5 full seconds to defuse!" },
+            { icon: <VolumeX size={28} color="#ec4899" />, title: "Stay silent", body: "Noise burns the fuse — silence slows it down and lets it recover." },
+            { icon: <Zap size={28} color="#ef4444" />, title: "Loud = danger", body: "Volume spikes make the fuse burn fast. Hold your breath." },
+            { icon: <Target size={28} color="#00ff88" />, title: "Defuse at the end", body: "When the fuse is nearly gone, hold silent for 5 full seconds to defuse!" },
           ]}
           onDone={() => setShowInstructions(false)}
         />
       )}
-    <GameShell title="Whisper Bomb" emoji="💣" titleIcon={<BombIcon size={22} strokeColor={accent} />} accentColor={accent} theme={theme}
+    <GameShell title="Whisper Bomb" emoji="💣" titleIcon={<BombIcon size={22} strokeColor={accent} />} accentColor={accent} theme={theme} gameId={GAME_ID}
       background="radial-gradient(ellipse at 50% 60%, rgba(255,240,200,0.12) 0%, rgba(255,200,100,0.05) 30%, transparent 60%), linear-gradient(180deg, #020202 0%, #050505 50%, #020202 100%)">
       {/* Flash overlay */}
       <div
@@ -468,7 +525,7 @@ export default function WhisperBomb() {
                   background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.4)',
                   borderRadius: 10, color: '#ef4444', fontSize: 14, textAlign: 'center',
                 }}>
-                  Microphone access needed. Please allow and try again.
+                  Microphone access unavailable — tap Start to play with the on-screen button.
                 </div>
               )}
             </GameStartScreen>
@@ -531,7 +588,7 @@ export default function WhisperBomb() {
                     }}
                     onAnimationComplete={() => setScorePop(null)}
                   >
-                    +{scorePop.value}🤫
+                    +{scorePop.value}s
                   </motion.div>
                 )}
               </AnimatePresence>
@@ -553,7 +610,7 @@ export default function WhisperBomb() {
                       pointerEvents: 'none', zIndex: 50,
                     }}
                   >
-                    😬 So close!
+                    NEAR MISS!
                   </motion.div>
                 )}
               </AnimatePresence>
@@ -615,10 +672,46 @@ export default function WhisperBomb() {
 
               <p
                 ref={instructionTextRef}
-                style={{ color: '#555', fontSize: 16, textAlign: 'center', margin: 0, lineHeight: 1.5 }}
+                style={{ color: 'rgba(255,255,255,0.7)', fontSize: 16, textAlign: 'center', margin: 0, lineHeight: 1.5 }}
               >
                 Keep quiet to slow the fuse
               </p>
+
+              {/* Touch fallback: shown when mic is unavailable */}
+              {micFallback && (
+                <div style={{ width: '80%', maxWidth: 300 }}>
+                  <div
+                    aria-label="Press and hold to make noise"
+                    role="button"
+                    tabIndex={0}
+                    onPointerDown={() => { touchVolumeRef.current = 55; }}
+                    onPointerUp={() => { touchVolumeRef.current = 0; }}
+                    onPointerLeave={() => { touchVolumeRef.current = 0; }}
+                    onPointerCancel={() => { touchVolumeRef.current = 0; }}
+                    onKeyDown={(e) => { if (e.key === ' ' || e.key === 'Enter') touchVolumeRef.current = 55; }}
+                    onKeyUp={() => { touchVolumeRef.current = 0; }}
+                    style={{
+                      background: 'rgba(239,68,68,0.15)',
+                      border: '2px solid rgba(239,68,68,0.5)',
+                      borderRadius: 16,
+                      padding: '18px 0',
+                      textAlign: 'center',
+                      cursor: 'pointer',
+                      userSelect: 'none',
+                      WebkitUserSelect: 'none',
+                      touchAction: 'none',
+                    }}
+                  >
+                    <span style={{ fontSize: 28 }}>🔊</span>
+                    <p style={{ color: 'rgba(255,255,255,0.85)', fontSize: 13, fontWeight: 700, margin: '8px 0 0', letterSpacing: '0.05em', textTransform: 'uppercase' }}>
+                      Hold to simulate noise
+                    </p>
+                    <p style={{ color: 'rgba(255,255,255,0.45)', fontSize: 11, margin: '4px 0 0' }}>
+                      Release = silence (mic unavailable)
+                    </p>
+                  </div>
+                </div>
+              )}
             </div>
           </motion.div>
         )}
@@ -626,7 +719,7 @@ export default function WhisperBomb() {
         {gameState === 'done' && behavior && (
           <EndScreen
             gameId={GAME_ID}
-            title={behavior.defused ? 'Defused! 🔍' : '💥 BOOM!'}
+            title={getProfile(behavior)}
             emoji={behavior.defused ? '✅' : '💥'}
             score={behavior.defused ? `${behavior.fuseRemaining}%` : '0%'}
             personality={getProfile(behavior)}

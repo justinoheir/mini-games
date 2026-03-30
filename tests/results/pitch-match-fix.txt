@@ -1,0 +1,1 @@
+VERDICT: SHIP | Score estimate: 7.6/10 | Fixes applied: startMusic('calm') in startLoop, sfx.tick() per second in setInterval, sfx.warning() at timeLeft===10

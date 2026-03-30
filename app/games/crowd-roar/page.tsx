@@ -6,7 +6,7 @@
  *  Sensor: Microphone (Web Audio API)
  *  Duration: 45s
  *  Signals: avgVolume, peakVolume, sustainedRoarTime, silenceEvents, roarBursts
- *  Personalities: Crowd King, Burst Machine, Steady Roar, Building Up
+ *  Personalities: Performer, Energizer, Connector, Trailblazer, Visionary
  * ══════════════════════════════════════════════════════════════════
  */
 
@@ -52,7 +52,7 @@ if (typeof window !== 'undefined') {
 
 const GAME_ID      = 'crowd-roar';
 const PB_KEY       = 'pb_crowd-roar';
-const ACCENT       = '#ef4444';
+const ACCENT       = '#f59e0b';
 const DURATION     = 45;
 const GAME_EMOJI   = '📢';
 const GAME_TITLE   = 'Crowd Roar';
@@ -83,10 +83,11 @@ interface Signals {
 function getPersonality(sig: Signals): string {
   const avg = sig.volumeCount > 0 ? sig.volumeSum / sig.volumeCount : 0;
 
-  if (avg > 0.75 && sig.sustainedRoarTime > 20000)  return 'Crowd King 👑';
-  if (sig.roarBursts >= 8 && sig.peakVolume > 0.85) return 'Burst Machine 💥';
-  if (avg > 0.55 && sig.silenceEvents <= 3)          return 'Steady Roar 🔥';
-  return 'Building Up 🌊';
+  if (avg > 0.75 && sig.sustainedRoarTime > 20000)   return 'Performer 🎭';
+  if (sig.roarBursts >= 8 && sig.peakVolume > 0.85)  return 'Energizer ⚡';
+  if (avg > 0.55 && sig.silenceEvents <= 3)           return 'Connector 🤝';
+  if (sig.peakVolume > 0.75 && sig.roarBursts >= 4)  return 'Trailblazer 🚀';
+  return 'Visionary 🌟';
 }
 
 // ─── CROWD MEMBER ─────────────────────────────────────────────────────────────
@@ -118,6 +119,7 @@ interface Challenge {
 interface GameState {
   running: boolean;
   finaleActive: boolean;   // true during the 1.5s stadium explosion after timer ends
+  finaleStartMs: number | null;  // rAF-based finale timing (replaces setTimeout)
   timeLeft: number;
   sig: Signals;
 
@@ -161,7 +163,7 @@ export default function CrowdRoarGame() {
   const animRef      = useRef(0);
   const timerRef     = useRef<ReturnType<typeof setInterval> | null>(null);
   const stopMusicRef = useRef<(() => void) | null>(null);
-  const finaleTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // finaleTimeoutRef removed — finale timing now uses rAF-based elapsed check in startLoop
 
   // Mic audio refs
   const audioCtxRef  = useRef<AudioContext | null>(null);
@@ -172,6 +174,7 @@ export default function CrowdRoarGame() {
   const stateRef = useRef<GameState>({
     running: false,
     finaleActive: false,
+    finaleStartMs: null,
     timeLeft: DURATION,
     sig: {
       avgVolume: 0,
@@ -211,12 +214,30 @@ export default function CrowdRoarGame() {
   const [streak, setStreak] = useState(0);
   const [isNewBest, setIsNewBest] = useState(false);
   const prevScoreRef = useRef(0);
+
+  // ─── HAPTICS GUARD (B-M3) ─────────────────────────────────────────────────
+  // Check once at mount; propagated via ref so it's always current in callbacks.
+  const hapticsEnabledRef = useRef(
+    typeof window !== 'undefined'
+      ? new URLSearchParams(window.location.search).get('haptics') !== 'off'
+      : true
+  );
+
+  // ─── GRADIENT CACHE REFS (P1 perf) ───────────────────────────────────────
+  // These gradients depend only on canvas W/H and are recreated on resize.
+  const gradBgRef    = useRef<CanvasGradient | null>(null);
+  const gradVigRef   = useRef<CanvasGradient | null>(null);
+  const gradStageRef = useRef<CanvasGradient | null>(null);
+  const gradFinBgRef = useRef<CanvasGradient | null>(null);
+  const gradCacheW   = useRef(0);
+  const gradCacheH   = useRef(0);
+
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     const numScore = typeof scoreDisplay === 'number' ? scoreDisplay : 0;
     if (numScore > prevScoreRef.current) {
       triggerPop(`+${numScore - prevScoreRef.current}`, window.innerWidth / 2, 200);
-      hapticScore();
+      if (hapticsEnabledRef.current) hapticScore();
       playScoreHit('default', numScore - prevScoreRef.current);
       setStreak(Math.floor(numScore / 5));
     }
@@ -287,7 +308,7 @@ export default function CrowdRoarGame() {
     if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
 
     sfx.success();
-    hapticVictory();
+    if (hapticsEnabledRef.current) hapticVictory();
     playVictoryFanfare();
 
     // Trigger stadium explosion: all crowd members go max excitement
@@ -296,30 +317,8 @@ export default function CrowdRoarGame() {
     }
     s.flashAlpha = 0.6;
 
-    // After 1.5s of stadium finale, close mic and show end screen
-    finaleTimeoutRef.current = setTimeout(() => {
-      s.finaleActive = false;
-      cancelAnimationFrame(animRef.current);
-
-      if (audioCtxRef.current) { audioCtxRef.current.close().catch(() => {}); audioCtxRef.current = null; }
-      if (micStreamRef.current) { micStreamRef.current.getTracks().forEach(t => t.stop()); micStreamRef.current = null; }
-      analyserRef.current = null;
-      dataArrayRef.current = null;
-    // Personal best tracking
-    try {
-      const _pbPrev = parseInt(localStorage.getItem(PB_KEY) || '0', 10);
-      const _pbVal = parseFloat(String(s.sig?.score ?? 0));
-      if (!isNaN(_pbVal) && _pbVal > _pbPrev) {
-        localStorage.setItem(PB_KEY, String(Math.round(_pbVal)));
-        setIsNewBest(true);
-      }
-    } catch { /* ignore */ }
-
-
-
-      setFinalSig({ ...s.sig });
-      setPhase('done');
-    }, 1500);
+    // Mark finale start — rAF loop will detect elapsed ≥1500ms and close mic + show end screen
+    s.finaleStartMs = Date.now();
   }, []);
 
   // ─── GET MIC VOLUME ──────────────────────────────────────────────────────
@@ -371,6 +370,13 @@ export default function CrowdRoarGame() {
       canvas.height = h * dpr;
       const ctx2 = canvas.getContext('2d');
       if (ctx2) ctx2.setTransform(dpr, 0, 0, dpr, 0, 0);
+      // Invalidate gradient cache on resize so they're rebuilt at new dimensions
+      gradBgRef.current    = null;
+      gradVigRef.current   = null;
+      gradStageRef.current = null;
+      gradFinBgRef.current = null;
+      gradCacheW.current   = 0;
+      gradCacheH.current   = 0;
       if (stateRef.current.running || stateRef.current.finaleActive) {
         initCrowd(window.innerWidth, window.innerHeight);
       }
@@ -383,6 +389,7 @@ export default function CrowdRoarGame() {
     // Reset state
     s.running = true;
     s.finaleActive = false;
+    s.finaleStartMs = null;
     s.timeLeft = DURATION;
     s.sig = {
       avgVolume: 0,
@@ -457,7 +464,7 @@ export default function CrowdRoarGame() {
 
       if (s.timeLeft <= 0) {
         // ── FIX: Remove sfx.fail() — timer expiry is normal game completion
-        haptic([300]);
+        if (hapticsEnabledRef.current) haptic([300]);
         endGame();
       }
     }, 1000);
@@ -490,13 +497,17 @@ export default function CrowdRoarGame() {
 
         // Render finale frame (simplified)
         ctx.imageSmoothingEnabled = true;
-        const crFinBg = ctx.createRadialGradient(W * 0.5, H * 0.4, 0, W * 0.5, H * 0.6, Math.max(W, H) * 0.9);
-        crFinBg.addColorStop(0, '#1a1000'); crFinBg.addColorStop(1, '#060400');
-        ctx.fillStyle = crFinBg;
+        // Use cached gradient (recreate only when W/H changed)
+        if (!gradFinBgRef.current || gradCacheW.current !== W || gradCacheH.current !== H) {
+          const g = ctx.createRadialGradient(W * 0.5, H * 0.4, 0, W * 0.5, H * 0.6, Math.max(W, H) * 0.9);
+          g.addColorStop(0, '#1a1000'); g.addColorStop(1, '#060400');
+          gradFinBgRef.current = g;
+        }
+        ctx.fillStyle = gradFinBgRef.current;
         ctx.fillRect(0, 0, W, H);
 
         if (s.flashAlpha > 0) {
-          ctx.fillStyle = `rgba(239, 68, 68, ${s.flashAlpha * 0.4})`;
+          ctx.fillStyle = `rgba(245, 158, 11, ${s.flashAlpha * 0.4})`;
           ctx.fillRect(0, 0, W, H);
         }
 
@@ -510,7 +521,7 @@ export default function CrowdRoarGame() {
           const headR  = (5 + exc * 2) * m.size;
           const alpha  = 0.35 + exc * 0.65;
 
-          ctx.fillStyle = `rgba(239, 68, 68, ${alpha})`;
+          ctx.fillStyle = `rgba(245, 158, 11, ${alpha})`;
           ctx.shadowBlur  = 10 + exc * 12;
           ctx.shadowColor = s.accentColor;
 
@@ -528,6 +539,27 @@ export default function CrowdRoarGame() {
         }
 
         updateAndDrawParticles(ctx, s.particles);
+
+        // ── rAF-based finale end: ≥1500ms elapsed → close mic + show end screen ──
+        if (s.finaleStartMs !== null && Date.now() - s.finaleStartMs >= 1500) {
+          s.finaleActive = false;
+          if (audioCtxRef.current) { audioCtxRef.current.close().catch(() => {}); audioCtxRef.current = null; }
+          if (micStreamRef.current) { micStreamRef.current.getTracks().forEach(t => t.stop()); micStreamRef.current = null; }
+          analyserRef.current = null;
+          dataArrayRef.current = null;
+          // Personal best tracking
+          try {
+            const _pbPrev = parseInt(localStorage.getItem(PB_KEY) || '0', 10);
+            const _pbVal = parseFloat(String(s.sig?.score ?? 0));
+            if (!isNaN(_pbVal) && _pbVal > _pbPrev) {
+              localStorage.setItem(PB_KEY, String(Math.round(_pbVal)));
+              setIsNewBest(true);
+            }
+          } catch { /* ignore */ }
+          setFinalSig({ ...s.sig });
+          setPhase('done');
+          return; // stop rAF — no more frames needed
+        }
 
         animRef.current = requestAnimationFrame(loop);
         return;
@@ -571,7 +603,7 @@ export default function CrowdRoarGame() {
           s.inSilenceEvent = true;
           s.sig.silenceEvents++;
           sfx.collision();  // spec.audio.missSound
-          haptic([40]);
+          if (hapticsEnabledRef.current) haptic([40]);
         }
       } else {
         s.silenceStartTime = null;
@@ -593,7 +625,7 @@ export default function CrowdRoarGame() {
           s.challenge.hit = true;
           s.sig.score += 50;
           sfx.collect();  // spec.audio.hitSound
-          haptic([30, 20, 30]);
+          if (hapticsEnabledRef.current) haptic([30, 20, 30]);
           s.flashAlpha = 0.55;
         }
       }
@@ -629,19 +661,33 @@ export default function CrowdRoarGame() {
 
       ctx.imageSmoothingEnabled = true;
 
-      // Background — dark stadium amber/brown gradient
-      const crBg = ctx.createRadialGradient(W * 0.5, H * 0.4, 0, W * 0.5, H * 0.7, Math.max(W, H) * 0.9);
-      crBg.addColorStop(0,   '#1a1000');
-      crBg.addColorStop(0.5, '#0d0900');
-      crBg.addColorStop(1,   '#060400');
-      ctx.fillStyle = crBg;
+      // Background — dark stadium amber/brown gradient (cached; rebuilt on resize)
+      if (!gradBgRef.current || gradCacheW.current !== W || gradCacheH.current !== H) {
+        const bg = ctx.createRadialGradient(W * 0.5, H * 0.4, 0, W * 0.5, H * 0.7, Math.max(W, H) * 0.9);
+        bg.addColorStop(0,   '#1a1000');
+        bg.addColorStop(0.5, '#0d0900');
+        bg.addColorStop(1,   '#060400');
+        gradBgRef.current = bg;
+        // Vignette also depends only on W/H — rebuild alongside bg
+        const vig = ctx.createRadialGradient(W * 0.5, H * 0.5, H * 0.15, W * 0.5, H * 0.5, H * 0.8);
+        vig.addColorStop(0, 'rgba(0,0,0,0)');
+        vig.addColorStop(1, 'rgba(0,0,0,0.55)');
+        gradVigRef.current = vig;
+        // Stage gradient also depends only on H
+        const stageYc = H - 48;
+        const sg = ctx.createLinearGradient(0, stageYc - 30, 0, H);
+        sg.addColorStop(0, 'rgba(239,68,68,0.12)');
+        sg.addColorStop(1, 'rgba(239,68,68,0.04)');
+        gradStageRef.current = sg;
+        // Update cache dimensions
+        gradCacheW.current = W;
+        gradCacheH.current = H;
+      }
+      ctx.fillStyle = gradBgRef.current;
       ctx.fillRect(0, 0, W, H);
 
-      // Vignette
-      const crVig = ctx.createRadialGradient(W * 0.5, H * 0.5, H * 0.15, W * 0.5, H * 0.5, H * 0.8);
-      crVig.addColorStop(0, 'rgba(0,0,0,0)');
-      crVig.addColorStop(1, 'rgba(0,0,0,0.55)');
-      ctx.fillStyle = crVig;
+      // Vignette (cached)
+      ctx.fillStyle = gradVigRef.current!;
       ctx.fillRect(0, 0, W, H);
 
       // ── Edge glow (scales with volume) ──────────────────────────────────
@@ -685,16 +731,20 @@ export default function CrowdRoarGame() {
 
       // ── Bonus flash overlay ──────────────────────────────────────────────
       if (s.flashAlpha > 0) {
-        ctx.fillStyle = `rgba(239, 68, 68, ${s.flashAlpha * 0.28})`;
+        ctx.fillStyle = `rgba(245, 158, 11, ${s.flashAlpha * 0.28})`;
         ctx.fillRect(0, 0, W, H);
       }
 
       // ── Stadium floor / stage ────────────────────────────────────────────
       const stageY  = H - 48;
-      const stageGrad = ctx.createLinearGradient(0, stageY - 30, 0, H);
-      stageGrad.addColorStop(0, 'rgba(239,68,68,0.12)');
-      stageGrad.addColorStop(1, 'rgba(239,68,68,0.04)');
-      ctx.fillStyle = stageGrad;
+      // Use cached stage gradient (recreated on resize alongside gradBgRef)
+      ctx.fillStyle = gradStageRef.current ?? (() => {
+        const sg = ctx.createLinearGradient(0, stageY - 30, 0, H);
+        sg.addColorStop(0, 'rgba(239,68,68,0.12)');
+        sg.addColorStop(1, 'rgba(239,68,68,0.04)');
+        gradStageRef.current = sg;
+        return sg;
+      })();
       ctx.fillRect(72, stageY - 30, W - 72, 78);
 
       // Stage line
@@ -714,13 +764,13 @@ export default function CrowdRoarGame() {
         const bodyH  = (12 + exc * 18) * m.size;
         const headR  = (5 + exc * 2) * m.size;
 
-        // Color: dark gray when seated → red when excited
+        // Color: dark gray when seated → amber (#f59e0b) when excited
         let r = 50, g = 45, b = 52;
         if (exc > 0.3) {
           const t2 = (exc - 0.3) / 0.7;
-          r = Math.round(50 + t2 * 189);  // 50→239
-          g = Math.round(45 - t2 * 22);   // 45→23 (approx ef4444)
-          b = Math.round(52 - t2 * 16);   // 52→36 (approx ef4444)
+          r = Math.round(50 + t2 * 195);  // 50→245
+          g = Math.round(45 + t2 * 113);  // 45→158
+          b = Math.round(52 - t2 * 41);   // 52→11
         }
         const alpha = 0.35 + exc * 0.65;
         ctx.fillStyle = `rgba(${r},${g},${b},${alpha})`;
@@ -953,7 +1003,6 @@ export default function CrowdRoarGame() {
     return () => {
       cancelAnimationFrame(animRef.current);
       if (timerRef.current) clearInterval(timerRef.current);
-      if (finaleTimeoutRef.current) clearTimeout(finaleTimeoutRef.current);
       if (stopMusicRef.current) stopMusicRef.current();
       if (audioCtxRef.current) audioCtxRef.current.close().catch(() => {});
       if (micStreamRef.current) micStreamRef.current.getTracks().forEach(t => t.stop());
@@ -1007,8 +1056,6 @@ export default function CrowdRoarGame() {
   }, [startLoop]);
 
   const handlePlayAgain = useCallback(() => {
-    // Cancel any pending finale timeout
-    if (finaleTimeoutRef.current) { clearTimeout(finaleTimeoutRef.current); finaleTimeoutRef.current = null; }
     // Close mic on play-again (will be re-requested)
     if (audioCtxRef.current) { audioCtxRef.current.close().catch(() => {}); audioCtxRef.current = null; }
     if (micStreamRef.current) { micStreamRef.current.getTracks().forEach(t => t.stop()); micStreamRef.current = null; }

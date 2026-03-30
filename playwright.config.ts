@@ -21,5 +21,5 @@ export default defineConfig({
       ],
     },
   },
-  outputDir: 'tests/results',
+  outputDir: 'tests/playwright-artifacts',
 });

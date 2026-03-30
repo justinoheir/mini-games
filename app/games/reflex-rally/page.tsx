@@ -35,10 +35,10 @@ if (typeof window !== 'undefined') {
   _loadSprite('/sprites/reflex-rally/paddle.svg');
 }
 
-const ACCENT = '#84cc16';
+const ACCENT = '#0891b2';
 const GAME_ID = 'reflex-rally';
 const PB_KEY       = 'pb_reflex-rally';
-const DURATION = 60;
+const DURATION = 45;
 const MAX_LIVES = 5;
 
 interface FloatText { x: number; y: number; text: string; color: string; alpha: number; vy: number; }
@@ -54,10 +54,17 @@ function getPersonality(sig: Signals): string {
   const late = sig.reactionTimes.slice(Math.floor(sig.reactionTimes.length/2));
   const earlyAvg = early.length > 0 ? early.reduce((a,b)=>a+b,0)/early.length : 999;
   const lateAvg = late.length > 0 ? late.reduce((a,b)=>a+b,0)/late.length : 999;
-  const dropoff = Math.abs(earlyAvg - lateAvg) / earlyAvg;
-  if (dropoff < 0.1 && avgRT < 400) return '🤖 Machine';
-  if (lateAvg < earlyAvg) return '⚡ Clutch Player';
-  return '🎾 Consistent';
+  // Trailblazer: blazing fast reflexes from the start
+  if (avgRT < 350 && sig.returns >= 5) return '⚡ Trailblazer';
+  // Optimizer: measurably improves in second half of game
+  if (lateAvg < earlyAvg * 0.88 && late.length >= 2) return '📈 Optimizer';
+  // Energizer: sustains high streaks — pure stamina
+  if (sig.streakMax >= 5) return '🔥 Energizer';
+  // Explorer: varied shot mix — versatile, adaptive
+  if (sig.forehands > 0 && sig.backhands > 0 &&
+      Math.abs(sig.forehands - sig.backhands) <= Math.max(sig.forehands, sig.backhands) * 0.4) return '🌍 Explorer';
+  // Visionary: sees the big picture — steady and strategic (fallback)
+  return '🎯 Visionary';
 }
 
 export default function ReflexRally() {
@@ -167,7 +174,7 @@ export default function ReflexRally() {
     setScoreDisplay(0); setStreakDisplay(0);
     s.speed = s.baseSpeed = 5; s.speedTier = 0;
     s.netX = W / 2;
-    s.playerZoneX = W * 0.3;
+    s.playerZoneX = W * 0.38; // wider zone = more forgiving for casual players
     s.courtTop = H * 0.2; s.courtBottom = H * 0.8;
     s.courtNarrow = false;
     setPhase('playing'); setTimeLeft(DURATION); setLives(MAX_LIVES);
@@ -257,10 +264,12 @@ export default function ReflexRally() {
         if (s.ballY - s.ballRadius < ct) { s.ballY = ct + s.ballRadius; s.ballVY = Math.abs(s.ballVY); sfx.click(); }
         if (s.ballY + s.ballRadius > cb) { s.ballY = cb - s.ballRadius; s.ballVY = -Math.abs(s.ballVY); sfx.click(); }
 
-        // Check if entering player zone
+        // Check if entering player zone — slow ball down for a wider response window
         if (s.ballX < s.playerZoneX && !s.ballInZone && s.ballVX < 0) {
           s.ballInZone = true;
           s.ballZoneEnterTime = Date.now();
+          // Zone entry: reduce ball speed by 40% to give ~600ms response window at all tiers
+          s.ballVX *= 0.6;
         }
 
         // Speed lines
@@ -284,8 +293,8 @@ export default function ReflexRally() {
         }
         ctx.restore();
 
-        // Miss — ball passed player zone
-        if (s.ballX < W * 0.06) {
+        // Miss — ball passed player zone (threshold at 4% gives extra margin)
+        if (s.ballX < W * 0.04) {
           s.lives--;
           s.sig.misses++;
           s.sig.streakCurrent = 0;
@@ -297,7 +306,7 @@ export default function ReflexRally() {
           s.floats.push({ x: W*0.15, y: (ct+cb)/2, text:'MISS!', color:'#ef4444', alpha:1, vy:-1.5 });
           s.ballActive = false;
           if (s.lives <= 0) { sfx.fail(); haptic([500]); endGame(); return; }
-          setTimeout(() => spawnBall(), 800);
+          setTimeout(() => spawnBall(), 450);
         }
       }
 
@@ -357,13 +366,17 @@ export default function ReflexRally() {
 
     // Must be in player zone or past it
     if (!s.ballActive || s.ballX > s.playerZoneX * 1.5) return;
-    if (Math.abs(dx) < 20) return;
+    // Tap (|dx| < 20) counts as half-credit return — lowers skill floor for all players
+    const isTap = Math.abs(dx) < 20;
+    const pointValue = isTap ? 5 : 10;
 
     const reactionTime = Date.now() - s.ballZoneEnterTime;
     s.sig.reactionTimes.push(reactionTime);
 
-    // Forehand = swipe left, backhand = swipe right
-    if (dx < 0) s.sig.forehands++; else s.sig.backhands++;
+    // Forehand = swipe left, backhand = swipe right (taps don't count as directional)
+    if (!isTap) {
+      if (dx < 0) s.sig.forehands++; else s.sig.backhands++;
+    }
 
     // Return the ball
     s.ballVX = Math.abs(s.ballVX) * 1.1;
@@ -371,19 +384,19 @@ export default function ReflexRally() {
     s.ballX = s.playerZoneX;
     s.ballInZone = false;
     s.sig.returns++;
-    s.sig.score += 10;
+    s.sig.score += pointValue;
     s.sig.streakCurrent++;
     if (s.sig.streakCurrent > s.sig.streakMax) s.sig.streakMax = s.sig.streakCurrent;
     setScoreDisplay(s.sig.score);
     setStreakDisplay(s.sig.streakCurrent);
 
     sfx.collect(); haptic([40]);
-    spawnBurst(s.particles, s.ballX, s.ballY, ACCENT, 14, 5);
+    spawnBurst(s.particles, s.ballX, s.ballY, ACCENT, isTap ? 8 : 14, 5);
     // Fast return (<300ms) = great reflex — celebrate with success sound (not nearMiss which is semantically wrong)
     if (reactionTime < 300) setTimeout(() => sfx.success(), 80);
     // Streak milestone: sfx.go() delayed so it follows the return sound
     if (s.sig.streakCurrent >= 3) setTimeout(() => sfx.go(), 120);
-    s.floats.push({ x: s.ballX, y: s.ballY - 20, text:'+10', color: ACCENT, alpha:1, vy:-2 });
+    s.floats.push({ x: s.ballX, y: s.ballY - 20, text: `+${pointValue}`, color: ACCENT, alpha:1, vy:-2 });
     s.swooshes.push({ x: s.ballX, y: s.ballY, dx, alpha: 1 });
 
     // Ball will come back after hitting right wall
@@ -392,7 +405,7 @@ export default function ReflexRally() {
       const canvas = canvasRef.current;
       if (!canvas) return;
       s.ballVX = -Math.abs(s.ballVX) * (1 + Math.random() * 0.3);
-    }, 800);
+    }, 480);
   }, []);
 
   useEffect(() => {
@@ -440,7 +453,7 @@ export default function ReflexRally() {
     cancelAnimationFrame(animRef.current);
     if (timerRef.current) clearInterval(timerRef.current);
     setStreakDisplay(0);
-    setPhase('start');
+    setPhase('countdown');
   
     setIsNewBest(false);
     setStreak(0);
@@ -456,7 +469,7 @@ export default function ReflexRally() {
       {phase === 'start' && showInstructions && (
         <SwipeInstructions
           gameId="reflex-rally"
-          steps={[{ icon: "👆", title: "Tap to return", body: "Tap when the ball reaches your side." }, { icon: "⚡", title: "Time it right", body: "Tap too early or too late and you miss." }, { icon: "🔥", title: "Speed up", body: "Each rally gets faster — how long can you keep it going?" }]}
+          steps={[{ icon: "Hand", title: "Tap to return", body: "Tap when the ball reaches your side." }, { icon: "Zap", title: "Time it right", body: "Tap too early or too late and you miss." }, { icon: "Flame", title: "Speed up", body: "Each rally gets faster — how long can you keep it going?" }]}
           onDone={() => setShowInstructions(false)}
         />
       )}
@@ -473,8 +486,8 @@ export default function ReflexRally() {
           items={[
             { label: 'SCORE', value: scoreDisplay,                               testId: 'score' },
             { label: 'TIME',  value: `${timeLeft}s`, danger: timeLeft <= 10, testId: 'timer' },
-            { label: 'LIVES', value: '❤️'.repeat(lives) },
-            { label: 'STREAK 🎾', value: streakDisplay },
+            { label: 'LIVES', value: '♥'.repeat(lives) + '♡'.repeat(Math.max(0, 5 - lives)) },
+            { label: 'STREAK', value: streakDisplay },
           ]}
           accentColor={ACCENT}
         />

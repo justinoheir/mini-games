@@ -14,7 +14,7 @@ import GameStartScreen from '@/components/GameStartScreen';
 import Countdown from '@/components/Countdown';
 import EndScreen from '@/components/EndScreen';
 import { initAudio, sfx, haptic, startMusic, increaseMusicTempo } from '@/lib/audio';
-import { playScoreHit, playVictoryFanfare, playNearMiss } from '@/lib/audio';
+import { playScoreHit, playVictoryFanfare } from '@/lib/audio';
 import { hapticScore, hapticFail, hapticVictory } from '@/lib/haptics';
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
@@ -23,12 +23,13 @@ import { createTiltController } from '@/lib/tilt';
 import { Particle, spawnBurst, updateAndDrawParticles } from '@/lib/particles';
 import { ShakeState, triggerShake, applyShake } from '@/lib/screenShake';
 import { motion, AnimatePresence } from 'framer-motion';
+import { Wind } from 'lucide-react';
 import ScorePopEffect, { useScorePop } from '@/components/ScorePopEffect';
 import StreakBadge from '@/components/StreakBadge';
-import { CATEGORY_THEMES } from '@/lib/theme';
+// CATEGORY_THEMES removed — using game accent directly
 import SwipeInstructions from '@/components/SwipeInstructions';
 
-const CATEGORY_ACCENT = CATEGORY_THEMES.sports.primaryAccent;
+// Use the game's own accent color for all visual components
 
 // ─── SPRITE CACHE ─────────────────────────────────────────────────────────────
 const _spriteCache = new Map<string, HTMLImageElement>();
@@ -61,9 +62,32 @@ const MAX_PARTICLES = 50;
 // ─── SPEED STAGES (pure function — no stale closure risk) ────────────────────
 
 function getSpeedParams(elapsed: number): { speed: number; spawnMs: number } {
-  if (elapsed < 15) return { speed: 1.8, spawnMs: 2800 };  // stage 1: very accessible — ~4.5s per obstacle
-  if (elapsed < 30) return { speed: 5.8, spawnMs: 1200 };  // stage 2: medium challenge
-  return { speed: 8.0, spawnMs: 900 };                     // stage 3: fast and intense
+  // Stage 1: very accessible — gentle intro (0–15s)
+  if (elapsed < 15) return { speed: 1.8, spawnMs: 2800 };
+
+  // Stage 1→2 ramp: gradual 5-second bridge so casual players don't hit a wall
+  if (elapsed < 20) {
+    const t = (elapsed - 15) / 5;  // 0..1
+    return {
+      speed:   1.8 + (3.5 - 1.8) * t,
+      spawnMs: Math.round(2800 - (2800 - 1800) * t),
+    };
+  }
+
+  // Stage 2: medium challenge (20–28s)
+  if (elapsed < 28) return { speed: 3.5, spawnMs: 1800 };
+
+  // Stage 2→3 ramp: another 5-second bridge (28–33s)
+  if (elapsed < 33) {
+    const t = (elapsed - 28) / 5;
+    return {
+      speed:   3.5 + (6.5 - 3.5) * t,
+      spawnMs: Math.round(1800 - (1800 - 1100) * t),
+    };
+  }
+
+  // Stage 3: fast and intense (33–45s)
+  return { speed: 6.5, spawnMs: 1100 };
 }
 
 // ─── BEHAVIORAL SIGNALS ──────────────────────────────────────────────────────
@@ -260,9 +284,16 @@ export default function DodgeBlitzGame() {
       s.sig.survivalTime = DURATION * 1000;
     }
 
-    sfx.success();
-    hapticVictory();
-    playVictoryFanfare();
+    if (forcedEnd) {
+      // Player ran out of lives — play fail sound
+      sfx.fail();
+      hapticFail();
+    } else {
+      // Timer expired — player survived! Celebrate.
+      sfx.success();
+      hapticVictory();
+      playVictoryFanfare();
+    }
 
     // Personal best tracking
     try {
@@ -823,6 +854,7 @@ export default function DodgeBlitzGame() {
           accentColor={theme.colors.accent ?? ACCENT}
           ctaTextColor="#000"
           onStart={handleStart}
+          iconNode={<Wind size={72} color={theme.colors.accent ?? ACCENT} strokeWidth={2} />}
           gradient="radial-gradient(ellipse 80% 70% at 50% 30%, #001525 0%, #000d18 55%, #00060e 100%)"
         >
           {/* ⚠️ Player name capture — required in every game */}
@@ -912,8 +944,8 @@ export default function DodgeBlitzGame() {
 
       {phase === 'playing' && (
         <>
-          <ScorePopEffect pops={pops} accentColor={CATEGORY_ACCENT} />
-          <StreakBadge streak={streak} accentColor={CATEGORY_ACCENT} />
+          <ScorePopEffect pops={pops} accentColor={theme.colors.accent ?? ACCENT} />
+          <StreakBadge streak={streak} accentColor={theme.colors.accent ?? ACCENT} />
         </>
       )}
     </GameShell>

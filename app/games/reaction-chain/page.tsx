@@ -5,7 +5,7 @@ import GameHUD from '@/components/GameHUD';
 import GameStartScreen from '@/components/GameStartScreen';
 import Countdown from '@/components/Countdown';
 import EndScreen from '@/components/EndScreen';
-import { initAudio, sfx, haptic, startMusic } from '@/lib/audio';
+import { initAudio, sfx, haptic, startMusic, playComboSfx } from '@/lib/audio';
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
@@ -43,11 +43,14 @@ const EDGE_MARGIN  = 70;
 
 // ─── HELPERS (outside component — pure, no stale closures) ────────────────────
 
-/** Returns the node expiry window in ms based on elapsed game seconds. */
+/** Returns the node expiry window in ms based on elapsed game seconds.
+ *  Smooth linear ramp: 1100ms at t=0 → 420ms at t=45s.
+ *  Keeps the first ~20 seconds accessible to casual players (700ms reaction time)
+ *  while still creating meaningful speed pressure in the final third.
+ */
 function getWindowMs(elapsed: number): number {
-  if (elapsed < 15) return 800;
-  if (elapsed < 30) return 600;
-  return 400;
+  const t = Math.min(elapsed / 45, 1);
+  return Math.round(1100 - t * (1100 - 420));
 }
 
 // ─── BEHAVIORAL SIGNALS ───────────────────────────────────────────────────────
@@ -69,11 +72,16 @@ function getPersonality(sig: Signals): string {
     sig.reactionTimes.length > 0
       ? sig.reactionTimes.reduce((a, b) => a + b, 0) / sig.reactionTimes.length
       : 9999;
+  const accuracy = sig.totalNodes > 0 ? sig.tappedNodes / sig.totalNodes : 0;
 
-  if (avgRT < 350 && sig.longestChain >= 15) return 'Lightning Reflex ⚡';
-  if (sig.longestChain >= 20 && sig.chainBreaks <= 2) return 'Chain Keeper 🔗';
-  if (sig.tappedNodes > 30 && sig.chainBreaks > 5) return 'Sprinter 🏃';
-  return 'Steady Reactor 🌊';
+  // Lightning Reflex: blazing speed + chain building — instinctive and electric
+  if (avgRT < 350 && sig.longestChain >= 10) return 'Lightning Reflex ⚡';
+  // Chain Keeper: disciplined accuracy + sustained chains — methodical and controlled
+  if (accuracy >= 0.70 && sig.chainBreaks <= 4 && sig.longestChain >= 8) return 'Chain Keeper 🔗';
+  // Sprinter: high-volume tapper, bursts of energy with frequent resets
+  if (sig.tappedNodes > 20 && sig.chainBreaks > 4) return 'Sprinter 💨';
+  // Steady Reactor: measured, consistent pace — reliable under pressure
+  return 'Steady Reactor 🎯';
 }
 
 // ─── GAME STATE ───────────────────────────────────────────────────────────────
@@ -100,6 +108,8 @@ type Phase = 'start' | 'countdown' | 'playing' | 'done';
 
 export default function ReactionChain() {
   const theme        = useBrandTheme();
+  // Use game's own accent when no brand override is active
+  const accentColor  = (theme.id !== 'ether') ? theme.colors.accent : ACCENT;
   const canvasRef    = useRef<HTMLCanvasElement>(null);
   const animRef      = useRef(0);
   const timerRef     = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -147,7 +157,7 @@ export default function ReactionChain() {
 
   // Sync brand accent into game state so rAF loop gets fresh value without stale closure
   useEffect(() => {
-    stateRef.current.accentColor = theme.colors.accent ?? ACCENT;
+    stateRef.current.accentColor = accentColor;
   }, [theme]);
 
   // ─── SPAWN NODE ─────────────────────────────────────────────────────────────
@@ -274,14 +284,13 @@ export default function ReactionChain() {
           s.sig.chainBreaks++;
           s.chainBreakFlash   = 1;
           s.lastChainDisplayed = 0;
-          setStreakDisplay(0);
           triggerShake(s.shake, 5, 8);
           sfx.collision();
           haptic([80]);
           // Post-miss pause before next node (≤ 500ms — within rules)
-          // setScoreDisplay here (outside rAF hot-path) to avoid React setState in animation frame
+          // All setState calls deferred here to avoid calling React setState inside rAF
           respawnRef.current = setTimeout(() => {
-            if (s.running) { setScoreDisplay(0); spawnNode(); }
+            if (s.running) { setScoreDisplay(0); setStreakDisplay(0); spawnNode(); }
           }, 500);
         } else {
           const alpha         = 1 - progress * 0.55;
@@ -343,6 +352,48 @@ export default function ReactionChain() {
         ctx.restore();
       }
 
+      // ── Chain dot bar (bottom edge — visualizes consecutive hits) ───────────
+      // Each dot = one consecutive tap. Shatters red on chain break.
+      {
+        const chainLen  = s.sig.currentChain;
+        const maxDots   = 20;
+        const showDots  = Math.min(chainLen, maxDots);
+        const dotR      = 4;
+        const dotGap    = 11;
+        const barY      = H - 28;
+        const totalW    = (showDots - 1) * dotGap;
+        const startX    = W / 2 - totalW / 2;
+
+        if (showDots > 0) {
+          for (let i = 0; i < showDots; i++) {
+            const px = startX + i * dotGap;
+            // Newest dot is brightest; older dots fade slightly
+            const bright = 0.55 + (i / Math.max(1, showDots - 1)) * 0.45;
+            const isMilestone = (i + 1) % 5 === 0;
+            ctx.beginPath();
+            ctx.arc(px, barY, isMilestone ? dotR + 2 : dotR, 0, Math.PI * 2);
+            ctx.fillStyle = s.chainBreakFlash > 0.6
+              ? `rgba(239,68,68,${bright})`     // flash red on break
+              : `${s.accentColor}${Math.round(bright * 255).toString(16).padStart(2, '0')}`;
+            ctx.shadowBlur  = isMilestone ? 10 : 4;
+            ctx.shadowColor = s.chainBreakFlash > 0.6 ? '#ef4444' : s.accentColor;
+            ctx.fill();
+          }
+          ctx.shadowBlur = 0;
+          // "+N" overflow indicator if chain > maxDots
+          if (chainLen > maxDots) {
+            ctx.save();
+            ctx.fillStyle    = s.accentColor;
+            ctx.globalAlpha  = 0.9;
+            ctx.font         = `bold 11px system-ui`;
+            ctx.textAlign    = 'left';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(`+${chainLen - maxDots}`, startX + totalW + 10, barY);
+            ctx.restore();
+          }
+        }
+      }
+
       animRef.current = requestAnimationFrame(loop);
     };
 
@@ -400,8 +451,13 @@ export default function ReactionChain() {
         );
       }
 
-      sfx.collect();
-      haptic([20]);
+      // Audio: combo sound replaces collect at chain ≥ 3 (so combo layer isn't stomped)
+      if (s.sig.currentChain >= 3) {
+        playComboSfx(s.sig.currentChain);
+      } else {
+        sfx.collect();
+      }
+      haptic(s.sig.currentChain >= 5 ? [20, 10, 20] : [20]);
 
       s.nodeAlive = false;
       // Immediate spawn after hit
@@ -486,7 +542,7 @@ export default function ReactionChain() {
           : 0;
       const accuracy =
         sig.totalNodes > 0 ? Math.round((sig.tappedNodes / sig.totalNodes) * 100) : 0;
-      const accentCol = theme.colors.accent ?? ACCENT;
+      const accentCol = accentColor;
 
       return [
         {
@@ -528,8 +584,8 @@ export default function ReactionChain() {
           onDone={() => setShowInstructions(false)}
         />
       )}
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}
-      background="radial-gradient(ellipse at 50% 50%, rgba(0,80,200,0.12) 0%, transparent 60%), radial-gradient(ellipse at 20% 80%, rgba(0,150,255,0.08) 0%, transparent 40%), linear-gradient(180deg, #020810 0%, #040c18 35%, #060e1e 60%, #040c18 85%, #020810 100%)">
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accentColor} gameId={GAME_ID}
+      background="radial-gradient(ellipse at 50% 50%, rgba(250,204,21,0.07) 0%, transparent 60%), linear-gradient(180deg, #0d0700 0%, #0a0500 35%, #080400 60%, #0a0500 85%, #0d0700 100%)">
       {/* ── Start Screen ──────────────────────────────────────────────────── */}
       {phase === 'start' && (
         <GameStartScreen
@@ -537,7 +593,7 @@ export default function ReactionChain() {
           title={GAME_TITLE}
           description={GAME_TAGLINE}
           ctaLabel="Start"
-          accentColor={theme.colors.accent ?? ACCENT}
+          accentColor={accentColor}
           onStart={handleStart}
           gradient="radial-gradient(ellipse 80% 70% at 50% 30%, #1a0e00 0%, #0d0700 55%, #060300 100%)"
         />
@@ -545,7 +601,7 @@ export default function ReactionChain() {
 
       {/* ── Countdown ─────────────────────────────────────────────────────── */}
       {phase === 'countdown' && (
-        <Countdown onComplete={handleCountdownDone} accentColor={theme.colors.accent ?? ACCENT} />
+        <Countdown onComplete={handleCountdownDone} accentColor={accentColor} />
       )}
 
       {/* ── Playing (canvas + HUD) ────────────────────────────────────────── */}
@@ -564,7 +620,7 @@ export default function ReactionChain() {
           {phase === 'playing' && (
             <>
               <GameHUD
-                accentColor={theme.colors.accent ?? ACCENT}
+                accentColor={accentColor}
                 items={[
                   { label: 'TIME', value: timeLeft, danger: timeLeft <= 10, testId: 'timer' },
                   { label: 'CHAIN', value: scoreDisplay, testId: 'score' },
@@ -573,11 +629,11 @@ export default function ReactionChain() {
               {/* Streak badge — fires at 3+ consecutive taps */}
               <StreakBadge
                 streak={streakDisplay}
-                accentColor={theme.colors.accent ?? ACCENT}
+                accentColor={accentColor}
                 position="bottom-center"
               />
               {/* Score pop overlay */}
-              <ScorePopEffect pops={pops} accentColor={theme.colors.accent ?? ACCENT} />
+              <ScorePopEffect pops={pops} accentColor={accentColor} />
             </>
           )}
         </>
@@ -592,7 +648,7 @@ export default function ReactionChain() {
           score={String(finalSig.longestChain)}
           personality={getPersonality(finalSig)}
           insights={buildInsights(finalSig)}
-          accentColor={theme.colors.accent ?? ACCENT}
+          accentColor={accentColor}
           onPlayAgain={handlePlayAgain}
           didWin={finalSig.longestChain >= 10}
         />

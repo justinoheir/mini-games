@@ -65,6 +65,7 @@ export default function GameHUD({ items, accentColor, style }: GameHUDProps) {
                */}
               <div
                 data-testid={item.testId}
+                data-value={item.testId ? String(item.value) : undefined}
                 style={{ overflow: 'hidden', lineHeight: 1, minHeight: 40 }}
                 aria-label={item.testId ? `${item.label}: ${item.value}` : undefined}
               >

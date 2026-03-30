@@ -152,43 +152,45 @@ test('3.6 — mount div has touchAction none', async ({ page }) => {
 test('4.1 — personality classification: all 3 types', async ({ page }) => {
   const result = await page.evaluate(() => {
     interface BehaviorData { collisions: number; avgTiltMagnitude: number; distance: number }
+    // Mirrors actual game getProfile() — returns 'Zen Pilot 🧊' as the fallback (not 'Conservative')
     function getProfile(b: BehaviorData): string {
       if (b.collisions === 0 && b.avgTiltMagnitude < 0.3) return 'Precise 🎯'
       if (b.avgTiltMagnitude > 0.7) return 'Aggressive 🔥'
-      return 'Conservative 🧊'
+      return 'Zen Pilot 🧊'
     }
     return {
       precise:       getProfile({ collisions: 0, avgTiltMagnitude: 0.2, distance: 300 }),
       aggressive:    getProfile({ collisions: 3, avgTiltMagnitude: 0.8, distance: 280 }),
-      conservative:  getProfile({ collisions: 2, avgTiltMagnitude: 0.4, distance: 260 }),
+      zenPilot:      getProfile({ collisions: 2, avgTiltMagnitude: 0.4, distance: 260 }),
       // Edge: 0 collisions but high tilt → Aggressive (not Precise)
       aggressivePrecise: getProfile({ collisions: 0, avgTiltMagnitude: 0.9, distance: 320 }),
     }
   })
   expect(result.precise).toBe('Precise 🎯')
   expect(result.aggressive).toBe('Aggressive 🔥')
-  expect(result.conservative).toBe('Conservative 🧊')
-  // 0 collisions but avgTilt > 0.7 → aggressive check fires before conservative fallback
+  expect(result.zenPilot).toBe('Zen Pilot 🧊')
+  // 0 collisions but avgTilt > 0.7 → aggressive check fires before zen-pilot fallback
   expect(result.aggressivePrecise).toBe('Aggressive 🔥')
 })
 
 test('4.2 — Precise requires BOTH collisions=0 AND avgTilt<0.3', async ({ page }) => {
   const result = await page.evaluate(() => {
     interface BehaviorData { collisions: number; avgTiltMagnitude: number; distance: number }
+    // Mirrors actual game getProfile() — fallback is 'Zen Pilot 🧊'
     function getProfile(b: BehaviorData): string {
       if (b.collisions === 0 && b.avgTiltMagnitude < 0.3) return 'Precise 🎯'
       if (b.avgTiltMagnitude > 0.7) return 'Aggressive 🔥'
-      return 'Conservative 🧊'
+      return 'Zen Pilot 🧊'
     }
     return {
-      // 0 collisions + avgTilt exactly 0.3 (NOT < 0.3) → not Precise
+      // 0 collisions + avgTilt exactly 0.3 (NOT < 0.3) → not Precise → Zen Pilot
       notPrecise_atBoundary: getProfile({ collisions: 0, avgTiltMagnitude: 0.3, distance: 300 }),
-      // 1 collision + low tilt → not Precise, not Aggressive → Conservative
+      // 1 collision + low tilt → not Precise, not Aggressive → Zen Pilot
       notPrecise_hasCollision: getProfile({ collisions: 1, avgTiltMagnitude: 0.1, distance: 280 }),
     }
   })
-  expect(result.notPrecise_atBoundary).toBe('Conservative 🧊')   // 0.3 is NOT < 0.3
-  expect(result.notPrecise_hasCollision).toBe('Conservative 🧊')
+  expect(result.notPrecise_atBoundary).toBe('Zen Pilot 🧊')   // 0.3 is NOT < 0.3
+  expect(result.notPrecise_hasCollision).toBe('Zen Pilot 🧊')
 })
 
 test('4.3 — gap fraction by elapsed time', async ({ page }) => {
@@ -888,24 +890,28 @@ test('9.6 — ring gap: startAngle + gapFraction × 2π defines the safe passage
 
 test('9.7 — collision insight text: 0 collisions = flawless, >5 = red, else green', async ({ page }) => {
   const result = await page.evaluate(() => {
+    // Mirrors actual game EndScreen insight for 'Collisions' label
     function getCollisionInsight(collisions: number): { text: string; color: string } {
       return {
-        text: collisions === 0 ? '0 — flawless run!' : `${collisions} — you recovered fast`,
+        text: collisions === 0 ? '0 — flawless!' : `${collisions} hit${collisions > 1 ? 's' : ''}`,
         color: collisions > 5 ? '#ef4444' : '#00ff88',
       }
     }
     return {
       zero:     getCollisionInsight(0),
       one:      getCollisionInsight(1),
+      two:      getCollisionInsight(2),
       five:     getCollisionInsight(5),
       six:      getCollisionInsight(6),
       ten:      getCollisionInsight(10),
     }
   })
-  expect(result.zero.text).toBe('0 — flawless run!')
+  expect(result.zero.text).toBe('0 — flawless!')
   expect(result.zero.color).toBe('#00ff88')
-  expect(result.one.text).toContain('1 — you recovered fast')
-  expect(result.five.color).toBe('#00ff88')   // ≤5 = green
-  expect(result.six.color).toBe('#ef4444')    // >5 = red
+  expect(result.one.text).toBe('1 hit')         // singular
+  expect(result.two.text).toBe('2 hits')        // plural
+  expect(result.five.color).toBe('#00ff88')     // ≤5 = green
+  expect(result.six.color).toBe('#ef4444')      // >5 = red
   expect(result.ten.color).toBe('#ef4444')
 })
+

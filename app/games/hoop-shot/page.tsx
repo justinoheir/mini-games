@@ -16,7 +16,8 @@ import SwipeInstructions from '@/components/SwipeInstructions';
 
 const ACCENT = '#f97316';
 const GAME_ID = 'hoop-shot';
-const DURATION = 60;
+const DURATION = 45;
+const DURATION_MS = 45000; // kept for reference; timer uses DURATION (seconds)
 
 // Stadium energy crowd comments shown on streak milestones
 const CROWD_LINES = [
@@ -50,10 +51,20 @@ function getPersonality(sig: Signals): string {
 
 export default function HoopShot() {
   const theme = useBrandTheme();
+  // Keep a ref so the rAF loop always sees the latest theme without stale closure
+  const themeRef = useRef(theme);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const stopMusicRef = useRef<(() => void) | null>(null);
   const animRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // ── Cached gradient refs (recreated only on canvas resize) ──────────────
+  const bgGradRef   = useRef<CanvasGradient | null>(null);
+  const vigGradRef  = useRef<CanvasGradient | null>(null);
+  const offscreenRef = useRef<HTMLCanvasElement | null>(null);
+  const gradDimsRef  = useRef<{ W: number; H: number } | null>(null);
+  // ────────────────────────────────────────────────────────────────────────
+
   const [phase, setPhase] = useState<Phase>('start');
   const [showInstructions, setShowInstructions] = useState(true);
   const [timeLeft, setTimeLeft] = useState(DURATION);
@@ -64,6 +75,9 @@ export default function HoopShot() {
   const [playerName, setPlayerName]   = useState('');
   const [playerAvatar, setPlayerAvatar] = useState('🎮');
   const playerSessionRef              = useRef<PlayerSession | null>(null);
+
+  // Sync themeRef whenever theme changes
+  useEffect(() => { themeRef.current = theme; }, [theme]);
 
   const stateRef = useRef({
     running: false,
@@ -180,37 +194,72 @@ export default function HoopShot() {
       s.timeLeft--;
       setTimeLeft(s.timeLeft);
       if (s.timeLeft === 15) increaseMusicTempo(120);
+      if (s.timeLeft === 10) sfx.warning();
       if (s.timeLeft <= 5 && s.timeLeft > 0) sfx.tick();
       if (s.timeLeft <= 0) { sfx.success(); endGame(); }
     }, 1000);
 
-    const loop = () => {
-      if (!s.running) return;
-      ctx.save();
-      applyShake(ctx, s.shake);
-      // Basketball court — rich hardwood atmosphere
-      const bg = ctx.createRadialGradient(W * 0.5, H * 0.4, 0, W * 0.5, H * 0.6, Math.max(W, H) * 0.9);
+    // Helper: (re)build cached gradients and offscreen grain canvas
+    const rebuildCachedAssets = (cW: number, cH: number) => {
+      const bg = ctx.createRadialGradient(cW * 0.5, cH * 0.4, 0, cW * 0.5, cH * 0.6, Math.max(cW, cH) * 0.9);
       bg.addColorStop(0,   '#1c1204');
       bg.addColorStop(0.5, '#120c02');
       bg.addColorStop(1,   '#080500');
-      ctx.fillStyle = bg;
-      ctx.fillRect(0, 0, W, H);
+      bgGradRef.current = bg;
 
-      // Vignette
-      const hsVig = ctx.createRadialGradient(W * 0.5, H * 0.5, H * 0.2, W * 0.5, H * 0.5, H * 0.85);
-      hsVig.addColorStop(0, 'rgba(0,0,0,0)');
-      hsVig.addColorStop(1, 'rgba(0,0,0,0.45)');
-      ctx.fillStyle = hsVig;
-      ctx.fillRect(0, 0, W, H);
+      const vig = ctx.createRadialGradient(cW * 0.5, cH * 0.5, cH * 0.2, cW * 0.5, cH * 0.5, cH * 0.85);
+      vig.addColorStop(0, 'rgba(0,0,0,0)');
+      vig.addColorStop(1, 'rgba(0,0,0,0.45)');
+      vigGradRef.current = vig;
 
-      // Hardwood grain lines
-      ctx.strokeStyle = 'rgba(200,130,40,0.04)'; ctx.lineWidth = 1;
-      for (let gy = 56; gy < H; gy += 14) { ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(W, gy); ctx.stroke(); }
+      // Pre-render hardwood grain to an offscreen canvas
+      const off = document.createElement('canvas');
+      off.width  = cW;
+      off.height = cH;
+      const octx = off.getContext('2d');
+      if (octx) {
+        octx.strokeStyle = 'rgba(200,130,40,0.04)';
+        octx.lineWidth = 1;
+        for (let gy = 56; gy < cH; gy += 14) {
+          octx.beginPath(); octx.moveTo(0, gy); octx.lineTo(cW, gy); octx.stroke();
+        }
+      }
+      offscreenRef.current = off;
+      gradDimsRef.current = { W: cW, H: cH };
+    };
+
+    // Build once immediately at game start
+    rebuildCachedAssets(W, H);
+
+    const loop = () => {
+      if (!s.running) return;
+      const cW = window.innerWidth, cH = window.innerHeight;
+
+      // Rebuild cached assets only when canvas dimensions change
+      if (!gradDimsRef.current || gradDimsRef.current.W !== cW || gradDimsRef.current.H !== cH) {
+        rebuildCachedAssets(cW, cH);
+      }
+
+      const accentColor = themeRef.current.colors?.accent ?? ACCENT;
+
+      ctx.save();
+      applyShake(ctx, s.shake);
+
+      // Basketball court background — use cached gradient
+      ctx.fillStyle = bgGradRef.current!;
+      ctx.fillRect(0, 0, cW, cH);
+
+      // Vignette — use cached gradient
+      ctx.fillStyle = vigGradRef.current!;
+      ctx.fillRect(0, 0, cW, cH);
+
+      // Hardwood grain — use pre-rendered offscreen canvas
+      if (offscreenRef.current) ctx.drawImage(offscreenRef.current, 0, 0);
 
       // Court lines
       ctx.strokeStyle = 'rgba(255,140,60,0.15)';
       ctx.lineWidth = 1;
-      ctx.beginPath(); ctx.moveTo(0, H/2); ctx.lineTo(W, H/2); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(0, cH/2); ctx.lineTo(cW, cH/2); ctx.stroke();
 
       // 3pt arc
       ctx.save();
@@ -218,7 +267,7 @@ export default function HoopShot() {
       ctx.lineWidth = 2;
       ctx.setLineDash([8, 6]);
       ctx.beginPath();
-      ctx.arc(W/2, H, W*0.42, Math.PI*1.15, Math.PI*1.85);
+      ctx.arc(cW/2, cH, cW*0.42, Math.PI*1.15, Math.PI*1.85);
       ctx.stroke();
       ctx.setLineDash([]);
       ctx.restore();
@@ -229,7 +278,7 @@ export default function HoopShot() {
       ctx.fillRect(s.hoopX - bw/2, s.hoopY - s.hoopRadius*1.8, bw, s.hoopRadius*0.6);
 
       // Rim
-      const rimColor = s.rimFlash > Date.now() ? '#ff4444' : ACCENT;
+      const rimColor = s.rimFlash > Date.now() ? '#ff4444' : accentColor;
       ctx.save();
       ctx.strokeStyle = rimColor;
       ctx.lineWidth = 4;
@@ -295,22 +344,20 @@ export default function HoopShot() {
             setStreakDisplay(s.sig.streakCurrent);
             hapticScore();
 
-            // Larger score pop for 3pt
-            const popSize = isThree ? 52 : 40;
             s.floats.push({ x: s.hoopX, y: s.hoopY - 30, text: `+${pts}`, color: isThree ? '#fbbf24' : '#4ade80', alpha: 1, vy: -2.5, scale: isThree ? 1.4 : 1.0 });
 
             // Stadium energy at streak milestones
             if (s.sig.streakCurrent === 3) {
-              s.floats.push({ x: W/2, y: H*0.45, text: '🔥 STREAK!', color: '#f97316', alpha: 1, vy: -1.2, scale: 1.1 });
+              s.floats.push({ x: cW/2, y: cH*0.45, text: '🔥 STREAK!', color: accentColor, alpha: 1, vy: -1.2, scale: 1.1 });
             } else if (s.sig.streakCurrent >= 5 && s.sig.streakCurrent % 3 === 2) {
               const line = CROWD_LINES[Math.min(Math.floor(s.sig.streakCurrent / 3) - 1, CROWD_LINES.length - 1)];
-              s.floats.push({ x: W/2, y: H*0.4, text: line, color: '#fbbf24', alpha: 1, vy: -1.0, scale: 1.2 });
+              s.floats.push({ x: cW/2, y: cH*0.4, text: line, color: '#fbbf24', alpha: 1, vy: -1.0, scale: 1.2 });
             }
 
             // PB mid-game milestone
             if (!s.milestoneFired50 && s.score > s.prevBest && s.prevBest > 0) {
               s.milestoneFired50 = true;
-              s.floats.push({ x: W/2, y: H*0.35, text: '🏆 NEW BEST!', color: '#fbbf24', alpha: 1, vy: -0.8, scale: 1.3 });
+              s.floats.push({ x: cW/2, y: cH*0.35, text: '🏆 NEW BEST!', color: '#fbbf24', alpha: 1, vy: -0.8, scale: 1.3 });
               setTimeout(() => sfx.success(), 150);
             }
 
@@ -326,7 +373,6 @@ export default function HoopShot() {
             sfx.collision();
             hapticImpact();
             s.rimFlash = Date.now() + 200;
-            // Near-miss "So close!" if ball was very close to scoring
             if (Math.abs(dx) < s.hoopRadius * 0.4) {
               s.nearMissX = s.hoopX;
               s.nearMissY = s.hoopY - 50;
@@ -335,14 +381,14 @@ export default function HoopShot() {
           }
         }
 
-        if (s.ballY > H + 60 || s.ballX < -60 || s.ballX > W + 60) {
+        if (s.ballY > cH + 60 || s.ballX < -60 || s.ballX > cW + 60) {
           if (!s.hoopScored) {
             s.sig.misses++;
             s.sig.streakCurrent = 0;
             setStreakDisplay(0);
             sfx.nearMiss();
             hapticFail();
-            triggerShake(s.shake, 5, 8);
+            triggerShake(s.shake, 3, 5);
             spawnBurst(s.particles, s.ballX, s.ballY, '#ef4444', 10, 4);
           }
           setTimeout(() => resetBall(), 800);
@@ -354,13 +400,13 @@ export default function HoopShot() {
         }
       }
 
-      // Draw ball
+      // Draw ball — ball gradient is position-dependent so recreated per frame (small cost)
       if (s.ballVisible) {
         const br = s.ballRadius;
         ctx.save();
-        ctx.shadowBlur = 12; ctx.shadowColor = ACCENT;
+        ctx.shadowBlur = 12; ctx.shadowColor = accentColor;
         const ballGrad = ctx.createRadialGradient(s.ballX - br*0.3, s.ballY - br*0.3, br*0.1, s.ballX, s.ballY, br);
-        ballGrad.addColorStop(0, '#f97316'); ballGrad.addColorStop(1, '#c2410c');
+        ballGrad.addColorStop(0, accentColor); ballGrad.addColorStop(1, '#c2410c');
         ctx.fillStyle = ballGrad;
         ctx.beginPath(); ctx.arc(s.ballX, s.ballY, br, 0, Math.PI*2); ctx.fill();
         ctx.strokeStyle = 'rgba(0,0,0,0.4)'; ctx.lineWidth = 1.5;
@@ -465,19 +511,19 @@ export default function HoopShot() {
       const dpr = window.devicePixelRatio || 1;
       canvas.width  = window.innerWidth  * dpr;
       canvas.height = window.innerHeight * dpr;
-      // Keep CSS display size at 1:1 viewport pixels
       canvas.style.width  = window.innerWidth  + 'px';
       canvas.style.height = window.innerHeight + 'px';
       const ctx2 = canvas.getContext('2d');
       if (ctx2) ctx2.setTransform(dpr, 0, 0, dpr, 0, 0);
+      // Invalidate gradient cache on resize so it rebuilds next frame
+      gradDimsRef.current = null;
     };
     applySize();
-    const onResize = applySize;
     const onForceEnd = () => { if (stateRef.current.running) endGame(); };
-    window.addEventListener('resize', onResize);
+    window.addEventListener('resize', applySize);
     window.addEventListener('game:force-end', onForceEnd);
     return () => {
-      window.removeEventListener('resize', onResize);
+      window.removeEventListener('resize', applySize);
       window.removeEventListener('game:force-end', onForceEnd);
       cancelAnimationFrame(animRef.current);
       if (timerRef.current) clearInterval(timerRef.current);
@@ -508,21 +554,22 @@ export default function HoopShot() {
   const makes = sig?.makes ?? 0;
   const totalShots = sig?.totalShots ?? 1;
   const acc = totalShots > 0 ? Math.round((makes / totalShots) * 100) : 0;
+  const accentUI = theme.colors?.accent ?? ACCENT;
 
   return (
     <>
       {phase === 'start' && showInstructions && (
         <SwipeInstructions
           gameId="hoop-shot"
-          steps={[{ icon: "👆", title: "Swipe UP to shoot", body: "Flick your finger upward on the screen to launch the ball." }, { icon: "🏀", title: "Aim for the hoop", body: "Start your swipe from the ball — the angle matters." }, { icon: "⏱️", title: "60 seconds on the clock", body: "Score as many baskets as you can before time runs out." }]}
+          steps={[{ icon: "👆", title: "Swipe UP to shoot", body: "Flick your finger upward on the screen to launch the ball." }, { icon: "🏀", title: "Aim for the hoop", body: "Start your swipe from the ball — the angle matters." }, { icon: "⏱️", title: "45 seconds on the clock", body: "Score as many baskets as you can before time runs out." }]}
           onDone={() => setShowInstructions(false)}
         />
       )}
-    <GameShell title="Hoop Shot" emoji="🏀" accentColor={ACCENT} theme={theme}
+    <GameShell title="Hoop Shot" emoji="🏀" accentColor={accentUI} theme={theme}
       background="radial-gradient(ellipse at 50% 120%, #8b5e3c 0%, #6b4423 30%, #4a2d14 60%, #1a0f06 85%, #0a0604 100%), radial-gradient(ellipse at 50% 0%, rgba(255,160,80,0.12) 0%, transparent 60%)">
       <canvas
         ref={canvasRef}
-        style={{ display: phase === 'playing' ? 'block' : 'none', position: 'absolute', top: 0, left: 0 }}
+        style={{ display: phase === 'playing' ? 'block' : 'none', position: 'absolute', top: 0, left: 0, touchAction: 'none' }}
         onTouchStart={handleTouchStart}
         onTouchEnd={handleTouchEnd}
       />
@@ -533,18 +580,18 @@ export default function HoopShot() {
             { label: 'TIME',  value: `${timeLeft}s`, danger: timeLeft <= 10, testId: 'timer' },
             { label: 'STREAK 🔥', value: streakDisplay },
           ]}
-          accentColor={ACCENT}
+          accentColor={accentUI}
         />
       )}
-      {phase === 'countdown' && <Countdown onComplete={startLoop} accentColor={ACCENT} />}
+      {phase === 'countdown' && <Countdown onComplete={startLoop} accentColor={accentUI} />}
       {phase === 'start' && (
         <GameStartScreen
           emoji="🏀"
           title="Hoop Shot"
-          description="Swipe UP to shoot. Score as many baskets as you can in 60 seconds."
+          description="Swipe UP to shoot. Score as many baskets as you can in 45 seconds."
           sensorNote="Touch only"
           ctaLabel="Start Game →"
-          accentColor={ACCENT}
+          accentColor={accentUI}
           onStart={handleStart}
           gradient="radial-gradient(ellipse 80% 70% at 50% 30%, #1a0c00 0%, #0e0700 55%, #060400 100%)"
         />
@@ -557,13 +604,13 @@ export default function HoopShot() {
           score={`${sig.score} pts`}
           personality={getPersonality(sig)}
           insights={[
-            { label: 'Made / Attempted', value: `${sig.makes}/${sig.totalShots}`, color: ACCENT },
+            { label: 'Made / Attempted', value: `${sig.makes}/${sig.totalShots}`, color: accentUI },
             { label: 'Accuracy', value: `${acc}%`, color: '#4ade80' },
             { label: 'Best Streak', value: `${sig.streakMax}`, color: '#fbbf24' },
             { label: '3PT Shots', value: `${sig.threePointMakes}/${sig.threePointAttempts}`, color: '#c084fc' },
             ...(isNewBest ? [{ label: '🏆 Personal Best', value: 'NEW RECORD!', color: '#fbbf24' }] : []),
           ]}
-          accentColor={ACCENT}
+          accentColor={accentUI}
           onPlayAgain={handlePlayAgain}
           didWin={sig.makes > 0}
         />

@@ -26,6 +26,7 @@ import { type Particle, spawnBurst, updateAndDrawParticles } from '@/lib/particl
 import { motion, AnimatePresence } from 'framer-motion';
 import ScorePopEffect, { useScorePop } from '@/components/ScorePopEffect';
 import StreakBadge from '@/components/StreakBadge';
+import { Palette } from 'lucide-react';
 import { CATEGORY_THEMES } from '@/lib/theme';
 import SwipeInstructions from '@/components/SwipeInstructions';
 
@@ -174,10 +175,10 @@ export default function ColorCascadeGame() {
   useEffect(() => {
     const numScore = typeof scoreDisplay === 'number' ? scoreDisplay : 0;
     if (numScore > prevScoreRef.current) {
+      // Score pop and streak update are UI state — fire in useEffect (not timing-critical)
       triggerPop(`+${numScore - prevScoreRef.current}`, window.innerWidth / 2, 200);
-      hapticScore();
-      playScoreHit('default', numScore - prevScoreRef.current);
-      setStreak(Math.floor(numScore / 5));
+      setStreak(stateRef.current.sig.streakCurrent);
+      // Note: hapticScore() and playScoreHit() moved to handleTap for synchronous firing
     }
     prevScoreRef.current = numScore;
   }, [scoreDisplay]); // triggerPop is stable
@@ -574,8 +575,9 @@ export default function ColorCascadeGame() {
         const pts        = Math.round(3 * multiplier);
         s.sig.score     += pts;
         setScoreDisplay(s.sig.score);
-        sfx.collect();
-        haptic([20]);
+        // Audio + haptic fire synchronously here (same handler as visual state change — spec requirement)
+        playScoreHit('default', pts);
+        hapticScore();
         // Particle burst at tap point (correct hit) — spec requires lib/particles.ts
         const tapHex = COLORS[bestDrop.colorIndex].hex;
         spawnBurst(s.particles, x, bestDropY, tapHex, 12, 5);
@@ -715,6 +717,7 @@ export default function ColorCascadeGame() {
       {phase === 'start' && (
         <GameStartScreen
           emoji={GAME_EMOJI}
+          iconNode={<Palette size={72} color={theme.colors.accent ?? ACCENT} strokeWidth={1.5} />}
           title={GAME_TITLE}
           description={GAME_TAGLINE}
           ctaLabel="Start"

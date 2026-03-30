@@ -1,0 +1,23 @@
+VERDICT: SHIP | Score estimate: 8.5/10 | Fixes applied: 5/5
+
+## Fixes Applied
+
+1. **Difficulty ramp** — Receiver speed now ramps dynamically from 3.5 → 5.0 over game duration:
+   `const receiverSpeed = 3.5 + (1.5 * (elapsedTime / DURATION))`
+
+2. **PB feature (was dead)** — After game ends, reads localStorage PB_KEY, compares to final score,
+   writes new best and sets isNewBest=true if score improves. Banner now fires correctly.
+
+3. **deepThrows ratio bug** — Removed increment at throw time (handleTouchEnd). Added `currentThrowIsDeep`
+   flag on stateRef, counted at result determination (catch or out-of-bounds). Ratio capped at 1.0
+   in getPersonality(). totalThrows correctly equals attempts.
+
+4. **Warning timing** — Added `sfx.warning()` at `timeLeft === 10` (in addition to existing sfx.tick() ≤5s).
+
+5. **Gradient cache** — Moved `createRadialGradient` calls for bg and vignette outside the rAF loop.
+   Cached as `bgGrad` / `vigGrad` local variables in startLoop scope. No per-frame gradient allocation.
+
+## Build & Deploy
+- `npm run build` — PASSED (165 static pages, 0 errors)
+- `npx vercel --prod --yes` — DEPLOYED
+- Production URL: https://glimmers.vercel.app

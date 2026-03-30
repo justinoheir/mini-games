@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
 import GameShell from '@/components/GameShell';
 import GameHUD from '@/components/GameHUD';
@@ -15,7 +15,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import ScorePopEffect, { useScorePop } from '@/components/ScorePopEffect';
 import StreakBadge from '@/components/StreakBadge';
 import SwipeInstructions from '@/components/SwipeInstructions';
-import { Grid3x3 } from 'lucide-react';
+import { Grid3x3, Smartphone, Compass, Timer } from 'lucide-react';
 
 type MazeCell = { top: number; right: number; bottom: number; left: number };
 const GRID = 5;
@@ -71,11 +71,20 @@ interface BehaviorData {
 type GameState = 'start' | 'countdown' | 'playing' | 'done';
 
 function getProfile(b: BehaviorData) {
-  const avg = b.correctionTimes.length > 0
+  const avgCorrectionMs = b.correctionTimes.length > 0
     ? b.correctionTimes.reduce((a, c) => a + c, 0) / b.correctionTimes.length : 999;
-  if (b.collisions < 5 && avg < 300) return 'Precision Navigator 🎯';
-  if (b.collisions > 15) return 'Reactive Explorer ⚡';
-  return 'Methodical Solver 🧭';
+  const solved = !!b.completionTime;
+  const completionSecs = solved ? b.completionTime! / 1000 : 45;
+  // Optimizer: efficient, low collisions, fast corrections — plans the path
+  if (b.collisions <= 4 && avgCorrectionMs < 300) return 'Optimizer ⚙️';
+  // Trailblazer: blazes through quickly, accepts some risk
+  if (solved && completionSecs < 18 && b.collisions <= 12) return 'Trailblazer 🚀';
+  // Guardian: very few collisions but deliberate pace — careful and protective
+  if (b.collisions <= 6) return 'Guardian 🛡️';
+  // Explorer: high collision count — adventurous, tries every path
+  if (b.collisions > 14) return 'Explorer 🧭';
+  // Connector: balanced approach, adapts through trial and observation
+  return 'Connector 🤝';
 }
 
 export default function TiltMaze() {
@@ -200,10 +209,18 @@ export default function TiltMaze() {
     const bData = { ...s.behavior };
     setBehavior(bData);
     setGameState('done');
+    const avgMs = bData.correctionTimes.length > 0
+      ? Math.round(bData.correctionTimes.reduce((a, c) => a + c, 0) / bData.correctionTimes.length)
+      : null;
     postWebhook(themeRef, 'tilt-maze', {
       score: bData.completionTime ? `${(bData.completionTime / 1000).toFixed(1)}s` : 'DNF',
       personality: getProfile(bData),
-      signals: { collisions: bData.collisions, timedOut: bData.timedOut },
+      signals: {
+        collisions: bData.collisions,
+        timedOut: bData.timedOut,
+        avgCorrectionMs: avgMs,
+        completionMs: bData.completionTime,
+      },
     }, playerSessionRef.current);
   }, []);
 
@@ -223,7 +240,8 @@ export default function TiltMaze() {
       setTimeLeft(s.timeLeft);
       if (s.timeLeft === 30 && !halfTimeFiredRef.current) {
         halfTimeFiredRef.current = true;
-        setMilestoneMsg('Halfway! Keep going! ⏱️');
+        sfx.shimmer();
+        setMilestoneMsg('Halfway! Keep going!');
         setTimeout(() => setMilestoneMsg(null), 1800);
       }
       if (s.timeLeft === 10) { sfx.warning(); if (hapticsEnabled) hapticScore(); }
@@ -330,8 +348,9 @@ export default function TiltMaze() {
         const now2 = Date.now();
         if (now2 - lastNearMissTimeRef.current > 3000) {
           lastNearMissTimeRef.current = now2;
-          setNearMissMsg(true);
-          setTimeout(() => setNearMissMsg(false), 1500);
+          sfx.nearMiss();
+          // Defer setState out of rAF to avoid React re-render during animation frame
+          setTimeout(() => { setNearMissMsg(true); setTimeout(() => setNearMissMsg(false), 1500); }, 0);
         }
       }
       if (s.celebrateUntil === 0 && distToExit < exitReach) {
@@ -339,8 +358,8 @@ export default function TiltMaze() {
         sfx.success();
         if (hapticsEnabled) hapticVictory();
         const timeStr = `${(s.behavior.completionTime / 1000).toFixed(1)}s`;
-        setScorePop(timeStr);
-        setTimeout(() => setScorePop(null), 1800);
+        // Defer setState out of rAF to avoid React re-render during animation frame
+        setTimeout(() => { setScorePop(timeStr); setTimeout(() => setScorePop(null), 1800); }, 0);
         s.celebrateUntil = Date.now() + 900;
         s.animId = requestAnimationFrame(loop); return;
       }
@@ -442,11 +461,15 @@ export default function TiltMaze() {
       {gameState === 'start' && showInstructions && (
         <SwipeInstructions
           gameId="tilt-maze"
-          steps={[{ icon: "📱", title: "Tilt your phone", body: "Tilt left, right, forward, and back to roll the ball." }, { icon: "🌀", title: "Navigate the maze", body: "Guide the ball through the paths to reach the glowing exit." }, { icon: "⏱️", title: "Beat the clock", body: "Reach the exit before time runs out. Fewer wall hits = better score." }]}
+          steps={[
+            { icon: <Smartphone size={52} color="#ffffff" strokeWidth={1.5} />, title: "Tilt your phone", body: "Tilt left, right, forward, and back to roll the ball." },
+            { icon: <Compass size={52} color="#ffffff" strokeWidth={1.5} />, title: "Navigate the maze", body: "Guide the ball through the paths to reach the glowing exit." },
+            { icon: <Timer size={52} color="#ffffff" strokeWidth={1.5} />, title: "Beat the clock", body: "Reach the exit before time runs out. Fewer wall hits = better score." },
+          ]}
           onDone={() => setShowInstructions(false)}
         />
       )}
-    <GameShell title="Tilt Maze" emoji="🌀" accentColor={accent} theme={theme}
+    <GameShell title="Tilt Maze" emoji="🌀" titleIcon={<Grid3x3 size={18} color="white" strokeWidth={2} />} accentColor={accent} theme={theme}
       background="repeating-linear-gradient(0deg, transparent, transparent 39px, rgba(255,255,255,0.025) 39px, rgba(255,255,255,0.025) 40px), repeating-linear-gradient(90deg, transparent, transparent 39px, rgba(255,255,255,0.025) 39px, rgba(255,255,255,0.025) 40px), linear-gradient(180deg, #060809 0%, #090c10 50%, #060809 100%)">
       <canvas ref={canvasRef} style={{ display: gameState==='playing' ? 'block' : 'none', position: 'absolute', top:0, left:0, touchAction: 'none' }} />
       {gameState==='playing' && (
@@ -490,7 +513,7 @@ export default function TiltMaze() {
           textShadow: '0 0 24px #00ff8888',
           letterSpacing: '-1px',
         }}>
-          {scorePop} 🏁
+          {scorePop}
         </div>
       )}
       {/* Near-miss message */}
@@ -510,7 +533,7 @@ export default function TiltMaze() {
               whiteSpace: 'nowrap',
             }}
           >
-            So close! 🎯
+            So close!
           </motion.div>
         )}
       </AnimatePresence>
@@ -565,10 +588,10 @@ export default function TiltMaze() {
           score={b.completionTime ? `${(b.completionTime/1000).toFixed(1)}s` : 'DNF'}
           personality={getProfile(b)}
           insights={[
-            { label:'Wall collisions', value:String(b.collisions), color:accent },
-            { label:'Avg correction', value:avg ? `${avg}ms` : 'N/A', color:'#c084fc' },
+            { label:'Wall hits', value: b.collisions === 0 ? '0 — perfect path' : b.collisions <= 4 ? `${b.collisions} — efficient route` : b.collisions <= 12 ? `${b.collisions} — adaptive approach` : `${b.collisions} — fearless explorer`, color:accent },
+            { label:'Response time', value: !avg ? 'no data yet' : avg < 200 ? `${avg}ms — lightning fast` : avg < 400 ? `${avg}ms — smooth & steady` : `${avg}ms — deliberate mover`, color:'#c084fc' },
             { label:'Style', value:getProfile(b), color:'#00ff88' },
-            { label:'Result', value:b.completionTime ? `${(b.completionTime/1000).toFixed(1)}s` : 'DNF', color: b.completionTime ? '#00ff88' : '#ef4444' },
+            { label:'Result', value:b.completionTime ? `${(b.completionTime/1000).toFixed(1)}s — maze solved!` : 'DNF — keep exploring!', color: b.completionTime ? '#00ff88' : '#ef4444' },
           ]}
           accentColor={accent}
           onPlayAgain={handlePlayAgain}

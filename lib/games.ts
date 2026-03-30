@@ -14,6 +14,7 @@ export interface Game {
   icon: string; // Material Symbol name
   category: GameCategory;
   industries: Industry[];
+  measures?: string[]; // Ether behavioral signals — populated at runtime from measures.ts
 }
 
 // ─── Game Data ────────────────────────────────────────────────────────────────
@@ -191,7 +192,10 @@ export const EXTRA_SPORTS_GAMES: Game[] = [
   { id: 'ski-slalom',      title: 'Ski Slalom',       tagline: 'Weave through the gates. Go fast.',                 href: '/games/ski-slalom',      accentColor: '#818cf8', duration: '45s', icon: 'downhill_skiing',     category: 'sports', industries: ['sports','cpg','automotive']            },
 ];
 
-export const ALL_GAMES: Game[] = [...SKILL_GAMES, ...SPORTS_GAMES, ...HOLIDAY_GAMES, ...BREATH_GAMES, ...EXTRA_COGNITIVE_GAMES, ...EXTRA_SKILL_GAMES, ...EXTRA_SPORTS_GAMES];
+import { GAME_MEASURES } from './measures';
+
+const _ALL: Game[] = [...SKILL_GAMES, ...SPORTS_GAMES, ...HOLIDAY_GAMES, ...BREATH_GAMES, ...EXTRA_COGNITIVE_GAMES, ...EXTRA_SKILL_GAMES, ...EXTRA_SPORTS_GAMES];
+export const ALL_GAMES: Game[] = _ALL.map(g => ({ ...g, measures: GAME_MEASURES[g.id] ?? [] }));
 
 export const FEATURED_GAMES: Game[] = [
   SKILL_GAMES[0],

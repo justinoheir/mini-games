@@ -137,7 +137,7 @@ function makeCauldronPath(cx: number, cy: number, r: number): Path2D {
   const rimRX     = r * 1.1;
   const wideRX    = r * 1.18;
   const bottomRX  = r * 0.55;
-  const mi      = (rimY + bottomY) / 2 + r * 0.05;
+  const midY    = (rimY + bottomY) / 2 + r * 0.05;
 
   const p = new Path2D();
   p.moveTo(cx - rimRX, rimY);
@@ -824,20 +824,48 @@ export default function CauldronBubble() {
     startLoop();
   }, [startLoop]);
 
-  const handlePlayAgain = useCallback(() => {
+  const handlePlayAgain = useCallback(async () => {
+    // Stop current music immediately
+    if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
+
+    // Clean up existing audio resources
     streamRef.current?.getTracks().forEach(t => t.stop());
     audioCtxRef.current?.close().catch(() => {});
     streamRef.current   = null;
     audioCtxRef.current = null;
     analyserRef.current = null;
-    stateRef.current.useTouchFallback = false;
-    stateRef.current.touchVolume      = 0;
-    setMicDenied(false);
-    setPhase('start');
+
+    // Reset display state
     setScoreDisplay(0);
     setTimeLeft(DURATION);
     setFinalSig(null);
     setChaosLabel('');
+
+    // Instant replay: skip start screen, go straight to countdown.
+    // Re-request mic if possible; fall back to touch if denied.
+    stateRef.current.useTouchFallback = false;
+    stateRef.current.touchVolume      = 0;
+    setMicDenied(false);
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      streamRef.current = stream;
+      const actx    = new AudioContext();
+      audioCtxRef.current = actx;
+      const source  = actx.createMediaStreamSource(stream);
+      const analyser = actx.createAnalyser();
+      analyser.fftSize              = 256;
+      analyser.smoothingTimeConstant = 0.3;
+      source.connect(analyser);
+      analyserRef.current = analyser;
+      dataArrRef.current  = new Uint8Array(analyser.frequencyBinCount) as Uint8Array<ArrayBuffer>;
+    } catch {
+      // Mic denied — use touch fallback
+      stateRef.current.useTouchFallback = true;
+      setMicDenied(true);
+    }
+
+    setPhase('countdown');
   }, []);
 
   // ── End screen insights ─────────────────────────────────────────────────────

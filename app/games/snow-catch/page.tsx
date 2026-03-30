@@ -180,8 +180,6 @@ function drawIcicle(
   ctx.rotate(rotation);
   const h = size * 2.6;
   const w = size * 0.75;
-  ctx.shadowBlur = 10;
-  ctx.shadowColor = '#74c0fc';
   ctx.fillStyle = '#a5d8ff';
   ctx.strokeStyle = '#74c0fc';
   ctx.lineWidth = 1;
@@ -210,15 +208,11 @@ function drawBasket(
   ctx.translate(x, y);
   const r   = width * 0.52;
   const bh  = BASKET_HEIGHT * 0.58;
-  // Drop shadow
-  ctx.shadowBlur   = 18;
-  ctx.shadowColor  = accentColor + '88';
-  // Sack body
+  // Sack body (no shadowBlur for perf — use subtle background glow instead)
   ctx.fillStyle = '#b91c1c';
   ctx.beginPath();
   ctx.ellipse(0, 0, r, bh, 0, 0, Math.PI * 2);
   ctx.fill();
-  ctx.shadowBlur = 0;
   // Fabric shading
   ctx.fillStyle = '#991b1b';
   ctx.beginPath();
@@ -239,11 +233,9 @@ function drawBasket(
   ctx.beginPath();
   ctx.arc(0, -bh * 0.56, bh * 0.12, 0, Math.PI * 2);
   ctx.fill();
-  // Rim glow ring
+  // Rim glow ring (no shadowBlur for perf)
   ctx.strokeStyle = accentColor + 'bb';
-  ctx.lineWidth   = 2;
-  ctx.shadowBlur  = 14;
-  ctx.shadowColor = accentColor;
+  ctx.lineWidth   = 2.5;
   ctx.beginPath();
   ctx.ellipse(0, 0, r + 5, bh + 5, 0, 0, Math.PI * 2);
   ctx.stroke();
@@ -331,6 +323,7 @@ function drawMountainSilhouette(
 export default function SnowCatchGame() {
   const theme        = useBrandTheme();
   const canvasRef    = useRef<HTMLCanvasElement>(null);
+  const bgCanvasRef  = useRef<HTMLCanvasElement | null>(null); // offscreen static background
   const animRef      = useRef(0);
   const timerRef     = useRef<ReturnType<typeof setInterval> | null>(null);
   const stopMusicRef = useRef<(() => void) | null>(null);
@@ -371,6 +364,7 @@ export default function SnowCatchGame() {
   const { pops, triggerPop } = useScorePop();
   const [streak, setStreak] = useState(0);
   const [isNewBest, setIsNewBest] = useState(false);
+  const [blizzardVisible, setBlizzardVisible] = useState(false);
   const prevScoreRef = useRef(0);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
@@ -477,6 +471,7 @@ export default function SnowCatchGame() {
     setScoreDisplay(0);
     setStreakDisplay(0);
     setTimeLeft(DURATION);
+    setBlizzardVisible(false);
     setPhase('playing');
 
     stopMusicRef.current = startMusic('calm');
@@ -491,6 +486,7 @@ export default function SnowCatchGame() {
       if (s.elapsed === BLIZZARD_AT && !s.blizzardActive) {
         s.blizzardActive      = true;
         s.scoreBeforeBlizzard = s.sig.score;
+        setBlizzardVisible(true);
         sfx.warning();
         haptic([50, 30, 50, 30, 50]);
         increaseMusicTempo(130); // ramp up music for blizzard
@@ -498,6 +494,7 @@ export default function SnowCatchGame() {
       // Blizzard end
       if (s.elapsed === BLIZZARD_AT + BLIZZARD_DURATION && s.blizzardActive) {
         s.blizzardActive = false;
+        setBlizzardVisible(false);
         if (s.sig.score > s.scoreBeforeBlizzard) s.sig.blizzardSurvived = true;
         increaseMusicTempo(60); // ramp back to calm tempo
       }
@@ -610,50 +607,35 @@ export default function SnowCatchGame() {
       ctx.save();
       applyShake(ctx, s.shake);
 
-      // Background — deep winter night gradient
-      const scBg = ctx.createRadialGradient(W * 0.5, 0, 0, W * 0.5, H * 0.5, Math.max(W, H) * 0.9);
-      scBg.addColorStop(0,   '#0a1825');
-      scBg.addColorStop(0.5, '#060f1a');
-      scBg.addColorStop(1,   '#020810');
-      ctx.fillStyle = scBg;
+      // Background — simple solid fill for perf, then static elements from offscreen canvas
+      ctx.fillStyle = '#060f1a';
       ctx.fillRect(0, 0, W, H);
 
-      // Vignette — subtle for snow-catch
-      const scVig = ctx.createRadialGradient(W * 0.5, H * 0.5, H * 0.2, W * 0.5, H * 0.5, H * 0.85);
-      scVig.addColorStop(0, 'rgba(0,0,0,0)');
-      scVig.addColorStop(1, 'rgba(0,0,10,0.45)');
-      ctx.fillStyle = scVig;
-      ctx.fillRect(0, 0, W, H);
+      // Static background (gradient + moon + mountains) — pre-rendered, blitted 1:1
+      const bgCanvas = bgCanvasRef.current;
+      if (bgCanvas) {
+        ctx.globalAlpha = 1;
+        // Reset transform temporarily to draw at physical pixels (1:1, no scaling)
+        ctx.save();
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.drawImage(bgCanvas, 0, 0);
+        ctx.restore();
+      } else {
+        // Fallback mountains
+        drawMountainSilhouette(ctx, W, H);
+      }
 
-      // Twinkling stars
-      for (let j = 0; j < 48; j++) {
+      // Twinkling stars — reduced to 24 for perf, drawn as small rects (faster than arc)
+      for (let j = 0; j < 24; j++) {
         const sx = (j * 137.508 + 23) % W;
         const sy = (j * 97.31 + 11) % (H * 0.52);
         const twinkle = 0.3 + 0.7 * Math.abs(Math.sin(now * 0.0008 + j * 0.9));
-        ctx.globalAlpha = twinkle;
-        ctx.fillStyle = j % 5 === 0 ? '#fde68a' : 'rgba(200,220,255,0.8)';
-        ctx.beginPath();
-        ctx.arc(sx, sy, 0.5 + (j % 3) * 0.5, 0, Math.PI * 2);
-        ctx.fill();
+        ctx.globalAlpha = twinkle * (j % 5 === 0 ? 1 : 0.6);
+        ctx.fillStyle = j % 5 === 0 ? '#fde68a' : '#c8dcff';
+        const r = 0.5 + (j % 3) * 0.5;
+        ctx.fillRect(sx - r, sy - r, r * 2, r * 2);
       }
       ctx.globalAlpha = 1;
-
-      // Moon
-      ctx.save();
-      ctx.shadowBlur  = 24;
-      ctx.shadowColor = '#c7d2fe';
-      ctx.fillStyle   = '#e0e7ff';
-      ctx.beginPath();
-      ctx.arc(W * 0.82, H * 0.10, 22, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = '#0d1b2a';
-      ctx.beginPath();
-      ctx.arc(W * 0.82 + 10, H * 0.10 - 5, 18, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.restore();
-
-      // Mountain/village silhouette
-      drawMountainSilhouette(ctx, W, H);
 
       // Flakes
       for (const f of s.flakes) {
@@ -704,14 +686,12 @@ export default function SnowCatchGame() {
         }
         ctx.restore();
 
-        // BLIZZARD text
+        // BLIZZARD text (no shadowBlur for perf)
         if (s.blizzardActive) {
           const pulse = 0.75 + 0.25 * Math.sin(now * 0.012);
           ctx.save();
           ctx.globalAlpha = pulse * s.blizzardOverlayAlpha;
           ctx.fillStyle   = '#ffffff';
-          ctx.shadowBlur  = 28;
-          ctx.shadowColor = s.accentColor;
           ctx.font        = `bold ${Math.round(Math.max(18, W * 0.066))}px system-ui, sans-serif`;
           ctx.textAlign   = 'center';
           ctx.textBaseline = 'middle';
@@ -745,7 +725,8 @@ export default function SnowCatchGame() {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const resize = () => {
-      const dpr = window.devicePixelRatio || 1;
+      // Cap DPR at 2 for performance — 3x DPR creates 9x pixels which kills canvas perf
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
       const w = window.innerWidth;
       const h = window.innerHeight;
       canvas.style.width  = w + 'px';
@@ -754,6 +735,49 @@ export default function SnowCatchGame() {
       canvas.height = h * dpr;
       const ctx2 = canvas.getContext('2d');
       if (ctx2) ctx2.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+      // Rebuild offscreen static background at physical pixel size (DPR-scaled for 1:1 blit)
+      const bg = document.createElement('canvas');
+      bg.width  = w * dpr;  // physical pixels
+      bg.height = h * dpr;
+      const bgCtx = bg.getContext('2d');
+      if (bgCtx) {
+        bgCtx.scale(dpr, dpr);  // draw at CSS pixel coords
+        // Deep winter night gradient
+        const scBg = bgCtx.createRadialGradient(w * 0.5, 0, 0, w * 0.5, h * 0.5, Math.max(w, h) * 0.9);
+        scBg.addColorStop(0,   '#0a1825');
+        scBg.addColorStop(0.5, '#060f1a');
+        scBg.addColorStop(1,   '#020810');
+        bgCtx.fillStyle = scBg;
+        bgCtx.fillRect(0, 0, w, h);
+        // Vignette
+        const scVig = bgCtx.createRadialGradient(w * 0.5, h * 0.5, h * 0.2, w * 0.5, h * 0.5, h * 0.85);
+        scVig.addColorStop(0, 'rgba(0,0,0,0)');
+        scVig.addColorStop(1, 'rgba(0,0,10,0.45)');
+        bgCtx.fillStyle = scVig;
+        bgCtx.fillRect(0, 0, w, h);
+        // Moon (no shadowBlur)
+        bgCtx.save();
+        bgCtx.globalAlpha = 0.18;
+        bgCtx.fillStyle = '#c7d2fe';
+        bgCtx.beginPath();
+        bgCtx.arc(w * 0.82, h * 0.10, 30, 0, Math.PI * 2);
+        bgCtx.fill();
+        bgCtx.globalAlpha = 1;
+        bgCtx.fillStyle   = '#e0e7ff';
+        bgCtx.beginPath();
+        bgCtx.arc(w * 0.82, h * 0.10, 22, 0, Math.PI * 2);
+        bgCtx.fill();
+        bgCtx.fillStyle = '#0d1b2a';
+        bgCtx.beginPath();
+        bgCtx.arc(w * 0.82 + 10, h * 0.10 - 5, 18, 0, Math.PI * 2);
+        bgCtx.fill();
+        bgCtx.restore();
+        // Mountain silhouette
+        drawMountainSilhouette(bgCtx, w, h);
+      }
+      bgCanvasRef.current = bg;
+
       if (stateRef.current.running) {
         stateRef.current.basketX = Math.min(
           Math.max(stateRef.current.basketX, BASKET_WIDTH / 2),
@@ -826,9 +850,9 @@ export default function SnowCatchGame() {
     setStreakDisplay(0);
     setTimeLeft(DURATION);
     setFinalSig(null);
-  
     setIsNewBest(false);
     setStreak(0);
+    setBlizzardVisible(false);
     prevScoreRef.current = 0;
   }, []);
 
@@ -970,6 +994,19 @@ export default function SnowCatchGame() {
           <ScorePopEffect pops={pops} accentColor={CATEGORY_ACCENT} />
           <StreakBadge streak={streakDisplay} accentColor={CATEGORY_ACCENT} />
         </>
+      )}
+      {/* Blizzard DOM indicator — invisible overlay for test detection */}
+      {blizzardVisible && (
+        <div
+          data-testid="blizzard-active"
+          aria-label="BLIZZARD"
+          style={{
+            position: 'absolute',
+            top: 0, left: 0, right: 0, bottom: 0,
+            pointerEvents: 'none',
+            zIndex: 5,
+          }}
+        />
       )}
     </GameShell>
     </>

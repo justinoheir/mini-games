@@ -638,66 +638,59 @@ test('4.25 — points badge: only shown for multi-point items (points > 1)', asy
 // ─── 5. GAME END ─────────────────────────────────────────────────────────────
 
 test('5.1 — game reaches end screen (full accelerated run)', async ({ page }) => {
+  test.setTimeout(60_000)
+  // Targeted override: only accelerate the 1-second game timer interval (leaves HMR/other timers intact)
   await page.addInitScript(() => {
-    const orig = window.setTimeout.bind(window)
-    ;(window as unknown as Record<string, unknown>).setTimeout =
-      (fn: () => void, ms: number, ...args: unknown[]) => orig(fn, Math.min(ms, 50), ...args)
     const origI = window.setInterval.bind(window)
     ;(window as unknown as Record<string, unknown>).setInterval =
-      (fn: () => void, ms: number, ...args: unknown[]) => origI(fn, 10, ...args)
+      (fn: () => void, ms: number, ...args: unknown[]) => origI(fn, ms === 1000 ? 100 : ms, ...args)
   })
   const game = new GamePage(page, GAME_PATH, ACCENT)
   await game.goto()
   await game.start()
-  await page.waitForSelector('button:has-text("Play Again")', { timeout: 60000 })
+  await page.waitForSelector('button:has-text("Play Again")', { timeout: 50000 })
   await expect(game.playAgainButton).toBeVisible()
 })
 
 test('5.2 — end screen shows Gifts Sorted', async ({ page }) => {
+  test.setTimeout(60_000)
   await page.addInitScript(() => {
-    const orig = window.setTimeout.bind(window)
-    ;(window as unknown as Record<string, unknown>).setTimeout =
-      (fn: () => void, ms: number, ...args: unknown[]) => orig(fn, Math.min(ms, 50), ...args)
     const origI = window.setInterval.bind(window)
     ;(window as unknown as Record<string, unknown>).setInterval =
-      (fn: () => void, ms: number, ...args: unknown[]) => origI(fn, 10, ...args)
+      (fn: () => void, ms: number, ...args: unknown[]) => origI(fn, ms === 1000 ? 100 : ms, ...args)
   })
   const game = new GamePage(page, GAME_PATH, ACCENT)
   await game.goto()
   await game.start()
-  await page.waitForSelector('text=Gifts Sorted', { timeout: 60000 })
+  await page.waitForSelector('text=Gifts Sorted', { timeout: 50000 })
   await expect(page.locator('text=Gifts Sorted')).toBeVisible()
 })
 
 test('5.3 — end screen shows Wrong Swipes', async ({ page }) => {
+  test.setTimeout(60_000)
   await page.addInitScript(() => {
-    const orig = window.setTimeout.bind(window)
-    ;(window as unknown as Record<string, unknown>).setTimeout =
-      (fn: () => void, ms: number, ...args: unknown[]) => orig(fn, Math.min(ms, 50), ...args)
     const origI = window.setInterval.bind(window)
     ;(window as unknown as Record<string, unknown>).setInterval =
-      (fn: () => void, ms: number, ...args: unknown[]) => origI(fn, 10, ...args)
+      (fn: () => void, ms: number, ...args: unknown[]) => origI(fn, ms === 1000 ? 100 : ms, ...args)
   })
   const game = new GamePage(page, GAME_PATH, ACCENT)
   await game.goto()
   await game.start()
-  await page.waitForSelector('text=Wrong Swipes', { timeout: 60000 })
+  await page.waitForSelector('text=Wrong Swipes', { timeout: 50000 })
   await expect(page.locator('text=Wrong Swipes')).toBeVisible()
 })
 
 test('5.4 — play-again resets to start screen', async ({ page }) => {
+  test.setTimeout(60_000)
   await page.addInitScript(() => {
-    const orig = window.setTimeout.bind(window)
-    ;(window as unknown as Record<string, unknown>).setTimeout =
-      (fn: () => void, ms: number, ...args: unknown[]) => orig(fn, Math.min(ms, 50), ...args)
     const origI = window.setInterval.bind(window)
     ;(window as unknown as Record<string, unknown>).setInterval =
-      (fn: () => void, ms: number, ...args: unknown[]) => origI(fn, 10, ...args)
+      (fn: () => void, ms: number, ...args: unknown[]) => origI(fn, ms === 1000 ? 100 : ms, ...args)
   })
   const game = new GamePage(page, GAME_PATH, ACCENT)
   await game.goto()
   await game.start()
-  await page.waitForSelector('button:has-text("Play Again")', { timeout: 60000 })
+  await page.waitForSelector('button:has-text("Play Again")', { timeout: 50000 })
   await game.playAgain()
   await expect(game.ctaButton).toBeVisible({ timeout: 3000 })
 })

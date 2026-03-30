@@ -3,7 +3,7 @@
  * GAME_ID:       pulse-sphere
  * GAME_PATH:     /games/pulse-sphere
  * ACCENT:        #a855f7
- * DURATION:      45s
+ * DURATION:      60s
  * SENSOR:        mic + motion + touch (multi-sensor)
  * PERSONALITIES: Verbal, Kinetic, Tactile, Balanced
  */
@@ -15,7 +15,7 @@ import { GamePage } from './pages/GamePage'
 const GAME_ID         = 'pulse-sphere'
 const GAME_PATH       = '/games/pulse-sphere'
 const ACCENT          = '#a855f7'
-const GAME_DURATION_MS = 45000
+const GAME_DURATION_MS = 60000
 const SENSOR          = 'mic'
 
 // ─── 1. PAGE LOAD ─────────────────────────────────────────────────────────────
@@ -68,7 +68,7 @@ test('2.5 — back button navigates to home', async ({ page }) => {
   const game = new GamePage(page, GAME_PATH, ACCENT)
   await game.goto()
   await game.backButton.click()
-  await expect(page).toHaveURL(new RegExp('^' + (process.env.TEST_URL ?? 'http://localhost:3001') + '/?$'))
+  await expect(page).toHaveURL(new RegExp('^' + (process.env.TEST_URL ?? 'http://localhost:3000') + '/?$'))
 })
 
 // ─── 3. COUNTDOWN ────────────────────────────────────────────────────────────
@@ -121,15 +121,15 @@ test('4.3 — no crash during 10 seconds of gameplay', async ({ page }) => {
 
 // ─── 5. BOUNDARY VALUES ──────────────────────────────────────────────────────
 
-test('5.1 — timer starts at 45s', async ({ page }) => {
+test('5.1 — timer starts at 60s', async ({ page }) => {
   const game = new GamePage(page, GAME_PATH, ACCENT)
   await game.goto({ sensors: { mic: true } })
   await game.start()
   await game.waitForPlaying()
 
-  const timerText = await game.timerEl.textContent().catch(() => '45s')
-  const timer = parseInt(timerText ?? '45')
-  expect(timer, `Timer should start at ~45, got ${timer}`).toBeGreaterThanOrEqual(42)
+  const timerText = await game.timerEl.textContent().catch(() => '60s')
+  const timer = parseInt(timerText ?? '60')
+  expect(timer, `Timer should start at ~60, got ${timer}`).toBeGreaterThanOrEqual(57)
 })
 
 test('5.2 — game ends when timer reaches 0', async ({ page }) => {

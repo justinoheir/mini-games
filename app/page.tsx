@@ -15,10 +15,11 @@ import {
   INDUSTRIES,
 } from '@/lib/games';
 import { getGlobalStats, type GlobalStats } from '@/lib/gameStorage';
+import { SIGNAL_COLOR } from '@/lib/measures';
 
 // ─── TopNavBar ────────────────────────────────────────────────────────────────
 
-function TopNavBar() {
+function TopNavBar({ searchQuery = '', onSearchChange }: { searchQuery?: string; onSearchChange?: (q: string) => void }) {
   const [menuOpen, setMenuOpen] = useState(false);
 
   return (
@@ -92,6 +93,8 @@ function TopNavBar() {
             <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#bfc8ce' }}>search</span>
             <input
               placeholder="Search games..."
+              value={searchQuery}
+              onChange={e => onSearchChange?.(e.target.value)}
               style={{
                 background: 'none',
                 border: 'none',
@@ -800,20 +803,36 @@ function IndustryGameCard({ game }: { game: Game }) {
         flexDirection: 'column',
       }}>
         <div style={{
-          height: 80,
+          height: 160,
           background: '#111115',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
           position: 'relative',
+          overflow: 'hidden',
         }}>
-          <span className="material-symbols-outlined" style={{
-            fontSize: 36,
-            color: game.accentColor,
-            opacity: 0.6,
+          <img
+            src={`/thumbnails/${game.id}.jpg`}
+            alt={game.title}
+            style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+            onError={(e) => {
+              (e.currentTarget as HTMLImageElement).style.display = 'none';
+              const fallback = e.currentTarget.nextSibling as HTMLElement;
+              if (fallback) fallback.style.display = 'flex';
+            }}
+          />
+          {/* Gradient overlay to suppress busy screenshot text */}
+          <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(to top, rgba(0,0,0,0.55) 0%, rgba(0,0,0,0.1) 60%, transparent 100%)', pointerEvents: 'none' }} />
+          <div style={{
+            display: 'none',
+            position: 'absolute', inset: 0,
+            alignItems: 'center', justifyContent: 'center',
+            background: '#111115',
           }}>
-            {game.icon}
-          </span>
+            <span className="material-symbols-outlined" style={{ fontSize: 36, color: game.accentColor, opacity: 0.6 }}>
+              {game.icon}
+            </span>
+          </div>
         </div>
         <div style={{ padding: '10px 12px' }}>
           <div style={{
@@ -1308,21 +1327,35 @@ function AllGamesSection() {
               cursor: 'pointer',
               transition: 'background 0.2s, transform 0.2s',
             }}>
-              {/* Icon area */}
+              {/* Thumbnail */}
               <div className="all-game-icon-area" style={{
-                height: 80,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
+                height: 160,
                 marginBottom: 12,
+                borderRadius: 8,
+                overflow: 'hidden',
+                position: 'relative',
+                background: '#111115',
               }}>
-                <span className="material-symbols-outlined" style={{
-                  fontSize: 48,
-                  color: 'white',
-                  opacity: 0.2,
+                <img
+                  src={`/thumbnails/${game.id}.jpg`}
+                  alt={game.title}
+                  style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                  onError={(e) => {
+                    (e.currentTarget as HTMLImageElement).style.display = 'none';
+                    const fallback = e.currentTarget.nextSibling as HTMLElement;
+                    if (fallback) fallback.style.display = 'flex';
+                  }}
+                />
+                <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(to top, rgba(0,0,0,0.6) 0%, rgba(0,0,0,0.1) 60%, transparent 100%)', pointerEvents: 'none' }} />
+                <div style={{
+                  display: 'none',
+                  position: 'absolute', inset: 0,
+                  alignItems: 'center', justifyContent: 'center',
                 }}>
-                  {game.icon}
-                </span>
+                  <span className="material-symbols-outlined" style={{ fontSize: 40, color: 'white', opacity: 0.18 }}>
+                    {game.icon}
+                  </span>
+                </div>
               </div>
 
               {/* Title */}
@@ -1359,6 +1392,30 @@ function AllGamesSection() {
                   {game.duration}
                 </span>
               </div>
+
+              {/* Ether signal chips */}
+              {game.measures && game.measures.length > 0 && (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 10 }}>
+                  {game.measures.map(signal => {
+                    const color = (SIGNAL_COLOR as Record<string, string>)[signal] ?? '#84d0f9';
+                    return (
+                      <span key={signal} style={{
+                        fontSize: 9,
+                        fontWeight: 700,
+                        fontFamily: "'Manrope', sans-serif",
+                        letterSpacing: '0.06em',
+                        color,
+                        background: `${color}18`,
+                        border: `1px solid ${color}35`,
+                        borderRadius: 4,
+                        padding: '2px 6px',
+                      }}>
+                        {signal}
+                      </span>
+                    );
+                  })}
+                </div>
+              )}
 
               {/* Intel button */}
               <NextLink href={`/intel/${game.id}`} onClick={(e) => e.stopPropagation()} style={{ textDecoration: 'none', display: 'block' }}>
@@ -1475,6 +1532,7 @@ export default function Home() {
   const [featuredIndex, setFeaturedIndex] = useState(0);
   const [visible, setVisible] = useState(false);
   const [returnStats, setReturnStats] = useState<GlobalStats | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
 
   useEffect(() => {
     // Load play data for initial featured index
@@ -1510,7 +1568,7 @@ export default function Home() {
       transition: 'opacity 0.35s ease',
       fontFamily: "'Space Grotesk', sans-serif",
     }}>
-      <TopNavBar />
+      <TopNavBar searchQuery={searchQuery} onSearchChange={setSearchQuery} />
       <SideNavBar />
 
       {/* Main canvas */}
@@ -1522,10 +1580,66 @@ export default function Home() {
       }} className="main-canvas">
         {/* Inner content — constrained width */}
         <div style={{ maxWidth: 1200, margin: '0 auto' }}>
-          {/* Brand Analyzer */}
-          <BrandAnalyzerSection />
 
-          {/* Hero */}
+          {/* ─── Realtime Search Results ─── */}
+          {searchQuery.trim().length > 0 && (() => {
+            const q = searchQuery.toLowerCase();
+            const results = ALL_GAMES.filter(g =>
+              g.title.toLowerCase().includes(q) ||
+              g.tagline.toLowerCase().includes(q) ||
+              g.category.toLowerCase().includes(q) ||
+              g.industries.some(i => i.toLowerCase().includes(q))
+            );
+            return (
+              <div style={{ paddingTop: 8, marginBottom: 48 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>
+                  <span style={{ fontFamily: "'Space Grotesk',sans-serif", fontSize: 22, fontWeight: 700, color: '#e5e2e1' }}>
+                    {results.length} result{results.length !== 1 ? 's' : ''} for &ldquo;{searchQuery}&rdquo;
+                  </span>
+                  <button onClick={() => setSearchQuery('')} style={{ background: 'none', border: '1px solid rgba(63,72,78,0.4)', borderRadius: 6, color: '#bfc8ce', fontSize: 11, fontWeight: 600, padding: '3px 10px', cursor: 'pointer', fontFamily: "'Space Grotesk',sans-serif" }}>
+                    Clear
+                  </button>
+                </div>
+                {results.length === 0 ? (
+                  <div style={{ color: '#bfc8ce', fontFamily: "'Manrope',sans-serif", fontSize: 14, padding: '32px 0' }}>
+                    No games matched &ldquo;{searchQuery}&rdquo;
+                  </div>
+                ) : (
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 14 }}>
+                    {results.map(game => (
+                      <NextLink key={game.id} href={game.href} style={{ textDecoration: 'none' }} onClick={() => setSearchQuery('')}>
+                        <div style={{ background: '#1c1b1b', borderRadius: 10, overflow: 'hidden', border: '1px solid rgba(63,72,78,0.15)', cursor: 'pointer' }}>
+                          <div style={{ height: 140, position: 'relative', background: '#111115', overflow: 'hidden' }}>
+                            <img
+                              src={`/thumbnails/${game.id}.jpg`}
+                              alt={game.title}
+                              style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                              onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
+                            />
+                            <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: '50%', background: 'linear-gradient(to top, rgba(0,0,0,0.7), transparent)' }} />
+                          </div>
+                          <div style={{ padding: '10px 12px' }}>
+                            <div style={{ fontFamily: "'Space Grotesk',sans-serif", fontWeight: 700, fontSize: 13, color: '#e5e2e1', marginBottom: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                              {game.title}
+                            </div>
+                            <div style={{ fontFamily: "'Manrope',sans-serif", fontSize: 10, fontWeight: 600, color: '#bfc8ce', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+                              {game.category} · {game.duration}
+                            </div>
+                          </div>
+                        </div>
+                      </NextLink>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+
+          {/* Brand Analyzer */}
+          {searchQuery.trim().length === 0 && <BrandAnalyzerSection />}
+
+          {/* Hero + everything else hidden during search */}
+          <div style={{ display: searchQuery.trim().length > 0 ? 'none' : 'block' }}>
           <div className="hero-mt" style={{ marginTop: 48 }}>
             <HeroSection
               game={featuredGame}
@@ -1560,6 +1674,7 @@ export default function Home() {
           <NewArrivalsSection />
 
           <AllGamesSection />
+          </div> {/* end search-hidden block */}
         </div>
       </main>
 

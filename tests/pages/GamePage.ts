@@ -43,10 +43,12 @@ export class GamePage {
   }
 
   get startButton(): Locator {
-    // Prefer explicit data-testid first, fall back to text heuristic
-    return this.page.locator('[data-testid="start-cta"], button').filter({
+    // Prefer explicit data-testid first (accepts any game-specific label), fall back to text heuristic
+    const byTestId = this.page.locator('[data-testid="start-cta"]')
+    const byText   = this.page.locator('button').filter({
       hasText: /enable|allow|start|motion|mic|begin|play|drop|go/i
-    }).first()
+    })
+    return byTestId.or(byText).first()
   }
 
   get nameInput(): Locator {
@@ -54,11 +56,13 @@ export class GamePage {
   }
 
   get ctaButton(): Locator {
-    // The final CTA button after name is entered (may be same as startButton)
-    // Prefer explicit data-testid, fall back to text heuristic
-    return this.page.locator('[data-testid="start-cta"], button').filter({
+    // Prefer explicit data-testid (no text filter — accepts any game-specific CTA label like "Blast Em'")
+    // Fall back to text heuristic for games without data-testid
+    const byTestId = this.page.locator('[data-testid="start-cta"]')
+    const byText   = this.page.locator('button').filter({
       hasText: /start|play|go|begin|drop|enable|launch|motion/i
-    }).last()
+    })
+    return byTestId.or(byText).last()
   }
 
   get countdownEl(): Locator {
@@ -167,7 +171,9 @@ export class GamePage {
   async setStoredUser(name = 'Test Player', avatar = '🎮') {
     await this.page.addInitScript(({ name, avatar }) => {
       localStorage.setItem('mg_user', JSON.stringify({
-        name, avatar, id: 'test-user-001', timestamp: Date.now()
+        name, avatar, id: 'test-user-001', timestamp: Date.now(),
+        // consented:true so returning-player flow skips the consent screen in tests
+        consented: true,
       }))
       localStorage.setItem('mg_last_player', JSON.stringify({ name, avatar }))
     }, { name, avatar })
@@ -198,7 +204,9 @@ export class GamePage {
     }
 
     await this.page.goto(this.url)
-    await this.page.waitForLoadState('networkidle')
+    // Use 'load' instead of 'networkidle' — Next.js dev server keeps HMR websockets
+    // open indefinitely so 'networkidle' never fires in development.
+    await this.page.waitForLoadState('load')
   }
 
   // ─── Interactions ────────────────────────────────────────────────────────────
@@ -211,39 +219,55 @@ export class GamePage {
   }
 
   async start() {
-    // Current GameStartScreen flow: CTA shown first → click CTA → PlayerNameInput overlay appears
-    // Stored user (set by setStoredUser in goto()) → "Welcome back" screen → Continue → Consent → I Agree & Play
+    // PlayerNameInput flow (stored user path):
+    //   CTA click → Welcome-back screen (Continue) → Consent screen (I Agree & Play) → game starts
+    // Uses expect().toBeVisible() for proper auto-retry on each step (isVisible() alone does NOT retry).
 
-    // Step 1: Click the game CTA button to open the PlayerNameInput overlay
-    if (await this.startButton.isVisible({ timeout: 2000 }).catch(() => false)) {
-      await this.startButton.click({ force: true })
+    // Step 0: Dismiss SwipeInstructions overlay if present (shown when localStorage has no "seen" flag).
+    // Swipe through up to 5 steps (Next → Next → ... → Got It / Start / Continue).
+    for (let swipeStep = 0; swipeStep < 5; swipeStep++) {
+      const swipeBtn = this.page.locator('button').filter({
+        hasText: /next|got it|continue|skip|done|ready/i
+      }).first()
+      const isSwipeVisible = await swipeBtn.isVisible({ timeout: 800 }).catch(() => false)
+      if (!isSwipeVisible) break
+      // Make sure this isn't the game's actual CTA
+      const btnText = await swipeBtn.textContent().catch(() => '')
+      if (/start/i.test(btnText ?? '')) break  // that's the CTA, stop
+      await swipeBtn.click({ force: true })
+      await this.page.waitForTimeout(300)
     }
 
-    // Step 2: Wait for PlayerNameInput overlay to mount and render
-    await this.page.waitForTimeout(500)
+    // Step 1: Wait for CTA, then click
+    await expect(this.startButton).toBeVisible({ timeout: 10000 })
+    await this.startButton.click({ force: true })
 
-    // Step 3: Click "Continue" on welcome-back screen (stored user path)
-    await this.page.evaluate(() => {
-      const buttons = Array.from(document.querySelectorAll('button'))
-      const continueBtn = buttons.find(b => b.textContent?.trim().startsWith('Continue'))
-      if (continueBtn) (continueBtn as HTMLButtonElement).click()
-    }).catch(() => {})
+    // Step 2: Wait for "Continue" button (welcome-back screen) with proper retry.
+    // Prefer data-testid; fallback to text-based locator for robustness.
+    const continueBtnById   = this.page.locator('[data-testid="reg-welcome-continue"]')
+    const continueBtnByText = this.page.locator('button').filter({ hasText: /^continue/i }).first()
+    const continueLocator   = continueBtnById.or(continueBtnByText).first()
+    try {
+      await expect(continueLocator).toBeVisible({ timeout: 3000 })
+      await continueLocator.click({ force: true })
+    } catch {
+      // Not a stored-user flow — no Continue screen; skip to consent
+    }
 
-    // Step 4: Wait for consent screen animation
-    await this.page.waitForTimeout(400)
+    // Step 3: Check for consent screen (I Agree & Play).
+    // Pre-consented returning users (consented:true in mg_user) skip straight to play.
+    // Use a short timeout: consent screen appears within ~300ms if needed, or not at all.
+    const consentBtn = this.page.locator('[data-testid="reg-consent-agree"]')
+      .or(this.page.locator('button').filter({ hasText: /agree.*play/i })).first()
+    try {
+      await expect(consentBtn).toBeVisible({ timeout: 600 })
+      await consentBtn.click({ force: true })
+    } catch {
+      // No consent screen (pre-consented user or game without consent step) — continue
+    }
 
-    // Step 5: Click "I Agree & Play" on consent screen
-    await this.page.evaluate(() => {
-      const buttons = Array.from(document.querySelectorAll('button'))
-      const agreeBtn = buttons.find(b => {
-        const t = b.textContent?.trim() ?? ''
-        return t.includes('Agree') && t.includes('Play')
-      })
-      if (agreeBtn) (agreeBtn as HTMLButtonElement).click()
-    }).catch(() => {})
-
-    // Step 6: Wait for overlay to dismiss (220ms animation) + React state propagation
-    await this.page.waitForTimeout(700)
+    // Step 4: Wait for overlay to dismiss (220ms animation) + React state propagation
+    await this.page.waitForTimeout(800)
   }
 
   async waitForCountdown() {
@@ -280,9 +304,13 @@ export class GamePage {
   }
 
   async expectTimerDecreasing(waitMs = 3000) {
-    const before = await this.timerEl.textContent()
+    // Use data-value attribute (set on the stable wrapper div) instead of textContent()
+    // because AnimatePresence mode="popLayout" temporarily keeps both the exiting and
+    // entering motion.div elements in the DOM during transitions, causing textContent()
+    // to concatenate both values (e.g. "40" + "39" = "4039").
+    const before = await this.timerEl.getAttribute('data-value')
     await this.page.waitForTimeout(waitMs)
-    const after = await this.timerEl.textContent()
+    const after = await this.timerEl.getAttribute('data-value')
     const bNum = parseInt(before ?? '999')
     const aNum = parseInt(after ?? '999')
     expect(aNum, `Timer should decrease: was ${bNum}, now ${aNum}`).toBeLessThan(bNum)

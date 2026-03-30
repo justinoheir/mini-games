@@ -1,0 +1,11 @@
+VERDICT: SHIP | Score estimate: 8.5/10 | Fixes applied: 5/5
+
+Fixes applied:
+1. Duration: DURATION changed from 60 → 45 seconds
+2. Real streak: currentStreak tracked in stateRef; incremented on correct tap, reset to 0 on wrong tap or grid timeout; setStreak() called at those points
+3. playScanBeep: Imported from @/lib/audio; playScanBeep(true) on correct taps, playScanBeep(false) on wrong taps (replaced sfx.collect/collision in handleTap)
+4. Animated target symbol: Sine wave glow applied before drawSymbol call (glow = 8 + 6 * Math.sin(Date.now() / 500)); ctx.shadowBlur reset to 0 after
+5. Music: startMusic('drive') → startMusic('minimal')
+
+Build: ✓ Clean (next build, 165 static pages)
+Deploy: ✓ Production https://glimmers.vercel.app

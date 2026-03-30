@@ -21,6 +21,7 @@ interface StoredUser {
   name?:      string;
   avatar?:    string;
   id?:        string;
+  consented?: boolean;
 }
 
 function readUser(): StoredUser | null {
@@ -38,6 +39,7 @@ function readUser(): StoredUser | null {
       name:      p.name      ?? [p.firstName, p.lastName].filter(Boolean).join(' '),
       avatar:    p.avatar    ?? AVATAR_DEFAULT,
       id:        p.id,
+      consented: p.consented ?? false,
     };
   } catch {
     return null;
@@ -89,9 +91,14 @@ export default function PlayerNameInput({ accentColor, onReady, brandName }: Pla
     const user = readUser();
     if (!user) { setStep(1); return; }
     const fullName = user.name ?? [user.firstName, user.lastName].filter(Boolean).join(' ');
-    // Returning players skip to consent
+    // Pre-consented returning players (already agreed on a prior visit) skip straight to play
+    if (user.consented) {
+      dismiss(fullName, user.avatar ?? AVATAR_DEFAULT);
+      return;
+    }
+    // First-time or un-consented returning players see the consent screen
     setStep(4);
-  }, []);
+  }, [dismiss]);
 
   // ── Returning player: edit ───────────────────────────────────────────────
   const handleEdit = useCallback(() => { setStep(1); }, []);
@@ -213,6 +220,7 @@ export default function PlayerNameInput({ accentColor, onReady, brandName }: Pla
                 {firstName}
               </h2>
               <button
+                data-testid="reg-welcome-continue"
                 onClick={handleContinue}
                 style={{
                   display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,

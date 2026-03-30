@@ -6,7 +6,7 @@ import GameStartScreen from '@/components/GameStartScreen';
 import Countdown from '@/components/Countdown';
 import EndScreen from '@/components/EndScreen';
 import { initAudio, sfx, haptic, startMusic } from '@/lib/audio';
-import { playScoreHit, playVictoryFanfare, playNearMiss } from '@/lib/audio';
+import { playScoreHit, playVictoryFanfare, playNearMiss, playComboSfx, playUrgentTick } from '@/lib/audio';
 import { hapticScore, hapticFail, hapticVictory } from '@/lib/haptics';
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
@@ -19,7 +19,11 @@ import { Wind, Trophy, Mic, Navigation } from 'lucide-react';
 
 const GAME_ID = 'breath-rider';
 const PB_KEY = 'pb_breath-rider';
-const SCROLL_SPEED = 2.2;
+const GAME_DURATION = 45; // seconds
+// Scroll speed ramps from BASE_SPEED → MAX_SPEED over the game duration
+// giving casual players an easy start and competitive players a real challenge
+const BASE_SCROLL_SPEED = 1.5;
+const MAX_SCROLL_SPEED = 3.2;
 
 // ─── SPRITE CACHE ─────────────────────────────────────────────────────────────
 const _spriteCache = new Map<string, HTMLImageElement>();
@@ -32,7 +36,7 @@ function _loadSprite(src: string): HTMLImageElement {
 }
 if (typeof window !== 'undefined') {
   _loadSprite('/sprites/breath-rider/bird.svg');
-  _loadSprite('/sprites/breath-rider/pipe.svg');
+  // pipe.svg reserved for future pipe-style obstacles; spikes currently drawn procedurally
 }
 
 type GameState = 'start' | 'requesting' | 'countdown' | 'playing' | 'done';
@@ -51,10 +55,17 @@ function hexToRgbStr(hex: string): string {
   return `${r},${g},${b}`;
 }
 
-function getProfile(b: BehaviorData) {
-  if (b.breathVariance < 15) return 'Steady 🧘';
-  if (b.breathVariance > 35) return 'Variable 🌊';
-  return 'Focused 🎯';
+function getProfile(b: BehaviorData): string {
+  // Steady: very calm breather, almost no spike collisions
+  if (b.breathVariance < 12 && b.spikeCollisions <= 1) return 'Steady 🧘';
+  // Guardian: avoids all danger, protective instinct
+  if (b.spikeCollisions === 0) return 'Guardian 🛡️';
+  // Sage: wise navigator, high coin collection
+  if (b.coinsCollected >= 9 && b.breathVariance <= 30) return 'Sage 🔮';
+  // Nurturer: gentle breather, flies in the safe middle zone
+  if (b.breathVariance >= 10 && b.breathVariance <= 28 && b.avgAltitude >= 35 && b.avgAltitude <= 65) return 'Nurturer 🌿';
+  // Harmonizer: finds their own rhythm across different styles
+  return 'Harmonizer 🌊';
 }
 
 export default function BreathRider() {
@@ -225,11 +236,15 @@ export default function BreathRider() {
       }
       sfx.tick();
       if (s.timeLeft === 10) sfx.warning();
+      if (s.timeLeft <= 5 && s.timeLeft > 0) playUrgentTick(s.timeLeft);
       if (s.timeLeft <= 0) endGame(capturedTheme);
     }, 1000);
 
     const loop = () => {
       if (!s.running) return;
+      // Dynamic difficulty: scroll speed ramps linearly over the game duration
+      const gameProgress = Math.max(0, Math.min(1, (GAME_DURATION - s.timeLeft) / GAME_DURATION));
+      const scrollSpeed = BASE_SCROLL_SPEED + (MAX_SCROLL_SPEED - BASE_SCROLL_SPEED) * gameProgress;
       const vol = getVolume();
       s.volumeSamples.push(vol);
 
@@ -262,7 +277,7 @@ export default function BreathRider() {
       ctx.fillRect(0, H * 0.93, W, H * 0.07);
 
       s.spikes.forEach((spike, si) => {
-        spike.x -= SCROLL_SPEED;
+        spike.x -= scrollSpeed;
         if (spike.x < -20) {
           spike.x = W + 20 + Math.random() * W * 0.5;
           spike.top = Math.random() > 0.5;
@@ -289,7 +304,7 @@ export default function BreathRider() {
       });
 
       s.coins.forEach((coin, ci) => {
-        coin.x -= SCROLL_SPEED;
+        coin.x -= scrollSpeed;
         if (coin.x < -30) {
           coin.x = W + 30 + Math.random() * W * 0.6;
           coin.y = H * 0.15 + Math.random() * H * 0.7;
@@ -327,6 +342,7 @@ export default function BreathRider() {
 
           // Streak tracking
           s.streak++;
+          if (s.streak >= 3) playComboSfx(s.streak);
 
           // Near-miss: score is within 10% of next milestone (every 5 coins)
           const nextMilestone = Math.ceil(s.coinsCollected / 5) * 5;
@@ -344,7 +360,7 @@ export default function BreathRider() {
         const age = (Date.now() - ft.t) / 700;
         ctx.globalAlpha = 1 - age;
         ctx.fillStyle = '#fbbf24';
-        ctx.font = 'bold 18px sans-serif';
+        ctx.font = 'bold 18px "Space Grotesk", sans-serif';
         ctx.fillText('+1', ft.x - 8, ft.y - age * 40);
         ctx.globalAlpha = 1;
       });
@@ -405,11 +421,61 @@ export default function BreathRider() {
       }
       ctx.restore();
 
+      // Breath level indicator bar — always shown for AC-3 accessibility requirement
+      // Shows players that mic input is being received (critical for noisy venues)
+      if (!s.usingTouchFallback) {
+        const barW = 80;
+        const barH = 6;
+        const barX = W / 2 - barW / 2;
+        const barY = H - 28;
+        const fillW = (vol / 100) * barW;
+        // Track bg
+        ctx.save();
+        ctx.globalAlpha = 0.25;
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath();
+        ctx.roundRect?.(barX, barY, barW, barH, 3) ?? ctx.fillRect(barX, barY, barW, barH);
+        ctx.fill();
+        // Fill: green when active, accent when quiet
+        ctx.globalAlpha = vol > 20 ? 0.85 : 0.5;
+        ctx.fillStyle = vol > 20 ? '#4ade80' : `rgba(${s.accentRgb},0.6)`;
+        if (fillW > 0) {
+          ctx.beginPath();
+          ctx.roundRect?.(barX, barY, fillW, barH, 3) ?? ctx.fillRect(barX, barY, fillW, barH);
+          ctx.fill();
+        }
+        // Mic icon — drawn with canvas paths (no emoji allowed in gameplay UI)
+        const mx = W / 2, my = barY + barH + 13;
+        ctx.globalAlpha = 0.35;
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 1.2;
+        ctx.lineCap = 'round';
+        // Mic body (rounded rectangle)
+        ctx.beginPath();
+        ctx.roundRect?.(mx - 3, my - 7, 6, 8, 2) ?? (() => { ctx.rect(mx - 3, my - 7, 6, 8); })();
+        ctx.stroke();
+        // Mic stand arc
+        ctx.beginPath();
+        ctx.arc(mx, my + 1, 4.5, Math.PI, 2 * Math.PI, true);
+        ctx.stroke();
+        // Stand vertical line
+        ctx.beginPath();
+        ctx.moveTo(mx, my + 5.5);
+        ctx.lineTo(mx, my + 7);
+        ctx.stroke();
+        // Stand base
+        ctx.beginPath();
+        ctx.moveTo(mx - 3, my + 7);
+        ctx.lineTo(mx + 3, my + 7);
+        ctx.stroke();
+        ctx.restore();
+      }
+
       if (s.usingTouchFallback) {
         ctx.save();
         ctx.globalAlpha = 0.45;
         ctx.fillStyle = '#ffffff';
-        ctx.font = '16px sans-serif';
+        ctx.font = '16px "Space Grotesk", sans-serif';
         ctx.textAlign = 'center';
         ctx.fillText('Hold screen to fly', W / 2, H - 20);
         ctx.textAlign = 'left';
@@ -502,6 +568,7 @@ export default function BreathRider() {
       if (s.audioCtx) s.audioCtx.close().catch(()=>{/* ignore */});
       if (stopMusicRef.current) stopMusicRef.current();
       if (s.touchCleanup) s.touchCleanup();
+      if (nearMissTimeoutRef.current) clearTimeout(nearMissTimeoutRef.current);
     };
   }, []);
 
@@ -621,8 +688,17 @@ export default function BreathRider() {
         )}
         {gameState==='requesting' && (
           <motion.div key="requesting" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            style={{ display:'flex', alignItems:'center', justifyContent:'center', height:'100%', color:'var(--color-text-secondary)' }}>
-            Requesting microphone…
+            style={{ display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', height:'100%', gap: 16 }}>
+            <motion.div
+              animate={{ scale: [1, 1.18, 1], opacity: [0.7, 1, 0.7] }}
+              transition={{ duration: 1.4, repeat: Infinity, ease: 'easeInOut' }}
+              style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+            >
+              <Mic size={44} color={accent} />
+            </motion.div>
+            <div style={{ color: 'rgba(255,255,255,0.75)', fontSize: 16, fontWeight: 600, letterSpacing: '0.04em' }}>
+              Requesting microphone…
+            </div>
           </motion.div>
         )}
         {gameState==='done' && behavior && (

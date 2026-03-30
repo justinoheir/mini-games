@@ -1,10 +1,12 @@
 import Link from 'next/link';
 import { ALL_GAMES } from '@/lib/games';
+import { GAME_MEASURES, SIGNAL_COLOR, SIGNAL_DESC } from '@/lib/measures';
 
 export const revalidate = 60;
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? 'https://ccioqoakdexiblnjrbhs.supabase.co';
-const SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY ?? process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? '';
+// Use anon key first (confirmed working for public reads), fall back to service key
+const SUPABASE_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? process.env.SUPABASE_SERVICE_KEY ?? process.env.SUPABASE_SERVICE_ROLE_KEY ?? '';
 
 interface DimensionScore {
   score?: number;
@@ -186,9 +188,73 @@ export default async function IntelGamePage({ params }: { params: Promise<{ game
           </span>
         </div>
         <p style={{ margin: 0, color: 'rgba(255,255,255,0.35)', fontSize: 13 }}>
-          📊 QA Intel Dashboard · Live data from Supabase
+          ⚡ Ether Measurement Intelligence · Consumer–brand signal capture
         </p>
       </div>
+
+      {/* ── Ether Behavioral Signals ─────────────────────────────────────── */}
+      {(() => {
+        const signals = GAME_MEASURES[gameId] ?? [];
+        if (signals.length === 0) return null;
+        return (
+          <div style={{
+            background: 'rgba(91,159,192,0.07)',
+            border: '1px solid rgba(91,159,192,0.2)',
+            borderRadius: 16,
+            padding: '22px 24px',
+            marginBottom: 24,
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
+              <span style={{ fontSize: 18 }}>⚡</span>
+              <h3 style={{
+                margin: 0,
+                fontSize: 13,
+                fontWeight: 700,
+                color: '#84d0f9',
+                textTransform: 'uppercase',
+                letterSpacing: '0.12em',
+              }}>
+                What Ether Measures
+              </h3>
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+              {signals.map(signal => {
+                const color = (SIGNAL_COLOR as Record<string, string>)[signal] ?? '#84d0f9';
+                return (
+                  <div key={signal} style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 3,
+                    padding: '10px 16px',
+                    borderRadius: 10,
+                    background: `${color}15`,
+                    border: `1px solid ${color}40`,
+                    minWidth: 140,
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                      <div style={{ width: 7, height: 7, borderRadius: '50%', background: color, boxShadow: `0 0 6px ${color}`, flexShrink: 0 }} />
+                      <span style={{ fontSize: 14, fontWeight: 800, color, fontFamily: "'Space Grotesk', sans-serif", letterSpacing: '-0.02em' }}>
+                        {signal}
+                      </span>
+                    </div>
+                    <div style={{ fontSize: 11, color: `${color}99`, fontFamily: "'Manrope', sans-serif", fontWeight: 600, paddingLeft: 14, lineHeight: 1.4 }}>
+                      {(SIGNAL_DESC as Record<string, string>)[signal] ?? ''}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <p style={{
+              margin: '14px 0 0',
+              fontSize: 12,
+              color: 'rgba(255,255,255,0.35)',
+              lineHeight: 1.6,
+            }}>
+              Each Glimmer is engineered to surface a specific consumer emotional state in the context of a brand experience. Interaction behavior — timing, force, voice, breath, motion — becomes the signal. The signal becomes the proof.
+            </p>
+          </div>
+        );
+      })()}
 
       {!record ? (
         /* Not yet tested */

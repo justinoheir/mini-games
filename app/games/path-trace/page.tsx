@@ -2,7 +2,7 @@
  * ══════════════════════════════════════════════════════════════════
  *  PATH TRACE — Ether Mini-Game
  *  Spec: game-specs/path-trace.json
- *  Sensor: touch | Duration: 45s | Category: skill
+ *  Sensor: touch | Duration: 60s | Category: skill
  *
  *  Players trace glowing bezier paths from start to end dot.
  *  Deviation from path is measured every frame. Precision is the metric.
@@ -27,8 +27,8 @@ import { PenLine } from 'lucide-react';
 
 // ─── SPEC CONSTANTS ────────────────────────────────────────────────────────────
 const GAME_ID      = 'path-trace';
-const ACCENT       = '#e879f9';
-const DURATION     = 45;
+const ACCENT       = '#059669';
+const DURATION     = 60;
 const GAME_EMOJI   = '✏️';
 const GAME_TITLE   = 'Path Trace';
 const GAME_TAGLINE = "Follow the line. Don't stray.";
@@ -155,10 +155,22 @@ function getPersonality(sig: Signals): string {
       ? sig.completionSpeeds.reduce((a, b) => a + b, 0) / sig.completionSpeeds.length
       : 9999;
 
-  if (sig.avgDeviation < 10 && sig.pathsCompleted >= 4)  return 'Laser Line 🎯';
-  if (avgSpeed < 3000         && sig.pathsCompleted >= 5) return 'Speed Tracer 🏎️';
-  if (sig.avgDeviation < 15   && avgSpeed > 4000)         return 'Steady Hand 🧘';
-  return 'Free Spirit 🌊';
+  const isVeryPrecise   = sig.avgDeviation < 10;
+  const isFairlyPrecise = sig.avgDeviation < 18;
+  const isFast          = avgSpeed < 3000;
+  const isProductive    = sig.pathsCompleted >= 5;
+  const isCalm          = sig.liftEvents <= 1 && sig.deviationEvents <= 3;
+
+  // Guardian: highest precision + calmest execution
+  if (isVeryPrecise && isCalm && sig.pathsCompleted >= 3) return 'Guardian 🛡️';
+  // Optimizer: fast throughput, results-driven
+  if (isFast && isProductive) return 'Optimizer ⚡';
+  // Sage: deliberate and precise, wisdom over speed
+  if (isFairlyPrecise && !isFast && sig.pathsCompleted >= 2) return 'Sage 🧘';
+  // Connector: high completion, fluid motion
+  if (isProductive) return 'Connector 🔗';
+  // Harmonizer: goes with the flow, adapts and persists
+  return 'Harmonizer 🌊';
 }
 
 // ─── GAME STATE ──────────────────────────────────────────────────────────────────
@@ -376,15 +388,18 @@ export default function PathTraceGame() {
       ctx.fillStyle = ptVig;
       ctx.fillRect(0, 0, W, H);
 
-      // Subtle dot-grid
-      ctx.fillStyle = 'rgba(255,255,255,0.025)';
-      const gs = 32;
-      for (let gx = gs; gx < W; gx += gs) {
-        for (let gy = gs; gy < H; gy += gs) {
-          ctx.beginPath();
-          ctx.arc(gx, gy, 1, 0, Math.PI * 2);
-          ctx.fill();
+      // Subtle dot-grid — batched into a single path for performance
+      {
+        const gs = 32;
+        ctx.fillStyle = 'rgba(255,255,255,0.025)';
+        ctx.beginPath();
+        for (let gx = gs; gx < W; gx += gs) {
+          for (let gy = gs; gy < H; gy += gs) {
+            ctx.moveTo(gx + 1, gy);
+            ctx.arc(gx, gy, 1, 0, Math.PI * 2);
+          }
         }
+        ctx.fill();
       }
 
       // ── Path Appear Animation ───────────────────────────────────────────────
@@ -401,12 +416,12 @@ export default function PathTraceGame() {
         const hintAlpha = Math.min(1, s.hintTimer / 60) * 0.85;
         ctx.save();
         ctx.globalAlpha = hintAlpha;
-        ctx.fillStyle   = 'rgba(232, 121, 249, 0.12)';
+        ctx.fillStyle   = s.accentColor + '1F';
         ctx.beginPath();
         ctx.roundRect(W / 2 - 140, H - 100, 280, 44, 12);
         ctx.fill();
         ctx.fillStyle = 'rgba(255,255,255,0.9)';
-        ctx.font      = '600 15px "Space Grotesk", sans-serif';
+        ctx.font      = '600 18px "Space Grotesk", sans-serif';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText('Press green dot · drag to end', W / 2, H - 78);
@@ -843,7 +858,7 @@ export default function PathTraceGame() {
           onDone={() => setShowInstructions(false)}
         />
       )}
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT} background="linear-gradient(180deg, #f5f1eb 0%, #ede8df 35%, #e8e3d9 60%, #ede8df 80%, #f0ece4 100%)">
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT} background="radial-gradient(ellipse 80% 70% at 50% 30%, #001818 0%, #000e0e 55%, #000606 100%)">
 
       {/* ── Start Screen ──────────────────────────────────────────────────── */}
       {phase === 'start' && (
@@ -942,6 +957,8 @@ export default function PathTraceGame() {
           accentColor={theme.colors.accent ?? ACCENT}
           onPlayAgain={handlePlayAgain}
           didWin={finalSig.pathsCompleted >= 3}
+          finalScore={finalSig.score}
+          gameDurationMs={DURATION * 1000}
         />
       )}
 

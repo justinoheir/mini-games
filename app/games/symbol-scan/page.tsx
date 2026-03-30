@@ -13,9 +13,7 @@ import GameHUD from '@/components/GameHUD';
 import GameStartScreen from '@/components/GameStartScreen';
 import Countdown from '@/components/Countdown';
 import EndScreen from '@/components/EndScreen';
-import { initAudio, sfx, haptic, startMusic } from '@/lib/audio';
-import { playScoreHit, playVictoryFanfare, playNearMiss } from '@/lib/audio';
-import { hapticScore, hapticFail, hapticVictory } from '@/lib/haptics';
+import { initAudio, sfx, haptic, startMusic, playScanBeep } from '@/lib/audio';
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
@@ -51,7 +49,7 @@ if (typeof window !== 'undefined') {
 const GAME_ID      = 'symbol-scan';
 const PB_KEY       = 'pb_symbol-scan';
 const ACCENT       = '#10b981';
-const DURATION     = 60;
+const DURATION     = 45;
 const GAME_EMOJI   = '🔍';
 const GAME_TITLE   = 'Symbol Scan';
 const GAME_TAGLINE = 'Find it. Tap it. Before the clock runs out.';
@@ -270,6 +268,9 @@ interface GameState {
   cellFound:          boolean[];
   cellFlashes:        Map<number, CellFlash>;
 
+  // Streak
+  currentStreak:      number;
+
   // Timing
   gridStartTime:      number;
   firstTapInGrid:     number;   // Date.now() of first correct tap; -1 if none yet
@@ -315,6 +316,7 @@ export default function SymbolScanGame() {
     targetCellIndices: [],
     cellFound:         new Array(GRID_CELLS).fill(false),
     cellFlashes:       new Map(),
+    currentStreak:     0,
     gridStartTime:     0,
     firstTapInGrid:    -1,
     round:             1,
@@ -345,12 +347,9 @@ export default function SymbolScanGame() {
     const numScore = typeof scoreDisplay === 'number' ? scoreDisplay : 0;
     if (numScore > prevScoreRef.current) {
       triggerPop(`+${numScore - prevScoreRef.current}`, window.innerWidth / 2, 200);
-      hapticScore();
-      playScoreHit('default', numScore - prevScoreRef.current);
-      setStreak(Math.floor(numScore / 5));
     }
     prevScoreRef.current = numScore;
-  }, [scoreDisplay]); // triggerPop is stable
+  }, [scoreDisplay]); // triggerPop is stable — sfx fires synchronously in handleTap
   const playerSessionRef                = useRef<PlayerSession | null>(null);
 
   // Sync brand theme accent into state (so rAF loop picks it up)
@@ -435,6 +434,7 @@ export default function SymbolScanGame() {
     s.round         = 1;
     s.gridFlashAlpha = 0;
     s.particles     = [];
+    s.currentStreak = 0;
     s.sig = {
       targetsFound: 0, falseTaps: 0, searchTimes: [],
       gridsCleared: 0, missedTargets: 0, score: 0,
@@ -447,7 +447,7 @@ export default function SymbolScanGame() {
     computeLayout();
     spawnGrid();
 
-    stopMusicRef.current = startMusic('drive');
+    stopMusicRef.current = startMusic('minimal');
 
     timerRef.current = setInterval(() => {
       s.timeLeft--;
@@ -500,6 +500,11 @@ export default function SymbolScanGame() {
         // Count missed targets before refreshing
         const unfound = s.targetCellIndices.filter(ci => !s.cellFound[ci]).length;
         s.sig.missedTargets += unfound;
+        if (unfound > 0) {
+          // Grid timed out with missed targets — reset streak
+          s.currentStreak = 0;
+          setStreak(0);
+        }
         s.round++;
         sfx.collision();
         haptic([60]);
@@ -525,9 +530,13 @@ export default function SymbolScanGame() {
       ctx.fillText('FIND', W / 2, targetAreaTop + targetAreaH * 0.22);
       ctx.restore();
 
-      // Large target symbol with glow
+      // Large target symbol with animated sine wave glow
       const targetDisplaySize = Math.min(targetAreaH * 0.52, 72);
+      const glow = 8 + 6 * Math.sin(Date.now() / 500);
+      ctx.shadowBlur = glow;
+      ctx.shadowColor = accentColor;
       drawSymbol(ctx, W / 2, targetAreaTop + targetAreaH * 0.58, targetDisplaySize, s.targetSymbol, accentColor, true);
+      ctx.shadowBlur = 0;
 
       // Grid timer progress bar (bottom of target area)
       const gridProgress = Math.min(1, Math.max(0, gridElapsed / GRID_DURATION));
@@ -699,8 +708,10 @@ export default function SymbolScanGame() {
 
       s.sig.targetsFound++;
       s.sig.score += 10;
+      s.currentStreak++;
+      setStreak(s.currentStreak);
       setScoreDisplay(s.sig.score);
-      sfx.collect();
+      playScanBeep(true);
       haptic([30]);
 
       // Particle burst at tap point
@@ -734,8 +745,10 @@ export default function SymbolScanGame() {
       s.cellFlashes.set(ci, { type: 'miss', endTime: Date.now() + 320 });
       s.sig.falseTaps++;
       s.sig.score = Math.max(0, s.sig.score - 5);
+      s.currentStreak = 0;
+      setStreak(0);
       setScoreDisplay(s.sig.score);
-      sfx.collision();
+      playScanBeep(false);
       haptic([80]);
     }
   }, [spawnGrid]);
@@ -867,7 +880,7 @@ export default function SymbolScanGame() {
       emoji={GAME_EMOJI}
       titleIcon={<Search size={20} color="#fff" strokeWidth={2} />}
       accentColor={accent}
-      background="radial-gradient(ellipse at 50% 50%, rgba(200,160,60,0.1) 0%, transparent 60%), radial-gradient(ellipse at 50% 100%, rgba(160,120,40,0.12) 0%, transparent 50%), linear-gradient(180deg, #0e0c09 0%, #16130c 35%, #1a160e 60%, #16130c 85%, #0e0c09 100%)"
+      background="radial-gradient(ellipse at 50% 35%, rgba(16,185,129,0.08) 0%, transparent 55%), radial-gradient(ellipse at 50% 100%, rgba(8,15,32,0.6) 0%, transparent 50%), linear-gradient(180deg, #080f20 0%, #050a14 35%, #04080f 60%, #050a14 85%, #080f20 100%)"
     >
 
       {/* ── Start Screen ──────────────────────────────────────────────────── */}
@@ -907,7 +920,7 @@ export default function SymbolScanGame() {
               accentColor={accent}
               items={[
                 { label: 'TIME',  value: timeLeft,     danger: timeLeft <= 10, testId: 'timer' },
-                { label: 'FOUND', value: scoreDisplay, testId: 'score' },
+                { label: 'SCORE', value: scoreDisplay, testId: 'score' },
               ]}
             />
           )}

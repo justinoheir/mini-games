@@ -22,10 +22,10 @@ import SwipeInstructions from '@/components/SwipeInstructions';
 
 const CATEGORY_ACCENT = CATEGORY_THEMES.sports.primaryAccent;
 
-const ACCENT = '#a16207';
+const ACCENT = '#b45309';
 const GAME_ID = 'spiral-throw';
 const PB_KEY       = 'pb_spiral-throw';
-const DURATION = 60;
+const DURATION = 45;
 
 type Route = 'curl' | 'out' | 'post' | 'go';
 interface FloatText { x: number; y: number; text: string; color: string; alpha: number; vy: number; }
@@ -40,11 +40,12 @@ function getPersonality(sig: Signals): string {
   const total = sig.attempts || 1;
   const compRate = sig.completions / total;
   const leadRate = sig.leadPasses / total;
-  const depthRate = sig.deepThrows / total;
-  if (compRate > 0.7 && leadRate > 0.65) return '🧠 Field General';
-  if (depthRate > 0.5) return '🔫 Gunslinger';
-  if (depthRate <= 0.3 && compRate > 0.75) return '📋 Checkdown Artist';
-  return '🏈 QB';
+  const depthRate = Math.min(1.0, sig.deepThrows / total);
+  if (compRate > 0.7 && leadRate > 0.65) return '🔭 Visionary';
+  if (depthRate > 0.5) return '🚀 Trailblazer';
+  if (depthRate <= 0.3 && compRate > 0.75) return '⚡ Optimizer';
+  if (sig.streakMax >= 4) return '🔥 Energizer';
+  return '🧭 Explorer';
 }
 
 const ROUTES: Route[] = ['curl', 'out', 'post', 'go'];
@@ -121,6 +122,7 @@ export default function SpiralThrow() {
     floats: [] as FloatText[],
     sig: { attempts:0, completions:0, interceptions:0, score:0,
            leadPasses:0, deepThrows:0, fastDecisions:0, catchStreak:0, streakMax:0 } as Signals,
+    currentThrowIsDeep: false,
     stars: [] as { x:number;y:number;alpha:number;vy:number }[],
     particles: [] as Particle[],
     shake: { intensity: 0, duration: 0 } as ShakeState,
@@ -135,6 +137,13 @@ export default function SpiralThrow() {
     if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
     const finalSigSnap = { ...s.sig };
     setFinalSig(finalSigSnap);
+    // PB check
+    const prevPB = localStorage.getItem(PB_KEY);
+    const prevPBScore = prevPB ? parseInt(prevPB, 10) : 0;
+    if (finalSigSnap.score > prevPBScore) {
+      localStorage.setItem(PB_KEY, String(finalSigSnap.score));
+      setIsNewBest(true);
+    }
     setPhase('done');
     postWebhook(theme, GAME_ID, {
       score: `${finalSigSnap.score} pts`,
@@ -171,16 +180,27 @@ export default function SpiralThrow() {
     s.running = true; s.timeLeft = DURATION;
     s.sig = { attempts:0, completions:0, interceptions:0, score:0,
                leadPasses:0, deepThrows:0, fastDecisions:0, catchStreak:0, streakMax:0 };
+    s.currentThrowIsDeep = false;
     s.floats = []; s.stars = [];
     s.particles = []; s.shake = { intensity: 0, duration: 0 };
     setupNewPlay();
     setPhase('playing'); setTimeLeft(DURATION); setScoreDisplay(0); setStreakDisplay(0);
     stopMusicRef.current = startMusic('drive');
 
+    // Cache gradients outside rAF loop
+    const bgGrad = ctx.createRadialGradient(W * 0.5, H * 0.5, 0, W * 0.5, H * 0.6, Math.max(W, H) * 0.9);
+    bgGrad.addColorStop(0,   '#0e200a');
+    bgGrad.addColorStop(0.5, '#091505');
+    bgGrad.addColorStop(1,   '#040a02');
+    const vigGrad = ctx.createRadialGradient(W * 0.5, H * 0.5, H * 0.2, W * 0.5, H * 0.5, H * 0.85);
+    vigGrad.addColorStop(0, 'rgba(0,0,0,0)');
+    vigGrad.addColorStop(1, 'rgba(0,0,0,0.45)');
+
     timerRef.current = setInterval(() => {
       s.timeLeft--;
       setTimeLeft(s.timeLeft);
       if (s.timeLeft === 15) increaseMusicTempo(120); // ramp for final stretch
+      if (s.timeLeft === 10) sfx.warning(); // 10s warning
       if (s.timeLeft <= 5 && s.timeLeft > 0) sfx.tick(); // urgency cue
       if (s.timeLeft <= 0) { sfx.success(); haptic([30, 50, 100]); endGame(); } // timer end = completed session
     }, 1000);
@@ -189,19 +209,12 @@ export default function SpiralThrow() {
       if (!s.running) return;
       ctx.save();
       applyShake(ctx, s.shake);
-      // Football field — night stadium, rich deep grass
-      const bg = ctx.createRadialGradient(W * 0.5, H * 0.5, 0, W * 0.5, H * 0.6, Math.max(W, H) * 0.9);
-      bg.addColorStop(0,   '#0e200a');
-      bg.addColorStop(0.5, '#091505');
-      bg.addColorStop(1,   '#040a02');
-      ctx.fillStyle = bg;
+      // Football field — night stadium, rich deep grass (cached gradient)
+      ctx.fillStyle = bgGrad;
       ctx.fillRect(0, 0, W, H);
 
-      // Vignette
-      const stVig2 = ctx.createRadialGradient(W * 0.5, H * 0.5, H * 0.2, W * 0.5, H * 0.5, H * 0.85);
-      stVig2.addColorStop(0, 'rgba(0,0,0,0)');
-      stVig2.addColorStop(1, 'rgba(0,0,0,0.45)');
-      ctx.fillStyle = stVig2;
+      // Vignette (cached gradient)
+      ctx.fillStyle = vigGrad;
       ctx.fillRect(0, 0, W, H);
 
       // Yard lines
@@ -245,7 +258,11 @@ export default function SpiralThrow() {
         const dx = target.x - s.recX, dy = target.y - s.recY;
         const d = Math.sqrt(dx*dx+dy*dy);
         if (d < 4) { s.recRouteIdx++; }
-        else { const spd = 3.5; s.recX += dx/d*spd; s.recY += dy/d*spd; }
+        else {
+          const elapsedTime = DURATION - s.timeLeft;
+          const receiverSpeed = 3.5 + (1.5 * (elapsedTime / DURATION));
+          s.recX += dx/d*receiverSpeed; s.recY += dy/d*receiverSpeed;
+        }
       }
 
       // Ball flight
@@ -260,7 +277,8 @@ export default function SpiralThrow() {
           const isLead = s.recRouteIdx < s.recRoute.length - 2;
           s.sig.attempts++;
           if (isLead) s.sig.leadPasses++;
-          // deepThrows tracked at throw time (handleTouchEnd) — not here
+          // deepThrows counted at result time
+          if (s.currentThrowIsDeep) { s.sig.deepThrows++; s.currentThrowIsDeep = false; }
           const decisionTime = Date.now() - s.snapTime;
           if (decisionTime < 2500) s.sig.fastDecisions++;
 
@@ -281,13 +299,15 @@ export default function SpiralThrow() {
                            alpha: 1, vy: -2 - Math.random()*2 });
           }
           s.recCaught = true; s.ballInFlight = false;
-          setTimeout(() => setupNewPlay(), 1200);
+          setTimeout(() => setupNewPlay(), 500);
         }
         // Incomplete — all four screen edges (fixed P1: was missing bottom edge)
         if (s.ballY < -50 || s.ballX < -50 || s.ballX > window.innerWidth + 50 || s.ballY > window.innerHeight + 50) {
           // Interception if ball goes backward (below receiver position = behind the play)
           const isInterception = s.ballY > s.recY + 30;
           s.sig.attempts++;
+          // deepThrows counted at result time
+          if (s.currentThrowIsDeep) { s.sig.deepThrows++; s.currentThrowIsDeep = false; }
           s.sig.catchStreak = 0;
           setStreakDisplay(0);
           if (isInterception) {
@@ -304,7 +324,7 @@ export default function SpiralThrow() {
             triggerShake(s.shake, 4, 6);
           }
           s.ballInFlight = false;
-          setTimeout(() => setupNewPlay(), 900);
+          setTimeout(() => setupNewPlay(), 500);
         }
       }
 
@@ -390,8 +410,8 @@ export default function SpiralThrow() {
     s.ballInFlight = true;
     s.gamePhase = 'ball-in-flight';
     s.throwTime = Date.now();
-    // deepThrows: measure at throw time using upfield velocity (negative VY = thrown toward top = downfield)
-    if (s.ballVY < -6) s.sig.deepThrows++;
+    // deepThrows: flag at throw time, count when result is determined
+    s.currentThrowIsDeep = s.ballVY < -6;
     sfx.click();
   }, []);
 
@@ -468,7 +488,7 @@ export default function SpiralThrow() {
       background="linear-gradient(180deg, #3a8fd4 0%, #5aaae8 20%, #8dc8f0 40%, #b8def7 58%, #6db85e 62%, #3a9430 75%, #1e7018 90%, #0f5010 100%)">
       <canvas
         ref={canvasRef}
-        style={{ display: phase === 'playing' ? 'block' : 'none', position: 'absolute', top: 0, left: 0 }}
+        style={{ display: phase === 'playing' ? 'block' : 'none', position: 'absolute', top: 0, left: 0, touchAction: 'none' }}
         onTouchStart={handleTouchStart}
         onTouchEnd={handleTouchEnd}
       />
@@ -477,7 +497,7 @@ export default function SpiralThrow() {
           items={[
             { label: 'SCORE', value: scoreDisplay,                               testId: 'score' },
             { label: 'TIME',  value: `${timeLeft}s`, danger: timeLeft <= 10, testId: 'timer' },
-            { label: 'STREAK 🏈', value: streakDisplay },
+            { label: 'STREAK', value: streakDisplay },
           ]}
           accentColor={ACCENT}
         />
@@ -534,6 +554,7 @@ export default function SpiralThrow() {
             { label: 'Best Streak', value: `${sig.streakMax}`, color: '#c084fc' },
           ]}
           accentColor={ACCENT}
+          ctaTextColor="#ffffff"
           onPlayAgain={handlePlayAgain}
           didWin={sig.completions > 5}
         />

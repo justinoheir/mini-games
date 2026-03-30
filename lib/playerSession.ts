@@ -65,6 +65,9 @@ export function savePlayerSession(gameId: string, name: string, avatar: string):
   const email      = (existingUser.email     ?? '').trim();
 
   const session: PlayerSession = {
+    // Spread existing fields first so extra props (like `consented`) are preserved,
+    // then override with the canonical fields for this session.
+    ...(existingUser as Partial<PlayerSession>),
     firstName,
     lastName,
     email,

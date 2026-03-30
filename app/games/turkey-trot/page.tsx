@@ -372,8 +372,9 @@ export default function TurkeyTrotGame() {
     timerRef.current = setInterval(() => {
       s.timeLeft--;
       setTimeLeft(s.timeLeft);
-      // ⚡ sfx.fail() was wrong — timer expiry is not a failure; was tonally incorrect
       if (s.timeLeft <= 0) { sfx.success(); haptic([30, 50, 30, 50, 100]); endGame(); }
+      else if (s.timeLeft <= 10) { sfx.warning(); }  // ⚡ urgent warning in final 10s
+      else { sfx.tick(); }  // ⚡ timer tick each second
     }, 1000);
 
     // ── rAF loop ────────────────────────────────────────────────────────────
@@ -773,7 +774,7 @@ export default function TurkeyTrotGame() {
       {phase === 'start' && showInstructions && (
         <SwipeInstructions
           gameId="turkey-trot"
-          steps={[{ icon: "🦃", title: "Help the turkey run", body: "Tap left or right to dodge obstacles." }, { icon: "🌽", title: "Collect corn", body: "Grab corn for bonus points as you run." }, { icon: "🏃", title: "Don't get caught", body: "Avoid the farmer — how far can you run?" }]}
+          steps={[{ icon: "🦃", title: "Tap the turkey!", body: "The turkey is running — tap it to catch it before it escapes." }, { icon: "⭐", title: "Golden turkey bonus", body: "Every 5 catches spawns a glowing golden turkey worth 5 points." }, { icon: "⚡", title: "It gets faster", body: "Each catch speeds the turkey up — how many can you catch in 30 seconds?" }]}
           onDone={() => setShowInstructions(false)}
         />
       )}

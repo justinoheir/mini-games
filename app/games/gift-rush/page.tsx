@@ -588,7 +588,7 @@ export default function GiftRushGame() {
               items={[
                 { label: 'TIME',       value: timeLeft,      danger: timeLeft <= 10, testId: 'timer' },
                 { label: 'GIFTS',      value: scoreDisplay,  testId: 'score' },
-                { label: 'STREAK',     value: streakDisplay },
+                { label: 'STREAK 🎄',  value: streakDisplay },
               ]}
             />
           </div>

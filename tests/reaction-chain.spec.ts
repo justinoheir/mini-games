@@ -3,7 +3,7 @@
  * Game ID:   reaction-chain
  * Sensor:    touch (no permission required)
  * Duration:  45s
- * Accent:    #facc15 (yellow/gold)
+ * Accent:    #facc15 (yellow)
  *
  * Run: npx playwright test tests/reaction-chain.spec.ts --reporter=line
  */
@@ -451,20 +451,21 @@ test('10.5 — personality classification is deterministic', async ({ page }) =>
       const avgRT = sig.reactionTimes.length > 0
         ? sig.reactionTimes.reduce((a, b) => a + b, 0) / sig.reactionTimes.length
         : 9999
-      if (avgRT < 350 && sig.longestChain >= 15) return 'Lightning Reflex ⚡'
-      if (sig.longestChain >= 20 && sig.chainBreaks <= 2) return 'Chain Keeper 🔗'
-      if (sig.tappedNodes > 30 && sig.chainBreaks > 5) return 'Sprinter 🏃'
-      return 'Steady Reactor 🌊'
+      const accuracy = sig.totalNodes > 0 ? sig.tappedNodes / sig.totalNodes : 0
+      if (avgRT < 350 && sig.longestChain >= 10) return 'Lightning Reflex ⚡'
+      if (accuracy >= 0.70 && sig.chainBreaks <= 4 && sig.longestChain >= 8) return 'Chain Keeper 🔗'
+      if (sig.tappedNodes > 20 && sig.chainBreaks > 4) return 'Sprinter 💨'
+      return 'Steady Reactor 🎯'
     }
     return {
-      lightningReflex: getPersonality({ reactionTimes: [300, 320, 280], longestChain: 15, chainBreaks: 3, totalNodes: 20, tappedNodes: 18, currentChain: 0, score: 0 }),
-      chainKeeper: getPersonality({ reactionTimes: [500, 600], longestChain: 22, chainBreaks: 1, totalNodes: 25, tappedNodes: 23, currentChain: 0, score: 0 }),
-      sprinter: getPersonality({ reactionTimes: [400, 450], longestChain: 8, chainBreaks: 8, totalNodes: 50, tappedNodes: 35, currentChain: 0, score: 0 }),
+      lightningReflex: getPersonality({ reactionTimes: [300, 320, 280], longestChain: 12, chainBreaks: 2, totalNodes: 20, tappedNodes: 18, currentChain: 0, score: 0 }),
+      chainKeeper: getPersonality({ reactionTimes: [500, 600], longestChain: 10, chainBreaks: 3, totalNodes: 16, tappedNodes: 12, currentChain: 0, score: 0 }),
+      sprinter: getPersonality({ reactionTimes: [450, 500], longestChain: 6, chainBreaks: 7, totalNodes: 30, tappedNodes: 22, currentChain: 0, score: 0 }),
       steadyReactor: getPersonality({ reactionTimes: [700, 650], longestChain: 5, chainBreaks: 10, totalNodes: 20, tappedNodes: 10, currentChain: 0, score: 0 }),
     }
   })
   expect(result.lightningReflex).toBe('Lightning Reflex ⚡')
   expect(result.chainKeeper).toBe('Chain Keeper 🔗')
-  expect(result.sprinter).toBe('Sprinter 🏃')
-  expect(result.steadyReactor).toBe('Steady Reactor 🌊')
+  expect(result.sprinter).toBe('Sprinter 💨')
+  expect(result.steadyReactor).toBe('Steady Reactor 🎯')
 })

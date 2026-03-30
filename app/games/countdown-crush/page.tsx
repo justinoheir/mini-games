@@ -850,7 +850,11 @@ export default function CountdownCrushGame() {
       {phase === 'start' && showInstructions && (
         <SwipeInstructions
           gameId="countdown-crush"
-          steps={[{ icon: "🔢", title: "Find the number", body: "Tap numbers in order from lowest to highest." }, { icon: "⏱️", title: "Race the clock", body: "You have limited time — move fast." }, { icon: "🔥", title: "Clear the board", body: "Clear all numbers before time runs out to win." }]}
+          steps={[
+            { icon: "🥂", title: "Pop the bubbles", body: "Tap champagne bubbles as they float up the screen to score points." },
+            { icon: "⏱️", title: "Race the countdown", body: "Score before midnight — windows get shorter and multipliers rise as zero approaches!" },
+            { icon: "✨", title: "Crush the final rush", body: "The midnight window gives 5× points — pop everything you can!" },
+          ]}
           onDone={() => setShowInstructions(false)}
         />
       )}

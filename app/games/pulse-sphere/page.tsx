@@ -13,14 +13,13 @@ import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
 import { createTiltController } from '@/lib/tilt';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
-import { Orbit } from 'lucide-react';
+import { Orbit, Hand, Smartphone, Mic } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import ScorePopEffect, { useScorePop } from '@/components/ScorePopEffect';
 import StreakBadge from '@/components/StreakBadge';
-import { CATEGORY_THEMES } from '@/lib/theme';
 import SwipeInstructions from '@/components/SwipeInstructions';
 
-const CATEGORY_ACCENT = CATEGORY_THEMES.breath.primaryAccent;
+const CATEGORY_ACCENT = '#a855f7'; // game-native purple accent
 
 
 // --- SPRITE CACHE -------------------------------------------------------------
@@ -58,7 +57,7 @@ function getPersonality(v: number, m: number, t: number) {
 function RadarChart({ voice, movement, touch }: { voice: number; movement: number; touch: number }) {
   const cx = 100, cy = 100, R = 72;
   const angles = [-Math.PI / 2, -Math.PI / 2 + (2 * Math.PI) / 3, -Math.PI / 2 + (4 * Math.PI) / 3];
-  const labels = ['🎙️ Voice', '🏃 Move', '👆 Touch'];
+  const labels = ['Voice', 'Move', 'Touch'];
   const scores = [voice / 100, movement / 100, touch / 100];
   const guide = angles.map(a => ({ x: cx + R * Math.cos(a), y: cy + R * Math.sin(a) }));
   const data  = scores.map((s, i) => ({ x: cx + s * R * Math.cos(angles[i]), y: cy + s * R * Math.sin(angles[i]) }));
@@ -80,6 +79,12 @@ function RadarChart({ voice, movement, touch }: { voice: number; movement: numbe
 }
 
 export default function PulseSphere() {
+  // Haptics gate — respects ?haptics=off URL param (accessibility B-M3)
+  // Declared first so all callbacks below can close over it correctly.
+  const hapticsEnabled = typeof window !== 'undefined'
+    ? new URLSearchParams(window.location.search).get('haptics') !== 'off'
+    : true;
+
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const stopMusicRef = useRef<(() => void) | null>(null);
@@ -95,7 +100,7 @@ export default function PulseSphere() {
     stream: null as MediaStream | null,
     analyser: null as AnalyserNode | null,
     audioCtx: null as AudioContext | null,
-    timeLeft: 45, intervalId: null as ReturnType<typeof setInterval> | null,
+    timeLeft: 60, intervalId: null as ReturnType<typeof setInterval> | null,
     // Tracking
     volumeSamples: [] as number[],
     tiltMagnitudes: [] as number[],
@@ -125,6 +130,7 @@ export default function PulseSphere() {
   const [streak, setStreak]           = useState(0);
   const [nearMissMsg, setNearMissMsg] = useState(false);
   const [isNewBest, setIsNewBest]     = useState(false);
+  const [liveActivity, setLiveActivity] = useState(0);
   const streakRef                     = useRef(0);
   const lastMilestoneRef              = useRef(0);
   const nearMissTimeoutRef            = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -178,11 +184,11 @@ export default function PulseSphere() {
   const startLoop = useCallback(() => {
     const s = stateRef.current;
     s.volumeSamples = []; s.tiltMagnitudes = []; s.touchCount = 0;
-    s.timeLeft = 45; s.running = true; s.hue = 280;
+    s.timeLeft = 60; s.running = true; s.hue = 280;
     s.joystickX = 0; s.joystickY = 0;
     streakRef.current = 0; lastMilestoneRef.current = 0;
     setStreak(0); setNearMissMsg(false); setIsNewBest(false);
-    setTimeLeft(45); setGameState('playing');
+    setTimeLeft(60); setLiveActivity(0); setGameState('playing');
     stopMusicRef.current = startMusic('ambient');
     const capturedTheme = theme;
 
@@ -263,9 +269,18 @@ export default function PulseSphere() {
       // that destroys the ambient atmosphere. Fixed: warning at 10s, tick only at ≤5s.
       if (s.timeLeft === 10) sfx.warning();
       else if (s.timeLeft <= 5 && s.timeLeft > 0) sfx.tick();
+      // Sync streak to React state here (once/sec) instead of inside rAF loop
+      setStreak(streakRef.current);
+      // Live activity meter — rolling 5-second window for responsive HUD feedback
+      const win5v = s.volumeSamples.slice(-5);
+      const win5t = s.tiltMagnitudes.slice(-5);
+      const recentVol  = win5v.length ? win5v.reduce((a, b) => a + b, 0) / win5v.length : 0;
+      const recentTilt = win5t.length ? (win5t.reduce((a, b) => a + b, 0) / win5t.length) * 100 : 0;
+      const elapsed    = 60 - s.timeLeft;
+      const touchRate  = elapsed > 0 ? Math.min(100, (s.touchCount / elapsed) * 6) : 0;
+      setLiveActivity(Math.min(100, Math.round((recentVol + Math.min(100, recentTilt) + touchRate) / 3)));
       if (s.timeLeft <= 0) {
-        sfx.success();
-        hapticVictory();
+        if (hapticsEnabled) hapticVictory();
         playVictoryFanfare();
         endGame(capturedTheme);
       }
@@ -273,7 +288,7 @@ export default function PulseSphere() {
       const survived = 60 - s.timeLeft;
       if (survived > 0 && survived % 10 === 0 && survived !== lastMilestoneRef.current) {
         lastMilestoneRef.current = survived;
-        hapticScore();
+        if (hapticsEnabled) hapticScore();
         playScoreHit('default', survived);
         triggerPop(`⚡ ${survived}s`, window.innerWidth / 2, 200);
       }
@@ -308,12 +323,13 @@ export default function PulseSphere() {
       }
 
       // Streak: increment every 3s of high activity (vol > 30)
+      // Note: setStreak is intentionally NOT called here — setState in rAF causes re-renders.
+      // Streak level is computed here and synced to React state via the 1s setInterval below.
       if (vol > 30) {
         const newLevel = Math.floor((s.volumeSamples.filter(v => v > 30).length / 60) / 3);
         if (newLevel > streakRef.current) {
           streakRef.current = newLevel;
-          setStreak(newLevel);
-          hapticScore();
+          if (hapticsEnabled) hapticScore();
           triggerPop(`🔥 x${newLevel}`, window.innerWidth / 2, 250);
         }
       }
@@ -454,7 +470,7 @@ export default function PulseSphere() {
       if (micFallbackRef.current) s.fallbackVolume = Math.min(100, s.fallbackVolume + 35);
       const now = Date.now();
       if (now - s.lastShimmerTime > 300) {
-        sfx.shimmer(); haptic([20]);
+        sfx.shimmer(); if (hapticsEnabled) haptic([20]);
         s.lastShimmerTime = now;
       }
     };
@@ -466,6 +482,8 @@ export default function PulseSphere() {
     const s = stateRef.current;
     s.running = false; cancelAnimationFrame(s.animId);
     if (s.intervalId) clearInterval(s.intervalId);
+    // Clear near-miss timeout to prevent setState on unmounted component (P1 fix)
+    if (nearMissTimeoutRef.current) clearTimeout(nearMissTimeoutRef.current);
     if (s.stream) s.stream.getTracks().forEach(t => t.stop());
     if (s.audioCtx) s.audioCtx.close().catch(()=>{/* ignore */});
     if (s.renderer) { s.renderer.dispose(); s.renderer = null; }
@@ -484,17 +502,24 @@ export default function PulseSphere() {
       {gameState === 'start' && showInstructions && (
         <SwipeInstructions
           gameId="pulse-sphere"
-          steps={[{ icon: "👆", title: "Tap the sphere", body: "Tap in rhythm with the pulse to score." }, { icon: "🎵", title: "Feel the beat", body: "The sphere glows on every beat." }, { icon: "🔥", title: "Build combos", body: "Perfect timing builds your streak multiplier." }]}
+          steps={[
+            { icon: <Hand size={64} color="#a855f7" strokeWidth={1.5} />, title: "Tap the sphere", body: "Tap the screen to shift the sphere's color and build your score." },
+            { icon: <Smartphone size={64} color="#a855f7" strokeWidth={1.5} />, title: "Move your phone", body: "Tilt and rotate your device to spin the sphere in real time." },
+            { icon: <Mic size={64} color="#a855f7" strokeWidth={1.5} />, title: "Use your voice", body: "Hum, sing, or breathe into the mic to pulse the sphere's size." },
+          ]}
           onDone={() => setShowInstructions(false)}
         />
       )}
     <GameShell title="Pulse Sphere" emoji="🔮" accentColor={accent} theme={theme}
-      background="radial-gradient(ellipse at 50% 50%, rgba(0,180,160,0.12) 0%, transparent 60%), radial-gradient(ellipse at 80% 20%, rgba(0,220,200,0.08) 0%, transparent 40%), linear-gradient(180deg, #020c0c 0%, #031212 35%, #041616 60%, #031212 85%, #020c0c 100%)">
+      background="radial-gradient(ellipse at 50% 50%, rgba(168,85,247,0.10) 0%, transparent 60%), radial-gradient(ellipse at 80% 20%, rgba(168,85,247,0.06) 0%, transparent 40%), linear-gradient(180deg, #06040f 0%, #0a0618 35%, #0c0720 60%, #0a0618 85%, #06040f 100%)">
       <div ref={mountRef} style={{ width:'100%', height:'100%', display: gameState==='playing' ? 'block' : 'none', position:'relative', zIndex:1, touchAction:'none' }} />
 
       {gameState==='playing' && (
         <GameHUD
-          items={[{ label: 'TIME', value: `${timeLeft}s`, danger: timeLeft <= 10, testId: 'timer' }]}
+          items={[
+            { label: 'ACTIVITY', value: `${liveActivity}%`, testId: 'activity' },
+            { label: 'TIME', value: `${timeLeft}s`, danger: timeLeft <= 10, isTime: true, testId: 'timer' },
+          ]}
           accentColor={accent}
         />
       )}
@@ -508,7 +533,7 @@ export default function PulseSphere() {
           color: 'rgba(255,255,255,0.7)', fontSize: 12, fontWeight: 600,
           whiteSpace: 'nowrap', pointerEvents: 'none',
         }}>
-          🎙️ Tap screen to simulate voice
+          Tap screen to simulate voice
         </div>
       )}
 
@@ -568,13 +593,13 @@ export default function PulseSphere() {
             gameId="pulse-sphere"
             title={personality}
             emoji="🔮"
-            score={`${voiceScore}% voice`}
+            score={`${Math.round((voiceScore + moveScore + touchScore) / 3)}%`}
             personality={personality}
             insights={[
-              { label: '🎙️ Voice engagement', value: `${voiceScore}%`, color: '#3b82f6' },
-              { label: '🏃 Movement engagement', value: `${moveScore}%`, color: '#00ff88' },
-              { label: '👆 Touch engagement', value: `${touchScore}%`, color: '#a855f7' },
-              { label: '🌟 Overall activity', value: `${Math.round((voiceScore + moveScore + touchScore) / 3)}%`, color: '#facc15' },
+              { label: 'Voice engagement', value: `${voiceScore}%`, color: '#3b82f6' },
+              { label: 'Movement engagement', value: `${moveScore}%`, color: '#00ff88' },
+              { label: 'Touch engagement', value: `${touchScore}%`, color: '#a855f7' },
+              { label: 'Overall activity', value: `${Math.round((voiceScore + moveScore + touchScore) / 3)}%`, color: '#facc15' },
             ]}
             accentColor={accent}
             onPlayAgain={handlePlayAgain}

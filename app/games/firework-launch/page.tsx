@@ -778,7 +778,7 @@ export default function FireworkLaunchGame() {
       // ── Screen flash (on perfect) ─────────────────────────────────────────
       if (s.screenFlash > 0) {
         const elapsed = now - s.screenFlashTime;
-        const flashAlpha = Math.max(0, s.screenFlash - elapsed / 350);
+        const flashAlpha = Math.max(0, 0.6 * (1 - elapsed / 350));
         s.screenFlash = flashAlpha;
         if (flashAlpha > 0) {
           ctx.save();
