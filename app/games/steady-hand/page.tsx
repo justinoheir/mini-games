@@ -20,31 +20,19 @@ import { hapticScore, hapticFail, hapticVictory } from '@/lib/haptics';
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
-import { Sun, Moon } from 'lucide-react';
+import { Sun, Moon, Hand, Timer, Trophy } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import ScorePopEffect, { useScorePop } from '@/components/ScorePopEffect';
 import StreakBadge from '@/components/StreakBadge';
 import { CATEGORY_THEMES } from '@/lib/theme';
 import SwipeInstructions from '@/components/SwipeInstructions';
 
-const CATEGORY_ACCENT = CATEGORY_THEMES.cognitive.primaryAccent;
+const CATEGORY_ACCENT = '#22c55e';
 
 // ─── SPEC CONSTANTS ──────────────────────────────────────────────────────────
 
 
 // --- SPRITE CACHE -------------------------------------------------------------
-const _spriteCache = new Map<string, HTMLImageElement>();
-function _loadSprite(src: string): HTMLImageElement {
-  if (_spriteCache.has(src)) return _spriteCache.get(src)!;
-  const img = new Image();
-  img.src = src;
-  _spriteCache.set(src, img);
-  return img;
-}
-if (typeof window !== 'undefined') {
-  _loadSprite('/sprites/steady-hand/ball.svg');
-  _loadSprite('/sprites/steady-hand/ring.svg');
-}
 
 const GAME_ID      = 'steady-hand';
 const PB_KEY       = 'pb_steady-hand';
@@ -150,12 +138,12 @@ function getPersonality(sig: Signals): string {
   const ts  = sig.tremorScore;
   const sur = sig.interferenceSurvived;
   const str = sig.maxStreak;
-  if (tot >= 90 && ts < 10)         return 'Surgeon 🔬';          // Pinpoint precision, minimal tremor
-  if (tot >= 75 && ts < 25)         return 'Steady as a Rock 🪨'; // High accuracy, low tremor
-  if (sur >= 4 && tot >= 60)        return 'Iron Nerve 🧠';       // Survived interference, solid accuracy
-  if (tot >= 60 && str >= 8)        return 'Focused 🎯';          // Good accuracy with long clean runs
-  if (tot >= 40)                    return 'Getting There 🌱';    // On the way
-  return 'Shaky But Brave 😅';                                    // Fallback — tried hard
+  if (tot >= 90 && ts < 10)  return 'Surgeon 🔬';           // Pinpoint precision, minimal tremor
+  if (tot >= 75 && ts < 25)  return 'Steady as a Rock 🪨';  // High accuracy, low tremor — efficient control
+  if (sur >= 4 && tot >= 60) return 'Iron Nerve 🧠';        // Survived interference with solid accuracy
+  if (tot >= 60 && str >= 8) return 'Focused 🎯';           // Focused — long clean runs
+  if (tot >= 40)             return 'Getting There 🌱';     // Balanced effort, room to grow
+  return 'Shaky But Brave 😅';                              // Fallback — lovable underdog
 }
 
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
@@ -399,7 +387,7 @@ export default function SteadyHandGame() {
             sfx.collect();
             hapticScore();
             playScoreHit('default', 10);
-            setScorePop(`🔥 ${s.sig.streakCurrent}s`);
+            setScorePop(`${s.sig.streakCurrent}s STREAK`);
             setTimeout(() => setScorePop(null), 1500);
           }
           // Near-miss: streak within 10% of next milestone (every 5s)
@@ -652,8 +640,8 @@ export default function SteadyHandGame() {
       ctx.fill();
       ctx.restore();
 
-      // ── Deviation bar (below HUD area, ~100px from top) ─────────────────
-      const barY     = 108;
+      // ── Deviation bar (below GameHUD, ~155px from top) ──────────────────
+      const barY     = 155;   // raised above GameHUD bottom (~141px) for clarity
       const barH     = 6;
       const barX     = 24;
       const barW     = W - 48;
@@ -674,44 +662,29 @@ export default function SteadyHandGame() {
         ctx.roundRect(barX, barY, barW * devFill, barH, 3);
         ctx.fill();
       }
-      // DEVIATION label
+      // DEVIATION label — 18px minimum for brand-activation legibility
       ctx.fillStyle = textC2;
-      ctx.font = '600 13px "Space Grotesk", sans-serif';
+      ctx.font = '600 18px "Space Grotesk", sans-serif';
       ctx.letterSpacing = '0.08em';
       ctx.textAlign = 'left';
-      ctx.fillText('DEVIATION', barX, barY - 5);
+      ctx.fillText('DEVIATION', barX, barY - 8);
       ctx.restore();
 
-      // ── Streak & Tremor (canvas-drawn, below deviation bar) ─────────────
-      const metricsY = 134;
-      const streakFlashAge = s.streakFlashAt > 0 ? (Date.now() - s.streakFlashAt) / 400 : 1;
-      const streakScale = streakFlashAge < 1 ? 1 + 0.25 * Math.sin(Math.PI * streakFlashAge) : 1;
+      // ── Tremor score (canvas-drawn, below deviation bar) ─────────────────
+      // NOTE: STREAK is shown in GameHUD — only TREMOR is canvas-drawn here
+      const metricsY = 203;   // barY + 48; space for 36px values below bar
 
       ctx.save();
-      ctx.textAlign = 'left';
-      ctx.fillStyle = textC2;
-      ctx.font = '600 13px "Space Grotesk", sans-serif';
-      ctx.fillText('STREAK', barX, metricsY + 2);
-
-      ctx.save();
-      ctx.translate(barX + 70, metricsY - 2);
-      ctx.scale(streakScale, streakScale);
-      ctx.fillStyle = s.sig.streakCurrent > 0 ? accent : textC;
-      ctx.font = `700 28px "Space Grotesk", sans-serif`;
-      ctx.textAlign = 'left';
-      ctx.fillText(String(s.sig.streakCurrent), 0, 0);
-      ctx.restore();
-
-      // Tremor
+      // Tremor value (36px) — value above, label below (right-aligned)
       const tremorX = W - barX - 88;
-      ctx.textAlign = 'left';
-      ctx.fillStyle = textC2;
-      ctx.font = '600 13px "Space Grotesk", sans-serif';
-      ctx.fillText('TREMOR', tremorX, metricsY + 2);
       const tremorColor = s.sig.tremorScore < 20 ? accent : s.sig.tremorScore < 50 ? '#facc15' : '#ef4444';
       ctx.fillStyle = tremorColor;
-      ctx.font = '700 28px "Space Grotesk", sans-serif';
-      ctx.fillText(String(s.sig.tremorScore), tremorX + 65, metricsY - 2);
+      ctx.font = '700 36px "Space Grotesk", sans-serif';
+      ctx.textAlign = 'left';
+      ctx.fillText(String(s.sig.tremorScore), tremorX + 65, metricsY);
+      ctx.fillStyle = textC2;
+      ctx.font = '600 18px "Space Grotesk", sans-serif';
+      ctx.fillText('TREMOR', tremorX, metricsY + 24);
       ctx.restore();
 
       // ── Touch fallback hint ─────────────────────────────────────────────
@@ -741,8 +714,13 @@ export default function SteadyHandGame() {
   }, [endGame]);
 
   // ─── CANVAS SETUP & TOUCH FALLBACK LISTENERS ─────────────────────────────
+  // NOTE: canvas is only rendered during 'countdown' and 'playing' phases,
+  // so this effect MUST depend on `phase` to run after the canvas mounts.
+  // A [] dep would run at mount when phase='start' (canvas not yet in DOM).
 
   useEffect(() => {
+    // Canvas is only rendered during 'countdown' and 'playing'
+    if (phase !== 'countdown' && phase !== 'playing') return;
     const canvas = canvasRef.current;
     if (!canvas) return;
 
@@ -793,7 +771,7 @@ export default function SteadyHandGame() {
       canvas.removeEventListener('pointerup', onPointerUp);
       canvas.removeEventListener('pointercancel', onPointerUp);
     };
-  }, []);
+  }, [phase]);
 
   // ─── CLEANUP ON UNMOUNT ───────────────────────────────────────────────────
 
@@ -804,6 +782,7 @@ export default function SteadyHandGame() {
       if (stopMusicRef.current) stopMusicRef.current();
       if (motionRef.current) window.removeEventListener('devicemotion', motionRef.current);
       if (fallbackCheckRef.current) clearTimeout(fallbackCheckRef.current);
+      if (nearMissTimeoutRef.current) clearTimeout(nearMissTimeoutRef.current);
     };
   }, []);
 
@@ -902,7 +881,11 @@ export default function SteadyHandGame() {
       {phase === 'start' && showInstructions && (
         <SwipeInstructions
           gameId="steady-hand"
-          steps={[{ icon: "✋", title: "Hold still", body: "Keep your device as still as possible." }, { icon: "⏱️", title: "Steady wins", body: "The less you move, the higher you score." }, { icon: "🏆", title: "Beat your best", body: "Try to beat your personal steadiness record." }]}
+          steps={[
+            { icon: <Hand size={56} color="#10b981" />, title: "Hold still", body: "Keep your device as still as possible." },
+            { icon: <Timer size={56} color="#10b981" />, title: "Steady wins", body: "The less you move, the higher you score." },
+            { icon: <Trophy size={56} color="#10b981" />, title: "Beat your best", body: "Try to beat your personal steadiness record." },
+          ]}
           onDone={() => setShowInstructions(false)}
         />
       )}
@@ -1037,7 +1020,7 @@ export default function SteadyHandGame() {
               whiteSpace: 'nowrap',
             }}
           >
-            So close! 🎯
+            So close!
           </motion.div>
         )}
       </AnimatePresence>
@@ -1064,7 +1047,7 @@ export default function SteadyHandGame() {
               boxShadow: '0 4px 20px rgba(251,191,36,0.5)',
             }}
           >
-            🏆 New Best!
+            ★ New Best!
           </motion.div>
         )}
       </AnimatePresence>
