@@ -319,7 +319,7 @@ export default function ThreadNeedleGame() {
       {phase === 'done' && finalSig && <>
         <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI} score={String(finalSig.score)} personality={getPersonality(finalSig)}
           insights={[{ label: 'Threads Passed', value: String(finalSig.score), color: accent }, { label: 'Attempts', value: String(finalSig.attempts), color: '#94a3b8' }, { label: 'Best Streak', value: `${finalSig.maxStreak}x`, color: '#fbbf24' }, { label: 'Near Misses', value: String(finalSig.nearMisses), color: '#f97316' }]}
-          accentColor={accent} onPlayAgain={handlePlayAgain} didWin={finalSig.score >= 3} finalScore={finalSig.score} />
+          accentColor={accent} onPlayAgain={handlePlayAgain} didWin={finalSig.score >= 3} />
         <WebhookEmitter theme={theme} sig={finalSig} personality={getPersonality(finalSig)} player={playerSessionRef.current} />
       </>}
     </GameShell>

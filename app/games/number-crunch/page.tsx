@@ -197,7 +197,7 @@ export default function NumberCrunchGame() {
     scene.add(stars);
 
     // Answer cubes — 2x2 grid
-    const cubeGeo = new THREE.RoundedBoxGeometry(2.8, 1.6, 0.4, 4, 0.12);
+    const cubeGeo = new THREE.BoxGeometry(2.8, 1.6, 0.4);
     const positions = [[-2, 1.2, 0], [2, 1.2, 0], [-2, -1.2, 0], [2, -1.2, 0]];
     cubesRef.current = [];
     positions.forEach((pos, i) => {

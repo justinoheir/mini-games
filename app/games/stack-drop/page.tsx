@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
+import * as THREE from 'three';
 import GameShell from '@/components/GameShell';
 import GameHUD from '@/components/GameHUD';
 import GameStartScreen from '@/components/GameStartScreen';
@@ -14,710 +15,343 @@ import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
 import { motion, AnimatePresence } from 'framer-motion';
 import ScorePopEffect, { useScorePop } from '@/components/ScorePopEffect';
 import StreakBadge from '@/components/StreakBadge';
-import SwipeInstructions from '@/components/SwipeInstructions';
 
+const GAME_ID = 'stack-drop';
+const PB_KEY = 'pb_stack-drop';
+const ACCENT = '#f97316';
+const DURATION = 60;
+const GAME_EMOJI = '🧱';
+const GAME_TITLE = 'Stack Drop';
+const GAME_TAGLINE = "Drop it. Stack it. Don't tip it.";
+const BLOCK_H = 0.35;
+const INITIAL_W = 2.2;
+const PERFECT_TOL = 0.12;
 
-// --- SPRITE CACHE -------------------------------------------------------------
-const _spriteCache = new Map<string, HTMLImageElement>();
-function _loadSprite(src: string): HTMLImageElement {
-  if (_spriteCache.has(src)) return _spriteCache.get(src)!;
-  const img = new Image();
-  img.src = src;
-  _spriteCache.set(src, img);
-  return img;
-}
-if (typeof window !== 'undefined') {
-  _loadSprite('/sprites/stack-drop/block.svg');
-}
-
-const GAME_ID      = 'stack-drop';
-const PB_KEY       = 'pb_stack-drop';
-const ACCENT       = '#f97316';
-const DURATION     = 60;
-const GAME_EMOJI   = '🧱';
-const GAME_TITLE   = 'Stack Drop';
-const GAME_TAGLINE = 'Drop it. Stack it. Don\'t tip it.';
-
-const BLOCK_HEIGHT    = 28;
-const INITIAL_WIDTH   = 0.78;  // fraction of canvas width
-const MIN_WIDTH_FRAC  = 0.20;  // below 20% of original = "too narrow", reset to top block width
-const PERFECT_PX      = 10;    // overlap within this = perfect drop
-const MISS_PAUSE_MS   = 1000;  // pause slider for 1s on complete miss (per spec)
-
-interface Block {
-  x: number;       // left edge
-  width: number;
-  y: number;       // top edge in canvas coords
-  color: string;
-}
-
-interface Particle {
-  x: number;
-  y: number;
-  vx: number;
-  vy: number;
-  w: number;
-  h: number;
-  color: string;
-  alpha: number;
-  life: number;    // remaining life 1→0
-}
-
-interface Signals {
-  blocksDropped: number;
-  perfectDrops: number;
-  overhangs: number[];
-  maxHeight: number;
-  earlyDrops: number;
-  lateDrops: number;
-  score: number;
-}
-
+interface Block3D { mesh: THREE.Mesh; x: number; w: number; y: number; color: number; }
+interface Signals { score: number; perfectDrops: number; goodDrops: number; missDrops: number; maxStack: number; maxStreak: number; streakCurrent: number; }
 function getPersonality(sig: Signals): string {
-  const total = sig.blocksDropped;
-  // Perfectionist: precision-focused — high perfect drops with impressive height
-  if (sig.perfectDrops >= 8 && sig.maxHeight >= 8)               return 'Perfectionist 🎯';
-  // Speed Stacker: blazes ahead — high blocks dropped + impressive height
-  if (total >= 20 && sig.maxHeight >= 10)                        return 'Speed Stacker ⚡';
-  // The Architect: methodical builder — good precision + solid height
-  if (sig.perfectDrops >= 5 && sig.maxHeight >= 6)               return 'The Architect 🏗️';
-  // Bold Builder: goes for it regardless — high block count or aggressive style
-  if (total >= 12)                                               return 'Bold Builder 🧱';
-  // Bold Builder fallback
-  return 'Bold Builder 🧱';
+  const total = sig.perfectDrops + sig.goodDrops + sig.missDrops;
+  const perfRate = total > 0 ? sig.perfectDrops / total : 0;
+  if (perfRate >= 0.5 && sig.maxStack >= 12) return 'Tower Master 🏰';
+  if (sig.maxStack >= 15) return 'Sky Builder 🌆';
+  if (sig.perfectDrops >= 8) return 'Precision Stacker 🎯';
+  if (sig.maxStreak >= 5) return 'Steady Hands 🤲';
+  return 'Block Dropper 🧱';
 }
-
 type Phase = 'start' | 'countdown' | 'playing' | 'done';
 
-function blockColor(index: number, accent: string): string {
-  const shades = [accent, accent + 'cc', accent + 'aa', accent + '88', accent + 'ff'];
-  return shades[index % shades.length];
-}
-
-interface GameState {
-  running: boolean;
-  timeLeft: number;
-  sig: Signals;
-  // Slider
-  sliderX: number;
-  sliderDir: number;       // 1 = right, -1 = left
-  sliderSpeed: number;
-  sliderWidth: number;
-  // Stack
-  stack: Block[];
-  cameraY: number;         // canvas offset — camera follows stack height
-  accentColor: string;
-  // miss shake feedback
-  missActive: boolean;
-  missStartTs: number;
-  // pause slider on miss (spec: 1s pause)
-  missUntilTs: number;
-  // overhang particle debris
-  particles: Particle[];
-}
-
 export default function StackDropGame() {
-  const theme        = useBrandTheme();
-  const canvasRef    = useRef<HTMLCanvasElement>(null);
-  const animRef      = useRef(0);
-  const timerRef     = useRef<ReturnType<typeof setInterval> | null>(null);
+  const theme = useBrandTheme();
+  const mountRef = useRef<HTMLDivElement>(null);
+  const animRef = useRef(0);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const stopMusicRef = useRef<(() => void) | null>(null);
-  const stateRef     = useRef<GameState>({
+
+  const stateRef = useRef({
+    renderer: null as THREE.WebGLRenderer | null,
+    scene: null as THREE.Scene | null,
+    camera: null as THREE.PerspectiveCamera | null,
+    sliderMesh: null as THREE.Mesh | null,
+    sliderLight: null as THREE.PointLight | null,
+    stackLight: null as THREE.PointLight | null,
+    stack: [] as Block3D[],
+    sliderX: 0, sliderDir: 1, sliderSpeed: 0.03,
+    sliderW: INITIAL_W,
     running: false, timeLeft: DURATION,
-    sig: { blocksDropped: 0, perfectDrops: 0, overhangs: [], maxHeight: 0, earlyDrops: 0, lateDrops: 0, score: 0 },
-    sliderX: 0, sliderDir: 1, sliderSpeed: 3.5, sliderWidth: 0,
-    stack: [], cameraY: 0, accentColor: ACCENT,
-    // miss shake feedback
-    missActive: false, missStartTs: 0,
-    // pause + particles
-    missUntilTs: 0, particles: [],
+    sig: { score: 0, perfectDrops: 0, goodDrops: 0, missDrops: 0, maxStack: 0, maxStreak: 0, streakCurrent: 0 } as Signals,
+    missPaused: false, pauseUntil: 0,
+    flashTimer: 0, flashColor: 0xffffff,
+    particles: [] as { mesh: THREE.Mesh; vx: number; vy: number; vz: number; life: number }[],
   });
-  const phaseRef     = useRef<Phase>('start');
 
-  const [phase, setPhase]             = useState<Phase>('start');
-  const [showInstructions, setShowInstructions] = useState(true);
-  const [timeLeft, setTimeLeft]       = useState(DURATION);
+  const [phase, setPhase] = useState<Phase>('start');
+  const [timeLeft, setTimeLeft] = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
-  // ⚡ heightDisplay tracks actual block count — HUD label is 'HEIGHT', not 'SCORE'
-  const [heightDisplay, setHeightDisplay] = useState(0);
-  const [finalSig, setFinalSig]       = useState<Signals | null>(null);
-  const [playerName, setPlayerName]   = useState('');
-  const [playerAvatar, setPlayerAvatar] = useState('🎮');
-  const { pops, triggerPop } = useScorePop();
-  const [streak, setStreak] = useState(0);
+  const [finalSig, setFinalSig] = useState<Signals | null>(null);
   const [isNewBest, setIsNewBest] = useState(false);
+  const [streak, setStreak] = useState(0);
+  const { pops, triggerPop } = useScorePop();
   const prevScoreRef = useRef(0);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const playerSessionRef = useRef<PlayerSession | null>(null);
+
   useEffect(() => {
-    const numScore = typeof scoreDisplay === 'number' ? scoreDisplay : 0;
-    if (numScore > prevScoreRef.current) {
-      triggerPop(`+${numScore - prevScoreRef.current}`, window.innerWidth / 2, 200);
-      // Note: sfx.collect() already fires synchronously in dropBlock().
-      // Do NOT call playScoreHit / hapticScore here — would cause double audio + haptic.
-      setStreak(Math.floor(numScore / 5));
-    }
-    prevScoreRef.current = numScore;
-  }, [scoreDisplay]); // triggerPop is stable
-  const playerSessionRef              = useRef<PlayerSession | null>(null);
+    if (scoreDisplay > prevScoreRef.current) triggerPop(`+${scoreDisplay - prevScoreRef.current}`, window.innerWidth / 2, 200);
+    prevScoreRef.current = scoreDisplay;
+  }, [scoreDisplay, triggerPop]);
 
-  useEffect(() => { stateRef.current.accentColor = theme.colors.accent ?? ACCENT; }, [theme]);
-
-  // ─── INIT STACK ──────────────────────────────────────────────────────────
-
-  const initStack = useCallback((canvas: HTMLCanvasElement) => {
+  const endGame = useCallback(() => {
     const s = stateRef.current;
-    const baseWidth = window.innerWidth * INITIAL_WIDTH;
-    const baseX = (window.innerWidth - baseWidth) / 2;
-    const baseY = window.innerHeight - BLOCK_HEIGHT - 20; // near bottom
-
-    s.stack = [{
-      x: baseX,
-      width: baseWidth,
-      y: baseY,
-      color: s.accentColor,
-    }];
-    s.sliderWidth  = baseWidth;
-    s.sliderX      = baseX;
-    s.sliderDir    = 1;
-    s.sliderSpeed  = 3.5;
-    s.cameraY      = 0;
-    s.missUntilTs  = 0;
-    s.particles    = [];
-    s.sig          = { blocksDropped: 0, perfectDrops: 0, overhangs: [], maxHeight: 0, earlyDrops: 0, lateDrops: 0, score: 0 };
+    s.running = false;
+    cancelAnimationFrame(animRef.current);
+    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+    stopMusicRef.current?.();
+    if (s.renderer) { s.renderer.dispose(); s.renderer = null; }
+    playVictoryFanfare(); hapticVictory();
+    try { const pb = parseInt(localStorage.getItem(PB_KEY) || '0', 10); if (s.sig.score > pb) { localStorage.setItem(PB_KEY, String(s.sig.score)); setIsNewBest(true); } } catch { /* ignore */ }
+    setFinalSig({ ...s.sig }); setPhase('done');
   }, []);
-
-  // ─── DROP BLOCK ──────────────────────────────────────────────────────────
 
   const dropBlock = useCallback(() => {
     const s = stateRef.current;
-    if (!s.running || s.stack.length === 0) return;
-
-    const top = s.stack[s.stack.length - 1];
-    const slLeft  = s.sliderX;
-    const slRight = s.sliderX + s.sliderWidth;
-    const topLeft  = top.x;
-    const topRight = top.x + top.width;
-
-    // Overlap
-    const overlapLeft  = Math.max(slLeft, topLeft);
-    const overlapRight = Math.min(slRight, topRight);
-    const overlap = overlapRight - overlapLeft;
-
-    s.sig.blocksDropped++;
-
-    const canvas = canvasRef.current;
-    const W = canvas?.width ?? 300;
-    const originalWidth = W * INITIAL_WIDTH;
-
-    const handleMiss = () => {
-      sfx.collision();
-      haptic([60]);
-      s.sliderWidth  = top.width;
-      s.sliderX      = W / 2 - s.sliderWidth / 2;
-      s.sig.score    = Math.max(0, s.sig.score - 5);
-      setScoreDisplay(s.sig.score);
-      // Arm shake animation
-      s.missActive   = true;
-      s.missStartTs  = 0;
-      // Pause slider for 1 second (spec requirement)
-      s.missUntilTs  = performance.now() + MISS_PAUSE_MS;
-    };
-
+    if (!s.running || s.missPaused) return;
+    const topBlock = s.stack.length > 0 ? s.stack[s.stack.length - 1] : { x: 0, w: INITIAL_W, y: -2.5 };
+    const sliderX = s.sliderX, sliderW = s.sliderW;
+    const topX = topBlock.x, topW = topBlock.w;
+    const overlap = Math.min(sliderX + sliderW / 2, topX + topW / 2) - Math.max(sliderX - sliderW / 2, topX - topW / 2);
     if (overlap <= 0) {
-      // Completely missed
-      handleMiss();
+      // Complete miss
+      s.sig.missDrops++; s.sig.streakCurrent = 0; setStreak(0);
+      sfx.collision(); hapticFail();
+      s.missPaused = true; s.pauseUntil = Date.now() + 1000;
+      s.flashTimer = 15; s.flashColor = 0xef4444;
       return;
     }
+    const newX = Math.max(sliderX - sliderW / 2, topX - topW / 2) + overlap / 2;
+    const newW = overlap;
+    const newY = topBlock.y + BLOCK_H;
+    const isPerfect = Math.abs(sliderX - topX) < PERFECT_TOL;
+    if (isPerfect) { s.sig.perfectDrops++; } else { s.sig.goodDrops++; }
+    s.sig.streakCurrent++;
+    if (s.sig.streakCurrent > s.sig.maxStreak) s.sig.maxStreak = s.sig.streakCurrent;
+    const stackHeight = s.stack.length + 1;
+    if (stackHeight > s.sig.maxStack) s.sig.maxStack = stackHeight;
+    const pts = 1 + (isPerfect ? 2 : 0) + Math.floor(s.sig.streakCurrent / 5);
+    s.sig.score += pts; setScoreDisplay(s.sig.score); setStreak(s.sig.streakCurrent);
+    playScoreHit?.(); hapticScore();
+    s.flashTimer = 10; s.flashColor = isPerfect ? 0x22c55e : 0xf97316;
 
-    // ⚡ "Too narrow" check — if trimmed overlap < 20% of original width, treat as miss
-    if (overlap < originalWidth * MIN_WIDTH_FRAC) {
-      handleMiss();
-      return;
-    }
+    // Create block mesh
+    const blockColors = [0xf97316, 0xfbbf24, 0xef4444, 0xa855f7, 0x06b6d4, 0x22c55e];
+    const color = blockColors[s.stack.length % blockColors.length];
+    const geo = new THREE.BoxGeometry(newW, BLOCK_H, 0.8);
+    const mat = new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: isPerfect ? 0.5 : 0.1, roughness: 0.4, metalness: 0.2 });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.set(newX, newY, 0);
+    s.scene!.add(mesh);
+    s.stack.push({ mesh, x: newX, w: newW, y: newY, color });
 
-    const overhang = Math.abs((slLeft + s.sliderWidth / 2) - (topLeft + top.width / 2));
-    s.sig.overhangs.push(Math.round(overhang));
-
-    const isPerfect = overhang <= PERFECT_PX;
-    if (isPerfect) {
-      s.sig.perfectDrops++;
-      s.sig.score += 20;
-      haptic([20, 10, 20]);
-    } else {
-      s.sig.score += 10;
-      haptic([30]);
-    }
-
-    // Determine if slider was "early" or "late" relative to center
-    const slCenter  = slLeft + s.sliderWidth / 2;
-    const topCenter = topLeft + top.width / 2;
-    if (slCenter < topCenter) s.sig.earlyDrops++;
-    else if (slCenter > topCenter) s.sig.lateDrops++;
-
-    // ⚡ Spawn particle debris for the trimmed overhang (left and/or right side)
-    if (!isPerfect) {
-      const spawnDebris = (fromX: number, toX: number, blockY: number) => {
-        const segW = Math.abs(toX - fromX);
-        if (segW < 2) return;
-        const numP = Math.min(8, Math.max(2, Math.round(segW / 12)));
-        for (let pi = 0; pi < numP; pi++) {
-          const px = fromX + Math.random() * segW;
-          const pw = 4 + Math.random() * 8;
-          const ph = 4 + Math.random() * (BLOCK_HEIGHT * 0.6);
-          s.particles.push({
-            x: px, y: blockY,
-            vx: (Math.random() - 0.5) * 2.5,
-            vy: 1.5 + Math.random() * 3,
-            w: pw, h: ph,
-            color: s.accentColor,
-            alpha: 0.85,
-            life: 1,
-          });
-        }
-      };
-      // Left overhang trim
-      if (slLeft < overlapLeft) spawnDebris(slLeft, overlapLeft, top.y - BLOCK_HEIGHT);
-      // Right overhang trim
-      if (slRight > overlapRight) spawnDebris(overlapRight, slRight, top.y - BLOCK_HEIGHT);
-    }
-
-    // New block placed at overlap position, one row above top
-    const newY = top.y - BLOCK_HEIGHT;
-    const newBlock: Block = {
-      x: overlapLeft,
-      width: overlap,
-      y: newY,
-      color: blockColor(s.stack.length, s.accentColor),
-    };
-    s.stack.push(newBlock);
-
-    const height = s.stack.length - 1; // base doesn't count
-    if (height > s.sig.maxHeight) s.sig.maxHeight = height;
-    setScoreDisplay(s.sig.score);
-
-    // Camera: scroll up if stack is getting tall
-    if (canvas) {
-      const stackTopInCanvas = newY - s.cameraY;
-      if (stackTopInCanvas < window.innerHeight * 0.35) {
-        s.cameraY -= (window.innerHeight * 0.35 - stackTopInCanvas);
+    // Burst particles for perfect
+    if (isPerfect && s.scene) {
+      for (let i = 0; i < 12; i++) {
+        const pGeo = new THREE.SphereGeometry(0.06, 4, 4);
+        const pMat = new THREE.MeshStandardMaterial({ color, transparent: true, opacity: 1 });
+        const pMesh = new THREE.Mesh(pGeo, pMat);
+        pMesh.position.set(newX, newY + BLOCK_H / 2, 0);
+        s.scene.add(pMesh);
+        const angle = Math.random() * Math.PI * 2;
+        s.particles.push({ mesh: pMesh, vx: Math.cos(angle) * 0.08, vy: 0.08 + Math.random() * 0.06, vz: (Math.random() - 0.5) * 0.05, life: 25 });
       }
     }
 
-    // Next slider: width = overlap (trimmed), center near top block
-    s.sliderWidth = isPerfect ? top.width : overlap; // perfect keeps full width
-    s.sliderX     = overlapLeft; // start from overlap position
-    // Increase speed over time
-    s.sliderSpeed = 3.5 + s.sig.blocksDropped * 0.12;
+    // Slider gets narrower on miss, stays same on hit (classic stack behavior)
+    s.sliderW = isPerfect ? newW : Math.max(0.4, newW - 0.05);
+    s.sliderSpeed = Math.min(0.06, 0.03 + stackHeight * 0.001);
 
-    // ⚡ Update height display with actual block count (not points)
-    setHeightDisplay(s.sig.maxHeight);
-    // Both perfect and hit play collect; sfx.collect() is spec hitSound
-    sfx.collect();
+    // Scroll camera up
+    if (s.camera) {
+      const targetY = Math.max(0, newY - 1);
+      s.camera.position.y += (targetY - s.camera.position.y) * 0.1;
+    }
+    if (s.stackLight) s.stackLight.position.y = newY + 1;
   }, []);
-
-  // ─── GAME LOOP ───────────────────────────────────────────────────────────
 
   const startLoop = useCallback(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
     const s = stateRef.current;
+    s.running = true; s.timeLeft = DURATION;
+    s.sig = { score: 0, perfectDrops: 0, goodDrops: 0, missDrops: 0, maxStack: 0, maxStreak: 0, streakCurrent: 0 };
+    s.stack = []; s.particles = []; s.sliderX = 0; s.sliderDir = 1; s.sliderSpeed = 0.03;
+    s.sliderW = INITIAL_W; s.missPaused = false;
+    setScoreDisplay(0); setTimeLeft(DURATION); setStreak(0);
+    stopMusicRef.current = startMusic('minimal');
 
-    initStack(canvas);
-    s.running  = true;
-    s.timeLeft = DURATION;
-    setPhase('playing');
-    phaseRef.current = 'playing';
-    stopMusicRef.current = startMusic('drive');
+    const W = window.innerWidth, H = window.innerHeight;
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(W, H);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setClearColor(0x0a0a1a);
+    if (mountRef.current) { mountRef.current.innerHTML = ''; mountRef.current.appendChild(renderer.domElement); }
+    s.renderer = renderer;
 
-    // Timer
+    const scene = new THREE.Scene();
+    scene.fog = new THREE.Fog(0x0a0a1a, 15, 35);
+    s.scene = scene;
+    const camera = new THREE.PerspectiveCamera(65, W / H, 0.1, 100);
+    camera.position.set(0, 0, 7);
+    camera.lookAt(0, 0, 0);
+    s.camera = camera;
+
+    scene.add(new THREE.AmbientLight(0x0a0a1a, 3));
+    const topLight = new THREE.PointLight(0xf97316, 2, 20);
+    topLight.position.set(0, 10, 3);
+    scene.add(topLight);
+    const stackLight = new THREE.PointLight(0xf97316, 2, 12);
+    stackLight.position.set(0, 0, 2);
+    scene.add(stackLight);
+    s.stackLight = stackLight;
+    const sliderLight = new THREE.PointLight(0xfbbf24, 2, 6);
+    scene.add(sliderLight);
+    s.sliderLight = sliderLight;
+
+    // Base platform
+    const basePlatGeo = new THREE.BoxGeometry(INITIAL_W + 0.2, BLOCK_H, 0.9);
+    const basePlatMat = new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.6 });
+    const basePlat = new THREE.Mesh(basePlatGeo, basePlatMat);
+    basePlat.position.set(0, -2.5, 0);
+    scene.add(basePlat);
+    s.stack.push({ mesh: basePlat, x: 0, w: INITIAL_W, y: -2.5, color: 0x222222 });
+
+    // Stars
+    const sp = new Float32Array(300*3);
+    for (let i=0;i<300;i++){sp[i*3]=(Math.random()-.5)*50;sp[i*3+1]=(Math.random()-.5)*50;sp[i*3+2]=(Math.random()-.5)*50;}
+    const sg=new THREE.BufferGeometry();sg.setAttribute('position',new THREE.BufferAttribute(sp,3));
+    scene.add(new THREE.Points(sg,new THREE.PointsMaterial({color:0xffffff,size:0.05})));
+
+    // Slider block
+    const sliderGeo = new THREE.BoxGeometry(INITIAL_W, BLOCK_H, 0.8);
+    const sliderMat = new THREE.MeshStandardMaterial({ color: 0xf97316, emissive: 0xf97316, emissiveIntensity: 0.5, roughness: 0.3 });
+    const sliderMesh = new THREE.Mesh(sliderGeo, sliderMat);
+    sliderMesh.position.set(0, -2.5 + BLOCK_H, 0);
+    scene.add(sliderMesh);
+    s.sliderMesh = sliderMesh;
+
+    const handleResize = () => {
+      const w = window.innerWidth, h = window.innerHeight;
+      renderer.setSize(w, h); camera.aspect = w / h; camera.updateProjectionMatrix();
+    };
+    window.addEventListener('resize', handleResize);
+    (s as any)._cleanup = () => window.removeEventListener('resize', handleResize);
+
     timerRef.current = setInterval(() => {
-      const st = stateRef.current;
-      st.timeLeft = Math.max(0, st.timeLeft - 1);
-      setTimeLeft(st.timeLeft);
-      // Urgency cue at ≤5s
-      if (st.timeLeft <= 10 && st.timeLeft > 0) sfx.tick();
-      if (st.timeLeft <= 0) {
-        st.running = false;
-        clearInterval(timerRef.current!);
-        cancelAnimationFrame(animRef.current);
-        stopMusicRef.current?.();
-        // ⚡ End sound + celebratory haptic
-        sfx.success();
-    hapticVictory();
-    playVictoryFanfare();
-    // Personal best tracking
-    try {
-      const _pbPrev = parseInt(localStorage.getItem(PB_KEY) || '0', 10);
-      const _pbVal = parseFloat(String(st.sig?.maxHeight ?? 0));
-      if (!isNaN(_pbVal) && _pbVal > _pbPrev) {
-        localStorage.setItem(PB_KEY, String(Math.round(_pbVal)));
-        setIsNewBest(true);
-      }
-    } catch { /* ignore */ }
-
-
-        setFinalSig({ ...st.sig });
-        setPhase('done');
-        phaseRef.current = 'done';
-      }
+      s.timeLeft--; setTimeLeft(s.timeLeft);
+      if (s.timeLeft <= 10 && s.timeLeft > 0) sfx.tick();
+      if (s.timeLeft <= 0) endGame();
     }, 1000);
 
-    let lastTime = 0;
-    function loop(ts: number) {
+    const loop = () => {
       if (!s.running) return;
-      const dt = Math.min(ts - lastTime, 50);
-      lastTime = ts;
+      const t = Date.now() * 0.001;
 
-      const cvs = canvasRef.current;
-      if (!cvs) { animRef.current = requestAnimationFrame(loop); return; }
-      const ctx = cvs.getContext('2d');
-      if (!ctx) { animRef.current = requestAnimationFrame(loop); return; }
-      // use cvs for dimensions below
-
-      const W = cvs.width;
-      const H = cvs.height;
-
-      // Move slider — pause during the 1-second miss window
-      if (performance.now() > s.missUntilTs) {
-        s.sliderX += s.sliderDir * s.sliderSpeed * (dt / 16.67);
-        if (s.sliderX + s.sliderWidth >= W) {
-          s.sliderX  = W - s.sliderWidth;
-          s.sliderDir = -1;
-        } else if (s.sliderX <= 0) {
-          s.sliderX  = 0;
-          s.sliderDir = 1;
-        }
-      } // end miss-pause guard
-
-      // Background — dark slate/purple gradient
-      const sdBg = ctx.createRadialGradient(W * 0.5, H * 0.35, 0, W * 0.5, H * 0.65, Math.max(W, H) * 0.9);
-      sdBg.addColorStop(0,   '#0f0820');
-      sdBg.addColorStop(0.55, '#080514');
-      sdBg.addColorStop(1,   '#030208');
-      ctx.fillStyle = sdBg;
-      ctx.fillRect(0, 0, W, H);
-
-      // Vignette
-      const sdVig = ctx.createRadialGradient(W * 0.5, H * 0.5, H * 0.25, W * 0.5, H * 0.5, H * 0.85);
-      sdVig.addColorStop(0, 'rgba(0,0,0,0)');
-      sdVig.addColorStop(1, 'rgba(0,0,0,0.55)');
-      ctx.fillStyle = sdVig;
-      ctx.fillRect(0, 0, W, H);
-
-      // Camera transform
-      ctx.save();
-      ctx.translate(0, -s.cameraY);
-
-      // Draw stack blocks
-      for (let i = 0; i < s.stack.length; i++) {
-        const b = s.stack[i];
-        const isPerfect = i > 0 && s.sig.overhangs[i - 1] <= PERFECT_PX;
-        ctx.fillStyle = b.color;
-        ctx.beginPath();
-        const r = 6;
-        ctx.moveTo(b.x + r, b.y);
-        ctx.lineTo(b.x + b.width - r, b.y);
-        ctx.quadraticCurveTo(b.x + b.width, b.y, b.x + b.width, b.y + r);
-        ctx.lineTo(b.x + b.width, b.y + BLOCK_HEIGHT - r);
-        ctx.quadraticCurveTo(b.x + b.width, b.y + BLOCK_HEIGHT, b.x + b.width - r, b.y + BLOCK_HEIGHT);
-        ctx.lineTo(b.x + r, b.y + BLOCK_HEIGHT);
-        ctx.quadraticCurveTo(b.x, b.y + BLOCK_HEIGHT, b.x, b.y + BLOCK_HEIGHT - r);
-        ctx.lineTo(b.x, b.y + r);
-        ctx.quadraticCurveTo(b.x, b.y, b.x + r, b.y);
-        ctx.closePath();
-        ctx.fill();
-        if (isPerfect) {
-          ctx.strokeStyle = '#fff';
-          ctx.lineWidth   = 1.5;
-          ctx.stroke();
-        }
+      // Pause on miss
+      if (s.missPaused && Date.now() > s.pauseUntil) {
+        s.missPaused = false;
+        sfx.tick();
       }
 
-      // Draw slider block
-      if (s.stack.length > 0) {
-        const top  = s.stack[s.stack.length - 1];
-        const slY  = top.y - BLOCK_HEIGHT;
-        ctx.fillStyle = s.accentColor;
-        ctx.globalAlpha = 0.85 + 0.15 * Math.sin(ts / 180);
-        const r2 = 6;
-        ctx.beginPath();
-        ctx.moveTo(s.sliderX + r2, slY);
-        ctx.lineTo(s.sliderX + s.sliderWidth - r2, slY);
-        ctx.quadraticCurveTo(s.sliderX + s.sliderWidth, slY, s.sliderX + s.sliderWidth, slY + r2);
-        ctx.lineTo(s.sliderX + s.sliderWidth, slY + BLOCK_HEIGHT - r2);
-        ctx.quadraticCurveTo(s.sliderX + s.sliderWidth, slY + BLOCK_HEIGHT, s.sliderX + s.sliderWidth - r2, slY + BLOCK_HEIGHT);
-        ctx.lineTo(s.sliderX + r2, slY + BLOCK_HEIGHT);
-        ctx.quadraticCurveTo(s.sliderX, slY + BLOCK_HEIGHT, s.sliderX, slY + BLOCK_HEIGHT - r2);
-        ctx.lineTo(s.sliderX, slY + r2);
-        ctx.quadraticCurveTo(s.sliderX, slY, s.sliderX + r2, slY);
-        ctx.closePath();
-        ctx.fill();
-        ctx.globalAlpha = 1;
+      // Move slider
+      if (!s.missPaused) {
+        s.sliderX += s.sliderDir * s.sliderSpeed;
+        const topBlock = s.stack[s.stack.length - 1];
+        const limit = topBlock.w / 2 + s.sliderW / 2 + 0.5;
+        if (Math.abs(s.sliderX) > limit) s.sliderDir *= -1;
       }
 
-      ctx.restore();
+      // Update slider mesh
+      const topBlock = s.stack[s.stack.length - 1];
+      const sliderY = topBlock.y + BLOCK_H;
+      sliderMesh.position.set(s.sliderX, sliderY, 0);
+      sliderMesh.scale.x = s.sliderW / INITIAL_W;
+      sliderLight.position.set(s.sliderX, sliderY + 0.5, 1);
+      const sliderMat2 = sliderMesh.material as THREE.MeshStandardMaterial;
+      sliderMat2.emissiveIntensity = 0.3 + Math.sin(t * 4) * 0.2;
 
-      // ⚡ Overhang debris particles — update physics + draw
-      if (s.particles.length > 0) {
-        ctx.save();
-        ctx.translate(0, -s.cameraY);
-        for (let pi = s.particles.length - 1; pi >= 0; pi--) {
-          const p = s.particles[pi];
-          p.x  += p.vx;
-          p.y  += p.vy;
-          p.vy += 0.15;   // gravity
-          p.life -= 0.03;
-          p.alpha = Math.max(0, p.life * 0.85);
-          if (p.life <= 0) { s.particles.splice(pi, 1); continue; }
-          ctx.globalAlpha = p.alpha;
-          ctx.fillStyle   = p.color;
-          ctx.fillRect(p.x, p.y, p.w, p.h);
-        }
-        ctx.globalAlpha = 1;
-        ctx.restore();
+      // Flash
+      if (s.flashTimer > 0) {
+        s.flashTimer--;
+        renderer.setClearColor(new THREE.Color(s.flashColor).lerp(new THREE.Color(0x0a0a1a), 1 - s.flashTimer / 15));
+      } else {
+        renderer.setClearColor(0x0a0a1a);
       }
 
-      // ⚡ Miss shake + MISS! text flash (600ms)
-      if (s.missActive) {
-        if (s.missStartTs === 0) s.missStartTs = ts;
-        const elapsed = ts - s.missStartTs;
-        if (elapsed < 600) {
-          // Shake: oscillate canvas translate
-          const shakeX = Math.sin(elapsed * 0.08) * 7 * (1 - elapsed / 600);
-          ctx.save();
-          ctx.translate(shakeX, 0);
-          ctx.font         = 'bold 32px sans-serif';
-          ctx.textAlign    = 'center';
-          ctx.textBaseline = 'middle';
-          const alpha = Math.max(0, 1 - elapsed / 600);
-          ctx.globalAlpha = alpha;
-          ctx.fillStyle   = '#ef4444';
-          ctx.fillText('MISS!', W / 2, H / 2);
-          ctx.globalAlpha = 1;
-          ctx.restore();
-        } else {
-          s.missActive   = false;
-          s.missStartTs  = 0;
-        }
+      // Particles
+      for (let pi = s.particles.length - 1; pi >= 0; pi--) {
+        const p = s.particles[pi];
+        p.mesh.position.x += p.vx; p.mesh.position.y += p.vy; p.mesh.position.z += p.vz;
+        p.vy -= 0.005; p.life--;
+        (p.mesh.material as THREE.MeshStandardMaterial).opacity = p.life / 25;
+        if (p.life <= 0) { scene.remove(p.mesh); s.particles.splice(pi, 1); }
       }
 
+      // Camera track stack height
+      const stackTopY = s.stack.length > 1 ? s.stack[s.stack.length - 1].y : -2.5;
+      const cameraTargetY = Math.max(0, stackTopY - 1.5);
+      camera.position.y += (cameraTargetY - camera.position.y) * 0.04;
+      camera.lookAt(0, cameraTargetY, 0);
+
+      renderer.render(scene, camera);
       animRef.current = requestAnimationFrame(loop);
-    }
-
+    };
     animRef.current = requestAnimationFrame(loop);
-  }, [initStack]);
 
-  // ─── CANVAS SETUP ────────────────────────────────────────────────────────
-  // NOTE: canvas only mounts when phase is 'countdown' or 'playing', so we
-  // must include 'phase' in deps to guarantee this effect re-runs once the
-  // canvas element is actually in the DOM.
+    if (mountRef.current) mountRef.current.addEventListener('pointerdown', dropBlock);
+    (s as any)._tapCleanup = () => mountRef.current?.removeEventListener('pointerdown', dropBlock);
+  }, [endGame, dropBlock]);
 
-  useEffect(() => {
-    if (phase !== 'playing' && phase !== 'countdown') return;
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    const resize = () => {
-      const dpr = window.devicePixelRatio || 1;
-      const w = window.innerWidth;
-      const h = window.innerHeight;
-      canvas.style.width  = w + 'px';
-      canvas.style.height = h + 'px';
-      canvas.width  = w * dpr;
-      canvas.height = h * dpr;
-      const ctx2 = canvas.getContext('2d');
-      if (ctx2) ctx2.setTransform(dpr, 0, 0, dpr, 0, 0);
-    };
-    resize();
-    window.addEventListener('resize', resize);
-
-    const onPointerDown = () => {
-      if (phaseRef.current !== 'playing') return;
-      dropBlock();
-    };
-    canvas.addEventListener('pointerdown', onPointerDown);
-
-    return () => {
-      window.removeEventListener('resize', resize);
-      canvas.removeEventListener('pointerdown', onPointerDown);
-    };
-  }, [dropBlock, phase]);
-
-  // ─── CLEANUP ─────────────────────────────────────────────────────────────
-
-  useEffect(() => {
-    return () => {
-      cancelAnimationFrame(animRef.current);
-      if (timerRef.current) clearInterval(timerRef.current);
-      if (stopMusicRef.current) stopMusicRef.current();
-    };
+  useEffect(() => () => {
+    cancelAnimationFrame(animRef.current);
+    if (timerRef.current) clearInterval(timerRef.current);
+    stopMusicRef.current?.();
+    const s = stateRef.current;
+    if (s.renderer) s.renderer.dispose();
+    (s as any)._cleanup?.(); (s as any)._tapCleanup?.();
   }, []);
 
-  // ─── PHASE HANDLERS ──────────────────────────────────────────────────────
-
-  const handleStart = useCallback(async (name: string, avatar: string) => {
-    setPlayerName(name);
-    setPlayerAvatar(avatar);
-    await initAudio(); sfx.click();
-    playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar);
-    setPhase('countdown');
-    phaseRef.current = 'countdown';
+  const handleStart = useCallback(async (n: string, a: string) => {
+    playerSessionRef.current = savePlayerSession(GAME_ID, n, a);
+    await initAudio(); setPhase('countdown');
   }, []);
+  const handlePlayAgain = useCallback(() => { setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null); setIsNewBest(false); setStreak(0); prevScoreRef.current = 0; }, []);
 
-  const handleCountdownDone = useCallback(() => { startLoop(); }, [startLoop]);
-
-  const handlePlayAgain = useCallback(() => {
-    setPhase('start');
-    phaseRef.current = 'start';
-    setScoreDisplay(0);
-    setHeightDisplay(0);
-    setTimeLeft(DURATION);
-    setFinalSig(null);
-  
-    setIsNewBest(false);
-    setStreak(0);
-    prevScoreRef.current = 0;
-  }, []);
-
-  // ─── INSIGHTS ────────────────────────────────────────────────────────────
-
-  const buildInsights = (sig: Signals) => {
-    const avgOverhang = sig.overhangs.length > 0
-      ? Math.round(sig.overhangs.reduce((a, b) => a + b, 0) / sig.overhangs.length)
-      : 0;
-    return [
-      { label: 'Max Height', value: `${sig.maxHeight} blocks`, color: sig.maxHeight >= 12 ? '#4ade80' : sig.maxHeight >= 7 ? '#facc15' : '#ef4444' },
-      { label: 'Perfect Drops', value: `${sig.perfectDrops}`, color: sig.perfectDrops >= 8 ? '#4ade80' : sig.perfectDrops >= 4 ? '#facc15' : '#ef4444' },
-      { label: 'Avg Overhang', value: `${avgOverhang}px`, color: avgOverhang < 15 ? '#4ade80' : avgOverhang < 30 ? '#facc15' : '#ef4444' },
-      { label: 'Blocks Stacked', value: `${sig.blocksDropped}`, color: theme.colors.accent ?? ACCENT },
-    ];
-  };
-
-  // ─── RENDER ──────────────────────────────────────────────────────────────
+  const accent = theme.colors.accent ?? ACCENT;
 
   return (
-    <>
-      {phase === 'start' && showInstructions && (
-        <SwipeInstructions
-          gameId="stack-drop"
-          steps={[{ icon: "👆", title: "Tap to drop", body: "Tap the screen to drop the block onto the stack." }, { icon: "⬜", title: "Stack perfectly", body: "Align blocks precisely — overhanging parts fall off." }, { icon: "🏆", title: "Stack higher", body: "How tall can you build before it falls?" }]}
-          onDone={() => setShowInstructions(false)}
-        />
-      )}
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}
-      background="radial-gradient(ellipse at 50% 0%, rgba(255,200,120,0.15) 0%, transparent 55%), linear-gradient(180deg, #2a1a08 0%, #3a2210 30%, #4a2a14 55%, #3a2210 80%, #2a1a08 100%)">
-
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accent}
+      background="linear-gradient(180deg, #0a0a1a 0%, #05050d 100%)">
       {phase === 'start' && (
-        <GameStartScreen
-          emoji={GAME_EMOJI}
-          title={GAME_TITLE}
-          description={GAME_TAGLINE}
-          ctaLabel="Drop In"
-          accentColor={theme.colors.accent ?? ACCENT}
-          onStart={handleStart}
-          gradient="radial-gradient(ellipse 80% 70% at 50% 30%, #0f0820 0%, #080514 55%, #030208 100%)"
-        />
+        <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description="Tap to drop the sliding 3D block. Stack them perfectly!"
+          ctaLabel="Stack! 🧱" accentColor={accent} onStart={handleStart} />
       )}
-
-      {phase === 'countdown' && (
-        <Countdown onComplete={handleCountdownDone} accentColor={theme.colors.accent ?? ACCENT} />
-      )}
-
+      {phase === 'countdown' && <Countdown onComplete={startLoop} accentColor={accent} />}
       {(phase === 'playing' || phase === 'countdown') && (
+        <div ref={mountRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none' }} />
+      )}
+      {phase === 'playing' && (
         <>
-          <canvas
-            ref={canvasRef}
-            role="application"
-            aria-label="Stack Drop game canvas — tap to drop blocks"
-            style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none' }}
-          />
-          {phase === 'playing' && (
-            <GameHUD
-              accentColor={theme.colors.accent ?? ACCENT}
-              items={[
-                { label: 'TIME',   value: timeLeft,       danger: timeLeft <= 10, testId: 'timer' },
-                { label: 'HEIGHT', value: heightDisplay,  testId: 'score' },
-              ]}
-            />
-          )}
+          <GameHUD accentColor={accent} items={[
+            { label: 'TIME', value: timeLeft, danger: timeLeft <= 10 },
+            { label: 'SCORE', value: scoreDisplay },
+          ]} />
+          <ScorePopEffect pops={pops} accentColor={accent} />
+          <StreakBadge streak={streak} accentColor={accent} />
         </>
       )}
-
-      
-      {/* New best banner */}
       <AnimatePresence>
-        {isNewBest && (
-          <motion.div
-            key="new-best"
-            initial={{ opacity: 0, y: -20, scale: 0.8 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -20 }}
-            transition={{ duration: 0.4, delay: 0.5 }}
-            style={{
-              position: 'fixed', top: '10%', left: '50%', transform: 'translateX(-50%)',
-              zIndex: 90, pointerEvents: 'none',
-              background: 'linear-gradient(135deg, #fbbf24, #f59e0b)',
-              borderRadius: 20, padding: '8px 20px', fontSize: 20,
-              fontWeight: 900, color: '#000', whiteSpace: 'nowrap',
-              boxShadow: '0 4px 20px rgba(251,191,36,0.5)',
-            }}
-          >
+        {isNewBest && phase === 'done' && (
+          <motion.div key="nb" initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
+            style={{ position: 'fixed', top: '10%', left: '50%', transform: 'translateX(-50%)', zIndex: 90, background: 'linear-gradient(135deg, #fbbf24, #f59e0b)', borderRadius: 20, padding: '8px 20px', fontSize: 20, fontWeight: 900, color: '#000', whiteSpace: 'nowrap' }}>
             🏆 New Best!
           </motion.div>
         )}
       </AnimatePresence>
-
-{phase === 'done' && finalSig && (
-        <EndScreen
-          gameId={GAME_ID}
-          title={getPersonality(finalSig)}
-          emoji={GAME_EMOJI}
-          score={`${finalSig.maxHeight} blocks`}
-          personality={getPersonality(finalSig)}
-          insights={buildInsights(finalSig)}
-          accentColor={theme.colors.accent ?? ACCENT}
-          onPlayAgain={handlePlayAgain}
-          didWin={finalSig.maxHeight >= 8}
-          finalScore={finalSig.score}
-          gameDurationMs={DURATION * 1000}
-        />
-      )}
-
       {phase === 'done' && finalSig && (
-        <StackWebhookEmitter theme={theme} sig={finalSig} player={playerSessionRef.current} />
-      )}
-      {phase === 'playing' && (
         <>
-          <ScorePopEffect pops={pops} accentColor={theme.colors.accent ?? ACCENT} />
-          <StreakBadge streak={streak} accentColor={theme.colors.accent ?? ACCENT} />
+          <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI}
+            score={String(finalSig.score)} personality={getPersonality(finalSig)}
+            insights={[
+              { label: 'Max Stack', value: `${finalSig.maxStack} blocks`, color: accent },
+              { label: 'Perfects', value: String(finalSig.perfectDrops), color: '#4ade80' },
+              { label: 'Best Streak', value: `×${finalSig.maxStreak}`, color: '#fbbf24' },
+              { label: 'Misses', value: String(finalSig.missDrops), color: '#ef4444' },
+            ]}
+            accentColor={accent} onPlayAgain={handlePlayAgain} didWin={finalSig.maxStack >= 10} />
+          <WebhookHelper theme={theme} sig={finalSig} personality={getPersonality(finalSig)} player={playerSessionRef.current} />
         </>
       )}
     </GameShell>
-    </>
   );
 }
 
-function StackWebhookEmitter({ theme, sig, player }: {
-  theme: ReturnType<typeof useBrandTheme>;
-  sig: Signals;
-  player: PlayerSession | null;
-}) {
+function WebhookHelper({ theme, sig, personality, player }: { theme: ReturnType<typeof useBrandTheme>; sig: Signals; personality: string; player: PlayerSession | null; }) {
   const fired = useRef(false);
-  useEffect(() => {
-    if (fired.current) return;
-    fired.current = true;
-    const avgOverhang = sig.overhangs.length > 0
-      ? Math.round(sig.overhangs.reduce((a, b) => a + b, 0) / sig.overhangs.length)
-      : 0;
-    postWebhook(theme, GAME_ID, {
-      personality:    getPersonality(sig),
-      score:          sig.score,
-      maxHeight:      sig.maxHeight,
-      blocksDropped:  sig.blocksDropped,
-      perfectDrops:   sig.perfectDrops,
-      avgOverhang,
-      earlyDropRate:  sig.blocksDropped > 0 ? parseFloat((sig.earlyDrops / sig.blocksDropped).toFixed(3)) : 0,
-    }, player);
-  }, [theme, sig, player]);
+  useEffect(() => { if (fired.current) return; fired.current = true; postWebhook(theme, GAME_ID, { personality, score: sig.score, maxStack: sig.maxStack, perfectDrops: sig.perfectDrops }, player); }, [theme, sig, personality, player]);
   return null;
 }

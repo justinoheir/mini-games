@@ -1,14 +1,10 @@
 /**
- * ══════════════════════════════════════════════════════════════════
- *  STEADY HAND — V2
- *  Sensor: DeviceMotion (accelerometer) | Fallback: touch
- *  Duration: 30s | Accent: #22c55e
- * ══════════════════════════════════════════════════════════════════
+ * STEADY HAND — 3D Version
+ * A 3D cursor orb must be held on a target ring. Phone motion drives the orb.
  */
-
 'use client';
-
 import { useEffect, useRef, useState, useCallback } from 'react';
+import * as THREE from 'three';
 import GameShell from '@/components/GameShell';
 import GameHUD from '@/components/GameHUD';
 import GameStartScreen from '@/components/GameStartScreen';
@@ -20,1110 +16,379 @@ import { hapticScore, hapticFail, hapticVictory } from '@/lib/haptics';
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
-import { Sun, Moon, Hand, Timer, Trophy } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import ScorePopEffect, { useScorePop } from '@/components/ScorePopEffect';
 import StreakBadge from '@/components/StreakBadge';
-import { CATEGORY_THEMES } from '@/lib/theme';
-import SwipeInstructions from '@/components/SwipeInstructions';
 
-const CATEGORY_ACCENT = '#22c55e';
-
-// ─── SPEC CONSTANTS ──────────────────────────────────────────────────────────
-
-
-// --- SPRITE CACHE -------------------------------------------------------------
-
-const GAME_ID      = 'steady-hand';
-const PB_KEY       = 'pb_steady-hand';
-
-// Haptics toggle — respect ?haptics=off URL param (accessibility: B-M3)
-function getHapticsEnabled(): boolean {
-  if (typeof window === 'undefined') return true;
-  return new URLSearchParams(window.location.search).get('haptics') !== 'off';
-}
-const ACCENT       = '#22c55e';
-const DURATION     = 30;
-const GAME_EMOJI   = '🎯';
-const GAME_TITLE   = 'Steady Hand';
+const GAME_ID = 'steady-hand';
+const PB_KEY = 'pb_steady-hand';
+const ACCENT = '#22c55e';
+const DURATION = 30;
+const GAME_EMOJI = '🎯';
+const GAME_TITLE = 'Steady Hand';
 const GAME_TAGLINE = 'Hold perfectly still. We dare you.';
+const TARGET_RADIUS_3D = 0.25;
+const MOTION_SENSITIVITY = 0.06;
+const CURSOR_DAMPING = 0.88;
+const ACC_SMOOTH = 0.20;
 
-// V2 physics constants
-const TARGET_RADIUS       = 8;       // px — requires real stillness
-const MOTION_SENSITIVITY  = 3.2;     // px per m/s² per frame
-const CURSOR_DAMPING      = 0.88;    // velocity decay per frame
-const ACC_SMOOTH          = 0.20;    // accelerometer EMA factor
-
-// Interference schedule (seconds from game start, randomized ±0.5s at runtime)
-const INTERFERENCE_BASE = [
-  { at: 6,  pattern: [80, 50, 80] as number[],          label: 'distraction' },
-  { at: 9,  pattern: [150, 80, 150, 80, 150] as number[], label: 'strong' },
-  { at: 13, pattern: [80, 50, 80] as number[],          label: 'distraction' },
-  { at: 16, pattern: [200, 100, 200] as number[],       label: 'big jolt' },
-  { at: 19, pattern: [80, 50, 80] as number[],          label: 'distraction' },
-  { at: 22, pattern: [150, 80, 150, 80, 150] as number[], label: 'strong' },
-  { at: 25, pattern: [80, 50, 80] as number[],          label: 'distraction' },
-] as const;
-
-// ─── TYPES ───────────────────────────────────────────────────────────────────
-
-interface Signals {
-  timeOnTarget:         number;   // % of game time within target radius
-  avgDeviation:         number;   // mean pixel distance from center
-  tremorScore:          number;   // 0–100 variance of recent samples
-  streakCurrent:        number;   // current consecutive on-target seconds
-  maxStreak:            number;   // best streak in seconds
-  interferenceSurvived: number;   // pulses survived without breaking
-  totalSamples:         number;   // total motion samples collected
-  score:                number;   // composite (for end screen)
-  // Internal tracking
-  onTargetFrames:    number;
-  totalFrames:       number;
-  deviationSum:      number;
-  recentDeviations:  number[];
-  interferenceCount: number;
+interface Signals { score: number; onTargetMs: number; maxStreakMs: number; totalMotion: number; vibrations: number; stability: number; }
+function getPersonality(sig: Signals): string {
+  const pct = sig.onTargetMs / (DURATION * 1000);
+  if (pct >= 0.7 && sig.stability >= 0.8) return 'Sniper Mind 🎯';
+  if (pct >= 0.6) return 'Iron Wrist 🤝';
+  if (sig.maxStreakMs > 8000) return 'Stillness Pro ⚡';
+  if (pct >= 0.3) return 'Getting Steadier 📈';
+  return 'The Shaky One 🫨';
 }
-
-interface InterferenceEvent {
-  triggerMs:    number;
-  warningMs:    number;
-  pattern:      number[];
-  label:        string;
-  fired:        boolean;
-  survived:     boolean;
-  warningShown: boolean;
-}
-
-interface GameState {
-  running:          boolean;
-  timeLeft:         number;
-  gameStartTime:    number;
-  sig:              Signals;
-  // Cursor
-  cursorX:          number;
-  cursorY:          number;
-  cursorVX:         number;
-  cursorVY:         number;
-  // Accelerometer smoothed
-  smoothedAccX:     number;
-  smoothedAccY:     number;
-  // Per-second streak tracking
-  secondOnTarget:   number;
-  secondTotal:      number;
-  // Interference
-  interferenceEvents: InterferenceEvent[];
-  warningActive:    boolean;
-  warningStartMs:   number;
-  // Touch fallback
-  usingTouchFallback: boolean;
-  touchActive:      boolean;
-  touchStartX:      number;
-  touchStartY:      number;
-  touchCurrentX:    number;
-  touchCurrentY:    number;
-  // Animation
-  pulsePhase:       number;
-  streakFlashAt:    number;
-  // Theme (read by rAF, updated via ref)
-  accentColor:      string;
-  isDark:           boolean;
-}
-
 type Phase = 'start' | 'countdown' | 'playing' | 'done';
 
-// ─── PERSONALITY CLASSIFICATION ──────────────────────────────────────────────
-
-function getPersonality(sig: Signals): string {
-  const tot = sig.timeOnTarget;
-  const ts  = sig.tremorScore;
-  const sur = sig.interferenceSurvived;
-  const str = sig.maxStreak;
-  if (tot >= 90 && ts < 10)  return 'Surgeon 🔬';           // Pinpoint precision, minimal tremor
-  if (tot >= 75 && ts < 25)  return 'Steady as a Rock 🪨';  // High accuracy, low tremor — efficient control
-  if (sur >= 4 && tot >= 60) return 'Iron Nerve 🧠';        // Survived interference with solid accuracy
-  if (tot >= 60 && str >= 8) return 'Focused 🎯';           // Focused — long clean runs
-  if (tot >= 40)             return 'Getting There 🌱';     // Balanced effort, room to grow
-  return 'Shaky But Brave 😅';                              // Fallback — lovable underdog
-}
-
-// ─── HELPERS ─────────────────────────────────────────────────────────────────
-
-function buildInterferenceEvents(): InterferenceEvent[] {
-  return INTERFERENCE_BASE.map(ev => {
-    const offset = (Math.random() - 0.5) * 1000;
-    const triggerMs = ev.at * 1000 + offset;
-    return {
-      triggerMs,
-      warningMs: triggerMs - 300,
-      pattern: [...ev.pattern],
-      label: ev.label,
-      fired: false,
-      survived: false,
-      warningShown: false,
-    };
-  });
-}
-
-function deviationColor(d: number): string {
-  if (d <= TARGET_RADIUS)      return '#4ade80';
-  if (d <= TARGET_RADIUS * 4)  return '#facc15';
-  return '#ef4444';
-}
-
-// ─── COMPONENT ───────────────────────────────────────────────────────────────
-
 export default function SteadyHandGame() {
-  const theme       = useBrandTheme();
-  const canvasRef   = useRef<HTMLCanvasElement>(null);
-  const animRef     = useRef(0);
-  const timerRef    = useRef<ReturnType<typeof setInterval> | null>(null);
+  const theme = useBrandTheme();
+  const mountRef = useRef<HTMLDivElement>(null);
+  const animRef = useRef(0);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const stopMusicRef = useRef<(() => void) | null>(null);
-  const motionRef   = useRef<((e: DeviceMotionEvent) => void) | null>(null);
-  const fallbackCheckRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const hapticsEnabled = useRef(getHapticsEnabled());
-
-  const stateRef = useRef<GameState>({
-    running: false, timeLeft: DURATION, gameStartTime: 0,
-    sig: {
-      timeOnTarget: 0, avgDeviation: 0, tremorScore: 0,
-      streakCurrent: 0, maxStreak: 0, interferenceSurvived: 0,
-      totalSamples: 0, score: 0,
-      onTargetFrames: 0, totalFrames: 0, deviationSum: 0,
-      recentDeviations: [], interferenceCount: 0,
-    },
-    cursorX: 0, cursorY: 0, cursorVX: 0, cursorVY: 0,
-    smoothedAccX: 0, smoothedAccY: 0,
-    secondOnTarget: 0, secondTotal: 0,
-    interferenceEvents: [],
-    warningActive: false, warningStartMs: 0,
-    usingTouchFallback: false, touchActive: false,
-    touchStartX: 0, touchStartY: 0, touchCurrentX: 0, touchCurrentY: 0,
-    pulsePhase: 0, streakFlashAt: 0,
-    accentColor: ACCENT, isDark: true,
+  const stateRef = useRef({
+    renderer: null as THREE.WebGLRenderer | null,
+    scene: null as THREE.Scene | null,
+    camera: null as THREE.PerspectiveCamera | null,
+    cursorMesh: null as THREE.Mesh | null,
+    cursorLight: null as THREE.PointLight | null,
+    targetRing: null as THREE.Mesh | null,
+    targetLight: null as THREE.PointLight | null,
+    trailMeshes: [] as THREE.Mesh[],
+    interferenceRings: [] as { mesh: THREE.Mesh; speed: number; phase: number }[],
+    running: false, timeLeft: DURATION,
+    sig: { score: 0, onTargetMs: 0, maxStreakMs: 0, totalMotion: 0, vibrations: 0, stability: 0 } as Signals,
+    cursorX: 0, cursorY: 0,
+    velX: 0, velY: 0,
+    accX: 0, accY: 0, accZ: 0,
+    smoothAccX: 0, smoothAccY: 0,
+    onTarget: false, streakStart: 0, currentStreakMs: 0,
+    onTargetTotalMs: 0,
+    deviceMotionGranted: false,
+    scoreTimer: 0, scoreInterval: 80,
+    interferenceTimer: 0,
+    totalFrames: 0, onTargetFrames: 0,
+    particles: [] as { mesh: THREE.Mesh; vx: number; vy: number; life: number }[],
   });
 
-  // React state — only these drive re-renders
-  const [phase, setPhase]               = useState<Phase>('start');
-  const [showInstructions, setShowInstructions] = useState(true);
-  const [timeLeft, setTimeLeft]         = useState(DURATION);
-  const [scoreDisplay, setScoreDisplay] = useState(0);  // on-target %
-  const [streakDisplay, setStreakDisplay] = useState(0); // current streak
-  const [finalSig, setFinalSig]         = useState<Signals | null>(null);
-  const [usingFallback, setUsingFallback] = useState(false);
-  const [playerName, setPlayerName]     = useState('');
-  const [playerAvatar, setPlayerAvatar] = useState('🎮');
+  const [phase, setPhase] = useState<Phase>('start');
+  const [timeLeft, setTimeLeft] = useState(DURATION);
+  const [scoreDisplay, setScoreDisplay] = useState(0);
+  const [finalSig, setFinalSig] = useState<Signals | null>(null);
+  const [isNewBest, setIsNewBest] = useState(false);
+  const [streak, setStreak] = useState(0);
   const { pops, triggerPop } = useScorePop();
   const prevScoreRef = useRef(0);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => {
-    const numScore = typeof scoreDisplay === 'number' ? scoreDisplay : 0;
-    if (numScore > prevScoreRef.current) {
-      triggerPop(`+${numScore - prevScoreRef.current}`, window.innerWidth / 2, 200);
-    }
-    prevScoreRef.current = numScore;
-  }, [scoreDisplay]); // triggerPop is stable
-  const playerSessionRef                = useRef<PlayerSession | null>(null);
-  const [scorePop, setScorePop]         = useState<string | null>(null);
-  const [nearMissMsg, setNearMissMsg]   = useState(false);
-  const [isNewBest, setIsNewBest]       = useState(false);
-  const nearMissTimeoutRef              = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  // Local dark/light theme (game-specific, stored in localStorage)
-  const [isDark, setIsDark] = useState(() => {
-    if (typeof window === 'undefined') return true;
-    return (localStorage.getItem('mg_theme') ?? 'dark') !== 'light';
-  });
-
-  // Sync refs used by rAF loop
-  useEffect(() => {
-    stateRef.current.accentColor = theme.colors.accent ?? ACCENT;
-  }, [theme]);
+  const playerSessionRef = useRef<PlayerSession | null>(null);
 
   useEffect(() => {
-    stateRef.current.isDark = isDark;
-  }, [isDark]);
-
-  // ─── THEME TOGGLE ────────────────────────────────────────────────────────
-
-  const toggleTheme = useCallback(() => {
-    setIsDark(prev => {
-      const next = !prev;
-      localStorage.setItem('mg_theme', next ? 'dark' : 'light');
-      return next;
-    });
-  }, []);
-
-  // ─── MOTION LISTENER ─────────────────────────────────────────────────────
-
-  const setupMotionListener = useCallback(() => {
-    const handler = (e: DeviceMotionEvent) => {
-      const s = stateRef.current;
-      if (!s.running) return;
-      const raw = e.accelerationIncludingGravity;
-      if (!raw) return;
-      const rawX = raw.x ?? 0;
-      const rawY = raw.y ?? 0;
-      s.smoothedAccX = s.smoothedAccX * (1 - ACC_SMOOTH) + rawX * ACC_SMOOTH;
-      s.smoothedAccY = s.smoothedAccY * (1 - ACC_SMOOTH) + rawY * ACC_SMOOTH;
-    };
-    motionRef.current = handler;
-    window.addEventListener('devicemotion', handler);
-  }, []);
-
-  const removeMotionListener = useCallback(() => {
-    if (motionRef.current) {
-      window.removeEventListener('devicemotion', motionRef.current);
-      motionRef.current = null;
-    }
-  }, []);
-
-  // ─── END GAME ────────────────────────────────────────────────────────────
+    if (scoreDisplay > prevScoreRef.current) triggerPop(`+${scoreDisplay - prevScoreRef.current}`, window.innerWidth / 2, 200);
+    prevScoreRef.current = scoreDisplay;
+  }, [scoreDisplay, triggerPop]);
 
   const endGame = useCallback(() => {
     const s = stateRef.current;
     s.running = false;
     cancelAnimationFrame(animRef.current);
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
-    if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
-    removeMotionListener();
+    stopMusicRef.current?.();
+    if (s.renderer) { s.renderer.dispose(); s.renderer = null; }
+    playVictoryFanfare(); hapticVictory();
+    const stability = s.totalFrames > 0 ? s.onTargetFrames / s.totalFrames : 0;
+    s.sig.onTargetMs = s.onTargetTotalMs;
+    s.sig.stability = stability;
+    try { const pb = parseInt(localStorage.getItem(PB_KEY) || '0', 10); if (s.sig.score > pb) { localStorage.setItem(PB_KEY, String(s.sig.score)); setIsNewBest(true); } } catch { /* ignore */ }
+    setFinalSig({ ...s.sig }); setPhase('done');
+  }, []);
 
-    // Finalize signals
-    const sig = s.sig;
-    sig.timeOnTarget = sig.totalFrames > 0
-      ? Math.round((sig.onTargetFrames / sig.totalFrames) * 100)
-      : 0;
-    sig.avgDeviation = sig.totalSamples > 0
-      ? Math.round(sig.deviationSum / sig.totalSamples)
-      : 0;
-    sig.interferenceSurvived = s.interferenceEvents.filter(e => e.fired && e.survived).length;
-    sig.interferenceCount    = s.interferenceEvents.filter(e => e.fired).length;
-    sig.score = Math.round(
-      sig.timeOnTarget * 0.6 +
-      sig.maxStreak * 3 +
-      sig.interferenceSurvived * 6
-    );
-
-    // End-game audio: success if ≥60% on-target, else nearMiss
-    if (sig.timeOnTarget >= 60) {
-      sfx.success();
-      hapticVictory();
-      playVictoryFanfare();
-    } else {
-      sfx.nearMiss();
-      hapticFail();
-    }
-
-    // Personal best tracking
-    try {
-      const prev = parseInt(localStorage.getItem(PB_KEY) || '0', 10);
-      if (sig.score > prev) {
-        localStorage.setItem(PB_KEY, String(sig.score));
-        setIsNewBest(true);
-      }
-    } catch { /* ignore */ }
-
-    setFinalSig({ ...sig });
-    setPhase('done');
-  }, [removeMotionListener]);
-
-  // ─── GAME LOOP ───────────────────────────────────────────────────────────
-
-  const startLoop = useCallback(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+  const startLoop = useCallback(async () => {
     const s = stateRef.current;
+    s.running = true; s.timeLeft = DURATION;
+    s.sig = { score: 0, onTargetMs: 0, maxStreakMs: 0, totalMotion: 0, vibrations: 0, stability: 0 };
+    s.cursorX = 0; s.cursorY = 0; s.velX = 0; s.velY = 0;
+    s.smoothAccX = 0; s.smoothAccY = 0;
+    s.onTarget = false; s.streakStart = 0; s.currentStreakMs = 0; s.onTargetTotalMs = 0;
+    s.scoreTimer = 0; s.totalFrames = 0; s.onTargetFrames = 0;
+    s.particles = [];
+    setScoreDisplay(0); setTimeLeft(DURATION); setStreak(0); setPhase('playing');
+    stopMusicRef.current = startMusic('ambient');
 
-    ctx.imageSmoothingEnabled = true;
+    const W = window.innerWidth, H = window.innerHeight;
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(W, H);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setClearColor(0x0a0a0a);
+    if (mountRef.current) { mountRef.current.innerHTML = ''; mountRef.current.appendChild(renderer.domElement); }
+    s.renderer = renderer;
 
-    // Reset all state
-    s.running = true;
-    s.timeLeft = DURATION;
-    s.gameStartTime = Date.now();
-    s.sig = {
-      timeOnTarget: 0, avgDeviation: 0, tremorScore: 0,
-      streakCurrent: 0, maxStreak: 0, interferenceSurvived: 0,
-      totalSamples: 0, score: 0,
-      onTargetFrames: 0, totalFrames: 0, deviationSum: 0,
-      recentDeviations: [], interferenceCount: 0,
+    const scene = new THREE.Scene();
+    s.scene = scene;
+    const camera = new THREE.PerspectiveCamera(65, W / H, 0.1, 100);
+    camera.position.set(0, 0, 6);
+    s.camera = camera;
+
+    scene.add(new THREE.AmbientLight(0x0a0a0a, 2));
+    const ambLight = new THREE.PointLight(0x22c55e, 1.5, 20);
+    ambLight.position.set(0, 4, 3);
+    scene.add(ambLight);
+    const targetLight = new THREE.PointLight(0x22c55e, 2, 8);
+    scene.add(targetLight);
+    s.targetLight = targetLight;
+    const cursorLight = new THREE.PointLight(0xfbbf24, 3, 5);
+    scene.add(cursorLight);
+    s.cursorLight = cursorLight;
+
+    // Stars
+    const sp = new Float32Array(500*3);
+    for (let i=0;i<500;i++){sp[i*3]=(Math.random()-.5)*60;sp[i*3+1]=(Math.random()-.5)*60;sp[i*3+2]=(Math.random()-.5)*60;}
+    const sg=new THREE.BufferGeometry();sg.setAttribute('position',new THREE.BufferAttribute(sp,3));
+    scene.add(new THREE.Points(sg,new THREE.PointsMaterial({color:0xffffff,size:0.04})));
+
+    // Target ring
+    const targetGeo = new THREE.TorusGeometry(TARGET_RADIUS_3D, 0.05, 8, 32);
+    const targetMat = new THREE.MeshStandardMaterial({ color: 0x22c55e, emissive: 0x22c55e, emissiveIntensity: 0.8 });
+    const targetRing = new THREE.Mesh(targetGeo, targetMat);
+    scene.add(targetRing);
+    s.targetRing = targetRing;
+    targetLight.position.set(0, 0, 0.5);
+
+    // Inner dot target
+    const dotGeo = new THREE.SphereGeometry(0.06, 8, 8);
+    const dotMat = new THREE.MeshStandardMaterial({ color: 0x4ade80, emissive: 0x4ade80, emissiveIntensity: 1 });
+    const dot = new THREE.Mesh(dotGeo, dotMat);
+    scene.add(dot);
+
+    // Interference decorative rings
+    const interferenceRings: { mesh: THREE.Mesh; speed: number; phase: number }[] = [];
+    for (let i = 0; i < 4; i++) {
+      const rGeo = new THREE.TorusGeometry(0.6 + i * 0.4, 0.02, 6, 24);
+      const rMat = new THREE.MeshStandardMaterial({ color: 0x22c55e, transparent: true, opacity: 0.15 - i * 0.02 });
+      const r = new THREE.Mesh(rGeo, rMat);
+      scene.add(r);
+      interferenceRings.push({ mesh: r, speed: 0.3 + i * 0.15, phase: i * Math.PI / 2 });
+    }
+    s.interferenceRings = interferenceRings;
+
+    // Cursor sphere
+    const cursorGeo = new THREE.SphereGeometry(0.12, 12, 12);
+    const cursorMat = new THREE.MeshStandardMaterial({ color: 0xfbbf24, emissive: 0xfbbf24, emissiveIntensity: 0.8, roughness: 0.2 });
+    const cursorMesh = new THREE.Mesh(cursorGeo, cursorMat);
+    scene.add(cursorMesh);
+    s.cursorMesh = cursorMesh;
+
+    // Setup DeviceMotion
+    const setupMotion = async () => {
+      if (typeof DeviceMotionEvent !== 'undefined' && 'requestPermission' in DeviceMotionEvent) {
+        try { const p = await (DeviceMotionEvent as any).requestPermission(); if (p !== 'granted') return; } catch { return; }
+      }
+      const onMotion = (e: DeviceMotionEvent) => {
+        const s2 = stateRef.current;
+        if (!s2.running) return;
+        const ax = e.accelerationIncludingGravity?.x ?? 0;
+        const ay = e.accelerationIncludingGravity?.y ?? 0;
+        s2.accX = ax; s2.accY = ay;
+      };
+      window.addEventListener('devicemotion', onMotion);
+      s.deviceMotionGranted = true;
+      (s as any)._motionCleanup = () => window.removeEventListener('devicemotion', onMotion);
     };
-    s.cursorX = 0; s.cursorY = 0; s.cursorVX = 0; s.cursorVY = 0;
-    s.smoothedAccX = 0; s.smoothedAccY = 0;
-    s.secondOnTarget = 0; s.secondTotal = 0;
-    s.interferenceEvents = buildInterferenceEvents();
-    s.warningActive = false; s.warningStartMs = 0;
-    s.pulsePhase = 0; s.streakFlashAt = 0;
-    s.touchActive = false;
+    await setupMotion();
 
-    setScoreDisplay(0);
-    setStreakDisplay(0);
-    setTimeLeft(DURATION);
-    setPhase('playing');
-    stopMusicRef.current = startMusic('minimal');
+    const handleResize = () => {
+      const w = window.innerWidth, h = window.innerHeight;
+      renderer.setSize(w, h); camera.aspect = w / h; camera.updateProjectionMatrix();
+    };
+    window.addEventListener('resize', handleResize);
+    (s as any)._cleanup = () => window.removeEventListener('resize', handleResize);
 
-    // 1-second tick for streak + HUD update
     timerRef.current = setInterval(() => {
-      if (!s.running) return;
-      s.timeLeft--;
-      setTimeLeft(s.timeLeft);
-      // Timer audio: warning at 10s, tick every second
-      if (s.timeLeft === 10) {
-        sfx.warning();
-        if (hapticsEnabled.current) haptic([50, 30, 50]);
-      } else {
-        sfx.tick();
-      }
-
-      // Per-second on-target check for streak
-      if (s.secondTotal > 0) {
-        const pct = s.secondOnTarget / s.secondTotal;
-        if (pct >= 0.75) {
-          s.sig.streakCurrent++;
-          if (s.sig.streakCurrent > s.sig.maxStreak) {
-            s.sig.maxStreak = s.sig.streakCurrent;
-            s.streakFlashAt = Date.now();
-            sfx.collect();
-            hapticScore();
-            playScoreHit('default', 10);
-            setScorePop(`${s.sig.streakCurrent}s STREAK`);
-            setTimeout(() => setScorePop(null), 1500);
-          }
-          // Near-miss: streak within 10% of next milestone (every 5s)
-          const nextMilestone = Math.ceil(s.sig.streakCurrent / 5) * 5;
-          const distTo = nextMilestone - s.sig.streakCurrent;
-          if (distTo === 1 && s.sig.streakCurrent > 0) {
-            playNearMiss();
-            setNearMissMsg(true);
-            if (nearMissTimeoutRef.current) clearTimeout(nearMissTimeoutRef.current);
-            nearMissTimeoutRef.current = setTimeout(() => setNearMissMsg(false), 1500);
-          }
-        } else {
-          s.sig.streakCurrent = 0;
-        }
-        setStreakDisplay(s.sig.streakCurrent);
-      }
-      s.secondOnTarget = 0;
-      s.secondTotal = 0;
-
-      // Update score display (on-target %)
-      const pct = s.sig.totalFrames > 0
-        ? Math.round((s.sig.onTargetFrames / s.sig.totalFrames) * 100)
-        : 0;
-      setScoreDisplay(pct);
-
-      if (s.timeLeft <= 0) {
-        if (hapticsEnabled.current) haptic([100, 50, 100]);
-        endGame();
-      }
+      s.timeLeft--; setTimeLeft(s.timeLeft);
+      if (s.timeLeft <= 10 && s.timeLeft > 0) sfx.tick();
+      if (s.timeLeft <= 0) endGame();
     }, 1000);
 
-    // ── rAF loop ────────────────────────────────────────────────────────────
-    const loop = (timestamp: number) => {
+    // Target position changes over time
+    const targetPositions = [
+      new THREE.Vector3(0, 0, 0),
+      new THREE.Vector3(0.5, 0.3, 0),
+      new THREE.Vector3(-0.3, 0.5, 0),
+      new THREE.Vector3(0.2, -0.4, 0),
+      new THREE.Vector3(-0.4, -0.2, 0),
+    ];
+    let targetIdx = 0, targetTransitionMs = 0;
+
+    const loop = () => {
       if (!s.running) return;
-      const W = window.innerWidth;
-      const H = window.innerHeight;
-      const cx = W / 2;
-      const cy = H / 2;
-      const elapsed = Date.now() - s.gameStartTime;
+      const now = Date.now();
+      const t = now * 0.001;
+      s.totalFrames++;
 
-      // ── Cursor position update ──────────────────────────────────────────
-      if (!s.usingTouchFallback) {
-        // Motion-based: accelerometer → velocity → position
-        s.cursorVX += s.smoothedAccX * MOTION_SENSITIVITY;
-        s.cursorVY -= s.smoothedAccY * MOTION_SENSITIVITY; // invert Y axis
-        s.cursorVX *= CURSOR_DAMPING;
-        s.cursorVY *= CURSOR_DAMPING;
-      } else if (s.touchActive) {
-        // Touch fallback: finger offset from initial touch = cursor position
-        const rect = canvas.getBoundingClientRect();
-        const scaleX = W / rect.width;
-        const scaleY = H / rect.height;
-        const targetX = (s.touchCurrentX - s.touchStartX) * scaleX;
-        const targetY = (s.touchCurrentY - s.touchStartY) * scaleY;
-        // Spring toward target position
-        s.cursorVX = (targetX - s.cursorX) * 0.18;
-        s.cursorVY = (targetY - s.cursorY) * 0.18;
+      // Smooth accelerometer
+      s.smoothAccX += (s.accX - s.smoothAccX) * ACC_SMOOTH;
+      s.smoothAccY += (s.accY - s.smoothAccY) * ACC_SMOOTH;
+
+      // Apply acceleration to velocity
+      if (s.deviceMotionGranted) {
+        s.velX += s.smoothAccX * MOTION_SENSITIVITY * 0.1;
+        s.velY += -s.smoothAccY * MOTION_SENSITIVITY * 0.1;
       } else {
-        // No active input: dampen toward center
-        s.cursorVX *= CURSOR_DAMPING;
-        s.cursorVY *= CURSOR_DAMPING;
+        // Mouse/touch fallback — slight random drift
+        s.velX += (Math.random() - 0.5) * 0.002;
+        s.velY += (Math.random() - 0.5) * 0.002;
       }
+      s.velX *= CURSOR_DAMPING;
+      s.velY *= CURSOR_DAMPING;
+      s.cursorX += s.velX;
+      s.cursorY += s.velY;
+      // Clamp
+      s.cursorX = Math.max(-3, Math.min(3, s.cursorX));
+      s.cursorY = Math.max(-3, Math.min(3, s.cursorY));
 
-      s.cursorX += s.cursorVX;
-      s.cursorY += s.cursorVY;
-
-      // Clamp to canvas bounds
-      const maxOff = Math.min(W, H) * 0.45;
-      const dist = Math.sqrt(s.cursorX * s.cursorX + s.cursorY * s.cursorY);
-      if (dist > maxOff) {
-        const scale = maxOff / dist;
-        s.cursorX *= scale;
-        s.cursorY *= scale;
-        s.cursorVX *= 0.2;
-        s.cursorVY *= 0.2;
+      // Target moves periodically
+      targetTransitionMs += 16;
+      if (targetTransitionMs > 5000) {
+        targetTransitionMs = 0;
+        targetIdx = (targetIdx + 1) % targetPositions.length;
       }
+      const targetPos = targetPositions[targetIdx];
+      targetRing.position.lerp(targetPos, 0.02);
+      dot.position.copy(targetRing.position);
+      targetLight.position.set(targetRing.position.x, targetRing.position.y, 0.5);
 
-      // ── Track signals ───────────────────────────────────────────────────
-      const deviation = Math.sqrt(s.cursorX * s.cursorX + s.cursorY * s.cursorY);
-      const onTarget  = deviation <= TARGET_RADIUS;
+      // Cursor position
+      cursorMesh.position.set(s.cursorX, s.cursorY, 0.2);
+      cursorLight.position.set(s.cursorX, s.cursorY, 0.8);
 
-      s.sig.totalFrames++;
-      s.sig.totalSamples++;
-      s.sig.deviationSum += deviation;
-      s.secondTotal++;
-      if (onTarget) { s.sig.onTargetFrames++; s.secondOnTarget++; }
+      // Check on target
+      const dist = cursorMesh.position.distanceTo(targetRing.position);
+      s.onTarget = dist < TARGET_RADIUS_3D + 0.05;
+      s.onTargetFrames += s.onTarget ? 1 : 0;
 
-      // Rolling 2s tremor window (120 samples @ 60fps)
-      s.sig.recentDeviations.push(deviation);
-      if (s.sig.recentDeviations.length > 120) s.sig.recentDeviations.shift();
-      if (s.sig.recentDeviations.length > 0) {
-        const samples = s.sig.recentDeviations;
-        const mean = samples.reduce((a, b) => a + b, 0) / samples.length;
-        const variance = samples.reduce((acc, v) => acc + (v - mean) ** 2, 0) / samples.length;
-        s.sig.tremorScore = Math.min(100, Math.round(variance / 2.5));
-      }
-
-      // ── Interference events ─────────────────────────────────────────────
-      for (const ev of s.interferenceEvents) {
-        if (!ev.warningShown && elapsed >= ev.warningMs) {
-          ev.warningShown = true;
-          s.warningActive = true;
-          s.warningStartMs = elapsed;
-          // Shimmer rising cue telegraphs incoming interference pulse (distinct from timer warning)
-          sfx.shimmer();
+      // Visual feedback
+      const tMat = targetRing.material as THREE.MeshStandardMaterial;
+      const cMat = cursorMesh.material as THREE.MeshStandardMaterial;
+      if (s.onTarget) {
+        s.onTargetTotalMs += 16;
+        s.scoreTimer += 16;
+        if (s.scoreTimer >= s.scoreInterval) {
+          s.scoreTimer = 0;
+          s.sig.score += 1; setScoreDisplay(s.sig.score);
         }
-        if (!ev.fired && elapsed >= ev.triggerMs) {
-          ev.fired = true;
-          ev.survived = deviation <= TARGET_RADIUS * 4; // survived if not fully broken
-          if (hapticsEnabled.current) haptic(ev.pattern);
-          sfx.nearMiss();
-        }
-      }
-      if (s.warningActive && elapsed - s.warningStartMs > 300) {
-        s.warningActive = false;
-      }
-
-      // Pulse phase for ring animation
-      s.pulsePhase = (s.pulsePhase + 0.045) % (Math.PI * 2);
-
-      // ── RENDER ─────────────────────────────────────────────────────────
-      const dark   = s.isDark;
-      const accent = s.accentColor;
-      const bg     = dark ? '#08090f' : '#f0f4f8';
-      const gridC  = dark ? 'rgba(255,255,255,0.025)' : 'rgba(0,0,0,0.04)';
-      const textC  = dark ? '#ffffff' : '#0d1117';
-      const textC2 = dark ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.4)';
-
-      // Background — rich teal/dark gradient in dark mode
-      if (dark) {
-        const shBg = ctx.createRadialGradient(W * 0.5, H * 0.35, 0, W * 0.5, H * 0.65, Math.max(W, H) * 0.9);
-        shBg.addColorStop(0,   '#001510');
-        shBg.addColorStop(0.55, '#000d08');
-        shBg.addColorStop(1,   '#000503');
-        ctx.fillStyle = shBg;
+        tMat.emissive.setHex(0xfbbf24); tMat.emissiveIntensity = 1.2;
+        cMat.emissive.setHex(0x22c55e); cMat.emissiveIntensity = 1.2;
+        targetLight.color.setHex(0xfbbf24); targetLight.intensity = 3;
+        cursorLight.color.setHex(0x22c55e);
+        if (!s.streakStart) s.streakStart = now;
+        s.currentStreakMs = now - s.streakStart;
+        if (s.currentStreakMs > s.sig.maxStreakMs) s.sig.maxStreakMs = s.currentStreakMs;
+        hapticScore(); sfx.tick();
       } else {
-        ctx.fillStyle = bg;
+        tMat.emissive.setHex(0x22c55e); tMat.emissiveIntensity = 0.8 + Math.sin(t * 3) * 0.2;
+        cMat.emissive.setHex(dist < 0.8 ? 0xfbbf24 : 0xef4444);
+        cMat.emissiveIntensity = 0.4;
+        targetLight.color.setHex(0x22c55e); targetLight.intensity = 1.5;
+        cursorLight.color.setHex(0xfbbf24);
+        s.streakStart = 0; s.currentStreakMs = 0;
       }
-      ctx.fillRect(0, 0, W, H);
+      setStreak(Math.round(s.currentStreakMs / 1000));
 
-      // Vignette (dark mode only)
-      if (dark) {
-        const shVig = ctx.createRadialGradient(W * 0.5, H * 0.5, H * 0.25, W * 0.5, H * 0.5, H * 0.85);
-        shVig.addColorStop(0, 'rgba(0,0,0,0)');
-        shVig.addColorStop(1, 'rgba(0,0,0,0.45)');
-        ctx.fillStyle = shVig;
-        ctx.fillRect(0, 0, W, H);
-      }
+      // Interference rings wobble
+      interferenceRings.forEach(r => {
+        r.phase += r.speed * 0.016;
+        r.mesh.rotation.x = Math.sin(r.phase) * 0.3;
+        r.mesh.rotation.y = Math.cos(r.phase * 0.7) * 0.3;
+        r.mesh.position.copy(targetRing.position);
+      });
 
-      // Grid
-      ctx.strokeStyle = gridC;
-      ctx.lineWidth = 1;
-      for (let gx = 0; gx < W; gx += 40) {
-        ctx.beginPath(); ctx.moveTo(gx, 0); ctx.lineTo(gx, H); ctx.stroke();
-      }
-      for (let gy = 0; gy < H; gy += 40) {
-        ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(W, gy); ctx.stroke();
-      }
-
-      // ── Target zone (canvas center) ─────────────────────────────────────
-
-      // Outer tolerance dashed ring
-      ctx.save();
-      ctx.strokeStyle = `${accent}33`;
-      ctx.lineWidth = 1;
-      ctx.setLineDash([4, 6]);
-      ctx.beginPath();
-      ctx.arc(cx, cy, 40, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.setLineDash([]);
-      ctx.restore();
-
-      // Warning ring expansion
-      if (s.warningActive) {
-        const wAge = Math.min(1, (elapsed - s.warningStartMs) / 300);
-        const wR   = 16 + wAge * 50;
-        ctx.save();
-        ctx.globalAlpha  = (1 - wAge) * 0.9;
-        ctx.strokeStyle  = '#ef4444';
-        ctx.lineWidth    = 3;
-        ctx.shadowBlur   = 30;
-        ctx.shadowColor  = '#ef4444';
-        ctx.beginPath();
-        ctx.arc(cx, cy, wR, 0, Math.PI * 2);
-        ctx.stroke();
-        ctx.restore();
-        // Screen edge flash
-        ctx.save();
-        ctx.globalAlpha = (1 - wAge) * 0.25;
-        const edgeGrad = ctx.createRadialGradient(cx, cy, W * 0.25, cx, cy, W * 0.85);
-        edgeGrad.addColorStop(0, 'transparent');
-        edgeGrad.addColorStop(1, '#ef4444');
-        ctx.fillStyle = edgeGrad;
-        ctx.fillRect(0, 0, W, H);
-        ctx.restore();
-      }
-
-      // Pulsing main ring
-      const ringR = TARGET_RADIUS + 5 + 2 * Math.sin(s.pulsePhase);
-      ctx.save();
-      ctx.shadowBlur  = s.warningActive ? 30 : 16;
-      ctx.shadowColor = s.warningActive ? '#ef4444' : accent;
-      ctx.strokeStyle = s.warningActive ? '#ef4444' : accent;
-      ctx.lineWidth   = 2.5;
-      ctx.beginPath();
-      ctx.arc(cx, cy, ringR, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.restore();
-
-      // Inner perfect-zone fill
-      ctx.save();
-      ctx.fillStyle = onTarget ? `${accent}44` : `${accent}18`;
-      ctx.beginPath();
-      ctx.arc(cx, cy, TARGET_RADIUS, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.restore();
-
-      // Center dot
-      ctx.save();
-      ctx.fillStyle = accent;
-      ctx.shadowBlur  = 6;
-      ctx.shadowColor = accent;
-      ctx.beginPath();
-      ctx.arc(cx, cy, 2.5, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.restore();
-
-      // ── Crosshair cursor ────────────────────────────────────────────────
-      const curAbsX  = cx + s.cursorX;
-      const curAbsY  = cy + s.cursorY;
-      const curColor = deviationColor(deviation);
-      const crossLen = 14;
-      const crossGap = 4;
-
-      ctx.save();
-      ctx.strokeStyle = curColor;
-      ctx.lineWidth   = 2;
-      ctx.shadowBlur  = 10;
-      ctx.shadowColor = curColor;
-      // Horizontal arms (with gap in center)
-      ctx.beginPath(); ctx.moveTo(curAbsX - crossLen, curAbsY); ctx.lineTo(curAbsX - crossGap, curAbsY); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(curAbsX + crossGap, curAbsY); ctx.lineTo(curAbsX + crossLen, curAbsY); ctx.stroke();
-      // Vertical arms
-      ctx.beginPath(); ctx.moveTo(curAbsX, curAbsY - crossLen); ctx.lineTo(curAbsX, curAbsY - crossGap); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(curAbsX, curAbsY + crossGap); ctx.lineTo(curAbsX, curAbsY + crossLen); ctx.stroke();
-      // Center dot
-      ctx.fillStyle = curColor;
-      ctx.beginPath();
-      ctx.arc(curAbsX, curAbsY, 3, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.restore();
-
-      // ── Deviation bar (below GameHUD, ~155px from top) ──────────────────
-      const barY     = 155;   // raised above GameHUD bottom (~141px) for clarity
-      const barH     = 6;
-      const barX     = 24;
-      const barW     = W - 48;
-      const devFill  = Math.min(1, deviation / 80);
-
-      ctx.save();
-      ctx.fillStyle = dark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.08)';
-      ctx.beginPath();
-      ctx.roundRect(barX, barY, barW, barH, 3);
-      ctx.fill();
-      if (devFill > 0) {
-        const barGrad = ctx.createLinearGradient(barX, 0, barX + barW, 0);
-        barGrad.addColorStop(0,   '#4ade80');
-        barGrad.addColorStop(0.4, '#facc15');
-        barGrad.addColorStop(1,   '#ef4444');
-        ctx.fillStyle = barGrad;
-        ctx.beginPath();
-        ctx.roundRect(barX, barY, barW * devFill, barH, 3);
-        ctx.fill();
-      }
-      // DEVIATION label — 18px minimum for brand-activation legibility
-      ctx.fillStyle = textC2;
-      ctx.font = '600 18px "Space Grotesk", sans-serif';
-      ctx.letterSpacing = '0.08em';
-      ctx.textAlign = 'left';
-      ctx.fillText('DEVIATION', barX, barY - 8);
-      ctx.restore();
-
-      // ── Tremor score (canvas-drawn, below deviation bar) ─────────────────
-      // NOTE: STREAK is shown in GameHUD — only TREMOR is canvas-drawn here
-      const metricsY = 203;   // barY + 48; space for 36px values below bar
-
-      ctx.save();
-      // Tremor value (36px) — value above, label below (right-aligned)
-      const tremorX = W - barX - 88;
-      const tremorColor = s.sig.tremorScore < 20 ? accent : s.sig.tremorScore < 50 ? '#facc15' : '#ef4444';
-      ctx.fillStyle = tremorColor;
-      ctx.font = '700 36px "Space Grotesk", sans-serif';
-      ctx.textAlign = 'left';
-      ctx.fillText(String(s.sig.tremorScore), tremorX + 65, metricsY);
-      ctx.fillStyle = textC2;
-      ctx.font = '600 18px "Space Grotesk", sans-serif';
-      ctx.fillText('TREMOR', tremorX, metricsY + 24);
-      ctx.restore();
-
-      // ── Touch fallback hint ─────────────────────────────────────────────
-      if (s.usingTouchFallback && !s.touchActive) {
-        ctx.save();
-        ctx.fillStyle = textC2;
-        ctx.font = '600 16px "Space Grotesk", sans-serif';
-        ctx.textAlign = 'center';
-        ctx.fillText('Touch & hold — keep your finger still', cx, cy + 80);
-        ctx.restore();
-      }
-
-      // ── On-target flash ─────────────────────────────────────────────────
-      if (onTarget) {
-        ctx.save();
-        ctx.globalAlpha = 0.06;
-        ctx.fillStyle = accent;
-        ctx.fillRect(0, 0, W, H);
-        ctx.restore();
-      }
-
-      void timestamp;
+      renderer.render(scene, camera);
       animRef.current = requestAnimationFrame(loop);
     };
-
     animRef.current = requestAnimationFrame(loop);
+
+    // Touch fallback — drag cursor
+    const onPointerMove = (e: PointerEvent) => {
+      const s2 = stateRef.current;
+      if (!s2.running || s2.deviceMotionGranted) return;
+      const ndcX = (e.clientX / window.innerWidth) * 2 - 1;
+      const ndcY = -((e.clientY / window.innerHeight) * 2 - 1);
+      s2.velX += (ndcX * 3 - s2.cursorX) * 0.04;
+      s2.velY += (ndcY * 2 - s2.cursorY) * 0.04;
+    };
+    if (mountRef.current) mountRef.current.addEventListener('pointermove', onPointerMove);
+    (s as any)._inputCleanup = () => mountRef.current?.removeEventListener('pointermove', onPointerMove);
   }, [endGame]);
 
-  // ─── CANVAS SETUP & TOUCH FALLBACK LISTENERS ─────────────────────────────
-  // NOTE: canvas is only rendered during 'countdown' and 'playing' phases,
-  // so this effect MUST depend on `phase` to run after the canvas mounts.
-  // A [] dep would run at mount when phase='start' (canvas not yet in DOM).
-
-  useEffect(() => {
-    // Canvas is only rendered during 'countdown' and 'playing'
-    if (phase !== 'countdown' && phase !== 'playing') return;
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    const resize = () => {
-      const dpr = window.devicePixelRatio || 1;
-      const w = window.innerWidth;
-      const h = window.innerHeight;
-      canvas.style.width  = w + 'px';
-      canvas.style.height = h + 'px';
-      canvas.width  = w * dpr;
-      canvas.height = h * dpr;
-      const ctx2 = canvas.getContext('2d');
-      if (ctx2) ctx2.setTransform(dpr, 0, 0, dpr, 0, 0);
-    };
-    resize();
-    window.addEventListener('resize', resize);
-
-    const onPointerDown = (e: PointerEvent) => {
-      const s = stateRef.current;
-      if (!s.running || !s.usingTouchFallback) return;
-      s.touchActive    = true;
-      s.touchStartX    = e.clientX;
-      s.touchStartY    = e.clientY;
-      s.touchCurrentX  = e.clientX;
-      s.touchCurrentY  = e.clientY;
-      // Reset cursor to center when new touch starts
-      s.cursorX = 0; s.cursorY = 0;
-    };
-    const onPointerMove = (e: PointerEvent) => {
-      const s = stateRef.current;
-      if (!s.running || !s.usingTouchFallback || !s.touchActive) return;
-      s.touchCurrentX = e.clientX;
-      s.touchCurrentY = e.clientY;
-    };
-    const onPointerUp = () => {
-      stateRef.current.touchActive = false;
-    };
-
-    canvas.addEventListener('pointerdown', onPointerDown);
-    canvas.addEventListener('pointermove', onPointerMove);
-    canvas.addEventListener('pointerup', onPointerUp);
-    canvas.addEventListener('pointercancel', onPointerUp);
-
-    return () => {
-      window.removeEventListener('resize', resize);
-      canvas.removeEventListener('pointerdown', onPointerDown);
-      canvas.removeEventListener('pointermove', onPointerMove);
-      canvas.removeEventListener('pointerup', onPointerUp);
-      canvas.removeEventListener('pointercancel', onPointerUp);
-    };
-  }, [phase]);
-
-  // ─── CLEANUP ON UNMOUNT ───────────────────────────────────────────────────
-
-  useEffect(() => {
-    return () => {
-      cancelAnimationFrame(animRef.current);
-      if (timerRef.current) clearInterval(timerRef.current);
-      if (stopMusicRef.current) stopMusicRef.current();
-      if (motionRef.current) window.removeEventListener('devicemotion', motionRef.current);
-      if (fallbackCheckRef.current) clearTimeout(fallbackCheckRef.current);
-      if (nearMissTimeoutRef.current) clearTimeout(nearMissTimeoutRef.current);
-    };
+  useEffect(() => () => {
+    cancelAnimationFrame(animRef.current);
+    if (timerRef.current) clearInterval(timerRef.current);
+    stopMusicRef.current?.();
+    const s = stateRef.current;
+    if (s.renderer) s.renderer.dispose();
+    (s as any)._cleanup?.(); (s as any)._inputCleanup?.(); (s as any)._motionCleanup?.();
   }, []);
-
-  // ─── PHASE TRANSITIONS ───────────────────────────────────────────────────
 
   const handleStart = useCallback(async (name: string, avatar: string) => {
-    setPlayerName(name);
-    setPlayerAvatar(avatar);
-    initAudio();
     playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar);
-
-    // Request motion permission (iOS Safari requires explicit permission)
-    const DM = DeviceMotionEvent as typeof DeviceMotionEvent & {
-      requestPermission?: () => Promise<PermissionState>;
-    };
-    if (typeof DM.requestPermission === 'function') {
-      try {
-        const perm = await DM.requestPermission();
-        if (perm === 'granted') {
-          setupMotionListener();
-        } else {
-          stateRef.current.usingTouchFallback = true;
-          setUsingFallback(true);
-        }
-      } catch {
-        stateRef.current.usingTouchFallback = true;
-        setUsingFallback(true);
-      }
-    } else {
-      // Android / desktop — start listener, detect if events actually fire
-      setupMotionListener();
-      // If no motion events within 1.5s of game start, switch to touch fallback
-      fallbackCheckRef.current = setTimeout(() => {
-        const s = stateRef.current;
-        if (s.running && s.smoothedAccX === 0 && s.smoothedAccY === 0 && !s.usingTouchFallback) {
-          s.usingTouchFallback = true;
-          setUsingFallback(true);
-        }
-      }, 1500);
-    }
-
-    setPhase('countdown');
-  }, [setupMotionListener]);
-
-  const handleCountdownDone = useCallback(() => {
-    startLoop();
-  }, [startLoop]);
-
-  const handlePlayAgain = useCallback(() => {
-    setPhase('start');
-    setScoreDisplay(0);
-    setStreakDisplay(0);
-    setTimeLeft(DURATION);
-    setFinalSig(null);
-    setUsingFallback(false);
-    stateRef.current.usingTouchFallback = false;
-    stateRef.current.smoothedAccX = 0;
-    stateRef.current.smoothedAccY = 0;
-  
-    setIsNewBest(false);
-    prevScoreRef.current = 0;
+    await initAudio(); setPhase('countdown');
   }, []);
 
-  // ─── END SCREEN INSIGHTS ─────────────────────────────────────────────────
-
-  const buildInsights = useCallback((sig: Signals) => {
-    const totColor = sig.timeOnTarget >= 80 ? '#4ade80'
-      : sig.timeOnTarget >= 60 ? '#facc15' : '#ef4444';
-    const devColor = sig.avgDeviation <= 10 ? '#4ade80'
-      : sig.avgDeviation <= 20 ? '#facc15' : '#ef4444';
-    const strColor = sig.maxStreak >= 10 ? '#4ade80'
-      : sig.maxStreak >= 5 ? '#facc15' : '#ef4444';
-    const surColor = sig.interferenceSurvived >= 4 ? '#4ade80'
-      : sig.interferenceSurvived >= 2 ? '#facc15' : '#ef4444';
-    const total = sig.interferenceCount;
-    return [
-      { label: 'Time on Target',       value: `${sig.timeOnTarget}%`,              color: totColor },
-      { label: 'Avg Deviation',         value: `${sig.avgDeviation}px`,             color: devColor },
-      { label: 'Max Streak',            value: `${sig.maxStreak}s`,                 color: strColor },
-      { label: 'Interference Survived', value: `${sig.interferenceSurvived} / ${total}`, color: surColor },
-    ];
-  }, []);
-
-  // ─── COMPUTED ────────────────────────────────────────────────────────────
+  const handlePlayAgain = useCallback(() => { setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null); setIsNewBest(false); setStreak(0); prevScoreRef.current = 0; }, []);
 
   const accent = theme.colors.accent ?? ACCENT;
 
-  // Colors driven by isDark (for start/end screen backgrounds)
-  const bgColor   = isDark ? '#08090f' : '#f0f4f8';
-  const textColor = isDark ? '#ffffff' : '#0d1117';
-
-  // ─── RENDER ──────────────────────────────────────────────────────────────
-
   return (
-    <>
-      {phase === 'start' && showInstructions && (
-        <SwipeInstructions
-          gameId="steady-hand"
-          steps={[
-            { icon: <Hand size={56} color="#10b981" />, title: "Hold still", body: "Keep your device as still as possible." },
-            { icon: <Timer size={56} color="#10b981" />, title: "Steady wins", body: "The less you move, the higher you score." },
-            { icon: <Trophy size={56} color="#10b981" />, title: "Beat your best", body: "Try to beat your personal steadiness record." },
-          ]}
-          onDone={() => setShowInstructions(false)}
-        />
-      )}
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accent} background="radial-gradient(ellipse at 50% 0%, rgba(180,210,255,0.07) 0%, transparent 55%), linear-gradient(180deg, #060d1a 0%, #070f1e 40%, #08111f 65%, #060d1a 100%)">
-
-      {/* ── Start Screen ──────────────────────────────────────────────────── */}
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accent}
+      background="linear-gradient(180deg, #0a0a0a 0%, #050505 100%)">
       {phase === 'start' && (
-        <div
-          style={{
-            position: 'relative',
-            width: '100%',
-            height: '100%',
-            background: bgColor,
-            transition: 'background 0.3s ease',
-            // Override the global --color-bg CSS var so GameStartScreen picks up the local theme
-            ['--color-bg' as string]: bgColor,
-            ['--color-text' as string]: textColor,
-            ['--color-text-secondary' as string]: isDark ? 'rgba(255,255,255,0.55)' : 'rgba(0,0,0,0.5)',
-          } as React.CSSProperties}
-        >
-          {/* Theme toggle — below top bar (top bar height=56, zIndex=300) */}
-          <button
-            onClick={toggleTheme}
-            aria-label={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
-            style={{
-              position: 'absolute',
-              top: 64,
-              right: 16,
-              zIndex: 20,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              width: 44,
-              height: 44,
-              borderRadius: 22,
-              border: `1px solid ${isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.12)'}`,
-              background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)',
-              color: textColor,
-              cursor: 'pointer',
-            }}
-          >
-            {isDark
-              ? <Sun size={20} color={textColor} />
-              : <Moon size={20} color={textColor} />
-            }
-          </button>
-
-          <GameStartScreen
-            emoji={GAME_EMOJI}
-            title={GAME_TITLE}
-            description={GAME_TAGLINE}
-            ctaLabel="Start →"
-            sensorNote="Uses motion sensor — hold still to score"
-            accentColor={accent}
-            onStart={handleStart}
-            gradient="radial-gradient(ellipse 80% 70% at 50% 30%, #001510 0%, #000d08 55%, #000603 100%)"
-          >
-            {usingFallback && (
-              <p style={{
-                margin: '8px 0 0',
-                fontSize: 13,
-                color: isDark ? 'rgba(255,255,255,0.45)' : 'rgba(0,0,0,0.45)',
-                textAlign: 'center',
-                lineHeight: 1.5,
-              }}>
-                No motion sensor detected — touch mode active
-              </p>
-            )}
-          </GameStartScreen>
-        </div>
+        <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description={GAME_TAGLINE}
+          ctaLabel="Hold Steady 🎯" sensorNote="Uses phone accelerometer. Hold your phone flat and still."
+          accentColor={accent} onStart={handleStart} />
       )}
-
-      {/* ── Countdown ─────────────────────────────────────────────────────── */}
-      {phase === 'countdown' && (
-        <Countdown onComplete={handleCountdownDone} accentColor={accent} />
-      )}
-
-      {/* ── Playing ───────────────────────────────────────────────────────── */}
+      {phase === 'countdown' && <Countdown onComplete={() => startLoop()} accentColor={accent} />}
       {(phase === 'playing' || phase === 'countdown') && (
-        <>
-          <canvas
-            ref={canvasRef}
-            style={{
-              position: 'absolute',
-              inset: 0,
-              width: '100%',
-              height: '100%',
-              touchAction: 'none',
-            }}
-          />
-          {phase === 'playing' && (
-            <GameHUD
-              accentColor={accent}
-              items={[
-                { label: 'TIME',      value: timeLeft,      danger: timeLeft <= 10, testId: 'timer' },
-                { label: 'STREAK', value: streakDisplay, testId: 'streak' },
-                { label: 'ON TARGET', value: `${scoreDisplay}%`, testId: 'score' },
-              ]}
-            />
-          )}
-        </>
+        <div ref={mountRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none' }} />
       )}
-
-      {/* Score pop overlay */}
-      {scorePop && (
-        <div style={{
-          position: 'fixed', top: '30%', left: '50%', transform: 'translateX(-50%)',
-          zIndex: 80, pointerEvents: 'none',
-          animation: 'scorePop 1.5s ease-out forwards',
-          fontSize: 44, fontWeight: 900, color: accent,
-          textShadow: `0 0 20px ${accent}88`,
-          whiteSpace: 'nowrap',
-        }}>
-          {scorePop}
-        </div>
-      )}
-
-      {/* Near-miss message */}
-      <AnimatePresence>
-        {nearMissMsg && (
-          <motion.div
-            key="near-miss"
-            initial={{ opacity: 0, scale: 0.7 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, y: -20 }}
-            transition={{ duration: 0.3 }}
-            style={{
-              position: 'fixed', top: '22%', left: '50%', transform: 'translateX(-50%)',
-              zIndex: 80, pointerEvents: 'none',
-              fontSize: 22, fontWeight: 800, color: '#fbbf24',
-              textShadow: '0 0 12px #fbbf2488',
-              whiteSpace: 'nowrap',
-            }}
-          >
-            So close!
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* New best banner */}
-      <AnimatePresence>
-        {isNewBest && phase === 'done' && (
-          <motion.div
-            key="new-best"
-            initial={{ opacity: 0, y: -20, scale: 0.8 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -20 }}
-            transition={{ duration: 0.4, delay: 0.5 }}
-            style={{
-              position: 'fixed', top: '10%', left: '50%', transform: 'translateX(-50%)',
-              zIndex: 90, pointerEvents: 'none',
-              background: 'linear-gradient(135deg, #fbbf24, #f59e0b)',
-              borderRadius: 20,
-              padding: '8px 20px',
-              fontSize: 20,
-              fontWeight: 900,
-              color: '#000',
-              whiteSpace: 'nowrap',
-              boxShadow: '0 4px 20px rgba(251,191,36,0.5)',
-            }}
-          >
-            ★ New Best!
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* ── End Screen ────────────────────────────────────────────────────── */}
-      <AnimatePresence>
-        {phase === 'done' && finalSig && (
-          <motion.div key="done" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} style={{ height: '100%' }}>
-            <EndScreen
-              gameId={GAME_ID}
-              title={getPersonality(finalSig)}
-              emoji={GAME_EMOJI}
-              score={String(finalSig.score)}
-              personality={getPersonality(finalSig)}
-              insights={buildInsights(finalSig)}
-              accentColor={accent}
-              onPlayAgain={handlePlayAgain}
-              didWin={finalSig.timeOnTarget >= 60}
-            />
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      <style>{`
-        @keyframes scorePop {
-          0%   { opacity: 0; transform: translateX(-50%) scale(0.6); }
-          15%  { opacity: 1; transform: translateX(-50%) scale(1.5); }
-          60%  { opacity: 1; transform: translateX(-50%) scale(1.2); }
-          100% { opacity: 0; transform: translateX(-50%) scale(0.9) translateY(-40px); }
-        }
-      `}</style>
-
-      {/* ── Webhook ───────────────────────────────────────────────────────── */}
-      {phase === 'done' && finalSig && (
-        <WebhookEmitter
-          theme={theme}
-          sig={finalSig}
-          personality={getPersonality(finalSig)}
-          player={playerSessionRef.current}
-        />
-      )}
-
       {phase === 'playing' && (
         <>
-          <ScorePopEffect pops={pops} accentColor={CATEGORY_ACCENT} />
-          <StreakBadge streak={streakDisplay} accentColor={CATEGORY_ACCENT} />
+          <GameHUD accentColor={accent} items={[
+            { label: 'TIME', value: timeLeft, danger: timeLeft <= 10 },
+            { label: 'SCORE', value: scoreDisplay },
+          ]} />
+          <ScorePopEffect pops={pops} accentColor={accent} />
+          <StreakBadge streak={streak} accentColor={accent} />
+        </>
+      )}
+      <AnimatePresence>
+        {isNewBest && phase === 'done' && (
+          <motion.div key="nb" initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
+            style={{ position: 'fixed', top: '10%', left: '50%', transform: 'translateX(-50%)', zIndex: 90, background: 'linear-gradient(135deg, #fbbf24, #f59e0b)', borderRadius: 20, padding: '8px 20px', fontSize: 20, fontWeight: 900, color: '#000', whiteSpace: 'nowrap' }}>
+            🏆 New Best!
+          </motion.div>
+        )}
+      </AnimatePresence>
+      {phase === 'done' && finalSig && (
+        <>
+          <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI}
+            score={String(finalSig.score)} personality={getPersonality(finalSig)}
+            insights={[
+              { label: 'On Target', value: `${Math.round(finalSig.onTargetMs / (DURATION * 10))}%`, color: accent },
+              { label: 'Best Hold', value: `${(finalSig.maxStreakMs / 1000).toFixed(1)}s`, color: '#fbbf24' },
+              { label: 'Stability', value: `${Math.round(finalSig.stability * 100)}%`, color: '#06b6d4' },
+            ]}
+            accentColor={accent} onPlayAgain={handlePlayAgain} didWin={finalSig.onTargetMs > DURATION * 400} />
+          <WebhookHelper theme={theme} sig={finalSig} personality={getPersonality(finalSig)} player={playerSessionRef.current} />
         </>
       )}
     </GameShell>
-    </>
   );
 }
 
-// ─── WEBHOOK EMITTER ─────────────────────────────────────────────────────────
-
-function WebhookEmitter({ theme, sig, personality, player }: {
-  theme:       ReturnType<typeof useBrandTheme>;
-  sig:         Signals;
-  personality: string;
-  player:      PlayerSession | null;
-}) {
+function WebhookHelper({ theme, sig, personality, player }: { theme: ReturnType<typeof useBrandTheme>; sig: Signals; personality: string; player: PlayerSession | null; }) {
   const fired = useRef(false);
-  useEffect(() => {
-    if (fired.current) return;
-    fired.current = true;
-    postWebhook(theme, GAME_ID, {
-      personality,
-      score:                sig.score,
-      timeOnTarget:         sig.timeOnTarget,
-      avgDeviation:         sig.avgDeviation,
-      tremorScore:          sig.tremorScore,
-      streakCurrent:        sig.streakCurrent,
-      maxStreak:            sig.maxStreak,
-      interferenceSurvived: sig.interferenceSurvived,
-      totalSamples:         sig.totalSamples,
-    }, player);
-  }, [theme, sig, personality, player]);
+  useEffect(() => { if (fired.current) return; fired.current = true; postWebhook(theme, GAME_ID, { personality, score: sig.score, onTargetMs: sig.onTargetMs, stability: sig.stability }, player); }, [theme, sig, personality, player]);
   return null;
 }
