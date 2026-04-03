@@ -169,6 +169,15 @@ export default function TypeSpeedGame() {
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(65, W / H, 0.1, 100);
     camera.position.set(0, 0, 12);
+    // === POLISH: Responsive resize handler ===
+    const _onResizeHandler = () => {
+      const _W = (mountRef.current?.clientWidth || window.innerWidth);
+      const _H = (mountRef.current?.clientHeight || window.innerHeight);
+      renderer.setSize(_W, _H);
+      if (camera instanceof THREE.PerspectiveCamera) { (camera as THREE.PerspectiveCamera).aspect = _W / _H; camera.updateProjectionMatrix(); }
+    };
+    window.addEventListener('resize', _onResizeHandler);
+    // === END POLISH ===
     // === POLISH: Enhanced rim + fill lighting ===
     const rimLightA = new THREE.PointLight(0x4466ff, 1.2, 20);
     rimLightA.position.set(-6, 5, 3);

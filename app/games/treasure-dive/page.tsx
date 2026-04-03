@@ -100,6 +100,15 @@ export default function TreasureDiveGame() {
     s.scene = scene;
     const camera = new THREE.PerspectiveCamera(65, W / H, 0.1, 100);
     camera.position.set(0, 0, 14);
+    // === POLISH: Responsive resize handler ===
+    const _onResizeHandler = () => {
+      const _W = (mountRef.current?.clientWidth || window.innerWidth);
+      const _H = (mountRef.current?.clientHeight || window.innerHeight);
+      renderer.setSize(_W, _H);
+      if (camera instanceof THREE.PerspectiveCamera) { (camera as THREE.PerspectiveCamera).aspect = _W / _H; camera.updateProjectionMatrix(); }
+    };
+    window.addEventListener('resize', _onResizeHandler);
+    // === END POLISH ===
     camera.lookAt(0, 0, 0);
 
     scene.add(new THREE.AmbientLight(0x051830, 2));

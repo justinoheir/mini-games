@@ -97,6 +97,15 @@ export default function ThreadNeedleGame() {
     scene.fog = new THREE.Fog(0x1a0010, 15, 40);
     const camera = new THREE.PerspectiveCamera(65, W / H, 0.1, 100);
     camera.position.set(0, 0, 10);
+    // === POLISH: Responsive resize handler ===
+    const _onResizeHandler = () => {
+      const _W = (mountRef.current?.clientWidth || window.innerWidth);
+      const _H = (mountRef.current?.clientHeight || window.innerHeight);
+      renderer.setSize(_W, _H);
+      if (camera instanceof THREE.PerspectiveCamera) { (camera as THREE.PerspectiveCamera).aspect = _W / _H; camera.updateProjectionMatrix(); }
+    };
+    window.addEventListener('resize', _onResizeHandler);
+    // === END POLISH ===
     camera.lookAt(0, 0, 0);
 
     scene.add(new THREE.AmbientLight(0x220011, 2));
