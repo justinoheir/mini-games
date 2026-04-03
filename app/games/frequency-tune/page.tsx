@@ -1,28 +1,22 @@
-/**
- * ══════════════════════════════════════════════════════════════════
- *  ETHER MINI-GAMES — FREQUENCY TUNE
- *  A tone plays. Tap the grid tile that matches the frequency.
- *  Each tile shows an animated sine wave — visual frequency clue.
- *
- *  Signals: correctTaps, wrongTaps, avgReactionMs, maxStreak
- * ══════════════════════════════════════════════════════════════════
- */
-
 'use client';
+/**
+ * FREQUENCY TUNE 3D — Tone plays, tap the matching 3D frequency tile.
+ * Each tile shows a unique 3D sine-wave-like ripple visual.
+ */
 import { useEffect, useRef, useState, useCallback } from 'react';
+import * as THREE from 'three';
 import GameShell from '@/components/GameShell';
 import GameHUD from '@/components/GameHUD';
 import GameStartScreen from '@/components/GameStartScreen';
 import Countdown from '@/components/Countdown';
 import EndScreen from '@/components/EndScreen';
 import { initAudio, sfx, haptic, startMusic } from '@/lib/audio';
+import { hapticScore, hapticFail, hapticVictory } from '@/lib/haptics';
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
 
-// ── Constants ────────────────────────────────────────────────────────────────
 const GAME_ID   = 'frequency-tune';
-const PB_KEY    = 'mg_pb_frequency-tune';
 const ACCENT    = '#a78bfa';
 const DURATION  = 45;
 const GAME_EMOJI   = '🎵';
@@ -30,446 +24,310 @@ const GAME_TITLE   = 'Frequency Tune';
 const GAME_TAGLINE = 'Hear the tone. Tap the matching frequency tile.';
 const Q_TIMEOUT_MS = 4000;
 
-// ── Frequency bank ────────────────────────────────────────────────────────────
-const FREQS: { hz: number; label: string; color: string }[] = [
-  { hz: 220,  label: '220 Hz',  color: '#3b82f6' },
-  { hz: 330,  label: '330 Hz',  color: '#06b6d4' },
-  { hz: 440,  label: '440 Hz',  color: '#4ade80' },
-  { hz: 550,  label: '550 Hz',  color: '#facc15' },
-  { hz: 660,  label: '660 Hz',  color: '#f97316' },
-  { hz: 880,  label: '880 Hz',  color: '#ef4444' },
+const FREQS = [
+  { hz: 220, label: '220 Hz', color: 0x3b82f6 },
+  { hz: 330, label: '330 Hz', color: 0x06b6d4 },
+  { hz: 440, label: '440 Hz', color: 0x4ade80 },
+  { hz: 550, label: '550 Hz', color: 0xfacc15 },
+  { hz: 660, label: '660 Hz', color: 0xf97316 },
+  { hz: 880, label: '880 Hz', color: 0xef4444 },
 ];
 const NF = FREQS.length;
 
-// ── Tone player (uses Tone.js directly) ───────────────────────────────────────
 async function playToneHz(hz: number, durationS = 0.7) {
   try {
     const T = await import('tone');
     if (T.context.state !== 'running') await T.start();
-    const synth = new T.Synth({
-      oscillator: { type: 'sine' },
-      envelope: { attack: 0.02, decay: 0.05, sustain: 0.9, release: 0.3 },
-      volume: -8,
-    }).toDestination();
+    const synth = new T.Synth({ oscillator: { type: 'sine' }, envelope: { attack: 0.02, decay: 0.05, sustain: 0.9, release: 0.3 }, volume: -8 }).toDestination();
     synth.triggerAttackRelease(hz, durationS);
     setTimeout(() => synth.dispose(), (durationS + 0.5) * 1000);
-  } catch { /* audio not available */ }
+  } catch { /**/ }
 }
 
-// ── Signals ───────────────────────────────────────────────────────────────────
-interface Signals {
-  score: number;
-  correctTaps: number;
-  wrongTaps: number;
-  avgReactionMs: number;
-  maxStreak: number;
+interface Signals { score: number; correctTaps: number; wrongTaps: number; maxStreak: number; streakCurrent: number; avgReactionMs: number; reactionTimes: number[]; }
+function getPersonality(s: Signals): string {
+  const acc = (s.correctTaps + s.wrongTaps) > 0 ? s.correctTaps / (s.correctTaps + s.wrongTaps) : 0;
+  if (acc >= 0.85 && s.maxStreak >= 5) return 'Frequency Master 🎵';
+  if (acc >= 0.7) return 'Pitch Perfect 🎶';
+  if (s.maxStreak >= 6) return 'Streak Listener 🔥';
+  return 'Tuning Up 📻';
 }
-
-function getPersonality(sig: Signals): string {
-  const total = sig.correctTaps + sig.wrongTaps;
-  const acc   = total > 0 ? sig.correctTaps / total : 0;
-  if (acc >= 0.90 && sig.correctTaps >= 12) return 'Perfect Pitch 🎶';
-  if (acc >= 0.80 && sig.correctTaps >= 8)  return 'Tone Listener 🎵';
-  if (sig.correctTaps >= 10)                return 'Frequency Finder ⚡';
-  return 'Training Ears 🌊';
-}
-
 type Phase = 'start' | 'countdown' | 'playing' | 'done';
 
-// ── Canvas drawing (sine wave tiles) ─────────────────────────────────────────
-function drawSineWave(
-  ctx: CanvasRenderingContext2D,
-  x: number, y: number, w: number, h: number,
-  hz: number, color: string,
-  glowing: boolean,
-  phase: number,
-) {
-  const freq = hz / 220;        // visual cycles per tile width
-  const amp  = h * 0.28;
-  const cy   = y + h / 2;
-  const pts  = Math.max(40, w * 2);
-
-  ctx.save();
-  ctx.strokeStyle = color;
-  ctx.lineWidth   = glowing ? 2.5 : 1.8;
-  if (glowing) { ctx.shadowBlur = 14; ctx.shadowColor = color; }
-  ctx.beginPath();
-  for (let i = 0; i <= pts; i++) {
-    const px = x + (i / pts) * w;
-    const py = cy + amp * Math.sin(2 * Math.PI * freq * (i / pts) + phase);
-    if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
-  }
-  ctx.stroke();
-  ctx.restore();
+interface GS {
+  running: boolean; timeLeft: number; sig: Signals;
+  correctIdx: number; answered: boolean; qSpawnTime: number;
+  questionTimeout: ReturnType<typeof setTimeout> | null;
 }
 
-interface TileFlash { type: 'hit' | 'miss'; end: number; }
-
-interface GameState {
-  running: boolean; timeLeft: number; sig: Signals; accentColor: string;
-  currentFreqIdx: number;   // the playing tone
-  tileFlashes: Map<number, TileFlash>;
-  streak: number;
-  phase: number;            // animation phase (radians, increments per frame)
-  waitingForTap: boolean;
-  spawnMs: number;
-  rxTimes: number[];
-  qTimerId: ReturnType<typeof setTimeout> | null;
-}
-
-// ── Layout ───────────────────────────────────────────────────────────────────
-interface Layout { tileW: number; tileH: number; gridX: number; gridY: number; }
-function getLayout(W: number, H: number): Layout {
-  const margin = 16, gap = 10, cols = 3, rows = 2;
-  const tileW  = Math.floor((W - margin * 2 - gap * (cols - 1)) / cols);
-  const tileH  = Math.floor(tileW * 0.6);
-  const totalW = tileW * cols + gap * (cols - 1);
-  const totalH = tileH * rows + gap * (rows - 1);
-  return { tileW, tileH, gridX: Math.floor((W - totalW) / 2), gridY: Math.max(150, Math.floor((H - totalH) / 2)) };
-}
-function tilePos(i: number, l: Layout) {
-  const gap = 10, col = i % 3, row = Math.floor(i / 3);
-  return { x: l.gridX + col * (l.tileW + gap), y: l.gridY + row * (l.tileH + gap) };
-}
-function hitTest(x: number, y: number, l: Layout): number {
-  for (let i = 0; i < NF; i++) {
-    const { x: tx, y: ty } = tilePos(i, l);
-    if (x >= tx && x <= tx + l.tileW && y >= ty && y <= ty + l.tileH) return i;
-  }
-  return -1;
-}
-
-// ── Rounded rect ─────────────────────────────────────────────────────────────
-function rRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
-  const rad = Math.min(r, w / 2, h / 2);
-  ctx.beginPath();
-  ctx.moveTo(x + rad, y); ctx.lineTo(x + w - rad, y); ctx.quadraticCurveTo(x + w, y, x + w, y + rad);
-  ctx.lineTo(x + w, y + h - rad); ctx.quadraticCurveTo(x + w, y + h, x + w - rad, y + h);
-  ctx.lineTo(x + rad, y + h); ctx.quadraticCurveTo(x, y + h, x, y + h - rad);
-  ctx.lineTo(x, y + rad); ctx.quadraticCurveTo(x, y, x + rad, y); ctx.closePath();
-}
-
-// ── Draw ──────────────────────────────────────────────────────────────────────
-function drawFrame(ctx: CanvasRenderingContext2D, W: number, H: number, s: GameState) {
-  const now = performance.now();
-  const l   = getLayout(W, H);
-
-  // Background
-  const bg = ctx.createRadialGradient(W * 0.5, H * 0.35, 0, W * 0.5, H * 0.65, Math.max(W, H));
-  bg.addColorStop(0, '#090511'); bg.addColorStop(0.7, '#050309'); bg.addColorStop(1, '#020105');
-  ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
-
-  // "Tap the tone" label (above tiles)
-  ctx.save();
-  ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
-  ctx.font = `700 ${Math.max(14, Math.floor(W * 0.038))}px -apple-system, sans-serif`;
-  ctx.fillStyle = 'rgba(255,255,255,0.5)';
-  ctx.fillText('TAP THE MATCHING FREQUENCY', W / 2, l.gridY - 12);
-  ctx.restore();
-
-  // Replay button (below tiles)
-  const totalTileH = l.tileH * 2 + 10;
-  const replayY = l.gridY + totalTileH + 20;
-  ctx.save();
-  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  ctx.font = `600 ${Math.max(13, Math.floor(W * 0.033))}px -apple-system, sans-serif`;
-  ctx.fillStyle = `${s.accentColor}aa`;
-  ctx.fillText('▶ REPLAY TONE', W / 2, replayY + 14);
-  ctx.restore();
-
-  // Tiles
-  for (let i = 0; i < NF; i++) {
-    const { x, y } = tilePos(i, l);
-    const f      = FREQS[i];
-    const flash  = s.tileFlashes.get(i);
-    const flashAlive = flash !== undefined && now < flash.end;
-
-    ctx.save();
-    // Tile background
-    if (flashAlive && flash) {
-      ctx.fillStyle = flash.type === 'hit' ? `${f.color}33` : 'rgba(239,68,68,0.25)';
-      ctx.strokeStyle = flash.type === 'hit' ? f.color : '#ef4444';
-      ctx.lineWidth = 2;
-      ctx.shadowBlur = 18; ctx.shadowColor = flash.type === 'hit' ? f.color : '#ef4444';
-    } else {
-      ctx.fillStyle = 'rgba(255,255,255,0.04)';
-      ctx.strokeStyle = `${f.color}55`;
-      ctx.lineWidth = 1.5;
-      ctx.shadowBlur = 0;
-    }
-    rRect(ctx, x, y, l.tileW, l.tileH, 10); ctx.fill(); ctx.stroke();
-    ctx.restore();
-
-    // Sine wave
-    const isActive = s.waitingForTap && s.currentFreqIdx === i;
-    drawSineWave(ctx, x + 8, y, l.tileW - 16, l.tileH - 24, f.hz, f.color, isActive, s.phase * (f.hz / 220));
-
-    // Frequency label
-    ctx.save();
-    ctx.fillStyle = flashAlive ? (flash?.type === 'hit' ? f.color : '#ef4444') : `${f.color}bb`;
-    ctx.font = `700 ${Math.max(11, Math.floor(l.tileW * 0.13))}px -apple-system, sans-serif`;
-    ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
-    ctx.fillText(f.label, x + l.tileW / 2, y + l.tileH - 4);
-    ctx.restore();
-  }
-
-  // Streak
-  if (s.streak >= 3) {
-    ctx.save();
-    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.font = `700 ${Math.max(14, Math.floor(W * 0.036))}px -apple-system, sans-serif`;
-    ctx.fillStyle = '#fbbf24'; ctx.shadowBlur = 8; ctx.shadowColor = '#fbbf24';
-    ctx.fillText(`×${s.streak} STREAK!`, W / 2, replayY + 40);
-    ctx.restore();
-  }
-}
-
-// ── Component ──────────────────────────────────────────────────────────────────
 export default function FrequencyTuneGame() {
-  const theme       = useBrandTheme();
-  const canvasRef   = useRef<HTMLCanvasElement>(null);
-  const animRef     = useRef(0);
-  const timerRef    = useRef<ReturnType<typeof setInterval> | null>(null);
+  const theme = useBrandTheme();
+  const mountRef = useRef<HTMLDivElement>(null);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const stopMusicRef = useRef<(() => void) | null>(null);
-  const phaseRef    = useRef<Phase>('start');
-
-  const stateRef = useRef<GameState>({
-    running: false, timeLeft: DURATION, accentColor: ACCENT,
-    sig: { score: 0, correctTaps: 0, wrongTaps: 0, avgReactionMs: 0, maxStreak: 0 },
-    currentFreqIdx: 0, tileFlashes: new Map(), streak: 0,
-    phase: 0, waitingForTap: false, spawnMs: 0, rxTimes: [],
-    qTimerId: null,
+  const playerSessionRef = useRef<PlayerSession | null>(null);
+  const stateRef = useRef<GS>({
+    running: false, timeLeft: DURATION,
+    sig: { score: 0, correctTaps: 0, wrongTaps: 0, maxStreak: 0, streakCurrent: 0, avgReactionMs: 0, reactionTimes: [] },
+    correctIdx: 0, answered: false, qSpawnTime: 0, questionTimeout: null,
   });
+  const threeRef = useRef<{
+    renderer: THREE.WebGLRenderer; scene: THREE.Scene; camera: THREE.PerspectiveCamera;
+    tiles: THREE.Mesh[]; tileLights: THREE.PointLight[];
+    tileWaves: Array<{ points: THREE.Points; positions: Float32Array }>;
+    animId: number; frame: number;
+  } | null>(null);
 
-  const [phase, setPhase]           = useState<Phase>('start');
-  const [timeLeft, setTimeLeft]     = useState(DURATION);
+  const [phase, setPhase] = useState<Phase>('start');
+  const [timeLeft, setTimeLeft] = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
-  const [finalSig, setFinalSig]     = useState<Signals | null>(null);
-  const [isNewBest, setIsNewBest]   = useState(false);
-  const playerSessionRef            = useRef<PlayerSession | null>(null);
+  const [finalSig, setFinalSig] = useState<Signals | null>(null);
+  const [isNewBest, setIsNewBest] = useState(false);
 
-  useEffect(() => { stateRef.current.accentColor = theme.colors.accent ?? ACCENT; }, [theme]);
+  const endGame = useCallback(() => {
+    const s = stateRef.current; s.running = false;
+    if (s.questionTimeout) { clearTimeout(s.questionTimeout); s.questionTimeout = null; }
+    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+    if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
+    const t = threeRef.current;
+    if (t) { cancelAnimationFrame(t.animId); t.renderer.dispose(); }
+    try {
+      const pb = parseInt(localStorage.getItem(`pb_${GAME_ID}`) ?? '0');
+      if (s.sig.score > pb) { localStorage.setItem(`pb_${GAME_ID}`, String(s.sig.score)); setIsNewBest(true); }
+    } catch { /**/ }
+    if (s.sig.reactionTimes.length > 0) s.sig.avgReactionMs = Math.round(s.sig.reactionTimes.reduce((a,b)=>a+b,0)/s.sig.reactionTimes.length);
+    setFinalSig({ ...s.sig }); setPhase('done'); hapticVictory();
+  }, []);
 
-  const nextQuestion = useCallback((s: GameState) => {
-    if (s.qTimerId) { clearTimeout(s.qTimerId); s.qTimerId = null; }
-    const prev = s.currentFreqIdx;
-    let next: number;
-    do { next = Math.floor(Math.random() * NF); } while (next === prev && NF > 1);
-    s.currentFreqIdx = next;
-    s.waitingForTap  = true;
-    s.spawnMs        = Date.now();
-    playToneHz(FREQS[next].hz);
-
-    s.qTimerId = setTimeout(() => {
-      if (!s.running || !s.waitingForTap) return;
-      s.waitingForTap = false;
-      s.sig.wrongTaps++;
-      s.streak = 0;
-      s.sig.score = Math.max(0, s.sig.score - 3);
-      sfx.collision(); haptic([20, 30, 20]);
-      setTimeout(() => { if (s.running) nextQuestion(s); }, 500);
+  const nextQuestion = useCallback(() => {
+    const s = stateRef.current; if (!s.running) return;
+    if (s.questionTimeout) clearTimeout(s.questionTimeout);
+    s.correctIdx = Math.floor(Math.random() * NF);
+    s.answered = false;
+    s.qSpawnTime = Date.now();
+    // Reset tile dim
+    const t = threeRef.current;
+    if (t) {
+      t.tiles.forEach((tile, i) => {
+        (tile.material as THREE.MeshStandardMaterial).emissiveIntensity = 0.2;
+        t.tileLights[i].intensity = 0.5;
+      });
+    }
+    void playToneHz(FREQS[s.correctIdx].hz);
+    s.questionTimeout = setTimeout(() => {
+      if (!s.running || s.answered) return;
+      s.sig.streakCurrent = 0; s.answered = true;
+      sfx.fail?.(); hapticFail();
+      setTimeout(() => { if (s.running) nextQuestion(); }, 600);
     }, Q_TIMEOUT_MS);
   }, []);
 
-  const endGame = useCallback(() => {
-    const s = stateRef.current;
-    s.running = false; s.waitingForTap = false;
-    if (s.qTimerId) { clearTimeout(s.qTimerId); s.qTimerId = null; }
-    cancelAnimationFrame(animRef.current);
-    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
-    if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
-    sfx.success(); haptic([100]);
-    const avg = s.rxTimes.length > 0
-      ? Math.round(s.rxTimes.reduce((a, b) => a + b, 0) / s.rxTimes.length) : 0;
-    s.sig.avgReactionMs = avg;
-    try {
-      const pb = parseInt(localStorage.getItem(PB_KEY) ?? '0', 10);
-      if (s.sig.score > pb) { localStorage.setItem(PB_KEY, String(s.sig.score)); setIsNewBest(true); }
-    } catch { /* ignore */ }
-    setFinalSig({ ...s.sig });
-    phaseRef.current = 'done'; setPhase('done');
-  }, []);
-
   const startLoop = useCallback(() => {
-    const canvas = canvasRef.current; if (!canvas) return;
-    const ctx = canvas.getContext('2d'); if (!ctx) return;
+    const mount = mountRef.current; if (!mount) return;
     const s = stateRef.current;
-
     s.running = true; s.timeLeft = DURATION;
-    s.sig = { score: 0, correctTaps: 0, wrongTaps: 0, avgReactionMs: 0, maxStreak: 0 };
-    s.streak = 0; s.phase = 0; s.rxTimes = [];
-    setScoreDisplay(0); setTimeLeft(DURATION);
-    phaseRef.current = 'playing'; setPhase('playing');
-    stopMusicRef.current = startMusic('minimal');
+    s.sig = { score: 0, correctTaps: 0, wrongTaps: 0, maxStreak: 0, streakCurrent: 0, avgReactionMs: 0, reactionTimes: [] };
+    setScoreDisplay(0); setTimeLeft(DURATION); setPhase('playing');
+    stopMusicRef.current = startMusic('ambient');
 
-    const dpr = window.devicePixelRatio || 1;
-    canvas.width = window.innerWidth * dpr; canvas.height = window.innerHeight * dpr;
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const W = mount.clientWidth, H = mount.clientHeight;
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(W, H); renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setClearColor(0x06020f);
+    mount.innerHTML = ''; mount.appendChild(renderer.domElement);
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x06020f);
+    const camera = new THREE.PerspectiveCamera(65, W / H, 0.1, 100);
+    camera.position.set(0, 0, 8);
+
+    scene.add(new THREE.AmbientLight(0xffffff, 0.25));
+
+    // Stars
+    const starPos = new Float32Array(300 * 3);
+    for (let i = 0; i < 300; i++) { starPos[i*3] = (Math.random()-0.5)*30; starPos[i*3+1] = (Math.random()-0.5)*20; starPos[i*3+2] = -8 - Math.random()*12; }
+    const starGeo = new THREE.BufferGeometry(); starGeo.setAttribute('position', new THREE.BufferAttribute(starPos, 3));
+    scene.add(new THREE.Points(starGeo, new THREE.PointsMaterial({ color: 0xa78bfa, size: 0.07, transparent: true, opacity: 0.5 })));
+
+    // 6 tiles in 3x2 grid
+    const TILE_POSITIONS = [[-2.2, 1.5, 0], [0, 1.5, 0], [2.2, 1.5, 0], [-2.2, -0.6, 0], [0, -0.6, 0], [2.2, -0.6, 0]];
+    const tiles: THREE.Mesh[] = [];
+    const tileLights: THREE.PointLight[] = [];
+    const tileWaves: Array<{ points: THREE.Points; positions: Float32Array }> = [];
+
+    FREQS.forEach((freq, i) => {
+      const geo = new THREE.BoxGeometry(1.8, 1.8, 0.18);
+      const mat = new THREE.MeshStandardMaterial({ color: freq.color, emissive: freq.color, emissiveIntensity: 0.2, metalness: 0.3, roughness: 0.4 });
+      const tile = new THREE.Mesh(geo, mat);
+      tile.position.set(TILE_POSITIONS[i][0], TILE_POSITIONS[i][1], TILE_POSITIONS[i][2]);
+      scene.add(tile);
+      tiles.push(tile);
+
+      // Frequency wave on tile face (particles)
+      const waveCount = 40;
+      const wPos = new Float32Array(waveCount * 3);
+      const wGeo = new THREE.BufferGeometry();
+      wGeo.setAttribute('position', new THREE.BufferAttribute(wPos, 3));
+      const wave = new THREE.Points(wGeo, new THREE.PointsMaterial({ color: freq.color, size: 0.05, transparent: true, opacity: 0.8 }));
+      wave.position.copy(tile.position);
+      wave.position.z += 0.1;
+      scene.add(wave);
+      tileWaves.push({ points: wave, positions: wPos });
+
+      const tl = new THREE.PointLight(freq.color, 0.5, 5);
+      tl.position.set(TILE_POSITIONS[i][0], TILE_POSITIONS[i][1], 1);
+      scene.add(tl);
+      tileLights.push(tl);
+    });
+
+    const obj = { renderer, scene, camera, tiles, tileLights, tileWaves, animId: 0, frame: 0 };
+    threeRef.current = obj;
 
     timerRef.current = setInterval(() => {
-      s.timeLeft--;
-      setTimeLeft(s.timeLeft);
-      if (s.timeLeft === 10) sfx.warning();
-      if (s.timeLeft > 0 && s.timeLeft < 10) sfx.tick();
+      s.timeLeft--; setTimeLeft(s.timeLeft);
       if (s.timeLeft <= 0) endGame();
     }, 1000);
 
-    setTimeout(() => { if (s.running) nextQuestion(s); }, 400);
+    setTimeout(() => { if (s.running) nextQuestion(); }, 500);
 
-    const loop = (now: number) => {
-      if (!s.running) return;
-      s.phase += 0.04;
-      // Clean expired flashes
-      for (const [k, fl] of s.tileFlashes) {
-        if (now >= fl.end) s.tileFlashes.delete(k);
-      }
-      drawFrame(ctx, window.innerWidth, window.innerHeight, s);
-      animRef.current = requestAnimationFrame(loop);
+    const animate = () => {
+      obj.animId = requestAnimationFrame(animate);
+      obj.frame++;
+      const t0 = obj.frame * 0.05;
+
+      // Animate sine wave on each tile face
+      tileWaves.forEach((tw, ti) => {
+        const freq = FREQS[ti];
+        const waveFreqMult = (ti + 1) * 0.8;
+        const pos = tw.positions;
+        for (let j = 0; j < 40; j++) {
+          pos[j*3]   = -0.75 + (j / 39) * 1.5;
+          pos[j*3+1] = Math.sin((j / 39) * Math.PI * 2 * waveFreqMult + t0 * (1 + ti * 0.3)) * 0.3;
+          pos[j*3+2] = 0;
+        }
+        tw.points.geometry.attributes.position.needsUpdate = true;
+        // Wave amplitude scales with tile activation
+        const mat = tiles[ti].material as THREE.MeshStandardMaterial;
+        const isLit = mat.emissiveIntensity > 0.5;
+        (tw.points.material as THREE.PointsMaterial).opacity = isLit ? 1.0 : 0.5;
+        (tw.points.material as THREE.PointsMaterial).size = isLit ? 0.08 : 0.04;
+      });
+
+      // Tile idle animation
+      tiles.forEach((tile, i) => {
+        tile.position.z = TILE_POSITIONS[i][2] + Math.sin(t0 * 0.5 + i * 0.7) * 0.05;
+      });
+
+      renderer.render(scene, camera);
     };
-    animRef.current = requestAnimationFrame(loop);
+    animate();
+
+    const handleResize = () => {
+      const w = mount.clientWidth, h = mount.clientHeight;
+      camera.aspect = w / h; camera.updateProjectionMatrix(); renderer.setSize(w, h);
+    };
+    window.addEventListener('resize', handleResize);
   }, [endGame, nextQuestion]);
 
-  const handleTap = useCallback((clientX: number, clientY: number) => {
-    const canvas = canvasRef.current; if (!canvas) return;
-    const s = stateRef.current;
-    if (!s.running) return;
-
-    const rect = canvas.getBoundingClientRect();
-    const x = (clientX - rect.left) * (canvas.offsetWidth / rect.width);
-    const y = (clientY - rect.top)  * (canvas.offsetHeight / rect.height);
-    const l = getLayout(window.innerWidth, window.innerHeight);
-
-    // Check replay button
-    const totalTileH = l.tileH * 2 + 10;
-    const replayY = l.gridY + totalTileH + 12;
-    if (x >= l.gridX && x <= l.gridX + l.tileW * 3 + 20 && y >= replayY && y <= replayY + 36) {
-      playToneHz(FREQS[s.currentFreqIdx].hz);
-      sfx.click(); return;
-    }
-
-    if (!s.waitingForTap) return;
-
-    const idx = hitTest(x, y, l);
-    if (idx < 0) return;
-
-    if (s.qTimerId) { clearTimeout(s.qTimerId); s.qTimerId = null; }
-    s.waitingForTap = false;
-    const rxMs = Date.now() - s.spawnMs;
-
-    if (idx === s.currentFreqIdx) {
-      s.tileFlashes.set(idx, { type: 'hit', end: performance.now() + 350 });
-      s.rxTimes.push(rxMs);
-      s.streak++;
-      if (s.streak > s.sig.maxStreak) s.sig.maxStreak = s.streak;
-      const pts = 10 + (s.streak >= 3 ? 5 : 0) + (rxMs < 1500 ? 5 : 0);
-      s.sig.score += pts; setScoreDisplay(s.sig.score);
-      s.sig.correctTaps++;
-      sfx.collect(); haptic([30]);
-    } else {
-      s.tileFlashes.set(idx, { type: 'miss', end: performance.now() + 350 });
-      s.streak = 0;
-      s.sig.score = Math.max(0, s.sig.score - 5); setScoreDisplay(s.sig.score);
-      s.sig.wrongTaps++;
-      sfx.collision(); haptic([20, 30, 20]);
-    }
-    setTimeout(() => { if (s.running) nextQuestion(s); }, 350);
-  }, [nextQuestion]);
-
   useEffect(() => {
-    const canvas = canvasRef.current; if (!canvas) return;
-    const resize = () => {
-      const dpr = window.devicePixelRatio || 1;
-      canvas.style.width  = window.innerWidth  + 'px';
-      canvas.style.height = window.innerHeight + 'px';
-      canvas.width  = window.innerWidth  * dpr;
-      canvas.height = window.innerHeight * dpr;
-      const c = canvas.getContext('2d');
-      if (c) c.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const mount = mountRef.current; if (!mount || phase !== 'playing') return;
+    const onTap = (e: PointerEvent) => {
+      e.preventDefault();
+      const t = threeRef.current; if (!t) return;
+      const s = stateRef.current; if (!s.running || s.answered) return;
+      const rect = mount.getBoundingClientRect();
+      const ndcX = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+      const ndcY = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+      const raycaster = new THREE.Raycaster();
+      raycaster.setFromCamera(new THREE.Vector2(ndcX, ndcY), t.camera);
+      const hits = raycaster.intersectObjects(t.tiles);
+      if (hits.length === 0) return;
+      const tileIdx = t.tiles.indexOf(hits[0].object as THREE.Mesh);
+      if (tileIdx < 0) return;
+
+      s.answered = true;
+      if (s.questionTimeout) clearTimeout(s.questionTimeout);
+
+      // Light up the tapped tile
+      (t.tiles[tileIdx].material as THREE.MeshStandardMaterial).emissiveIntensity = 1.2;
+      t.tileLights[tileIdx].intensity = 5;
+
+      if (tileIdx === s.correctIdx) {
+        s.sig.correctTaps++;
+        s.sig.streakCurrent++;
+        if (s.sig.streakCurrent > s.sig.maxStreak) s.sig.maxStreak = s.sig.streakCurrent;
+        const rt = Date.now() - s.qSpawnTime; s.sig.reactionTimes.push(rt);
+        const pts = 2 * (s.sig.streakCurrent >= 3 ? 2 : 1);
+        s.sig.score += pts;
+        setScoreDisplay(s.sig.score);
+        sfx.success?.(); hapticScore();
+      } else {
+        s.sig.wrongTaps++;
+        s.sig.streakCurrent = 0;
+        // Flash wrong tile red
+        (t.tiles[tileIdx].material as THREE.MeshStandardMaterial).emissive.set(0xef4444);
+        setTimeout(() => {
+          (t.tiles[tileIdx].material as THREE.MeshStandardMaterial).emissive.set(FREQS[tileIdx].color);
+          (t.tiles[tileIdx].material as THREE.MeshStandardMaterial).emissiveIntensity = 0.2;
+          t.tileLights[tileIdx].intensity = 0.5;
+        }, 400);
+        // Show correct
+        (t.tiles[s.correctIdx].material as THREE.MeshStandardMaterial).emissiveIntensity = 1.0;
+        sfx.fail?.(); hapticFail();
+      }
+      setTimeout(() => { if (s.running) nextQuestion(); }, 700);
     };
-    resize(); window.addEventListener('resize', resize);
-    const onDown = (e: PointerEvent) => { if (phaseRef.current === 'playing') handleTap(e.clientX, e.clientY); };
-    canvas.addEventListener('pointerdown', onDown);
-    return () => { window.removeEventListener('resize', resize); canvas.removeEventListener('pointerdown', onDown); };
-  }, [handleTap]);
+    mount.addEventListener('pointerdown', onTap);
+    return () => mount.removeEventListener('pointerdown', onTap);
+  }, [phase, nextQuestion]);
 
   useEffect(() => () => {
-    cancelAnimationFrame(animRef.current);
+    const s = stateRef.current;
+    if (s.questionTimeout) clearTimeout(s.questionTimeout);
     if (timerRef.current) clearInterval(timerRef.current);
     if (stopMusicRef.current) stopMusicRef.current();
-    const s = stateRef.current;
-    if (s.qTimerId) clearTimeout(s.qTimerId);
+    const t = threeRef.current;
+    if (t) { cancelAnimationFrame(t.animId); t.renderer.dispose(); }
   }, []);
 
-  const handleStart = useCallback((name: string, avatar: string) => {
+  const handleStart = useCallback(async (name: string, avatar: string) => {
     playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar);
-    initAudio(); phaseRef.current = 'countdown'; setPhase('countdown');
+    await initAudio(); setPhase('countdown');
   }, []);
   const handleCountdownDone = useCallback(() => { startLoop(); }, [startLoop]);
-  const handlePlayAgain = useCallback(() => {
-    setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null); setIsNewBest(false);
-    phaseRef.current = 'countdown'; setPhase('countdown');
-  }, []);
-
-  const buildInsights = useCallback((sig: Signals) => {
-    const total = sig.correctTaps + sig.wrongTaps;
-    const acc   = total > 0 ? Math.round(sig.correctTaps / total * 100) : 0;
-    const ac    = theme.colors.accent ?? ACCENT;
-    return [
-      { label: 'Correct',     value: String(sig.correctTaps), color: sig.correctTaps >= 12 ? '#4ade80' : ac },
-      { label: 'Accuracy',    value: `${acc}%`, color: acc >= 85 ? '#4ade80' : acc >= 65 ? '#facc15' : '#ef4444' },
-      { label: 'Best Streak', value: `×${sig.maxStreak}`, color: sig.maxStreak >= 5 ? '#4ade80' : ac },
-      { label: 'Avg Speed',   value: sig.avgReactionMs > 0 ? `${(sig.avgReactionMs / 1000).toFixed(1)}s` : '—', color: ac },
-    ];
-  }, [theme]);
-
-  const accent = theme.colors.accent ?? ACCENT;
+  const handlePlayAgain = useCallback(() => { setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null); setIsNewBest(false); }, []);
+  const buildInsights = (sig: Signals) => [
+    { label: 'Correct', value: String(sig.correctTaps), color: '#4ade80' },
+    { label: 'Wrong', value: String(sig.wrongTaps), color: '#ef4444' },
+    { label: 'Best Streak', value: `×${sig.maxStreak}`, color: ACCENT },
+    { label: 'Avg React', value: sig.avgReactionMs > 0 ? `${sig.avgReactionMs}ms` : '-', color: 'var(--color-text)' },
+  ];
 
   return (
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accent}
-      background="radial-gradient(ellipse at 50% 0%, rgba(167,139,250,0.12) 0%, transparent 55%), linear-gradient(180deg, #090511 0%, #050309 50%, #020105 100%)">
-      {phase === 'start' && (
-        <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description={GAME_TAGLINE}
-          ctaLabel="Start" accentColor={accent} onStart={handleStart} />
-      )}
-      {phase === 'countdown' && <Countdown onComplete={handleCountdownDone} accentColor={accent} />}
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
+      {phase === 'start' && <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description={GAME_TAGLINE} ctaLabel="Tune In 🎵" accentColor={theme.colors.accent ?? ACCENT} onStart={handleStart} />}
+      {phase === 'countdown' && <Countdown onComplete={handleCountdownDone} accentColor={theme.colors.accent ?? ACCENT} />}
       {(phase === 'playing' || phase === 'countdown') && (
         <>
-          <canvas ref={canvasRef} role="img" aria-label="Frequency Tune game canvas"
-            style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none' }} />
-          {phase === 'playing' && (
-            <GameHUD accentColor={accent} items={[
-              { label: 'TIME',  value: timeLeft,     danger: timeLeft <= 10, testId: 'timer' },
-              { label: 'SCORE', value: scoreDisplay, testId: 'score' },
-            ]} />
-          )}
+          <div ref={mountRef} style={{ position: 'absolute', inset: 0, touchAction: 'none' }} />
+          {phase === 'playing' && <GameHUD accentColor={theme.colors.accent ?? ACCENT} items={[{ label: 'TIME', value: timeLeft, danger: timeLeft <= 10 }, { label: 'SCORE', value: scoreDisplay }]} />}
         </>
-      )}
-      {isNewBest && phase === 'done' && (
-        <div style={{ position: 'fixed', top: '10%', left: '50%', transform: 'translateX(-50%)',
-          zIndex: 90, background: 'linear-gradient(135deg,#fbbf24,#f59e0b)', borderRadius: 20,
-          padding: '8px 20px', fontSize: 20, fontWeight: 900, color: '#000',
-          whiteSpace: 'nowrap', boxShadow: '0 4px 20px rgba(251,191,36,0.5)' }}>🏆 New Best!</div>
       )}
       {phase === 'done' && finalSig && (
-        <>
-          <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI}
-            score={String(finalSig.score)} personality={getPersonality(finalSig)}
-            insights={buildInsights(finalSig)} accentColor={accent}
-            onPlayAgain={handlePlayAgain} didWin={finalSig.correctTaps >= 8} />
-          <WebhookEmitter theme={theme} sig={finalSig} personality={getPersonality(finalSig)} player={playerSessionRef.current} />
-        </>
+        <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI} score={String(finalSig.score)} personality={getPersonality(finalSig)} insights={buildInsights(finalSig)} accentColor={theme.colors.accent ?? ACCENT} onPlayAgain={handlePlayAgain} didWin={finalSig.correctTaps >= 10} />
+      )}
+      {phase === 'done' && finalSig && (
+        <WebhookEmitter theme={theme} sig={finalSig} personality={getPersonality(finalSig)} player={playerSessionRef.current} />
       )}
     </GameShell>
   );
 }
 
-function WebhookEmitter({ theme, sig, personality, player }: {
-  theme: ReturnType<typeof useBrandTheme>; sig: Signals; personality: string; player: PlayerSession | null;
-}) {
+function WebhookEmitter({ theme, sig, personality, player }: { theme: ReturnType<typeof useBrandTheme>; sig: Signals; personality: string; player: PlayerSession | null; }) {
   const fired = useRef(false);
   useEffect(() => {
     if (fired.current) return; fired.current = true;
-    postWebhook(theme, GAME_ID, { personality, score: sig.score }, player);
+    postWebhook(theme, GAME_ID, { personality, score: sig.score, correctTaps: sig.correctTaps, wrongTaps: sig.wrongTaps, maxStreak: sig.maxStreak, avgReactionMs: sig.avgReactionMs }, player);
   }, [theme, sig, personality, player]);
   return null;
 }

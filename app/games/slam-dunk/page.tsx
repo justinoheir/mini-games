@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
+import * as THREE from 'three';
 import GameShell from '@/components/GameShell';
 import GameHUD from '@/components/GameHUD';
 import GameStartScreen from '@/components/GameStartScreen';
@@ -27,269 +28,317 @@ function getPersonality(sig: Signals): string {
   return 'Air Ball ❌';
 }
 type Phase = 'start' | 'countdown' | 'playing' | 'done';
-interface GameState {
-  running: boolean; timeLeft: number; sig: Signals;
-  playerY: number; playerVY: number; jumping: boolean; onGround: boolean;
-  chargeLevel: number; charging: boolean; chargeStart: number;
-  hoopX: number; hoopY: number; ballX: number; ballY: number;
-  dunkWindow: boolean; dunkWindowTimer: number; lastDunkFrame: number;
-  accentColor: string; floats: Array<{ x: number; y: number; text: string; alpha: number; vy: number; color: string }>;
-  scorePop: number; frame: number; pointerCount: number; shakeX: number;
-}
-const activePointers = new Set<number>();
 
 export default function SlamDunk() {
   const theme = useBrandTheme();
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const mountRef = useRef<HTMLDivElement>(null);
   const animRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const stateRef = useRef<GameState>({
+
+  const stateRef = useRef({
+    renderer: null as THREE.WebGLRenderer | null,
+    scene: null as THREE.Scene | null,
+    camera: null as THREE.PerspectiveCamera | null,
+    ball: null as THREE.Mesh | null,
+    hoop: null as THREE.Mesh | null,
+    hoopLight: null as THREE.PointLight | null,
+    ballLight: null as THREE.PointLight | null,
     running: false, timeLeft: DURATION,
-    sig: { totalAttempts: 0, dunks: 0, almostDunks: 0, perfectTiming: 0, maxStreak: 0, streakCurrent: 0, score: 0 },
-    playerY: 0, playerVY: 0, jumping: false, onGround: true,
+    sig: { totalAttempts: 0, dunks: 0, almostDunks: 0, perfectTiming: 0, maxStreak: 0, streakCurrent: 0, score: 0 } as Signals,
+    ballX: 0, ballY: 0, ballZ: 0,
+    ballVX: 0, ballVY: 0, ballVZ: 0,
+    ballInFlight: false,
     chargeLevel: 0, charging: false, chargeStart: 0,
-    hoopX: 0, hoopY: 0, ballX: 0, ballY: 0, dunkWindow: false, dunkWindowTimer: 0, lastDunkFrame: -100,
-    accentColor: ACCENT, floats: [], scorePop: 0, frame: 0, pointerCount: 0, shakeX: 0,
+    pointerCount: 0, dunkWindow: false, dunkWindowTimer: 0,
+    onGround: true, groundY: -1.5,
+    shakeX: 0,
+    particles: [] as { mesh: THREE.Mesh; vx: number; vy: number; vz: number; life: number }[],
+    floats: [] as { text: string; mesh: THREE.Mesh; life: number; vy: number }[],
+    frame: 0,
+    hoopX: 0, hoopY: 1.8, hoopZ: -3,
+    dunkFlash: 0,
   });
+
   const [phase, setPhase] = useState<Phase>('start');
   const [timeLeft, setTimeLeft] = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
   const [finalSig, setFinalSig] = useState<Signals | null>(null);
   const playerSessionRef = useRef<PlayerSession | null>(null);
-  useEffect(() => { stateRef.current.accentColor = theme.colors.accent ?? ACCENT; }, [theme]);
+
   const endGame = useCallback(() => {
-    const s = stateRef.current; s.running = false; cancelAnimationFrame(animRef.current);
+    const s = stateRef.current;
+    s.running = false;
+    cancelAnimationFrame(animRef.current);
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+    if (s.renderer) { s.renderer.dispose(); s.renderer = null; }
     const pb = parseInt(localStorage.getItem(`pb_${GAME_ID}`) ?? '0');
     if (s.sig.score > pb) localStorage.setItem(`pb_${GAME_ID}`, String(s.sig.score));
-    setFinalSig({ ...s.sig }); setPhase('done'); hapticVictory();
+    setFinalSig({ ...s.sig });
+    setPhase('done');
+    hapticVictory();
+  }, []);
+
+  const attemptDunk = useCallback(() => {
+    const s = stateRef.current;
+    if (!s.running || s.ballInFlight) return;
+    s.sig.totalAttempts++;
+    s.chargeLevel = Math.min(1, (Date.now() - s.chargeStart) / 600);
+    const power = 0.12 + s.chargeLevel * 0.15;
+    // Launch toward hoop
+    const dx = s.hoopX - s.ballX;
+    const dz = s.hoopZ - s.ballZ;
+    const dist = Math.sqrt(dx * dx + dz * dz);
+    s.ballVX = (dx / dist) * power * 2.5;
+    s.ballVZ = (dz / dist) * power * 2.5;
+    s.ballVY = power * 4;
+    s.ballInFlight = true;
+    s.charging = false;
+    sfx.collect();
   }, []);
 
   const startLoop = useCallback(() => {
-    const canvas = canvasRef.current; if (!canvas) return;
-    const ctx = canvas.getContext('2d'); if (!ctx) return;
     const s = stateRef.current;
-    const W = canvas.width, H = canvas.height;
     s.running = true; s.timeLeft = DURATION;
     s.sig = { totalAttempts: 0, dunks: 0, almostDunks: 0, perfectTiming: 0, maxStreak: 0, streakCurrent: 0, score: 0 };
-    s.playerY = H * 0.78; s.playerVY = 0; s.jumping = false; s.onGround = true;
-    s.hoopX = W / 2; s.hoopY = H * 0.28;
-    s.ballX = W / 2; s.ballY = H * 0.72;
-    s.chargeLevel = 0; s.charging = false;
-    s.frame = 0; s.floats = []; s.scorePop = 0; s.shakeX = 0;
+    s.ballX = 0; s.ballY = s.groundY; s.ballZ = 2;
+    s.ballInFlight = false; s.charging = false; s.frame = 0;
     setScoreDisplay(0); setTimeLeft(DURATION); setPhase('playing');
-    timerRef.current = setInterval(() => { s.timeLeft--; setTimeLeft(s.timeLeft); if (s.timeLeft <= 0) { sfx.fail(); endGame(); } }, 1000);
 
-    const GRAVITY = 0.45;
-    const GROUND = H * 0.78;
+    const W = window.innerWidth, H = window.innerHeight;
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(W, H);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setClearColor(0x0a0a1a);
+    if (mountRef.current) { mountRef.current.innerHTML = ''; mountRef.current.appendChild(renderer.domElement); }
+    s.renderer = renderer;
+
+    const scene = new THREE.Scene();
+    s.scene = scene;
+    const camera = new THREE.PerspectiveCamera(65, W / H, 0.1, 100);
+    camera.position.set(0, 2, 7);
+    camera.lookAt(0, 1, 0);
+    s.camera = camera;
+
+    scene.add(new THREE.AmbientLight(0x0a0a1a, 3));
+    const courtLight = new THREE.PointLight(0xf97316, 2, 20);
+    courtLight.position.set(0, 8, 0);
+    scene.add(courtLight);
+    const hoopLight = new THREE.PointLight(0xf97316, 3, 8);
+    hoopLight.position.set(0, 3, -3);
+    scene.add(hoopLight);
+    s.hoopLight = hoopLight;
+    const ballLight = new THREE.PointLight(0xfbbf24, 2, 5);
+    scene.add(ballLight);
+    s.ballLight = ballLight;
+
+    // Court floor
+    const courtGeo = new THREE.PlaneGeometry(10, 16);
+    const courtMat = new THREE.MeshStandardMaterial({ color: 0x7c2d0a, roughness: 0.6 });
+    const court = new THREE.Mesh(courtGeo, courtMat);
+    court.rotation.x = -Math.PI / 2;
+    court.position.y = s.groundY - 0.05;
+    scene.add(court);
+    // Court lines
+    const lineGeo = new THREE.PlaneGeometry(9.8, 0.04);
+    const lineMat = new THREE.MeshStandardMaterial({ color: 0xffffff, transparent: true, opacity: 0.3 });
+    for (let lz = -6; lz <= 6; lz += 3) {
+      const line = new THREE.Mesh(lineGeo, lineMat);
+      line.rotation.x = -Math.PI / 2;
+      line.position.set(0, s.groundY - 0.04, lz);
+      scene.add(line);
+    }
+
+    // Backboard
+    const backboard = new THREE.Mesh(new THREE.BoxGeometry(2, 1.2, 0.1), new THREE.MeshStandardMaterial({ color: 0xf0f0f0, transparent: true, opacity: 0.8 }));
+    backboard.position.set(s.hoopX, s.hoopY + 0.5, s.hoopZ - 0.2);
+    scene.add(backboard);
+    // Hoop
+    const hoopGeo = new THREE.TorusGeometry(0.45, 0.04, 8, 24);
+    const hoopMat = new THREE.MeshStandardMaterial({ color: 0xf97316, emissive: 0xf97316, emissiveIntensity: 0.4 });
+    const hoop = new THREE.Mesh(hoopGeo, hoopMat);
+    hoop.rotation.x = Math.PI / 2;
+    hoop.position.set(s.hoopX, s.hoopY, s.hoopZ);
+    scene.add(hoop);
+    s.hoop = hoop;
+    // Pole
+    scene.add(new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, s.hoopY - s.groundY + 1), new THREE.MeshStandardMaterial({ color: 0x888888 })));
+    const pole = scene.children[scene.children.length - 1] as THREE.Mesh;
+    pole.position.set(s.hoopX, s.groundY + (s.hoopY - s.groundY) / 2, s.hoopZ - 0.6);
+
+    // Ball
+    const ballGeo = new THREE.SphereGeometry(0.22, 16, 16);
+    const ballMat = new THREE.MeshStandardMaterial({ color: 0xf97316, roughness: 0.6, metalness: 0.1, emissive: 0xf97316, emissiveIntensity: 0.2 });
+    const ball = new THREE.Mesh(ballGeo, ballMat);
+    ball.position.set(s.ballX, s.ballY, s.ballZ);
+    scene.add(ball);
+    s.ball = ball;
+
+    // Charge ring on ground
+    const chargeRingGeo = new THREE.TorusGeometry(0.4, 0.03, 6, 24);
+    const chargeRingMat = new THREE.MeshStandardMaterial({ color: 0xfbbf24, emissive: 0xfbbf24, emissiveIntensity: 0, transparent: true, opacity: 0 });
+    const chargeRing = new THREE.Mesh(chargeRingGeo, chargeRingMat);
+    chargeRing.rotation.x = Math.PI / 2;
+    chargeRing.position.set(0, s.groundY + 0.05, 2);
+    scene.add(chargeRing);
+
+    const handleResize = () => {
+      const w = window.innerWidth, h = window.innerHeight;
+      renderer.setSize(w, h); camera.aspect = w / h; camera.updateProjectionMatrix();
+    };
+    window.addEventListener('resize', handleResize);
+    (s as any)._cleanup = () => window.removeEventListener('resize', handleResize);
+
+    timerRef.current = setInterval(() => {
+      s.timeLeft--; setTimeLeft(s.timeLeft);
+      if (s.timeLeft <= 10 && s.timeLeft > 0) sfx.tick();
+      if (s.timeLeft <= 0) { sfx.fail(); endGame(); }
+    }, 1000);
+
+    const GRAVITY = -0.018;
 
     const loop = () => {
       if (!s.running) return;
-      ctx.clearRect(0, 0, W, H);
+      const t = Date.now() * 0.001;
       s.frame++;
-      // Court background
-      const bg = ctx.createRadialGradient(W*0.5, H*0.5, 0, W*0.5, H*0.5, H);
-      bg.addColorStop(0, '#1a0a00'); bg.addColorStop(1, '#060300');
-      ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
-      // Court floor
-      ctx.fillStyle = '#3d1a00'; ctx.fillRect(0, H*0.8, W, H*0.2);
-      ctx.strokeStyle = 'rgba(249,115,22,0.2)'; ctx.lineWidth = 1;
-      ctx.beginPath(); ctx.moveTo(0, H*0.8); ctx.lineTo(W, H*0.8); ctx.stroke();
 
-      // Backboard
-      ctx.fillStyle = 'rgba(255,255,255,0.85)';
-      ctx.fillRect(s.hoopX - 40, s.hoopY - 45, 80, 50);
-      ctx.strokeStyle = '#ef4444'; ctx.lineWidth = 3;
-      ctx.strokeRect(s.hoopX - 16, s.hoopY - 30, 32, 24);
-
-      // Hoop
-      ctx.save();
-      ctx.strokeStyle = ACCENT; ctx.lineWidth = 5;
-      ctx.shadowBlur = 10; ctx.shadowColor = ACCENT;
-      ctx.beginPath(); ctx.arc(s.hoopX, s.hoopY, 22, 0, Math.PI); ctx.stroke();
-      ctx.restore();
-
-      // Net
-      ctx.save();
-      ctx.strokeStyle = 'rgba(220,220,220,0.6)'; ctx.lineWidth = 1;
-      for (let i = 0; i <= 6; i++) {
-        const nx = s.hoopX - 22 + (44/6)*i;
-        ctx.beginPath(); ctx.moveTo(nx, s.hoopY); ctx.lineTo(s.hoopX, s.hoopY + 28); ctx.stroke();
-      }
-      for (let j = 1; j <= 3; j++) {
-        const ny = s.hoopY + j * 8;
-        ctx.beginPath(); ctx.moveTo(s.hoopX - 22*(1-j/4), ny); ctx.lineTo(s.hoopX + 22*(1-j/4), ny); ctx.stroke();
-      }
-      ctx.restore();
-
-      // Player physics
-      if (s.jumping) {
-        s.playerVY += GRAVITY;
-        s.playerY += s.playerVY;
-        s.ballX = s.hoopX + Math.sin(s.frame * 0.3) * 5;
-        s.ballY = s.playerY - 60;
-
-        // Dunk window at top of jump
-        if (Math.abs(s.playerY - s.hoopY - 40) < 40 && s.playerVY > -2 && s.playerVY < 2) {
-          s.dunkWindow = true;
-          s.dunkWindowTimer = Math.max(0, s.dunkWindowTimer - 1);
-        } else {
-          s.dunkWindow = false;
+      // Ball physics
+      if (s.ballInFlight) {
+        s.ballX += s.ballVX;
+        s.ballY += s.ballVY;
+        s.ballZ += s.ballVZ;
+        s.ballVY += GRAVITY;
+        ball.position.set(s.ballX, s.ballY, s.ballZ);
+        ball.rotation.x += s.ballVX * 0.3;
+        ball.rotation.z -= s.ballVZ * 0.3;
+        // Check hoop
+        const dx = s.ballX - s.hoopX;
+        const dy = s.ballY - s.hoopY;
+        const dz = s.ballZ - s.hoopZ;
+        const dist3D = Math.sqrt(dx*dx + dz*dz);
+        if (dy > -0.15 && dy < 0.3 && dist3D < 0.4) {
+          // Dunk!
+          const isPerfect = dist3D < 0.15;
+          s.sig.dunks++; s.sig.streakCurrent++;
+          if (s.sig.streakCurrent > s.sig.maxStreak) s.sig.maxStreak = s.sig.streakCurrent;
+          if (isPerfect) s.sig.perfectTiming++;
+          const pts = isPerfect ? 3 : 1 + Math.min(2, Math.floor(s.sig.streakCurrent / 3));
+          s.sig.score += pts; setScoreDisplay(s.sig.score);
+          sfx.success(); hapticScore();
+          s.dunkFlash = 20;
+          hoopMat.emissiveIntensity = 2;
+          // Reset ball
+          s.ballInFlight = false;
+          s.ballX = (Math.random() - 0.5) * 3;
+          s.ballY = s.groundY; s.ballZ = 1.5 + Math.random();
+          ball.position.set(s.ballX, s.ballY, s.ballZ);
         }
-
-        // Land
-        if (s.playerY >= GROUND) {
-          s.playerY = GROUND; s.playerVY = 0; s.jumping = false; s.onGround = true;
-          s.ballX = W / 2; s.ballY = s.playerY - 60;
-          if (s.sig.totalAttempts > 0 && s.frame - s.lastDunkFrame > 20) {
-            // Missed dunk
-            s.sig.almostDunks++;
-            s.sig.streakCurrent = 0;
-            sfx.collision(); hapticFail();
-          }
+        // Bounce off ground
+        if (s.ballY <= s.groundY) {
+          s.ballY = s.groundY; s.ballVY *= -0.5; s.ballVX *= 0.85; s.ballVZ *= 0.85;
+          if (Math.abs(s.ballVY) < 0.02) { s.ballInFlight = false; sfx.collision(); hapticFail(); s.sig.streakCurrent = 0; }
         }
-      }
-
-      // Charge animation
-      if (s.charging && s.onGround) {
-        s.chargeLevel = Math.min(1, (Date.now() - s.chargeStart) / 1200);
-      }
-
-      // Draw charge circle
-      if (s.charging && s.onGround) {
-        ctx.save();
-        ctx.strokeStyle = `rgba(249,115,22,${s.chargeLevel*0.8})`;
-        ctx.lineWidth = 3;
-        ctx.beginPath(); ctx.arc(W/2, s.playerY, 30 + s.chargeLevel * 40, 0, Math.PI*2); ctx.stroke();
-        ctx.restore();
-      }
-
-      // Dunk window indicator
-      if (s.dunkWindow) {
-        ctx.save();
-        ctx.fillStyle = 'rgba(251,191,36,0.6)';
-        ctx.font = 'bold 22px sans-serif'; ctx.textAlign = 'center';
-        ctx.shadowBlur = 10; ctx.shadowColor = '#fbbf24';
-        ctx.fillText('🏀 DUNK NOW!', W/2, H*0.85); ctx.restore();
-      }
-
-      // Player body (simple stick figure)
-      ctx.save();
-      ctx.strokeStyle = '#fed7aa'; ctx.lineWidth = 5; ctx.lineCap = 'round';
-      const px = W/2 + (s.shakeX *= 0.8);
-      const py = s.playerY;
-      // Body
-      ctx.beginPath(); ctx.moveTo(px, py - 50); ctx.lineTo(px, py - 25); ctx.stroke();
-      // Arms raised during jump
-      if (s.jumping) {
-        ctx.beginPath(); ctx.moveTo(px - 20, py - 40); ctx.lineTo(px, py - 45); ctx.lineTo(px + 20, py - 40); ctx.stroke();
+        // Out of bounds
+        if (s.ballZ < -6 || Math.abs(s.ballX) > 5.5) {
+          s.ballInFlight = false; s.sig.streakCurrent = 0;
+          s.ballX = 0; s.ballY = s.groundY; s.ballZ = 2;
+          ball.position.set(s.ballX, s.ballY, s.ballZ);
+        }
       } else {
-        ctx.beginPath(); ctx.moveTo(px - 20, py - 30); ctx.lineTo(px, py - 35); ctx.lineTo(px + 20, py - 30); ctx.stroke();
+        // Idle bob
+        ball.position.y = s.groundY + Math.sin(t * 3) * 0.05;
+        // Charge ring
+        if (s.charging) {
+          const charge = Math.min(1, (Date.now() - s.chargeStart) / 600);
+          chargeRingMat.opacity = charge * 0.8;
+          chargeRingMat.emissiveIntensity = charge * 1.5;
+          chargeRing.scale.setScalar(1 + charge * 0.5);
+        } else {
+          chargeRingMat.opacity = 0;
+        }
+        chargeRing.position.set(s.ballX, s.groundY + 0.05, s.ballZ);
       }
-      // Legs
-      ctx.beginPath(); ctx.moveTo(px, py - 25); ctx.lineTo(px - 12, py); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(px, py - 25); ctx.lineTo(px + 12, py); ctx.stroke();
-      // Head
-      ctx.fillStyle = '#fed7aa';
-      ctx.beginPath(); ctx.arc(px, py - 58, 12, 0, Math.PI*2); ctx.fill();
-      ctx.restore();
 
-      // Ball
-      ctx.save();
-      ctx.shadowBlur = 10; ctx.shadowColor = ACCENT;
-      const ballGrad = ctx.createRadialGradient(s.ballX-5, s.ballY-5, 2, s.ballX, s.ballY, 16);
-      ballGrad.addColorStop(0, '#fb923c'); ballGrad.addColorStop(1, '#c2410c');
-      ctx.fillStyle = ballGrad;
-      ctx.beginPath(); ctx.arc(s.ballX, s.ballY, 16, 0, Math.PI*2); ctx.fill();
-      ctx.restore();
-
-      if (s.scorePop > Date.now()) {
-        const t = (s.scorePop - Date.now()) / 400;
-        ctx.save(); ctx.globalAlpha = t; ctx.font = `bold ${Math.round(42*(1+(1-t)*0.3))}px sans-serif`;
-        ctx.fillStyle = ACCENT; ctx.textAlign = 'center'; ctx.fillText(`${s.sig.score}`, W/2, 90); ctx.restore();
+      // Hoop & ball lights
+      ballLight.position.set(ball.position.x, ball.position.y + 0.5, ball.position.z);
+      if (s.dunkFlash > 0) {
+        s.dunkFlash--;
+        hoopLight.intensity = 5 + s.dunkFlash * 0.3;
+        hoopMat.emissiveIntensity = s.dunkFlash * 0.1;
+      } else {
+        hoopLight.intensity = 1.5 + Math.sin(t * 2) * 0.3;
+        hoopMat.emissiveIntensity = 0.3;
       }
-      s.floats = s.floats.filter(f => f.alpha > 0.02);
-      s.floats.forEach(f => {
-        ctx.save(); ctx.globalAlpha = f.alpha; ctx.fillStyle = f.color; ctx.font = 'bold 24px sans-serif'; ctx.textAlign = 'center';
-        ctx.fillText(f.text, f.x, f.y); ctx.restore();
-        f.y += f.vy; f.alpha *= 0.95;
-      });
+
+      // Hoop pulse
+      hoop.rotation.z = Math.sin(t * 0.5) * 0.02;
+
+      renderer.render(scene, camera);
       animRef.current = requestAnimationFrame(loop);
     };
     animRef.current = requestAnimationFrame(loop);
-  }, [endGame]);
 
-  useEffect(() => {
-    const canvas = canvasRef.current; if (!canvas) return;
-    const resize = () => { canvas.width = canvas.offsetWidth; canvas.height = canvas.offsetHeight; };
-    resize(); window.addEventListener('resize', resize);
+    // Input: hold = charge, release = shoot
+    const onDown = (e: PointerEvent) => {
+      const s2 = stateRef.current;
+      if (!s2.running || s2.ballInFlight) return;
+      s2.charging = true; s2.chargeStart = Date.now(); s2.pointerCount++;
+    };
+    const onUp = () => {
+      const s2 = stateRef.current;
+      if (!s2.running || !s2.charging) return;
+      s2.pointerCount = Math.max(0, s2.pointerCount - 1);
+      if (s2.pointerCount === 0) attemptDunk();
+    };
+    if (mountRef.current) {
+      mountRef.current.addEventListener('pointerdown', onDown);
+      mountRef.current.addEventListener('pointerup', onUp);
+    }
+    (s as any)._inputCleanup = () => { mountRef.current?.removeEventListener('pointerdown', onDown); mountRef.current?.removeEventListener('pointerup', onUp); };
+  }, [endGame, attemptDunk]);
 
-    const onPointerDown = (e: PointerEvent) => {
-      if (phase !== 'playing') return;
-      const s = stateRef.current;
-      activePointers.add(e.pointerId);
-      s.pointerCount = activePointers.size;
-      if (activePointers.size >= 2 && s.onGround && !s.charging) {
-        // Two-finger charge
-        s.charging = true; s.chargeStart = Date.now();
-      }
-    };
-    const onPointerUp = (e: PointerEvent) => {
-      if (phase !== 'playing') return;
-      const s = stateRef.current;
-      activePointers.delete(e.pointerId);
-      s.pointerCount = activePointers.size;
-      if (s.charging && s.onGround) {
-        s.charging = false;
-        const jumpForce = -(12 + s.chargeLevel * 10);
-        s.playerVY = jumpForce;
-        s.jumping = true; s.onGround = false;
-        s.sig.totalAttempts++;
-        sfx.click(); hapticScore();
-      } else if (s.dunkWindow && s.jumping) {
-        // Dunk!
-        const isPerfect = Math.abs(s.playerVY) < 1;
-        s.sig.dunks++;
-        if (isPerfect) s.sig.perfectTiming++;
-        s.sig.streakCurrent++;
-        if (s.sig.streakCurrent > s.sig.maxStreak) s.sig.maxStreak = s.sig.streakCurrent;
-        const mult = s.sig.streakCurrent >= 3 ? 2 : 1;
-        const pts = (isPerfect ? 3 : 2) * mult;
-        s.sig.score += pts;
-        s.scorePop = Date.now() + 400;
-        setScoreDisplay(s.sig.score);
-        sfx.success(); hapticScore();
-        s.lastDunkFrame = s.frame;
-        s.floats.push({ x: s.hoopX, y: s.hoopY - 30, text: isPerfect ? `+${pts} 🔥 PERFECT!` : `+${pts} DUNK!`, alpha: 1, vy: -2.5, color: '#fbbf24' });
-        hapticImpact();
-      }
-    };
-    canvas.addEventListener('pointerdown', onPointerDown);
-    canvas.addEventListener('pointerup', onPointerUp);
-    return () => {
-      window.removeEventListener('resize', resize);
-      canvas.removeEventListener('pointerdown', onPointerDown);
-      canvas.removeEventListener('pointerup', onPointerUp);
-      activePointers.clear();
-    };
-  }, [phase]);
+  useEffect(() => () => {
+    cancelAnimationFrame(animRef.current);
+    if (timerRef.current) clearInterval(timerRef.current);
+    const s = stateRef.current;
+    if (s.renderer) s.renderer.dispose();
+    (s as any)._cleanup?.(); (s as any)._inputCleanup?.();
+  }, []);
 
-  useEffect(() => () => { cancelAnimationFrame(animRef.current); if (timerRef.current) clearInterval(timerRef.current); }, []);
-  const handleStart = useCallback(async (name: string, avatar: string) => { playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar); await initAudio(); setPhase('countdown'); }, []);
+  const handleStart = useCallback(async (n: string, a: string) => {
+    playerSessionRef.current = savePlayerSession(GAME_ID, n, a);
+    await initAudio(); setPhase('countdown');
+  }, []);
   const handlePlayAgain = useCallback(() => { setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null); }, []);
 
+  const accent = theme.colors.accent ?? ACCENT;
+
   return (
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
-      {phase === 'start' && <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description="Hold TWO fingers to charge your jump, then tap again to dunk at the peak!" ctaLabel="Dunk! 🏀" accentColor={theme.colors.accent ?? ACCENT} onStart={handleStart} />}
-      {phase === 'countdown' && <Countdown onComplete={startLoop} accentColor={theme.colors.accent ?? ACCENT} />}
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accent}
+      background="linear-gradient(180deg, #0a0a1a 0%, #0a0500 100%)">
+      {phase === 'start' && (
+        <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description="Hold to charge your shot, release to dunk! Aim for the 3D hoop."
+          ctaLabel="Dunk It! 🏀" accentColor={accent} onStart={handleStart} />
+      )}
+      {phase === 'countdown' && <Countdown onComplete={startLoop} accentColor={accent} />}
       {(phase === 'playing' || phase === 'countdown') && (
-        <><canvas ref={canvasRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none' }} role="img" aria-label="Slam dunk basketball game canvas" />
-        {phase === 'playing' && <GameHUD accentColor={theme.colors.accent ?? ACCENT} items={[{ label: 'TIME', value: timeLeft, danger: timeLeft <= 10 }, { label: 'SCORE', value: scoreDisplay }]} />}</>
+        <div ref={mountRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none' }} />
+      )}
+      {phase === 'playing' && (
+        <GameHUD accentColor={accent} items={[
+          { label: 'TIME', value: timeLeft, danger: timeLeft <= 10 },
+          { label: 'SCORE', value: scoreDisplay },
+        ]} />
       )}
       {phase === 'done' && finalSig && (
-        <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI} score={String(finalSig.score)} personality={getPersonality(finalSig)}
-          insights={[{ label: 'Dunks', value: String(finalSig.dunks), color: ACCENT }, { label: 'Perfect Timing', value: String(finalSig.perfectTiming), color: '#fbbf24' }, { label: 'Best Streak', value: `×${finalSig.maxStreak}`, color: '#4ade80' }, { label: 'Attempts', value: String(finalSig.totalAttempts), color: '#06b6d4' }]}
-          accentColor={theme.colors.accent ?? ACCENT} onPlayAgain={handlePlayAgain} didWin={finalSig.dunks >= 5} />
+        <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI}
+          score={String(finalSig.score)} personality={getPersonality(finalSig)}
+          insights={[
+            { label: 'Dunks', value: String(finalSig.dunks), color: accent },
+            { label: 'Attempts', value: String(finalSig.totalAttempts), color: '#fbbf24' },
+            { label: 'Perfects', value: String(finalSig.perfectTiming), color: '#4ade80' },
+            { label: 'Best Streak', value: `×${finalSig.maxStreak}`, color: '#06b6d4' },
+          ]}
+          accentColor={accent} onPlayAgain={handlePlayAgain} didWin={finalSig.dunks >= 5} />
       )}
     </GameShell>
   );

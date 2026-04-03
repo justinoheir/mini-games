@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
+import * as THREE from 'three';
 import GameShell from '@/components/GameShell';
 import GameHUD from '@/components/GameHUD';
 import GameStartScreen from '@/components/GameStartScreen';
@@ -17,346 +18,300 @@ const GAME_EMOJI = '⚡';
 const GAME_TITLE = 'Speed Sort';
 const GAME_TAGLINE = 'Left or right. Think fast.';
 
-type Category = { name: string; color: string; icon: string };
+type Category = { name: string; colorHex: number; icon: string };
 type Item = { name: string; category: 0 | 1; emoji: string };
 
 const ROUND_SETS: Array<{ left: Category; right: Category; items: Item[] }> = [
   {
-    left: { name: 'FRUIT', color: '#4ade80', icon: '🍎' },
-    right: { name: 'VEG', color: '#f97316', icon: '🥦' },
+    left: { name: 'FRUIT', colorHex: 0x4ade80, icon: '🍎' },
+    right: { name: 'VEG', colorHex: 0xf97316, icon: '🥦' },
     items: [
       { name: 'Apple', emoji: '🍎', category: 0 }, { name: 'Broccoli', emoji: '🥦', category: 1 },
       { name: 'Banana', emoji: '🍌', category: 0 }, { name: 'Carrot', emoji: '🥕', category: 1 },
       { name: 'Grape', emoji: '🍇', category: 0 }, { name: 'Onion', emoji: '🧅', category: 1 },
       { name: 'Mango', emoji: '🥭', category: 0 }, { name: 'Spinach', emoji: '🥬', category: 1 },
-      { name: 'Lemon', emoji: '🍋', category: 0 }, { name: 'Potato', emoji: '🥔', category: 1 },
     ],
   },
   {
-    left: { name: 'HOT', color: '#ef4444', icon: '🔥' },
-    right: { name: 'COLD', color: '#06b6d4', icon: '❄️' },
+    left: { name: 'HOT', colorHex: 0xef4444, icon: '🔥' },
+    right: { name: 'COLD', colorHex: 0x06b6d4, icon: '❄️' },
     items: [
       { name: 'Coffee', emoji: '☕', category: 0 }, { name: 'Ice Cream', emoji: '🍦', category: 1 },
       { name: 'Soup', emoji: '🍲', category: 0 }, { name: 'Soda', emoji: '🥤', category: 1 },
-      { name: 'Tea', emoji: '🍵', category: 0 }, { name: 'Snowflake', emoji: '❄️', category: 1 },
-      { name: 'Fire', emoji: '🔥', category: 0 }, { name: 'Popsicle', emoji: '🧊', category: 1 },
-      { name: 'Oven', emoji: '🍳', category: 0 }, { name: 'Freezer', emoji: '🥶', category: 1 },
+      { name: 'Tea', emoji: '🍵', category: 0 }, { name: 'Snow', emoji: '❄️', category: 1 },
+      { name: 'Fire', emoji: '🔥', category: 0 }, { name: 'Penguin', emoji: '🐧', category: 1 },
     ],
   },
   {
-    left: { name: 'LAND', color: '#84cc16', icon: '🏔️' },
-    right: { name: 'SEA', color: '#0ea5e9', icon: '🌊' },
+    left: { name: 'LAND', colorHex: 0x22c55e, icon: '🦁' },
+    right: { name: 'SEA', colorHex: 0x3b82f6, icon: '🐟' },
     items: [
-      { name: 'Eagle', emoji: '🦅', category: 0 }, { name: 'Shark', emoji: '🦈', category: 1 },
-      { name: 'Bear', emoji: '🐻', category: 0 }, { name: 'Whale', emoji: '🐋', category: 1 },
-      { name: 'Lion', emoji: '🦁', category: 0 }, { name: 'Dolphin', emoji: '🐬', category: 1 },
-      { name: 'Wolf', emoji: '🐺', category: 0 }, { name: 'Crab', emoji: '🦀', category: 1 },
-      { name: 'Deer', emoji: '🦌', category: 0 }, { name: 'Octopus', emoji: '🐙', category: 1 },
+      { name: 'Elephant', emoji: '🐘', category: 0 }, { name: 'Dolphin', emoji: '🐬', category: 1 },
+      { name: 'Tiger', emoji: '🐯', category: 0 }, { name: 'Shark', emoji: '🦈', category: 1 },
+      { name: 'Rabbit', emoji: '🐰', category: 0 }, { name: 'Octopus', emoji: '🐙', category: 1 },
+      { name: 'Horse', emoji: '🐴', category: 0 }, { name: 'Crab', emoji: '🦀', category: 1 },
     ],
   },
 ];
 
-interface Signals {
-  totalItems: number; correct: number; wrong: number;
-  maxStreak: number; streakCurrent: number; avgReactionMs: number; reactionSum: number; score: number;
-}
-
+interface Signals { correct: number; wrong: number; score: number; maxStreak: number; streakCurrent: number; avgReactionMs: number; totalReactionMs: number; totalDecisions: number; }
 function getPersonality(sig: Signals): string {
-  const acc = sig.totalItems > 0 ? sig.correct / sig.totalItems : 0;
-  const avgRx = sig.totalItems > 0 ? sig.reactionSum / sig.totalItems : 9999;
-  if (acc >= 0.9 && avgRx < 700) return 'Lightning Sorter ⚡';
-  if (acc >= 0.8 && sig.maxStreak >= 5) return 'Clean Sweep 🧹';
-  if (avgRx < 600) return 'Hair Trigger 🎯';
-  if (acc >= 0.7) return 'Reliable Classifier 📊';
-  return 'Still Sorting 🤔';
+  const acc = (sig.correct + sig.wrong) > 0 ? sig.correct / (sig.correct + sig.wrong) : 0;
+  const avg = sig.totalDecisions > 0 ? sig.totalReactionMs / sig.totalDecisions : 9999;
+  if (acc >= 0.9 && avg < 500) return 'Lightning Sorter ⚡';
+  if (acc >= 0.85) return 'Sharp Classifier 🎯';
+  if (sig.maxStreak >= 6) return 'Streak Machine 🔥';
+  if (acc >= 0.7) return 'Quick Thinker 💡';
+  return 'Still Learning ⚡';
 }
-
 type Phase = 'start' | 'countdown' | 'playing' | 'done';
 
-interface GameState {
-  running: boolean; timeLeft: number; sig: Signals;
-  currentRound: number; currentItemIndex: number; itemShownAt: number;
-  shuffledItems: Item[]; swipeStartX: number; swipeStartY: number; swiping: boolean;
-  cardX: number; cardOpacity: number; animating: boolean; lastCorrect: boolean | null;
-  accentColor: string; floats: Array<{ x: number; y: number; text: string; alpha: number; vy: number; color: string }>;
-  scorePop: number;
-}
-
-export default function SpeedSort() {
+export default function SpeedSortGame() {
   const theme = useBrandTheme();
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const mountRef = useRef<HTMLDivElement>(null);
   const animRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const stateRef = useRef<GameState>({
+
+  const stateRef = useRef({
+    renderer: null as THREE.WebGLRenderer | null,
+    scene: null as THREE.Scene | null,
+    camera: null as THREE.PerspectiveCamera | null,
+    cardMesh: null as THREE.Mesh | null,
+    cardLight: null as THREE.PointLight | null,
+    leftBin: null as THREE.Mesh | null,
+    rightBin: null as THREE.Mesh | null,
+    flyingCard: null as { mesh: THREE.Mesh; vx: number; vy: number; vz: number; life: number } | null,
     running: false, timeLeft: DURATION,
-    sig: { totalItems: 0, correct: 0, wrong: 0, maxStreak: 0, streakCurrent: 0, avgReactionMs: 0, reactionSum: 0, score: 0 },
-    currentRound: 0, currentItemIndex: 0, itemShownAt: 0, shuffledItems: [],
-    swipeStartX: 0, swipeStartY: 0, swiping: false,
-    cardX: 0, cardOpacity: 1, animating: false, lastCorrect: null,
-    accentColor: ACCENT, floats: [], scorePop: 0,
+    sig: { correct: 0, wrong: 0, score: 0, maxStreak: 0, streakCurrent: 0, avgReactionMs: 0, totalReactionMs: 0, totalDecisions: 0 } as Signals,
+    currentSetIdx: 0,
+    currentItemIdx: 0,
+    currentItem: null as Item | null,
+    itemStartMs: 0,
+    pointerStart: null as { x: number; y: number; time: number } | null,
   });
 
   const [phase, setPhase] = useState<Phase>('start');
   const [timeLeft, setTimeLeft] = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
   const [finalSig, setFinalSig] = useState<Signals | null>(null);
+  const [currentEmoji, setCurrentEmoji] = useState('');
+  const [currentName, setCurrentName] = useState('');
+  const [leftLabel, setLeftLabel] = useState('');
+  const [rightLabel, setRightLabel] = useState('');
+  const [feedback, setFeedback] = useState<'correct' | 'wrong' | null>(null);
   const playerSessionRef = useRef<PlayerSession | null>(null);
-
-  useEffect(() => { stateRef.current.accentColor = theme.colors.accent ?? ACCENT; }, [theme]);
 
   const endGame = useCallback(() => {
     const s = stateRef.current;
     s.running = false;
     cancelAnimationFrame(animRef.current);
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+    if (s.renderer) { s.renderer.dispose(); s.renderer = null; }
     const pb = parseInt(localStorage.getItem(`pb_${GAME_ID}`) ?? '0');
     if (s.sig.score > pb) localStorage.setItem(`pb_${GAME_ID}`, String(s.sig.score));
-    setFinalSig({ ...s.sig });
-    setPhase('done');
-    hapticVictory();
+    setFinalSig({ ...s.sig }); setPhase('done'); hapticVictory();
   }, []);
 
-  const nextItem = useCallback(() => {
+  const loadNextItem = useCallback(() => {
     const s = stateRef.current;
-    s.currentItemIndex++;
-    if (s.currentItemIndex >= s.shuffledItems.length) {
-      s.currentRound = (s.currentRound + 1) % ROUND_SETS.length;
-      const set = ROUND_SETS[s.currentRound];
-      s.shuffledItems = [...set.items].sort(() => Math.random() - 0.5);
-      s.currentItemIndex = 0;
+    const set = ROUND_SETS[s.currentSetIdx];
+    if (s.currentItemIdx >= set.items.length) {
+      s.currentSetIdx = (s.currentSetIdx + 1) % ROUND_SETS.length;
+      s.currentItemIdx = 0;
     }
-    s.cardX = 0; s.cardOpacity = 1; s.animating = false;
-    s.itemShownAt = Date.now();
+    const item = set.items[s.currentItemIdx];
+    s.currentItem = item; s.currentItemIdx++;
+    s.itemStartMs = Date.now();
+    setCurrentEmoji(item.emoji); setCurrentName(item.name);
+    setLeftLabel(set.left.name); setRightLabel(set.right.name);
+    // Update card color
+    if (s.cardMesh) {
+      const mat = s.cardMesh.material as THREE.MeshStandardMaterial;
+      mat.color.setHex(0x1a1a2e); mat.emissive.setHex(0x000000);
+    }
   }, []);
 
-  const handleSort = useCallback((direction: 'left' | 'right') => {
+  const handleSort = useCallback((direction: 0 | 1) => {
     const s = stateRef.current;
-    if (s.animating || !s.running) return;
-    const roundSet = ROUND_SETS[s.currentRound];
-    const item = s.shuffledItems[s.currentItemIndex];
-    const expectedCategory = direction === 'left' ? 0 : 1;
-    const isCorrect = item.category === expectedCategory;
-    const reactionMs = Date.now() - s.itemShownAt;
-
-    s.sig.totalItems++;
-    s.sig.reactionSum += reactionMs;
-    s.lastCorrect = isCorrect;
-    s.animating = true;
-
+    if (!s.running || !s.currentItem) return;
+    const reactionMs = Date.now() - s.itemStartMs;
+    s.sig.totalReactionMs += reactionMs; s.sig.totalDecisions++;
+    const isCorrect = direction === s.currentItem.category;
     if (isCorrect) {
-      s.sig.correct++;
-      s.sig.streakCurrent++;
+      s.sig.correct++; s.sig.streakCurrent++;
       if (s.sig.streakCurrent > s.sig.maxStreak) s.sig.maxStreak = s.sig.streakCurrent;
-      const mult = s.sig.streakCurrent >= 3 ? 2 : 1;
-      s.sig.score += mult;
-      s.scorePop = Date.now() + 300;
-      setScoreDisplay(s.sig.score);
-      sfx.collect();
-      hapticScore();
-      if (s.sig.streakCurrent >= 3) { hapticCombo(s.sig.streakCurrent); sfx.success(); }
+      const speedBonus = Math.max(0, Math.floor((800 - reactionMs) / 200));
+      const streakBonus = Math.floor(s.sig.streakCurrent / 3);
+      const pts = 1 + speedBonus + streakBonus;
+      s.sig.score += pts; setScoreDisplay(s.sig.score);
+      sfx.collect(); hapticScore();
+      setFeedback('correct');
+      const set = ROUND_SETS[s.currentSetIdx];
+      if (s.cardMesh) (s.cardMesh.material as THREE.MeshStandardMaterial).emissive.setHex(direction === 0 ? set.left.colorHex : set.right.colorHex);
     } else {
-      s.sig.wrong++;
-      s.sig.streakCurrent = 0;
-      sfx.collision();
-      hapticFail();
+      s.sig.wrong++; s.sig.streakCurrent = 0;
+      sfx.collision(); hapticFail();
+      setFeedback('wrong');
+      if (s.cardMesh) (s.cardMesh.material as THREE.MeshStandardMaterial).emissive.setHex(0xef4444);
     }
-
-    // Animate card off screen
-    const targetX = direction === 'left' ? -400 : 400;
-    const startCardX = s.cardX;
-    const startTime = Date.now();
-    const animDuration = 250;
-    const animateCard = () => {
-      const elapsed = Date.now() - startTime;
-      const t = Math.min(1, elapsed / animDuration);
-      s.cardX = startCardX + (targetX - startCardX) * t;
-      s.cardOpacity = 1 - t;
-      if (t < 1) requestAnimationFrame(animateCard);
-      else nextItem();
-    };
-    requestAnimationFrame(animateCard);
-  }, [nextItem]);
+    setTimeout(() => { setFeedback(null); loadNextItem(); }, 300);
+  }, [loadNextItem]);
 
   const startLoop = useCallback(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
     const s = stateRef.current;
-    const W = canvas.width, H = canvas.height;
-
     s.running = true; s.timeLeft = DURATION;
-    s.sig = { totalItems: 0, correct: 0, wrong: 0, maxStreak: 0, streakCurrent: 0, avgReactionMs: 0, reactionSum: 0, score: 0 };
-    s.currentRound = 0;
-    const set = ROUND_SETS[0];
-    s.shuffledItems = [...set.items].sort(() => Math.random() - 0.5);
-    s.currentItemIndex = 0; s.cardX = 0; s.cardOpacity = 1; s.animating = false;
-    s.floats = []; s.scorePop = 0; s.itemShownAt = Date.now();
+    s.sig = { correct: 0, wrong: 0, score: 0, maxStreak: 0, streakCurrent: 0, avgReactionMs: 0, totalReactionMs: 0, totalDecisions: 0 };
+    s.currentSetIdx = 0; s.currentItemIdx = 0;
     setScoreDisplay(0); setTimeLeft(DURATION); setPhase('playing');
+
+    const W = window.innerWidth, H = window.innerHeight;
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(W, H);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setClearColor(0x0a0a1a);
+    if (mountRef.current) { mountRef.current.innerHTML = ''; mountRef.current.appendChild(renderer.domElement); }
+    s.renderer = renderer;
+
+    const scene = new THREE.Scene();
+    s.scene = scene;
+    const camera = new THREE.PerspectiveCamera(65, W / H, 0.1, 100);
+    camera.position.set(0, 0, 5);
+    s.camera = camera;
+
+    scene.add(new THREE.AmbientLight(0x0a0a1a, 3));
+    const mainLight = new THREE.PointLight(0xfacc15, 2, 20);
+    mainLight.position.set(0, 5, 3);
+    scene.add(mainLight);
+    const cardLight = new THREE.PointLight(0xfacc15, 3, 6);
+    scene.add(cardLight);
+    s.cardLight = cardLight;
+
+    // Stars
+    const sp = new Float32Array(300*3);
+    for (let i=0;i<300;i++){sp[i*3]=(Math.random()-.5)*50;sp[i*3+1]=(Math.random()-.5)*50;sp[i*3+2]=(Math.random()-.5)*50;}
+    const sg=new THREE.BufferGeometry();sg.setAttribute('position',new THREE.BufferAttribute(sp,3));
+    scene.add(new THREE.Points(sg,new THREE.PointsMaterial({color:0xffffff,size:0.05})));
+
+    // Left bin
+    const leftBinGeo = new THREE.BoxGeometry(1.5, 2, 0.2);
+    const set0 = ROUND_SETS[0];
+    const leftBin = new THREE.Mesh(leftBinGeo, new THREE.MeshStandardMaterial({ color: set0.left.colorHex, transparent: true, opacity: 0.3, emissive: set0.left.colorHex, emissiveIntensity: 0.3 }));
+    leftBin.position.set(-3, 0, -1);
+    scene.add(leftBin);
+    s.leftBin = leftBin;
+    // Right bin
+    const rightBin = new THREE.Mesh(leftBinGeo.clone(), new THREE.MeshStandardMaterial({ color: set0.right.colorHex, transparent: true, opacity: 0.3, emissive: set0.right.colorHex, emissiveIntensity: 0.3 }));
+    rightBin.position.set(3, 0, -1);
+    scene.add(rightBin);
+    s.rightBin = rightBin;
+
+    // Center card
+    const cardGeo = new THREE.BoxGeometry(2, 2.5, 0.15);
+    const cardMat = new THREE.MeshStandardMaterial({ color: 0x1a1a2e, emissive: 0x000000, emissiveIntensity: 0, roughness: 0.3, metalness: 0.5 });
+    const cardMesh = new THREE.Mesh(cardGeo, cardMat);
+    scene.add(cardMesh);
+    s.cardMesh = cardMesh;
+    cardLight.position.set(0, 0, 0.5);
+
+    const handleResize = () => {
+      const w = window.innerWidth, h = window.innerHeight;
+      renderer.setSize(w, h); camera.aspect = w / h; camera.updateProjectionMatrix();
+    };
+    window.addEventListener('resize', handleResize);
+    (s as any)._cleanup = () => window.removeEventListener('resize', handleResize);
 
     timerRef.current = setInterval(() => {
       s.timeLeft--; setTimeLeft(s.timeLeft);
       if (s.timeLeft <= 0) { sfx.fail(); endGame(); }
     }, 1000);
 
+    loadNextItem();
+
     const loop = () => {
       if (!s.running) return;
-      ctx.clearRect(0, 0, W, H);
-
-      const roundSet = ROUND_SETS[s.currentRound];
-      const item = s.shuffledItems[s.currentItemIndex];
-
-      // Background
-      ctx.fillStyle = '#0f0f18';
-      ctx.fillRect(0, 0, W, H);
-
-      // Category zones
-      const zoneW = W * 0.35;
-      const zoneH = H * 0.5;
-      const zoneY = (H - zoneH) / 2;
-
-      // Left zone
-      ctx.fillStyle = roundSet.left.color + '18';
-      ctx.fillRect(0, zoneY, zoneW, zoneH);
-      ctx.save();
-      ctx.font = 'bold 36px sans-serif'; ctx.textAlign = 'center'; ctx.fillStyle = roundSet.left.color;
-      ctx.fillText(roundSet.left.icon, zoneW / 2, zoneY + zoneH / 2 - 10);
-      ctx.font = 'bold 16px sans-serif';
-      ctx.fillText(roundSet.left.name, zoneW / 2, zoneY + zoneH / 2 + 20);
-      ctx.restore();
-
-      // Right zone
-      ctx.fillStyle = roundSet.right.color + '18';
-      ctx.fillRect(W - zoneW, zoneY, zoneW, zoneH);
-      ctx.save();
-      ctx.font = 'bold 36px sans-serif'; ctx.textAlign = 'center'; ctx.fillStyle = roundSet.right.color;
-      ctx.fillText(roundSet.right.icon, W - zoneW / 2, zoneY + zoneH / 2 - 10);
-      ctx.font = 'bold 16px sans-serif';
-      ctx.fillText(roundSet.right.name, W - zoneW / 2, zoneY + zoneH / 2 + 20);
-      ctx.restore();
-
-      // Divider arrows
-      ctx.save();
-      ctx.fillStyle = 'rgba(255,255,255,0.15)';
-      ctx.font = 'bold 28px sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillText('◀', 50, H * 0.5);
-      ctx.fillText('▶', W - 50, H * 0.5);
-      ctx.restore();
-
-      // Item card
-      if (item) {
-        const cardW = 160, cardH = 180;
-        const cardX = W / 2 - cardW / 2 + s.cardX;
-        const car = H / 2 - cardH / 2;
-        const tilt = s.cardX / 400 * 0.3;
-
-        ctx.save();
-        ctx.globalAlpha = s.cardOpacity;
-        ctx.translate(cardX + cardW / 2, car + cardH / 2);
-        ctx.rotate(tilt);
-
-        const bgColor = s.lastCorrect === null ? '#1e1e2e' : s.lastCorrect ? '#1e3020' : '#301e1e';
-        ctx.fillStyle = bgColor;
-        ctx.shadowBlur = 20; ctx.shadowColor = s.cardX > 0 ? roundSet.right.color : s.cardX < 0 ? roundSet.left.color : ACCENT;
-        ctx.beginPath();
-        (ctx as any).roundRect?.(-cardW / 2, -cardH / 2, cardW, cardH, 16) ?? ctx.rect(-cardW / 2, -cardH / 2, cardW, cardH);
-        ctx.fill();
-
-        ctx.font = '72px sans-serif'; ctx.textAlign = 'center'; ctx.shadowBlur = 0;
-        ctx.fillText(item.emoji, 0, 20);
-        ctx.font = 'bold 20px sans-serif'; ctx.fillStyle = '#ffffff';
-        ctx.fillText(item.name, 0, 65);
-
-        ctx.restore();
-      }
-
-      // Score pop
-      if (s.scorePop > Date.now()) {
-        const t = (s.scorePop - Date.now()) / 300;
-        ctx.save(); ctx.globalAlpha = t;
-        ctx.font = `bold ${Math.round(40 * (1 + (1 - t) * 0.3))}px sans-serif`;
-        ctx.fillStyle = '#facc15'; ctx.textAlign = 'center';
-        ctx.fillText(`${s.sig.score}`, W / 2, 80); ctx.restore();
-      }
-
-      s.floats = s.floats.filter(f => f.alpha > 0.02);
-      s.floats.forEach(f => {
-        ctx.save(); ctx.globalAlpha = f.alpha;
-        ctx.fillStyle = f.color; ctx.font = 'bold 24px sans-serif'; ctx.textAlign = 'center';
-        ctx.fillText(f.text, f.x, f.y); ctx.restore();
-        f.y += f.vy; f.alpha *= 0.95;
-      });
-
+      const t = Date.now() * 0.001;
+      // Card breathe
+      cardMesh.rotation.y = Math.sin(t * 0.8) * 0.05;
+      cardMesh.rotation.x = Math.sin(t * 0.5) * 0.02;
+      cardMesh.position.y = Math.sin(t * 1.5) * 0.05;
+      cardLight.intensity = 2 + Math.sin(t * 3) * 0.5;
+      // Bins glow
+      (leftBin.material as THREE.MeshStandardMaterial).emissiveIntensity = 0.2 + Math.sin(t * 2) * 0.1;
+      (rightBin.material as THREE.MeshStandardMaterial).emissiveIntensity = 0.2 + Math.sin(t * 2 + 1) * 0.1;
+      renderer.render(scene, camera);
       animRef.current = requestAnimationFrame(loop);
     };
     animRef.current = requestAnimationFrame(loop);
-  }, [endGame, nextItem]);
 
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const resize = () => { canvas.width = canvas.offsetWidth; canvas.height = canvas.offsetHeight; };
-    resize();
-    window.addEventListener('resize', resize);
-
-    const onPointerDown = (e: PointerEvent) => {
-      if (phase !== 'playing') return;
-      const s = stateRef.current;
-      const rect = canvas.getBoundingClientRect();
-      s.swipeStartX = (e.clientX - rect.left) * (canvas.width / rect.width);
-      s.swipeStartY = (e.clientY - rect.top) * (canvas.height / rect.height);
-      s.swiping = true;
+    // Swipe detection
+    const onDown = (e: PointerEvent) => { stateRef.current.pointerStart = { x: e.clientX, y: e.clientY, time: Date.now() }; };
+    const onUp = (e: PointerEvent) => {
+      const s2 = stateRef.current;
+      if (!s2.pointerStart || !s2.running) { s2.pointerStart = null; return; }
+      const dx = e.clientX - s2.pointerStart.x;
+      const dy = e.clientY - s2.pointerStart.y;
+      const dt = Date.now() - s2.pointerStart.time;
+      s2.pointerStart = null;
+      if (Math.abs(dx) > 30 && Math.abs(dx) / Math.max(1, Math.abs(dy)) > 1 && dt < 800) {
+        handleSort(dx < 0 ? 0 : 1);
+      }
     };
-    const onPointerUp = (e: PointerEvent) => {
-      if (phase !== 'playing') return;
-      const s = stateRef.current;
-      if (!s.swiping) return;
-      s.swiping = false;
-      const rect = canvas.getBoundingClientRect();
-      const endX = (e.clientX - rect.left) * (canvas.width / rect.width);
-      const dx = endX - s.swipeStartX;
-      if (Math.abs(dx) > 40) handleSort(dx < 0 ? 'left' : 'right');
+    if (mountRef.current) {
+      mountRef.current.addEventListener('pointerdown', onDown);
+      mountRef.current.addEventListener('pointerup', onUp);
+    }
+    (s as any)._inputCleanup = () => {
+      mountRef.current?.removeEventListener('pointerdown', onDown);
+      mountRef.current?.removeEventListener('pointerup', onUp);
     };
-
-    canvas.addEventListener('pointerdown', onPointerDown);
-    canvas.addEventListener('pointerup', onPointerUp);
-    return () => {
-      window.removeEventListener('resize', resize);
-      canvas.removeEventListener('pointerdown', onPointerDown);
-      canvas.removeEventListener('pointerup', onPointerUp);
-    };
-  }, [phase, handleSort]);
+  }, [endGame, loadNextItem, handleSort]);
 
   useEffect(() => () => {
     cancelAnimationFrame(animRef.current);
     if (timerRef.current) clearInterval(timerRef.current);
+    const s = stateRef.current;
+    if (s.renderer) s.renderer.dispose();
+    (s as any)._cleanup?.(); (s as any)._inputCleanup?.();
   }, []);
 
-  const handleStart = useCallback(async (name: string, avatar: string) => {
-    playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar);
+  const handleStart = useCallback(async (n: string, a: string) => {
+    playerSessionRef.current = savePlayerSession(GAME_ID, n, a);
     await initAudio(); setPhase('countdown');
   }, []);
-  const handlePlayAgain = useCallback(() => {
-    setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null);
-  }, []);
+  const handlePlayAgain = useCallback(() => { setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null); }, []);
+
+  const accent = theme.colors.accent ?? ACCENT;
 
   return (
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accent}
+      background="linear-gradient(180deg, #0a0a1a 0%, #050510 100%)">
       {phase === 'start' && (
-        <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description="Swipe LEFT or RIGHT to sort items into categories. Be fast and accurate!"
-          ctaLabel="Sort It! ⚡" accentColor={theme.colors.accent ?? ACCENT} onStart={handleStart} />
+        <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description="Swipe LEFT or RIGHT to sort items into categories — fast!"
+          ctaLabel="Sort It! ⚡" sensorNote="Swipe left = left category. Swipe right = right category."
+          accentColor={accent} onStart={handleStart} />
       )}
-      {phase === 'countdown' && <Countdown onComplete={startLoop} accentColor={theme.colors.accent ?? ACCENT} />}
+      {phase === 'countdown' && <Countdown onComplete={startLoop} accentColor={accent} />}
       {(phase === 'playing' || phase === 'countdown') && (
+        <div ref={mountRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none' }} />
+      )}
+      {phase === 'playing' && (
         <>
-          <canvas ref={canvasRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none' }}
-            role="img" aria-label="Speed sorting game canvas" />
-          {phase === 'playing' && (
-            <GameHUD accentColor={theme.colors.accent ?? ACCENT} items={[
-              { label: 'TIME', value: timeLeft, danger: timeLeft <= 5 },
-              { label: 'SCORE', value: scoreDisplay },
-            ]} />
+          <GameHUD accentColor={accent} items={[
+            { label: 'TIME', value: timeLeft, danger: timeLeft <= 10 },
+            { label: 'SCORE', value: scoreDisplay },
+          ]} />
+          {/* Overlay item display */}
+          <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', zIndex: 50, pointerEvents: 'none', textAlign: 'center' }}>
+            <div style={{ fontSize: 64, lineHeight: 1 }}>{currentEmoji}</div>
+            <div style={{ color: 'white', fontWeight: 700, fontSize: 18, marginTop: 6 }}>{currentName}</div>
+          </div>
+          {/* Category labels */}
+          <div style={{ position: 'fixed', bottom: '15%', left: '8%', zIndex: 50, pointerEvents: 'none', color: accent, fontWeight: 900, fontSize: 14, letterSpacing: 2 }}>← {leftLabel}</div>
+          <div style={{ position: 'fixed', bottom: '15%', right: '8%', zIndex: 50, pointerEvents: 'none', color: accent, fontWeight: 900, fontSize: 14, letterSpacing: 2 }}>{rightLabel} →</div>
+          {feedback && (
+            <div style={{ position: 'fixed', top: '35%', left: '50%', transform: 'translateX(-50%)', zIndex: 80, pointerEvents: 'none', fontSize: 40, textShadow: '0 0 20px currentColor', color: feedback === 'correct' ? '#4ade80' : '#ef4444' }}>
+              {feedback === 'correct' ? '✓' : '✗'}
+            </div>
           )}
         </>
       )}
@@ -364,12 +319,12 @@ export default function SpeedSort() {
         <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI}
           score={String(finalSig.score)} personality={getPersonality(finalSig)}
           insights={[
-            { label: 'Accuracy', value: `${finalSig.totalItems > 0 ? Math.round(finalSig.correct / finalSig.totalItems * 100) : 0}%`, color: ACCENT },
             { label: 'Correct', value: String(finalSig.correct), color: '#4ade80' },
+            { label: 'Wrong', value: String(finalSig.wrong), color: '#ef4444' },
+            { label: 'Avg Speed', value: finalSig.totalDecisions > 0 ? `${Math.round(finalSig.totalReactionMs / finalSig.totalDecisions)}ms` : '—', color: accent },
             { label: 'Best Streak', value: `×${finalSig.maxStreak}`, color: '#fbbf24' },
-            { label: 'Avg Speed', value: `${finalSig.totalItems > 0 ? Math.round(finalSig.reactionSum / finalSig.totalItems) : 0}ms`, color: '#06b6d4' },
           ]}
-          accentColor={theme.colors.accent ?? ACCENT} onPlayAgain={handlePlayAgain} didWin={finalSig.correct >= 10} />
+          accentColor={accent} onPlayAgain={handlePlayAgain} didWin={finalSig.correct >= 20} />
       )}
     </GameShell>
   );

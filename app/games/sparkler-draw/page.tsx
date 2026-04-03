@@ -1,11 +1,10 @@
 'use client';
 /**
- * SPARKLER DRAW
- * Real mechanic: A glowing firework star template is shown. Player traces it with their
- * finger as quickly and accurately as possible. Accuracy = how close to the template.
- * Score = accuracy% × speed bonus.
+ * SPARKLER DRAW — 3D Version
+ * Trace a glowing 3D star shape with particle trail sparkles.
  */
 import { useEffect, useRef, useState, useCallback } from 'react';
+import * as THREE from 'three';
 import GameShell from '@/components/GameShell';
 import GameHUD from '@/components/GameHUD';
 import GameStartScreen from '@/components/GameStartScreen';
@@ -26,7 +25,6 @@ const GAME_TAGLINE = 'Trace the firework. Be fast. Be precise.';
 const PB_KEY = 'mg_pb_sparkler-draw';
 
 interface Signals { score: number; accuracy: number; completionTime: number | null; tracedPct: number; }
-
 function getPersonality(sig: Signals): string {
   if (sig.accuracy >= 88 && sig.completionTime && sig.completionTime < 8000) return 'Pyrotechnic Pro 🎆';
   if (sig.accuracy >= 80) return 'Star Tracer ⭐';
@@ -34,359 +32,319 @@ function getPersonality(sig: Signals): string {
   if (sig.accuracy >= 60) return 'Firework Fan 🎇';
   return 'Apprentice Lighter 🕯️';
 }
-
 type Phase = 'start' | 'countdown' | 'playing' | 'done';
 
-function WebhookEmitter({ theme, sig, personality, player }: { theme: ReturnType<typeof useBrandTheme>; sig: Signals; personality: string; player: PlayerSession | null; }) {
-  const fired = useRef(false);
-  useEffect(() => { if (fired.current) return; fired.current = true; postWebhook(theme, GAME_ID, { personality, score: sig.score }, player); }, [theme, sig, personality, player]);
-  return null;
-}
-
-/** Generate a star polygon with n points */
-function starPoints(cx: number, cy: number, outerR: number, innerR: number, n: number): { x: number; y: number }[] {
-  const pts: { x: number; y: number }[] = [];
+function starPoints3D(n: number, outerR: number, innerR: number): THREE.Vector3[] {
+  const pts: THREE.Vector3[] = [];
   for (let i = 0; i < n * 2; i++) {
     const angle = (i * Math.PI) / n - Math.PI / 2;
     const r = i % 2 === 0 ? outerR : innerR;
-    pts.push({ x: cx + Math.cos(angle) * r, y: cy + Math.sin(angle) * r });
+    pts.push(new THREE.Vector3(Math.cos(angle) * r, Math.sin(angle) * r, 0));
   }
+  pts.push(pts[0].clone()); // close
   return pts;
-}
-
-/** Sample points along a polyline at roughly every `step` pixels */
-function samplePolyline(pts: { x: number; y: number }[], step: number): { x: number; y: number }[] {
-  if (pts.length < 2) return pts;
-  const result: { x: number; y: number }[] = [pts[0]];
-  let remaining = step;
-  for (let i = 1; i < pts.length; i++) {
-    const dx = pts[i].x - pts[i - 1].x;
-    const dy = pts[i].y - pts[i - 1].y;
-    let segLen = Math.hypot(dx, dy);
-    let pos = 0;
-    while (pos + remaining <= segLen) {
-      pos += remaining;
-      result.push({ x: pts[i - 1].x + (dx / segLen) * pos, y: pts[i - 1].y + (dy / segLen) * pos });
-      remaining = step;
-    }
-    remaining -= segLen - pos;
-  }
-  return result;
 }
 
 export default function SparklerDrawGame() {
   const theme = useBrandTheme();
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const mountRef = useRef<HTMLDivElement>(null);
   const animRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const stopMusicRef = useRef<(() => void) | null>(null);
 
   const stateRef = useRef({
-    running: false,
-    timeLeft: DURATION,
+    renderer: null as THREE.WebGLRenderer | null,
+    scene: null as THREE.Scene | null,
+    camera: null as THREE.PerspectiveCamera | null,
+    templateLine: null as THREE.Line | null,
+    sparkParticles: [] as { mesh: THREE.Mesh; vx: number; vy: number; vz: number; life: number; maxLife: number }[],
+    trailLine: null as THREE.Line | null,
+    trailPoints: [] as THREE.Vector3[],
+    cursor: null as THREE.Mesh | null,
+    cursorLight: null as THREE.PointLight | null,
+    templatePoints: [] as THREE.Vector3[],
+    trackedCount: 0,
+    hitThreshold: 0.4,
+    running: false, timeLeft: DURATION,
     sig: { score: 0, accuracy: 0, completionTime: null as number | null, tracedPct: 0 } as Signals,
-    // Template (star polygon sampled points)
-    template: [] as { x: number; y: number }[],
-    templateRaw: [] as { x: number; y: number }[], // vertices only
-    templateSampled: [] as { x: number; y: number }[], // dense samples
-    templateHit: [] as boolean[], // which sampled points have been traced
-    // Player's drawn path
-    playerPath: [] as { x: number; y: number }[],
-    drawing: false,
-    startTime: 0,
-    completedAt: 0,
-    // Tolerance for "on path"
-    tolerance: 28,
-    accentColor: ACCENT,
-    sparkles: [] as { x: number; y: number; vx: number; vy: number; life: number; }[],
+    drawing: false, gameStartMs: 0, completionMs: null as number | null,
+    totalHits: 0, totalSamples: 0,
+    cursorX: 0, cursorY: 0,
   });
 
   const [phase, setPhase] = useState<Phase>('start');
   const [timeLeft, setTimeLeft] = useState(DURATION);
-  const [accuracyDisplay, setAccuracyDisplay] = useState(0);
+  const [scoreDisplay, setScoreDisplay] = useState(0);
   const [finalSig, setFinalSig] = useState<Signals | null>(null);
-  const [donePop, setDonePop] = useState<string | null>(null);
+  const [isNewBest, setIsNewBest] = useState(false);
   const playerSessionRef = useRef<PlayerSession | null>(null);
-
-  useEffect(() => { stateRef.current.accentColor = theme.colors.accent ?? ACCENT; }, [theme]);
-
-  const computeAccuracy = useCallback(() => {
-    const s = stateRef.current;
-    if (s.templateHit.length === 0) return 0;
-    const hitCount = s.templateHit.filter(Boolean).length;
-    return Math.round((hitCount / s.templateHit.length) * 100);
-  }, []);
 
   const endGame = useCallback(() => {
     const s = stateRef.current;
-    if (!s.running) return;
     s.running = false;
     cancelAnimationFrame(animRef.current);
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
-    if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
-    sfx.gameOver(); haptic([100]);
-    const acc = computeAccuracy();
-    const tracedPct = s.templateHit.filter(Boolean).length / Math.max(1, s.templateHit.length) * 100;
-    const timeBonusFactor = s.completedAt > 0
-      ? Math.max(1, 2 - (s.completedAt - s.startTime) / 15000)
-      : 1;
-    const score = Math.round(acc * timeBonusFactor);
-    s.sig = { score, accuracy: acc, completionTime: s.completedAt > 0 ? s.completedAt - s.startTime : null, tracedPct: Math.round(tracedPct) };
-    try {
-      const pb = parseInt(localStorage.getItem(PB_KEY) ?? '0', 10);
-      if (score > pb) localStorage.setItem(PB_KEY, String(score));
-    } catch { /* noop */ }
+    stopMusicRef.current?.();
+    if (s.renderer) { s.renderer.dispose(); s.renderer = null; }
+    const accuracy = s.totalSamples > 0 ? Math.round((s.totalHits / s.totalSamples) * 100) : 0;
+    const tracedPct = s.trackedCount / s.templatePoints.length * 100;
+    s.sig.accuracy = accuracy;
+    s.sig.tracedPct = tracedPct;
+    s.sig.completionTime = s.completionMs;
+    if (s.completionMs !== null) { const speed = Math.max(0, 20000 - s.completionMs) / 1000; s.sig.score = Math.round(accuracy * 0.8 + speed * 5); }
+    else s.sig.score = Math.round(accuracy * 0.5 + (tracedPct / 100) * 20);
+    try { const pb = parseInt(localStorage.getItem(PB_KEY) || '0', 10); if (s.sig.score > pb) { localStorage.setItem(PB_KEY, String(s.sig.score)); setIsNewBest(true); } } catch { /* ignore */ }
     setFinalSig({ ...s.sig });
     setPhase('done');
-  }, [computeAccuracy]);
+  }, []);
 
   const startLoop = useCallback(() => {
-    const canvas = canvasRef.current; if (!canvas) return;
-    const ctx = canvas.getContext('2d'); if (!ctx) return;
-    const W = window.innerWidth, H = window.innerHeight;
     const s = stateRef.current;
-    s.running = true;
-    s.timeLeft = DURATION;
-    s.drawing = false;
-    s.playerPath = [];
-    s.sparkles = [];
-    s.completedAt = 0;
-    s.startTime = 0;
-
-    // Build star template centered in game area
-    const cx = W / 2, cy = H * 0.48;
-    const outerR = Math.min(W, H) * 0.28;
-    const innerR = outerR * 0.42;
-    s.templateRaw = starPoints(cx, cy, outerR, innerR, 5);
-    s.template = [...s.templateRaw, s.templateRaw[0]]; // close loop
-    s.templateSampled = samplePolyline(s.template, 10);
-    s.templateHit = new Array(s.templateSampled.length).fill(false);
-
-    setAccuracyDisplay(0); setTimeLeft(DURATION);
-    setPhase('playing');
+    s.running = true; s.timeLeft = DURATION;
+    s.sig = { score: 0, accuracy: 0, completionTime: null, tracedPct: 0 };
+    s.sparkParticles = []; s.trailPoints = []; s.drawing = false;
+    s.totalHits = 0; s.totalSamples = 0; s.trackedCount = 0; s.completionMs = null;
+    s.gameStartMs = Date.now();
+    setScoreDisplay(0); setTimeLeft(DURATION); setPhase('playing');
     stopMusicRef.current = startMusic('ambient');
 
+    const W = window.innerWidth, H = window.innerHeight;
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(W, H);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setClearColor(0x020a0a);
+    if (mountRef.current) { mountRef.current.innerHTML = ''; mountRef.current.appendChild(renderer.domElement); }
+    s.renderer = renderer;
+
+    const scene = new THREE.Scene();
+    s.scene = scene;
+    const camera = new THREE.PerspectiveCamera(65, W / H, 0.1, 100);
+    camera.position.set(0, 0, 6);
+    s.camera = camera;
+
+    scene.add(new THREE.AmbientLight(0x020a0a, 2));
+    const bgLight = new THREE.PointLight(0xf59e0b, 1, 20);
+    bgLight.position.set(0, 3, 3);
+    scene.add(bgLight);
+    const cursorLight = new THREE.PointLight(0xfacc15, 0, 5);
+    scene.add(cursorLight);
+    s.cursorLight = cursorLight;
+
+    // Stars background
+    const sp = new Float32Array(400*3);
+    for (let i=0;i<400;i++){sp[i*3]=(Math.random()-.5)*50;sp[i*3+1]=(Math.random()-.5)*50;sp[i*3+2]=(Math.random()-.5)*50;}
+    const sg=new THREE.BufferGeometry();sg.setAttribute('position',new THREE.BufferAttribute(sp,3));
+    scene.add(new THREE.Points(sg,new THREE.PointsMaterial({color:0xffffff,size:0.04})));
+
+    // Star template
+    const starPts = starPoints3D(5, 2.2, 0.9);
+    s.templatePoints = starPts;
+    const templateGeo = new THREE.BufferGeometry().setFromPoints(starPts);
+    const templateLine = new THREE.Line(templateGeo, new THREE.LineBasicMaterial({ color: 0xf59e0b, transparent: true, opacity: 0.5 }));
+    scene.add(templateLine);
+    s.templateLine = templateLine;
+
+    // Template vertex markers (guide dots)
+    starPts.forEach((pt, i) => {
+      if (i % 2 === 0) {
+        const dot = new THREE.Mesh(new THREE.SphereGeometry(0.06, 6, 6), new THREE.MeshStandardMaterial({ color: 0xfbbf24, emissive: 0xfbbf24, emissiveIntensity: 0.8 }));
+        dot.position.copy(pt);
+        scene.add(dot);
+      }
+    });
+
+    // Live trail line
+    const trailGeo = new THREE.BufferGeometry();
+    trailGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(0), 3));
+    const trailLine = new THREE.Line(trailGeo, new THREE.LineBasicMaterial({ color: 0xfacc15 }));
+    scene.add(trailLine);
+    s.trailLine = trailLine;
+
+    // Cursor sparkler sphere
+    const cursorGeo = new THREE.SphereGeometry(0.08, 8, 8);
+    const cursorMat = new THREE.MeshStandardMaterial({ color: 0xfacc15, emissive: 0xfacc15, emissiveIntensity: 1 });
+    const cursor = new THREE.Mesh(cursorGeo, cursorMat);
+    cursor.visible = false;
+    scene.add(cursor);
+    s.cursor = cursor;
+
+    const handleResize = () => {
+      const w = window.innerWidth, h = window.innerHeight;
+      renderer.setSize(w, h); camera.aspect = w / h; camera.updateProjectionMatrix();
+    };
+    window.addEventListener('resize', handleResize);
+    (s as any)._cleanup = () => window.removeEventListener('resize', handleResize);
+
     timerRef.current = setInterval(() => {
-      s.timeLeft--;
-      setTimeLeft(s.timeLeft);
-      if (s.timeLeft === 10) { sfx.warning(); haptic([50, 30, 50]); }
-      else if (s.timeLeft > 0) sfx.tick();
+      s.timeLeft--; setTimeLeft(s.timeLeft);
       if (s.timeLeft <= 0) endGame();
     }, 1000);
 
+    const screenToWorld = (cx: number, cy: number) => {
+      const ndcX = (cx / window.innerWidth) * 2 - 1;
+      const ndcY = -((cy / window.innerHeight) * 2 - 1);
+      const v = new THREE.Vector3(ndcX, ndcY, 0.5).unproject(camera);
+      const dir = v.sub(camera.position).normalize();
+      const t = -camera.position.z / dir.z;
+      return camera.position.clone().add(dir.multiplyScalar(t));
+    };
+
+    const checkNearTemplate = (worldPt: THREE.Vector3): boolean => {
+      return s.templatePoints.some(tp => tp.distanceTo(worldPt) < s.hitThreshold * 1.5);
+    };
+
     const loop = () => {
       if (!s.running) return;
-      const now = Date.now();
-      const accent = s.accentColor;
-      ctx.clearRect(0, 0, W, H);
-
-      // Background – night sky
-      const bg = ctx.createRadialGradient(W / 2, H * 0.4, 0, W / 2, H * 0.5, Math.max(W, H) * 0.8);
-      bg.addColorStop(0, '#0a0820'); bg.addColorStop(0.5, '#060415'); bg.addColorStop(1, '#020208');
-      ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
-
-      // Star background dots
-      ctx.fillStyle = 'rgba(255,255,255,0.3)';
-      for (let i = 0; i < 40; i++) {
-        const sx = ((i * 173.7 + 11) % 1) * W;
-        const sy = ((i * 89.3 + 7) % 1) * H;
-        const sr = 0.8 + ((i * 57) % 1) * 1.2;
-        ctx.beginPath(); ctx.arc(sx, sy, sr, 0, Math.PI * 2); ctx.fill();
-      }
-
-      // Template star (dashed outline)
-      ctx.save();
-      ctx.strokeStyle = 'rgba(245,158,11,0.35)';
-      ctx.lineWidth = 3; ctx.setLineDash([8, 10]); ctx.lineJoin = 'round'; ctx.lineCap = 'round';
-      ctx.shadowBlur = 12; ctx.shadowColor = 'rgba(245,158,11,0.4)';
-      ctx.beginPath();
-      ctx.moveTo(s.template[0].x, s.template[0].y);
-      for (let i = 1; i < s.template.length; i++) ctx.lineTo(s.template[i].x, s.template[i].y);
-      ctx.closePath(); ctx.stroke();
-      ctx.setLineDash([]); ctx.restore();
-
-      // Template progress — traced portions glow
-      for (let i = 0; i < s.templateSampled.length; i++) {
-        if (s.templateHit[i]) {
-          ctx.save();
-          ctx.fillStyle = accent + 'cc'; ctx.shadowBlur = 8; ctx.shadowColor = accent;
-          ctx.beginPath(); ctx.arc(s.templateSampled[i].x, s.templateSampled[i].y, 3, 0, Math.PI * 2); ctx.fill();
-          ctx.restore();
-        }
-      }
-
-      // Player's drawn path (sparkler trail)
-      if (s.playerPath.length >= 2) {
-        for (let i = 1; i < s.playerPath.length; i++) {
-          const t = i / s.playerPath.length;
-          ctx.save();
-          ctx.globalAlpha = 0.5 + t * 0.5;
-          ctx.strokeStyle = accent; ctx.lineWidth = 3 + t * 3;
-          ctx.shadowBlur = 14; ctx.shadowColor = accent;
-          ctx.lineCap = 'round';
-          ctx.beginPath(); ctx.moveTo(s.playerPath[i - 1].x, s.playerPath[i - 1].y);
-          ctx.lineTo(s.playerPath[i].x, s.playerPath[i].y); ctx.stroke();
-          ctx.restore();
-        }
-        // Sparkler tip glow
-        const tip = s.playerPath[s.playerPath.length - 1];
-        ctx.save(); ctx.fillStyle = '#ffffff'; ctx.shadowBlur = 20; ctx.shadowColor = accent;
-        ctx.beginPath(); ctx.arc(tip.x, tip.y, 5, 0, Math.PI * 2); ctx.fill(); ctx.restore();
-      }
+      const t = Date.now() * 0.001;
 
       // Sparkle particles
-      s.sparkles = s.sparkles.filter(sp => sp.life > 0);
-      for (const sp of s.sparkles) {
-        sp.x += sp.vx; sp.y += sp.vy; sp.vy += 0.1; sp.life -= 3;
-        ctx.save(); ctx.globalAlpha = sp.life / 100;
-        ctx.fillStyle = accent; ctx.shadowBlur = 6; ctx.shadowColor = accent;
-        ctx.beginPath(); ctx.arc(sp.x, sp.y, 2, 0, Math.PI * 2); ctx.fill(); ctx.restore();
+      for (let pi = s.sparkParticles.length - 1; pi >= 0; pi--) {
+        const p = s.sparkParticles[pi];
+        p.mesh.position.x += p.vx; p.mesh.position.y += p.vy; p.mesh.position.z += p.vz;
+        p.vy -= 0.002; p.life--;
+        (p.mesh.material as THREE.MeshStandardMaterial).opacity = p.life / p.maxLife;
+        if (p.life <= 0) { scene.remove(p.mesh); s.sparkParticles.splice(pi, 1); }
       }
 
-      // Accuracy live update
-      const acc = computeAccuracy();
-      if (acc !== accuracyDisplay) setAccuracyDisplay(acc);
-
-      // Check completion: >85% hit
-      if (acc >= 85 && s.completedAt === 0 && s.drawing) {
-        s.completedAt = now;
-        sfx.collect(); haptic([40, 20, 60, 20, 80]);
-        setDonePop('⭐ ' + acc + '%');
-        setTimeout(() => setDonePop(null), 2000);
-        // Burst sparkles
-        const tip = s.playerPath[s.playerPath.length - 1] ?? { x: W / 2, y: H / 2 };
-        for (let i = 0; i < 25; i++) {
-          const angle = Math.random() * Math.PI * 2;
-          const speed = 2 + Math.random() * 4;
-          s.sparkles.push({ x: tip.x, y: tip.y, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed - 2, life: 80 + Math.random() * 40 });
-        }
+      // Template pulse
+      if (s.templateLine) {
+        (s.templateLine.material as THREE.LineBasicMaterial).opacity = 0.3 + Math.sin(t * 3) * 0.2;
       }
 
-      void now;
+      // Cursor light
+      if (s.drawing && s.cursor?.visible) {
+        cursorLight.intensity = 2 + Math.sin(t * 8) * 0.5;
+        cursorLight.position.copy(cursor.position);
+      } else {
+        cursorLight.intensity = 0;
+      }
+
+      renderer.render(scene, camera);
       animRef.current = requestAnimationFrame(loop);
     };
     animRef.current = requestAnimationFrame(loop);
-  }, [endGame, computeAccuracy, accuracyDisplay]);
 
-  useEffect(() => {
-    const canvas = canvasRef.current; if (!canvas) return;
-    const dpr = window.devicePixelRatio || 1;
-    const resize = () => {
-      canvas.width = window.innerWidth * dpr; canvas.height = window.innerHeight * dpr;
-      canvas.style.width = window.innerWidth + 'px'; canvas.style.height = window.innerHeight + 'px';
-      const ctx = canvas.getContext('2d'); if (ctx) ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    };
-    resize();
-    window.addEventListener('resize', resize);
-
-    const getPos = (e: PointerEvent) => {
-      const rect = canvas.getBoundingClientRect();
-      return { x: e.clientX - rect.left, y: e.clientY - rect.top };
-    };
-
-    const onDown = (e: PointerEvent) => {
-      const s = stateRef.current; if (!s.running) return;
-      s.drawing = true;
-      if (s.startTime === 0) s.startTime = Date.now();
-      const pos = getPos(e);
-      s.playerPath = [pos];
-      canvas.setPointerCapture(e.pointerId);
-    };
-    const onMove = (e: PointerEvent) => {
-      const s = stateRef.current; if (!s.running || !s.drawing) return;
-      const pos = getPos(e);
-      s.playerPath.push(pos);
-      // Keep path lean
-      if (s.playerPath.length > 400) s.playerPath.splice(0, 100);
-      // Spawn sparkles occasionally
-      if (Math.random() < 0.25) {
+    const spawnSparks = (pos: THREE.Vector3, isHit: boolean) => {
+      for (let i = 0; i < (isHit ? 5 : 2); i++) {
+        const geo = new THREE.SphereGeometry(0.04, 4, 4);
+        const color = isHit ? 0xfbbf24 : 0x888800;
+        const mat = new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 1, transparent: true, opacity: 1 });
+        const mesh = new THREE.Mesh(geo, mat);
+        mesh.position.copy(pos);
+        scene.add(mesh);
         const angle = Math.random() * Math.PI * 2;
-        s.sparkles.push({ x: pos.x, y: pos.y, vx: Math.cos(angle) * (0.5 + Math.random() * 2), vy: Math.sin(angle) * (0.5 + Math.random() * 2) - 1, life: 60 + Math.random() * 40 });
-      }
-      // Check coverage against template
-      for (let i = 0; i < s.templateSampled.length; i++) {
-        if (!s.templateHit[i]) {
-          const tp = s.templateSampled[i];
-          if (Math.hypot(pos.x - tp.x, pos.y - tp.y) <= s.tolerance) {
-            s.templateHit[i] = true;
-          }
-        }
+        const elev = (Math.random() - 0.5) * 0.5;
+        const spd = 0.03 + Math.random() * 0.04;
+        s.sparkParticles.push({ mesh, vx: Math.cos(angle) * spd, vy: Math.sin(elev) * spd + 0.03, vz: Math.sin(angle) * spd, life: 20 + Math.floor(Math.random() * 15), maxLife: 35 });
       }
     };
-    const onUp = () => { stateRef.current.drawing = false; };
 
-    canvas.addEventListener('pointerdown', onDown);
-    canvas.addEventListener('pointermove', onMove);
-    canvas.addEventListener('pointerup', onUp);
-    canvas.addEventListener('pointercancel', onUp);
-
-    return () => {
-      window.removeEventListener('resize', resize);
-      canvas.removeEventListener('pointerdown', onDown);
-      canvas.removeEventListener('pointermove', onMove);
-      canvas.removeEventListener('pointerup', onUp);
-      canvas.removeEventListener('pointercancel', onUp);
+    const onPointerDown = (e: PointerEvent) => {
+      stateRef.current.drawing = true;
+      stateRef.current.trailPoints = [];
+      if (cursor) cursor.visible = true;
     };
-  }, []);
+    const onPointerMove = (e: PointerEvent) => {
+      const s2 = stateRef.current;
+      if (!s2.running || !s2.drawing) return;
+      const worldPt = screenToWorld(e.clientX, e.clientY);
+      cursor.position.copy(worldPt);
+      s2.trailPoints.push(worldPt.clone());
+      if (s2.trailPoints.length > 2) {
+        const tGeo = new THREE.BufferGeometry().setFromPoints(s2.trailPoints);
+        trailLine.geometry.dispose(); trailLine.geometry = tGeo;
+      }
+      // Check hit
+      s2.totalSamples++;
+      if (checkNearTemplate(worldPt)) { s2.totalHits++; spawnSparks(worldPt, true); sfx.tick(); }
+      else spawnSparks(worldPt, false);
+    };
+    const onPointerUp = () => {
+      const s2 = stateRef.current;
+      s2.drawing = false;
+      if (cursor) cursor.visible = false;
+      // Check completion
+      const covered = s2.templatePoints.filter(tp => s2.trailPoints.some(dp => tp.distanceTo(dp) < s2.hitThreshold * 2));
+      s2.trackedCount = covered.length;
+      if (covered.length >= s2.templatePoints.length * 0.7 && s2.completionMs === null) {
+        s2.completionMs = Date.now() - s2.gameStartMs;
+        sfx.success(); haptic([50, 30, 50]);
+      }
+      setScoreDisplay(Math.round((s2.totalHits / Math.max(1, s2.totalSamples)) * 100));
+    };
+    if (mountRef.current) {
+      mountRef.current.addEventListener('pointerdown', onPointerDown);
+      mountRef.current.addEventListener('pointermove', onPointerMove);
+      mountRef.current.addEventListener('pointerup', onPointerUp);
+    }
+    (s as any)._inputCleanup = () => {
+      mountRef.current?.removeEventListener('pointerdown', onPointerDown);
+      mountRef.current?.removeEventListener('pointermove', onPointerMove);
+      mountRef.current?.removeEventListener('pointerup', onPointerUp);
+    };
+  }, [endGame]);
 
   useEffect(() => () => {
     cancelAnimationFrame(animRef.current);
     if (timerRef.current) clearInterval(timerRef.current);
-    if (stopMusicRef.current) stopMusicRef.current();
+    stopMusicRef.current?.();
+    const s = stateRef.current;
+    if (s.renderer) s.renderer.dispose();
+    (s as any)._cleanup?.(); (s as any)._inputCleanup?.();
   }, []);
 
   const handleStart = useCallback(async (name: string, avatar: string) => {
     playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar);
-    await initAudio();
-    setPhase('countdown');
+    await initAudio(); setPhase('countdown');
   }, []);
-  const handlePlayAgain = useCallback(() => {
-    setPhase('start'); setAccuracyDisplay(0); setTimeLeft(DURATION); setFinalSig(null);
-  }, []);
+  const handlePlayAgain = useCallback(() => { setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null); setIsNewBest(false); }, []);
 
   const accent = theme.colors.accent ?? ACCENT;
 
   return (
     <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accent}
-      background="linear-gradient(180deg, #0a0820 0%, #020208 100%)">
+      background="linear-gradient(180deg, #020a0a 0%, #010505 100%)">
       {phase === 'start' && (
         <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description={GAME_TAGLINE}
-          ctaLabel="Light It Up →" accentColor={accent} onStart={handleStart}
-          gradient="radial-gradient(ellipse 80% 70% at 50% 30%, #0a0820 0%, #020208 100%)" />
+          ctaLabel="Draw! ✨" accentColor={accent} onStart={handleStart} />
       )}
-      {phase === 'countdown' && <Countdown onComplete={() => startLoop()} accentColor={accent} />}
+      {phase === 'countdown' && <Countdown onComplete={startLoop} accentColor={accent} />}
       {(phase === 'playing' || phase === 'countdown') && (
-        <canvas ref={canvasRef} role="img" aria-label="Sparkler Draw game canvas"
-          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none' }} />
+        <div ref={mountRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none' }} />
       )}
       {phase === 'playing' && (
         <GameHUD accentColor={accent} items={[
-          { label: 'TIME', value: `${timeLeft}s`, danger: timeLeft <= 10, testId: 'timer' },
-          { label: 'ACCURACY', value: `${accuracyDisplay}%`, testId: 'score' },
+          { label: 'TIME', value: timeLeft, danger: timeLeft <= 10 },
+          { label: 'ACC', value: `${scoreDisplay}%` },
         ]} />
       )}
       <AnimatePresence>
-        {donePop && (
-          <motion.div key="done" initial={{ opacity: 0, scale: 0.5 }} animate={{ opacity: 1, scale: 1.2 }} exit={{ opacity: 0, y: -40 }} transition={{ duration: 0.6 }}
-            style={{ position: 'fixed', top: '28%', left: '50%', transform: 'translateX(-50%)', zIndex: 80, pointerEvents: 'none', fontSize: 44, fontWeight: 900, color: accent, textShadow: `0 0 24px ${accent}`, whiteSpace: 'nowrap' }}>
-            {donePop}
+        {isNewBest && phase === 'done' && (
+          <motion.div key="nb" initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
+            style={{ position: 'fixed', top: '10%', left: '50%', transform: 'translateX(-50%)', zIndex: 90, background: 'linear-gradient(135deg, #fbbf24, #f59e0b)', borderRadius: 20, padding: '8px 20px', fontSize: 20, fontWeight: 900, color: '#000', whiteSpace: 'nowrap' }}>
+            🏆 New Best!
           </motion.div>
         )}
       </AnimatePresence>
       {phase === 'done' && finalSig && (
         <>
           <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI}
-            score={`${finalSig.accuracy}%`} personality={getPersonality(finalSig)}
+            score={String(finalSig.score)} personality={getPersonality(finalSig)}
             insights={[
-              { label: 'Accuracy', value: `${finalSig.accuracy}%`, color: finalSig.accuracy >= 80 ? '#4ade80' : finalSig.accuracy >= 60 ? '#facc15' : '#ef4444' },
-              { label: 'Coverage', value: `${finalSig.tracedPct}%`, color: accent },
-              { label: 'Completion Time', value: finalSig.completionTime ? `${(finalSig.completionTime / 1000).toFixed(1)}s` : 'Not completed', color: finalSig.completionTime ? '#00ff88' : '#94a3b8' },
-              { label: 'Score', value: String(finalSig.score), color: accent },
+              { label: 'Accuracy', value: `${finalSig.accuracy}%`, color: accent },
+              { label: 'Traced', value: `${Math.round(finalSig.tracedPct)}%`, color: '#fbbf24' },
+              { label: 'Time', value: finalSig.completionTime ? `${(finalSig.completionTime / 1000).toFixed(1)}s` : 'Incomplete', color: '#4ade80' },
             ]}
-            accentColor={accent} onPlayAgain={handlePlayAgain} didWin={finalSig.accuracy >= 70} finalScore={finalSig.score} />
-          <WebhookEmitter theme={theme} sig={finalSig} personality={getPersonality(finalSig)} player={playerSessionRef.current} />
+            accentColor={accent} onPlayAgain={handlePlayAgain} didWin={finalSig.accuracy >= 70} />
+          <WebhookHelper theme={theme} sig={finalSig} personality={getPersonality(finalSig)} player={playerSessionRef.current} />
         </>
       )}
     </GameShell>
   );
+}
+
+function WebhookHelper({ theme, sig, personality, player }: { theme: ReturnType<typeof useBrandTheme>; sig: Signals; personality: string; player: PlayerSession | null; }) {
+  const fired = useRef(false);
+  useEffect(() => { if (fired.current) return; fired.current = true; postWebhook(theme, GAME_ID, { personality, score: sig.score, accuracy: sig.accuracy }, player); }, [theme, sig, personality, player]);
+  return null;
 }

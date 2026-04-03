@@ -1,5 +1,10 @@
 'use client';
+/**
+ * CODE BREAKER — 3D: floating holographic number display in a dark cyber environment.
+ * Memorize the glowing code, then tap digits back. Codes grow longer.
+ */
 import { useEffect, useRef, useState, useCallback } from 'react';
+import * as THREE from 'three';
 import GameShell from '@/components/GameShell';
 import GameHUD from '@/components/GameHUD';
 import GameStartScreen from '@/components/GameStartScreen';
@@ -15,16 +20,11 @@ const ACCENT       = '#06b6d4';
 const DURATION     = 60;
 const GAME_EMOJI   = '🔐';
 const GAME_TITLE   = 'Code Breaker';
-const GAME_TAGLINE = 'Memorize the code — then tap it back from memory. Codes get longer over time.';
+const GAME_TAGLINE = 'Memorize the code — then tap it back from memory.';
 
 interface Signals {
-  codesCorrect: number;
-  codesWrong: number;
-  maxCodeLength: number;
-  avgMemoryMs: number;
-  longestStreak: number;
-  streakCurrent: number;
-  score: number;
+  codesCorrect: number; codesWrong: number; maxCodeLength: number;
+  avgMemoryMs: number; longestStreak: number; streakCurrent: number; score: number;
 }
 
 function getPersonality(sig: Signals): string {
@@ -38,388 +38,392 @@ function getPersonality(sig: Signals): string {
 type MemoryPhase = 'show' | 'hide' | 'input' | 'feedback';
 
 interface CodeState {
-  code: number[];
-  userInput: number[];
-  memoryPhase: MemoryPhase;
-  showTimer: number;
-  hideTimer: number;
-  feedbackTimer: number;
+  code: number[]; userInput: number[]; memoryPhase: MemoryPhase;
+  showTimer: number; hideTimer: number; feedbackTimer: number;
   feedbackResult: 'correct' | 'wrong' | null;
-  showStartTime: number;
-  inputStartTime: number;
+  inputStartTime: number; showStartTime: number;
 }
 
 interface GameState {
-  running: boolean;
-  timeLeft: number;
-  sig: Signals;
-  codeState: CodeState;
-  currentCodeLength: number;
-  accentColor: string;
-  glowPhase: number;
-  memoryTimes: number[];
+  running: boolean; timeLeft: number; sig: Signals;
+  codeState: CodeState; currentCodeLength: number;
+  accentColor: string; memoryTimes: number[];
 }
 
 type Phase = 'start' | 'countdown' | 'playing' | 'done';
 
-const SHOW_FRAMES  = 120;  // 2 seconds at 60fps
-const FEEDBACK_FRAMES = 90;
+const SHOW_FRAMES  = 120;
+const FEEDBACK_FRAMES = 60;
 
 function generateCode(length: number): number[] {
-  const code: number[] = [];
-  for (let i = 0; i < length; i++) code.push(Math.floor(Math.random() * 10));
-  return code;
+  return Array.from({ length }, () => Math.floor(Math.random() * 10));
 }
 
 export default function CodeBreakerGame() {
   const theme        = useBrandTheme();
-  const canvasRef    = useRef<HTMLCanvasElement>(null);
-  const animRef      = useRef(0);
-  const timerRef     = useRef<ReturnType<typeof setInterval> | null>(null);
-  const stopMusicRef = useRef<(() => void) | null>(null);
+  const accent       = theme.colors.accent ?? ACCENT;
+
+  const mountRef     = useRef<HTMLDivElement>(null);
+  const rendererRef  = useRef<THREE.WebGLRenderer|null>(null);
+  const sceneRef     = useRef<THREE.Scene|null>(null);
+  const cameraRef    = useRef<THREE.PerspectiveCamera|null>(null);
+  const rafRef       = useRef(0);
+  const timerRef     = useRef<ReturnType<typeof setInterval>|null>(null);
+  const stopMusicRef = useRef<(()=>void)|null>(null);
+  const playerSessionRef = useRef<PlayerSession|null>(null);
+
+  // 3D floating panels for each digit slot
+  const digitMeshesRef = useRef<THREE.Mesh[]>([]);
+  const gridMeshesRef  = useRef<THREE.Mesh[]>([]);
 
   const stateRef = useRef<GameState>({
-    running: false,
-    timeLeft: DURATION,
-    sig: { codesCorrect: 0, codesWrong: 0, maxCodeLength: 4, avgMemoryMs: 0, longestStreak: 0, streakCurrent: 0, score: 0 },
-    codeState: {
-      code: [], userInput: [], memoryPhase: 'show',
-      showTimer: 0, hideTimer: 0, feedbackTimer: 0,
-      feedbackResult: null, showStartTime: 0, inputStartTime: 0,
-    },
-    currentCodeLength: 4,
-    accentColor: ACCENT,
-    glowPhase: 0,
-    memoryTimes: [],
+    running: false, timeLeft: DURATION,
+    sig: { codesCorrect:0, codesWrong:0, maxCodeLength:3, avgMemoryMs:0, longestStreak:0, streakCurrent:0, score:0 },
+    codeState: { code:[], userInput:[], memoryPhase:'show', showTimer:SHOW_FRAMES, hideTimer:30, feedbackTimer:0, feedbackResult:null, inputStartTime:0, showStartTime:0 },
+    currentCodeLength: 3,
+    accentColor: ACCENT, memoryTimes: [],
   });
 
   const [phase, setPhase]               = useState<Phase>('start');
   const [timeLeft, setTimeLeft]         = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
-  const [finalSig, setFinalSig]         = useState<Signals | null>(null);
-  const [playerName, setPlayerName]     = useState('');
-  const [playerAvatar, setPlayerAvatar] = useState('🔐');
-  const [codePhaseDisplay, setCodePhaseDisplay] = useState<MemoryPhase>('show');
-  const [userInputDisplay, setUserInputDisplay] = useState<number[]>([]);
-  const [feedbackDisplay, setFeedbackDisplay]   = useState<'correct' | 'wrong' | null>(null);
-  const [codeDisplay, setCodeDisplay]           = useState<number[]>([]);
-  const [codeLengthDisplay, setCodeLengthDisplay] = useState(4);
-  const playerSessionRef                = useRef<PlayerSession | null>(null);
+  const [finalSig, setFinalSig]         = useState<Signals|null>(null);
+  // UI state for digit display overlay
+  const [uiCode, setUiCode]             = useState<number[]>([]);
+  const [uiInput, setUiInput]           = useState<number[]>([]);
+  const [uiMemPhase, setUiMemPhase]     = useState<MemoryPhase>('show');
+  const [uiFeedback, setUiFeedback]     = useState<'correct'|'wrong'|null>(null);
 
-  useEffect(() => { stateRef.current.accentColor = theme.colors.accent ?? ACCENT; }, [theme]);
+  useEffect(() => { stateRef.current.accentColor = accent; }, [accent]);
 
-  const startNextCode = useCallback(() => {
+  // ── Three.js setup ──────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!mountRef.current) return;
+    const mount = mountRef.current;
+    const W = mount.clientWidth||window.innerWidth; const H = mount.clientHeight||window.innerHeight;
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio,2));
+    renderer.setSize(W, H); renderer.setClearColor(0x020b12);
+    mount.appendChild(renderer.domElement);
+    rendererRef.current = renderer;
+
+    const scene = new THREE.Scene();
+    sceneRef.current = scene;
+
+    const camera = new THREE.PerspectiveCamera(65, W/H, 0.1, 100);
+    camera.position.set(0, 0, 7);
+    cameraRef.current = camera;
+
+    scene.add(new THREE.AmbientLight(0xffffff, 0.3));
+    const pl = new THREE.PointLight(0x06b6d4, 4, 20);
+    pl.position.set(0, 2, 5);
+    scene.add(pl);
+    scene.add(new THREE.DirectionalLight(0x67e8f9, 0.6));
+
+    // Grid floor
+    const gridHelper = new THREE.GridHelper(20, 20, 0x0e7490, 0x0e7490);
+    gridHelper.position.y = -3;
+    (gridHelper.material as THREE.Material).transparent = true;
+    (gridHelper.material as THREE.Material).opacity = 0.25;
+    scene.add(gridHelper);
+
+    // Background particles (floating data bits)
+    const bitGeo = new THREE.BufferGeometry();
+    const bitPos = new Float32Array(400 * 3);
+    for (let i = 0; i < 400; i++) {
+      bitPos[i*3]   = (Math.random()-0.5)*16;
+      bitPos[i*3+1] = (Math.random()-0.5)*16;
+      bitPos[i*3+2] = (Math.random()-0.5)*8-4;
+    }
+    bitGeo.setAttribute('position', new THREE.BufferAttribute(bitPos, 3));
+    scene.add(new THREE.Points(bitGeo, new THREE.PointsMaterial({ color: 0x0891b2, size: 0.06, sizeAttenuation: true, transparent: true, opacity: 0.6 })));
+
+    // Digit slot panels — created/rebuilt per round
+    for (let i = 0; i < 10; i++) {
+      const geo = new THREE.BoxGeometry(0.8, 0.9, 0.08);
+      const mat = new THREE.MeshStandardMaterial({ color: 0x0e7490, metalness: 0.5, roughness: 0.4, transparent: true, opacity: 0 });
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.visible = false;
+      scene.add(mesh);
+      digitMeshesRef.current.push(mesh);
+    }
+
+    // Number pad tiles (0-9)
+    const PAD_LAYOUT = [
+      [1,2,3],[4,5,6],[7,8,9],[null,0,null]
+    ];
+    const tileSize = 0.7;
+    const tileGap = 0.1;
+    const padOffsetY = -1.5;
+    PAD_LAYOUT.forEach((row, ri) => {
+      row.forEach((num, ci) => {
+        if (num === null) return;
+        const geo = new THREE.BoxGeometry(tileSize, tileSize, 0.1);
+        const mat = new THREE.MeshStandardMaterial({ color: 0x164e63, metalness: 0.4, roughness: 0.5, emissive: 0x06b6d4, emissiveIntensity: 0.2 });
+        const mesh = new THREE.Mesh(geo, mat);
+        mesh.position.set((ci - 1) * (tileSize + tileGap), padOffsetY - ri * (tileSize + tileGap), 0.5);
+        mesh.userData.digit = num;
+        scene.add(mesh);
+        gridMeshesRef.current.push(mesh);
+      });
+    });
+
+    const onResize = () => {
+      const W2 = mount.clientWidth||window.innerWidth; const H2 = mount.clientHeight||window.innerHeight;
+      renderer.setSize(W2,H2); camera.aspect=W2/H2; camera.updateProjectionMatrix();
+    };
+    window.addEventListener('resize', onResize);
+
+    let frame = 0;
+    const render = () => {
+      rafRef.current = requestAnimationFrame(render);
+      frame++;
+      const t = frame * 0.016;
+      // Animate grid tiles
+      gridMeshesRef.current.forEach(m => {
+        m.position.z = 0.5 + Math.sin(t + m.position.x * 0.8) * 0.05;
+      });
+      // Animate digit panels
+      digitMeshesRef.current.forEach((m, i) => {
+        if (m.visible) m.rotation.y = Math.sin(t * 0.5 + i * 0.3) * 0.05;
+      });
+      // Camera gentle sway
+      camera.position.x = Math.sin(t * 0.2) * 0.2;
+      camera.position.y = Math.cos(t * 0.15) * 0.1;
+      renderer.render(scene, camera);
+    };
+    render();
+
+    return () => {
+      window.removeEventListener('resize', onResize);
+      cancelAnimationFrame(rafRef.current);
+      renderer.dispose();
+      mount.removeChild(renderer.domElement);
+    };
+  }, []);
+
+  const startNewCode = useCallback(() => {
     const s = stateRef.current;
     const code = generateCode(s.currentCodeLength);
     s.codeState = {
-      code,
-      userInput: [],
-      memoryPhase: 'show',
-      showTimer: 0,
-      hideTimer: 20, // brief pause before showing
-      feedbackTimer: 0,
-      feedbackResult: null,
-      showStartTime: Date.now(),
-      inputStartTime: 0,
+      code, userInput: [], memoryPhase: 'show',
+      showTimer: SHOW_FRAMES, hideTimer: 30, feedbackTimer: 0, feedbackResult: null,
+      inputStartTime: 0, showStartTime: Date.now(),
     };
-    setCodeDisplay([...code]);
-    setUserInputDisplay([]);
-    setCodePhaseDisplay('show');
-    setFeedbackDisplay(null);
+    // Update 3D digit display
+    const panels = digitMeshesRef.current;
+    panels.forEach((m, i) => {
+      m.visible = i < s.currentCodeLength;
+      if (m.visible) {
+        m.position.set((i - (s.currentCodeLength-1)/2) * 1.0, 1.2, 0.5);
+        const mat = m.material as THREE.MeshStandardMaterial;
+        mat.opacity = 1; mat.color.setHex(0x0e7490);
+      }
+    });
+    setUiCode(code); setUiInput([]); setUiMemPhase('show'); setUiFeedback(null);
   }, []);
 
   const endGame = useCallback(() => {
-    const s = stateRef.current;
-    s.running = false;
-    if (s.memoryTimes.length > 0) {
-      s.sig.avgMemoryMs = Math.round(s.memoryTimes.reduce((a, b) => a + b, 0) / s.memoryTimes.length);
-    }
-    cancelAnimationFrame(animRef.current);
+    const s = stateRef.current; s.running = false;
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
     if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
-    setFinalSig({ ...s.sig });
-    setPhase('done');
-  }, []);
-
-  const handleDigitTap = useCallback((digit: number) => {
-    const s = stateRef.current;
-    if (!s.running || s.codeState.memoryPhase !== 'input') return;
-    const cs = s.codeState;
-    cs.userInput.push(digit);
-    setUserInputDisplay([...cs.userInput]);
-    haptic([20]);
-
-    if (cs.userInput.length === cs.code.length) {
-      const correct = cs.userInput.every((d, i) => d === cs.code[i]);
-      const memTime = Date.now() - cs.inputStartTime;
-      s.memoryTimes.push(memTime);
-
-      if (correct) {
-        s.sig.codesCorrect++;
-        s.sig.streakCurrent++;
-        if (s.sig.streakCurrent > s.sig.longestStreak) s.sig.longestStreak = s.sig.streakCurrent;
-        const pts = s.currentCodeLength + (s.sig.streakCurrent >= 3 ? 2 : 0);
-        s.sig.score += pts;
-        setScoreDisplay(s.sig.score);
-        cs.feedbackResult = 'correct';
-        setFeedbackDisplay('correct');
-        sfx.collect();
-        haptic([30, 20, 50]);
-        // Increase code length every 3 correct
-        if (s.sig.codesCorrect % 3 === 0) {
-          s.currentCodeLength = Math.min(9, s.currentCodeLength + 1);
-          setCodeLengthDisplay(s.currentCodeLength);
-          if (s.currentCodeLength > s.sig.maxCodeLength) s.sig.maxCodeLength = s.currentCodeLength;
-        }
-      } else {
-        s.sig.codesWrong++;
-        s.sig.streakCurrent = 0;
-        cs.feedbackResult = 'wrong';
-        setFeedbackDisplay('wrong');
-        sfx.collision();
-        haptic([20, 30, 20]);
-      }
-
-      cs.memoryPhase = 'feedback';
-      cs.feedbackTimer = FEEDBACK_FRAMES;
-      setCodePhaseDisplay('feedback');
-    }
+    const avg = s.memoryTimes.length > 0 ? s.memoryTimes.reduce((a,b)=>a+b,0)/s.memoryTimes.length : 0;
+    s.sig.avgMemoryMs = Math.round(avg);
+    const sig = { ...s.sig };
+    const pb = parseInt(localStorage.getItem(`pb_${GAME_ID}`)??'0');
+    if (sig.score > pb) localStorage.setItem(`pb_${GAME_ID}`, String(sig.score));
+    setFinalSig(sig); setPhase('done');
   }, []);
 
   const startLoop = useCallback(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
     const s = stateRef.current;
+    s.running = true; s.timeLeft = DURATION;
+    s.sig = { codesCorrect:0, codesWrong:0, maxCodeLength:3, avgMemoryMs:0, longestStreak:0, streakCurrent:0, score:0 };
+    s.currentCodeLength = 3; s.memoryTimes = [];
+    setScoreDisplay(0); setTimeLeft(DURATION); setPhase('playing');
+    stopMusicRef.current = startMusic('minimal');
+    startNewCode();
 
-    s.running = true;
-    s.timeLeft = DURATION;
-    s.sig = { codesCorrect: 0, codesWrong: 0, maxCodeLength: 4, avgMemoryMs: 0, longestStreak: 0, streakCurrent: 0, score: 0 };
-    s.currentCodeLength = 4;
-    s.glowPhase = 0;
-    s.memoryTimes = [];
-    setScoreDisplay(0);
-    setTimeLeft(DURATION);
-    setCodeLengthDisplay(4);
-    setPhase('playing');
-    stopMusicRef.current = startMusic('ambient');
+    // Game logic ticker
+    let frameCt = 0;
+    const gameTick = () => {
+      if (!stateRef.current.running) return;
+      const s2 = stateRef.current; const cs = s2.codeState;
+      frameCt++;
 
-    timerRef.current = setInterval(() => {
-      s.timeLeft--;
-      setTimeLeft(s.timeLeft);
-      if (s.timeLeft <= 0) { sfx.fail(); haptic([300]); endGame(); }
-    }, 1000);
-
-    startNextCode();
-
-    const loop = () => {
-      if (!s.running) return;
-      const W = canvas.width;
-      const H = canvas.height;
-      const cs = s.codeState;
-
-      s.glowPhase += 0.04;
-
-      // State machine for code display
       if (cs.memoryPhase === 'show') {
-        cs.showTimer++;
-        if (cs.showTimer >= SHOW_FRAMES) {
-          cs.memoryPhase = 'hide';
-          cs.inputStartTime = Date.now();
-          setCodePhaseDisplay('hide');
-          setTimeout(() => {
-            if (s.running && cs.memoryPhase === 'hide') {
-              cs.memoryPhase = 'input';
-              setCodePhaseDisplay('input');
-            }
-          }, 300);
+        cs.showTimer--;
+        if (cs.showTimer <= 0) {
+          cs.memoryPhase = 'hide'; cs.hideTimer = 30;
+          setUiMemPhase('hide');
+          // Hide panels
+          digitMeshesRef.current.forEach(m => {
+            if (m.visible) { const mat = m.material as THREE.MeshStandardMaterial; mat.opacity = 0.1; mat.color.setHex(0x164e63); }
+          });
+          sfx.click();
+        }
+      } else if (cs.memoryPhase === 'hide') {
+        cs.hideTimer--;
+        if (cs.hideTimer <= 0) {
+          cs.memoryPhase = 'input'; cs.inputStartTime = Date.now();
+          setUiMemPhase('input');
         }
       } else if (cs.memoryPhase === 'feedback') {
         cs.feedbackTimer--;
         if (cs.feedbackTimer <= 0) {
-          startNextCode();
+          if (cs.feedbackResult === 'correct') s2.currentCodeLength = Math.min(9, s2.currentCodeLength + 1);
+          startNewCode();
         }
       }
-
-      // Background
-      ctx.fillStyle = '#020d14';
-      ctx.fillRect(0, 0, W, H);
-
-      // Matrix-like background effect
-      ctx.font = '10px monospace';
-      ctx.fillStyle = 'rgba(6,182,212,0.04)';
-      for (let i = 0; i < 20; i++) {
-        const mx = Math.random() * W;
-        const my = Math.random() * H;
-        ctx.fillText(String(Math.floor(Math.random() * 10)), mx, my);
-      }
-
-      // Central display area
-      const boxW = Math.min(W * 0.85, 320);
-      const boxH = 100;
-      const boxX = (W - boxW) / 2;
-      const boxY = H * 0.25;
-
-      ctx.fillStyle = '#0a1a24';
-      ctx.strokeStyle = ACCENT;
-      ctx.lineWidth = 2;
-      ctx.shadowBlur = cs.memoryPhase === 'show' ? 20 : 5;
-      ctx.shadowColor = ACCENT;
-      ctx.beginPath();
-      ctx.roundRect(boxX, boxY, boxW, boxH, 12);
-      ctx.fill();
-      ctx.stroke();
-      ctx.shadowBlur = 0;
-
-      // Code display
-      const cellW = boxW / Math.max(cs.code.length, 1);
-      for (let i = 0; i < cs.code.length; i++) {
-        const cx = boxX + cellW * i + cellW / 2;
-        const cy = boxY + boxH / 2;
-
-        ctx.textAlign = 'center';
-        ctx.font = `bold ${Math.floor(boxH * 0.5)}px monospace`;
-
-        if (cs.memoryPhase === 'show') {
-          ctx.fillStyle = ACCENT;
-          ctx.shadowBlur = 10; ctx.shadowColor = ACCENT;
-          ctx.fillText(String(cs.code[i]), cx, cy + 12);
-          ctx.shadowBlur = 0;
-        } else if (cs.memoryPhase === 'input' || cs.memoryPhase === 'hide') {
-          if (i < cs.userInput.length) {
-            ctx.fillStyle = '#fff';
-            ctx.fillText(String(cs.userInput[i]), cx, cy + 12);
-          } else {
-            ctx.fillStyle = '#1a3a4a';
-            ctx.fillText('?', cx, cy + 12);
-          }
-        } else if (cs.memoryPhase === 'feedback') {
-          const isCorrect = cs.userInput[i] === cs.code[i];
-          ctx.fillStyle = isCorrect ? '#4ade80' : '#ef4444';
-          ctx.fillText(String(cs.code[i]), cx, cy + 12);
-          if (!isCorrect && cs.userInput[i] !== undefined) {
-            ctx.fillStyle = '#ef4444';
-            ctx.font = `12px monospace`;
-            ctx.fillText(`(${cs.userInput[i]})`, cx, cy + boxH * 0.7);
-          }
-        }
-        ctx.textAlign = 'left';
-      }
-
-      // Phase label
-      ctx.fillStyle = ACCENT;
-      ctx.font = '12px monospace';
-      ctx.textAlign = 'center';
-      const phaseLabel = cs.memoryPhase === 'show' ? 'MEMORIZE!'
-        : cs.memoryPhase === 'hide' ? '...'
-        : cs.memoryPhase === 'input' ? 'ENTER THE CODE'
-        : cs.feedbackResult === 'correct' ? '✓ CORRECT!' : '✗ WRONG';
-      ctx.fillStyle = cs.memoryPhase === 'feedback'
-        ? (cs.feedbackResult === 'correct' ? '#4ade80' : '#ef4444')
-        : ACCENT;
-      ctx.fillText(phaseLabel, W / 2, boxY - 14);
-
-      // Code length indicator
-      ctx.fillStyle = 'rgba(6,182,212,0.5)';
-      ctx.font = '11px monospace';
-      ctx.fillText(`CODE LENGTH: ${cs.code.length}`, W / 2, H * 0.82);
-      ctx.textAlign = 'left';
-
-      animRef.current = requestAnimationFrame(loop);
+      rafRef.current = requestAnimationFrame(gameTick);
     };
+    rafRef.current = requestAnimationFrame(gameTick);
 
-    animRef.current = requestAnimationFrame(loop);
-  }, [endGame, startNextCode]);
+    timerRef.current = setInterval(() => {
+      const s2 = stateRef.current;
+      s2.timeLeft--; setTimeLeft(s2.timeLeft);
+      if (s2.timeLeft <= 10 && s2.timeLeft > 0) sfx.tick();
+      if (s2.timeLeft <= 0) endGame();
+    }, 1000);
+  }, [endGame, startNewCode]);
 
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const resize = () => { canvas.width = canvas.offsetWidth; canvas.height = canvas.offsetHeight; };
-    resize();
-    window.addEventListener('resize', resize);
-    return () => { window.removeEventListener('resize', resize); };
-  }, [phase]);
+  const handleDigitTap = useCallback((digit: number) => {
+    const s = stateRef.current; const cs = s.codeState;
+    if (cs.memoryPhase !== 'input') return;
+    const newInput = [...cs.userInput, digit];
+    cs.userInput = newInput; setUiInput([...newInput]);
+    sfx.click(); haptic([15]);
 
-  useEffect(() => {
-    return () => {
-      cancelAnimationFrame(animRef.current);
-      if (timerRef.current) clearInterval(timerRef.current);
-      if (stopMusicRef.current) stopMusicRef.current();
-    };
+    if (newInput.length === cs.code.length) {
+      const correct = cs.code.every((d, i) => d === newInput[i]);
+      cs.feedbackResult = correct ? 'correct' : 'wrong';
+      cs.feedbackTimer = FEEDBACK_FRAMES;
+      cs.memoryPhase = 'feedback';
+      setUiMemPhase('feedback'); setUiFeedback(correct ? 'correct' : 'wrong');
+
+      if (correct) {
+        s.sig.codesCorrect++; s.sig.streakCurrent++;
+        if (s.sig.streakCurrent > s.sig.longestStreak) s.sig.longestStreak = s.sig.streakCurrent;
+        if (s.currentCodeLength > s.sig.maxCodeLength) s.sig.maxCodeLength = s.currentCodeLength;
+        const pts = s.currentCodeLength * 10 * (s.sig.streakCurrent >= 3 ? 2 : 1);
+        s.sig.score += pts;
+        const rt = Date.now() - cs.inputStartTime; s.memoryTimes.push(rt);
+        setScoreDisplay(s.sig.score); sfx.success();
+        // Light up panels green
+        digitMeshesRef.current.forEach(m => {
+          if (m.visible) { const mat = m.material as THREE.MeshStandardMaterial; mat.opacity=1; mat.emissive.setHex(0x22c55e); mat.emissiveIntensity=1; }
+        });
+      } else {
+        s.sig.codesWrong++; s.sig.streakCurrent = 0;
+        sfx.collision(); haptic([50,30,50]);
+        // Light up panels red
+        digitMeshesRef.current.forEach(m => {
+          if (m.visible) { const mat = m.material as THREE.MeshStandardMaterial; mat.opacity=1; mat.emissive.setHex(0xef4444); mat.emissiveIntensity=1; }
+        });
+      }
+    }
   }, []);
 
-  const handleStart = useCallback((name: string, avatar: string) => {
-    setPlayerName(name); setPlayerAvatar(avatar);
-    initAudio();
+  // Handle tap on 3D number pad tiles
+  useEffect(() => {
+    const mount = mountRef.current; if (!mount) return;
+    const onPointerDown = (e: PointerEvent) => {
+      if (phase !== 'playing') return;
+      const s = stateRef.current;
+      if (s.codeState.memoryPhase !== 'input') return;
+      // Raycasting
+      const renderer = rendererRef.current; const camera = cameraRef.current; const scene = sceneRef.current;
+      if (!renderer||!camera||!scene) return;
+      const rect = mount.getBoundingClientRect();
+      const x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+      const y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+      const raycaster = new THREE.Raycaster();
+      raycaster.setFromCamera(new THREE.Vector2(x, y), camera);
+      const hits = raycaster.intersectObjects(gridMeshesRef.current);
+      if (hits.length > 0) {
+        const digit = hits[0].object.userData.digit as number;
+        if (digit !== undefined) {
+          handleDigitTap(digit);
+          // Flash the tile
+          const mat = hits[0].object.material as THREE.MeshStandardMaterial;
+          mat.emissiveIntensity = 2;
+          setTimeout(() => { mat.emissiveIntensity = 0.2; }, 200);
+        }
+      }
+    };
+    mount.addEventListener('pointerdown', onPointerDown);
+    return () => mount.removeEventListener('pointerdown', onPointerDown);
+  }, [phase, handleDigitTap]);
+
+  useEffect(() => () => {
+    cancelAnimationFrame(rafRef.current);
+    if (timerRef.current) clearInterval(timerRef.current);
+    if (stopMusicRef.current) stopMusicRef.current();
+  }, []);
+
+  const handleStart = useCallback(async (name: string, avatar: string) => {
     playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar);
-    setPhase('countdown');
+    await initAudio(); setPhase('countdown');
   }, []);
-
   const handleCountdownDone = useCallback(() => { startLoop(); }, [startLoop]);
+  const handlePlayAgain = useCallback(() => { setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null); }, []);
 
-  const handlePlayAgain = useCallback(() => {
-    setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null);
-    setUserInputDisplay([]); setFeedbackDisplay(null); setCodeDisplay([]); setCodeLengthDisplay(4);
-  }, []);
-
-  const buildInsights = (sig: Signals) => {
-    const total = sig.codesCorrect + sig.codesWrong;
-    const acc = total > 0 ? Math.round((sig.codesCorrect / total) * 100) : 0;
-    return [
-      { label: 'Accuracy',    value: `${acc}%`,              color: acc >= 70 ? '#4ade80' : '#facc15' },
-      { label: 'Max Length',  value: `${sig.maxCodeLength} digits`, color: ACCENT },
-      { label: 'Best Streak', value: `×${sig.longestStreak}`, color: ACCENT },
-      { label: 'Cracked',     value: `${sig.codesCorrect}`,  color: 'var(--color-text)' },
-    ];
-  };
-
-  const digits = [1, 2, 3, 4, 5, 6, 7, 8, 9, 0];
+  const memPhaseLabel = uiMemPhase === 'show' ? 'MEMORIZE' : uiMemPhase === 'input' ? 'ENTER CODE' : uiMemPhase === 'feedback' ? (uiFeedback === 'correct' ? '✓ CORRECT' : '✗ WRONG') : '...';
+  const memColor = uiMemPhase === 'feedback' ? (uiFeedback === 'correct' ? '#22c55e' : '#ef4444') : accent;
 
   return (
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accent}>
       {phase === 'start' && (
-        <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description={GAME_TAGLINE} ctaLabel="Crack the Code" accentColor={theme.colors.accent ?? ACCENT} onStart={handleStart} />
+        <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description={GAME_TAGLINE}
+          ctaLabel="Break It 🔐" accentColor={accent} onStart={handleStart} />
       )}
-      {phase === 'countdown' && (
-        <Countdown onComplete={handleCountdownDone} accentColor={theme.colors.accent ?? ACCENT} />
-      )}
+      {phase === 'countdown' && <Countdown onComplete={handleCountdownDone} accentColor={accent} />}
       {(phase === 'playing' || phase === 'countdown') && (
         <>
-          <canvas ref={canvasRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '63%', touchAction: 'none' }} role="img" aria-label="Code Breaker game canvas" />
+          <div ref={mountRef} style={{ position:'absolute',inset:0,width:'100%',height:'100%' }} />
           {phase === 'playing' && (
             <>
-              <GameHUD accentColor={theme.colors.accent ?? ACCENT} items={[
-                { label: 'TIME',  value: timeLeft,      danger: timeLeft <= 10 },
-                { label: 'SCORE', value: scoreDisplay },
+              <GameHUD accentColor={accent} items={[
+                { label:'TIME',  value:timeLeft,      danger:timeLeft<=10 },
+                { label:'SCORE', value:scoreDisplay },
               ]} />
-              {/* Number pad */}
-              <div style={{
-                position: 'absolute', bottom: 0, left: 0, right: 0, height: '37%',
-                display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 6, padding: 10,
-                background: '#020d14',
-              }}>
-                {digits.map(d => (
-                  <button
-                    key={d}
-                    aria-label={`Digit ${d}`}
-                    onClick={() => handleDigitTap(d)}
-                    disabled={codePhaseDisplay !== 'input'}
-                    style={{
-                      background: codePhaseDisplay === 'input' ? '#0a1a24' : '#050d14',
-                      border: `2px solid ${codePhaseDisplay === 'input' ? ACCENT : '#1a3a4a'}`,
-                      borderRadius: 8,
-                      color: codePhaseDisplay === 'input' ? ACCENT : '#1a3a4a',
-                      fontSize: 22,
-                      fontWeight: 'bold',
-                      fontFamily: 'monospace',
-                      cursor: codePhaseDisplay === 'input' ? 'pointer' : 'default',
-                      minHeight: 44,
-                      transition: 'all 0.15s',
-                    }}
-                  >
-                    {d}
-                  </button>
+              {/* Code display overlay */}
+              <div style={{ position:'absolute',top:'18%',left:0,right:0,display:'flex',flexDirection:'column',alignItems:'center',gap:8,pointerEvents:'none' }}>
+                <div style={{ fontSize:13,fontWeight:700,letterSpacing:'0.15em',color:memColor,textTransform:'uppercase' }}>{memPhaseLabel}</div>
+                <div style={{ display:'flex',gap:8 }}>
+                  {uiCode.map((d, i) => {
+                    const revealed = uiMemPhase === 'show' || (uiMemPhase === 'feedback');
+                    const entered = uiMemPhase !== 'show' && uiInput[i] !== undefined;
+                    const bg = uiMemPhase === 'feedback' ? (uiFeedback === 'correct' ? 'rgba(34,197,94,0.25)' : 'rgba(239,68,68,0.25)') : 'rgba(6,182,212,0.12)';
+                    return (
+                      <div key={i} style={{ width:44,height:54,borderRadius:8,border:`2px solid ${memColor}55`,background:bg,
+                        display:'flex',alignItems:'center',justifyContent:'center',
+                        fontSize:26,fontWeight:900,color:memColor,
+                        fontFamily:'monospace' }}>
+                        {revealed ? d : (entered ? uiInput[i] : '—')}
+                      </div>
+                    );
+                  })}
+                </div>
+                {uiMemPhase === 'input' && (
+                  <div style={{ fontSize:12,color:'rgba(255,255,255,0.4)',marginTop:2 }}>
+                    {uiInput.length}/{uiCode.length} digits entered
+                  </div>
+                )}
+              </div>
+              {/* Digit pad overlay */}
+              <div style={{ position:'absolute',bottom:80,left:'50%',transform:'translateX(-50%)',
+                display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:8,width:200 }}>
+                {[1,2,3,4,5,6,7,8,9,null,0,null].map((d, i) => (
+                  d !== null ? (
+                    <button key={i} onClick={() => handleDigitTap(d)}
+                      style={{ height:52,borderRadius:10,border:`1.5px solid ${accent}55`,background:'rgba(6,182,212,0.08)',
+                        color:accent,fontSize:22,fontWeight:800,cursor:'pointer',fontFamily:'monospace',
+                        transition:'background 150ms',touchAction:'manipulation' }}>
+                      {d}
+                    </button>
+                  ) : <div key={i} />
                 ))}
               </div>
             </>
@@ -427,22 +431,28 @@ export default function CodeBreakerGame() {
         </>
       )}
       {phase === 'done' && finalSig && (
-        <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI} score={String(finalSig.score)} personality={getPersonality(finalSig)} insights={buildInsights(finalSig)} accentColor={theme.colors.accent ?? ACCENT} onPlayAgain={handlePlayAgain} didWin={finalSig.codesCorrect >= 8} />
+        <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI}
+          score={String(finalSig.score)} personality={getPersonality(finalSig)}
+          insights={[
+            { label:'Correct',   value:String(finalSig.codesCorrect),  color:finalSig.codesCorrect>=8?'#4ade80':'#facc15' },
+            { label:'Max Length',value:String(finalSig.maxCodeLength), color:accent },
+            { label:'Best Streak',value:`×${finalSig.longestStreak}`,  color:'#fbbf24' },
+            { label:'Avg Memory',value:`${(finalSig.avgMemoryMs/1000).toFixed(1)}s`, color:'var(--color-text)' },
+          ]}
+          accentColor={accent} onPlayAgain={handlePlayAgain} didWin={finalSig.codesCorrect >= 5} />
       )}
       {phase === 'done' && finalSig && (
-        <WebhookEmitter theme={theme} gameId={GAME_ID} sig={finalSig} personality={getPersonality(finalSig)} player={playerSessionRef.current} />
+        <WebhookEmitter theme={theme} sig={finalSig} personality={getPersonality(finalSig)} player={playerSessionRef.current} />
       )}
     </GameShell>
   );
 }
 
-function WebhookEmitter({ theme, gameId, sig, personality, player }: {
-  theme: ReturnType<typeof useBrandTheme>; gameId: string; sig: Signals; personality: string; player: PlayerSession | null;
-}) {
+function WebhookEmitter({ theme, sig, personality, player }: { theme: ReturnType<typeof useBrandTheme>; sig: Signals; personality: string; player: PlayerSession | null; }) {
   const fired = useRef(false);
   useEffect(() => {
     if (fired.current) return; fired.current = true;
-    postWebhook(theme, gameId, { personality, score: sig.score, codesCorrect: sig.codesCorrect, codesWrong: sig.codesWrong, maxCodeLength: sig.maxCodeLength, longestStreak: sig.longestStreak, avgMemoryMs: sig.avgMemoryMs }, player);
-  }, [theme, gameId, sig, personality, player]);
+    postWebhook(theme, GAME_ID, { personality, score: sig.score, codesCorrect: sig.codesCorrect, maxCodeLength: sig.maxCodeLength }, player);
+  }, [theme, sig, personality, player]);
   return null;
 }

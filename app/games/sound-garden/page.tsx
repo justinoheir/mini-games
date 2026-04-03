@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
+import * as THREE from 'three';
 import GameShell from '@/components/GameShell';
 import GameHUD from '@/components/GameHUD';
 import GameStartScreen from '@/components/GameStartScreen';
@@ -10,300 +11,301 @@ import { hapticScore, hapticFail, hapticVictory, hapticCombo } from '@/lib/hapti
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
 
-const GAME_ID    = 'sound-garden';
-const ACCENT     = '#4ade80';
-const DURATION   = 60;
+const GAME_ID = 'sound-garden';
+const ACCENT = '#4ade80';
+const DURATION = 60;
 const GAME_EMOJI = '🌱';
 const GAME_TITLE = 'Sound Garden';
-const GAME_TAGLINE = 'Touch to grow. Grow to play.';
+const GRID_COLS = 4, GRID_ROWS = 4, CELL_COUNT = GRID_COLS * GRID_ROWS;
 
-// 4×4 grid of garden cells, each with a unique color/note
-const GRID_COLS = 4;
-const GRID_ROWS = 4;
-const CELL_COUNT = GRID_COLS * GRID_ROWS;
-
-const CELL_COLORS = [
-  '#4ade80','#22c55e','#86efac','#bbf7d0',
-  '#34d399','#6ee7b7','#a7f3d0','#d1fae5',
-  '#10b981','#059669','#047857','#065f46',
-  '#2dd4bf','#5eead4','#99f6e4','#ccfbf1',
+const CELL_COLORS_HEX = [
+  0x4ade80, 0x22c55e, 0x86efac, 0xbbf7d0,
+  0x34d399, 0x6ee7b7, 0xa7f3d0, 0xd1fae5,
+  0x10b981, 0x059669, 0x047857, 0x065f46,
+  0x2dd4bf, 0x5eead4, 0x99f6e4, 0xccfbf1,
 ];
 
-interface Plant {
-  cellIdx: number;
-  growth: number;   // 0-100
-  maxGrowth: number; // stops at this level without water
-  lastTap: number;
-  color: string;
-  wilt: boolean;
+interface Plant3D {
+  stemMesh: THREE.Mesh; flowerMesh: THREE.Mesh; light: THREE.PointLight;
+  growth: number; maxGrowth: number; lastTap: number; wilt: boolean; cellIdx: number;
 }
 
-interface Signals {
-  plantsGrown: number;
-  tapCount: number;
-  bloomedPlants: number;
-  gardenFullness: number;
-  maxStreak: number;
-  streakCurrent: number;
-  score: number;
+interface Signals { totalTaps: number; plantsFullyGrown: number; wilted: number; score: number; maxStreak: number; streakCurrent: number; }
+function getPersonality(sig: Signals): string {
+  if (sig.plantsFullyGrown >= 12) return 'Master Gardener 🌺';
+  if (sig.wilted === 0 && sig.plantsFullyGrown >= 6) return 'Green Thumb 🌿';
+  if (sig.score >= 30) return 'Sprouting Well 🌱';
+  return 'New Seedling 🌾';
 }
-
-function getPersonality(s: Signals): string {
-  if (s.bloomedPlants>=8&&s.tapCount<40) return 'Green Thumb Maestro 🌺';
-  if (s.bloomedPlants>=6)               return 'Garden Whisperer 🌻';
-  if (s.plantsGrown>=12)                return 'Busy Botanist 🌿';
-  if (s.gardenFullness>=80)             return 'Patient Grower 🌱';
-  return 'Seedling 🌾';
-}
-
-type Phase = 'start'|'countdown'|'playing'|'done';
-interface GS {
-  running:boolean; timeLeft:number; sig:Signals; frame:number; accentColor:string;
-  plants:Map<number,Plant>;
-  particles:Array<{x:number;y:number;vx:number;vy:number;alpha:number;color:string}>;
-  bloomParticles:Array<{x:number;y:number;vx:number;vy:number;alpha:number;r:number;color:string}>;
-}
+type Phase = 'start' | 'countdown' | 'playing' | 'done';
 
 export default function SoundGardenGame() {
   const theme = useBrandTheme();
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const animRef   = useRef(0);
-  const timerRef  = useRef<ReturnType<typeof setInterval>|null>(null);
+  const mountRef = useRef<HTMLDivElement>(null);
+  const animRef = useRef(0);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const stateRef = useRef<GS>({
-    running:false,timeLeft:DURATION,
-    sig:{plantsGrown:0,tapCount:0,bloomedPlants:0,gardenFullness:0,maxStreak:0,streakCurrent:0,score:0},
-    frame:0,accentColor:ACCENT,
-    plants:new Map(),particles:[],bloomParticles:[],
+  const stateRef = useRef({
+    renderer: null as THREE.WebGLRenderer | null,
+    scene: null as THREE.Scene | null,
+    camera: null as THREE.PerspectiveCamera | null,
+    plants: [] as Plant3D[],
+    groundMesh: null as THREE.Mesh | null,
+    running: false, timeLeft: DURATION,
+    sig: { totalTaps: 0, plantsFullyGrown: 0, wilted: 0, score: 0, maxStreak: 0, streakCurrent: 0 } as Signals,
+    wiltTimer: 0,
   });
 
-  const [phase,setPhase]        = useState<Phase>('start');
-  const [timeLeft,setTimeLeft]  = useState(DURATION);
-  const [scoreDisplay,setScore] = useState(0);
-  const [finalSig,setFinalSig]  = useState<Signals|null>(null);
-  const playerSessionRef = useRef<PlayerSession|null>(null);
-  useEffect(()=>{ stateRef.current.accentColor=theme.colors.accent??ACCENT; },[theme]);
+  const [phase, setPhase] = useState<Phase>('start');
+  const [timeLeft, setTimeLeft] = useState(DURATION);
+  const [scoreDisplay, setScoreDisplay] = useState(0);
+  const [finalSig, setFinalSig] = useState<Signals | null>(null);
+  const playerSessionRef = useRef<PlayerSession | null>(null);
 
-  const endGame = useCallback(()=>{
-    const s=stateRef.current; s.running=false;
+  const endGame = useCallback(() => {
+    const s = stateRef.current;
+    s.running = false;
     cancelAnimationFrame(animRef.current);
-    if(timerRef.current){ clearInterval(timerRef.current); timerRef.current=null; }
-    const pb=parseInt(localStorage.getItem('pb_'+GAME_ID)??"0");
-    if(s.sig.score>pb) localStorage.setItem('pb_'+GAME_ID,String(s.sig.score));
-    s.sig.gardenFullness=Math.round(s.plants.size/CELL_COUNT*100);
-    s.sig.bloomedPlants=[...s.plants.values()].filter(p=>p.growth>=100).length;
-    setFinalSig({...s.sig}); setPhase('done'); hapticVictory();
-  },[]);
+    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+    if (s.renderer) { s.renderer.dispose(); s.renderer = null; }
+    const pb = parseInt(localStorage.getItem('pb_' + GAME_ID) ?? '0');
+    if (s.sig.score > pb) localStorage.setItem('pb_' + GAME_ID, String(s.sig.score));
+    setFinalSig({ ...s.sig });
+    setPhase('done');
+    hapticVictory();
+  }, []);
 
-  function getCellXY(idx:number,W:number,H:number):{cx:number,cy:number,cw:number,ch:number}{
-    const margin=10, topPad=80;
-    const cw=(W-margin*2)/GRID_COLS, ch=(H-topPad-margin*2)/GRID_ROWS;
-    const col=idx%GRID_COLS, row=Math.floor(idx/GRID_COLS);
-    return {cx:margin+col*cw, cy:topPad+margin+row*ch, cw, ch};
-  }
+  const startLoop = useCallback(() => {
+    const s = stateRef.current;
+    s.running = true; s.timeLeft = DURATION;
+    s.sig = { totalTaps: 0, plantsFullyGrown: 0, wilted: 0, score: 0, maxStreak: 0, streakCurrent: 0 };
+    s.wiltTimer = 0;
+    setScoreDisplay(0); setTimeLeft(DURATION); setPhase('playing');
 
-  const startLoop = useCallback(()=>{
-    const canvas=canvasRef.current; if(!canvas) return;
-    const ctx=canvas.getContext('2d'); if(!ctx) return;
-    const s=stateRef.current;
-    s.running=true; s.timeLeft=DURATION; s.frame=0;
-    s.sig={plantsGrown:0,tapCount:0,bloomedPlants:0,gardenFullness:0,maxStreak:0,streakCurrent:0,score:0};
-    s.plants=new Map(); s.particles=[]; s.bloomParticles=[];
-    setScore(0); setTimeLeft(DURATION); setPhase('playing');
+    const W = window.innerWidth, H = window.innerHeight;
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(W, H);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setClearColor(0x061206);
+    if (mountRef.current) { mountRef.current.innerHTML = ''; mountRef.current.appendChild(renderer.domElement); }
+    s.renderer = renderer;
 
-    timerRef.current=setInterval(()=>{
+    const scene = new THREE.Scene();
+    scene.fog = new THREE.Fog(0x061206, 15, 35);
+    s.scene = scene;
+    const camera = new THREE.PerspectiveCamera(65, W / H, 0.1, 100);
+    camera.position.set(0, 4, 8);
+    camera.lookAt(0, 0, 0);
+    s.camera = camera;
+
+    scene.add(new THREE.AmbientLight(0x0a1f0a, 3));
+    const sunLight = new THREE.DirectionalLight(0x4ade80, 2);
+    sunLight.position.set(3, 8, 5);
+    scene.add(sunLight);
+
+    // Garden ground (dark soil)
+    const groundGeo = new THREE.PlaneGeometry(8, 8, 4, 4);
+    const groundMat = new THREE.MeshStandardMaterial({ color: 0x1a0d00, roughness: 0.9 });
+    const ground = new THREE.Mesh(groundGeo, groundMat);
+    ground.rotation.x = -Math.PI / 2;
+    ground.position.y = -0.3;
+    scene.add(ground);
+    s.groundMesh = ground;
+
+    // Grid plot markers
+    const plotMat = new THREE.MeshStandardMaterial({ color: 0x2d1a00, roughness: 0.95 });
+    const spacing = 1.6;
+    const offsetX = -(GRID_COLS - 1) * spacing / 2;
+    const offsetZ = -(GRID_ROWS - 1) * spacing / 2;
+    for (let r = 0; r < GRID_ROWS; r++) {
+      for (let c = 0; c < GRID_COLS; c++) {
+        const x = offsetX + c * spacing;
+        const z = offsetZ + r * spacing;
+        const plotGeo = new THREE.BoxGeometry(1.3, 0.05, 1.3);
+        const plot = new THREE.Mesh(plotGeo, plotMat);
+        plot.position.set(x, -0.27, z);
+        scene.add(plot);
+      }
+    }
+
+    // Create plants for each cell
+    const plants: Plant3D[] = [];
+    for (let i = 0; i < CELL_COUNT; i++) {
+      const r = Math.floor(i / GRID_COLS);
+      const c = i % GRID_COLS;
+      const x = offsetX + c * spacing;
+      const z = offsetZ + r * spacing;
+      const color = CELL_COLORS_HEX[i];
+      const maxGrowth = 50 + Math.random() * 30;
+      const stemMat = new THREE.MeshStandardMaterial({ color: 0x22c55e, roughness: 0.6 });
+      const stemMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.06, 1, 6), stemMat);
+      stemMesh.scale.y = 0.05;
+      stemMesh.position.set(x, -0.25, z);
+      scene.add(stemMesh);
+      const flowerMat = new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.4, roughness: 0.4 });
+      const flowerMesh = new THREE.Mesh(new THREE.SphereGeometry(0.18, 10, 10), flowerMat);
+      flowerMesh.scale.setScalar(0.05);
+      flowerMesh.position.set(x, -0.2, z);
+      flowerMesh.visible = false;
+      scene.add(flowerMesh);
+      const light = new THREE.PointLight(color, 0, 4);
+      light.position.set(x, 0.5, z);
+      scene.add(light);
+      plants.push({ stemMesh, flowerMesh, light, growth: 0, maxGrowth, lastTap: Date.now(), wilt: false, cellIdx: i });
+    }
+    s.plants = plants;
+
+    const handleResize = () => {
+      const w = window.innerWidth, h = window.innerHeight;
+      renderer.setSize(w, h); camera.aspect = w / h; camera.updateProjectionMatrix();
+    };
+    window.addEventListener('resize', handleResize);
+    (s as any)._cleanup = () => window.removeEventListener('resize', handleResize);
+
+    timerRef.current = setInterval(() => {
       s.timeLeft--; setTimeLeft(s.timeLeft);
-      if(s.timeLeft<=0){ sfx.fail(); endGame(); }
-      // Plants wilt slowly if not tapped
-      const now=Date.now();
-      s.plants.forEach(p=>{
-        if(now-p.lastTap>4000&&p.growth>0&&p.growth<100){
-          p.growth=Math.max(0,p.growth-8); p.wilt=true;
+      s.wiltTimer++;
+      // Wilt plants that haven't been watered in 5s
+      const now = Date.now();
+      s.plants.forEach(p => {
+        if (!p.wilt && p.growth > 0 && now - p.lastTap > 5000 && p.growth < p.maxGrowth) {
+          p.wilt = true; p.growth = Math.max(0, p.growth - 10);
+          s.sig.wilted++; sfx.collision(); hapticFail();
         }
       });
-    },1000);
+      if (s.timeLeft <= 0) endGame();
+    }, 1000);
 
-    const PLANT_STAGES=['🌱','🌿','🌸','🌺','🌻'];
+    const loop = () => {
+      if (!s.running) return;
+      const t = Date.now() * 0.001;
 
-    const loop=()=>{
-      if(!s.running) return; s.frame++;
-      const W=canvas.width,H=canvas.height;
-
-      // Soft garden background
-      const bgGrad=ctx.createLinearGradient(0,0,0,H);
-      bgGrad.addColorStop(0,'#0a2010');
-      bgGrad.addColorStop(1,'#0d1a0a');
-      ctx.fillStyle=bgGrad; ctx.fillRect(0,0,W,H);
-
-      // Soil texture
-      for(let i=0;i<30;i++){
-        const sx=((i*173)%W), sy=H*0.8+((i*97)%H*0.2);
-        ctx.fillStyle='rgba(100,60,20,0.05)';
-        ctx.beginPath(); ctx.arc(sx,sy,8,0,Math.PI*2); ctx.fill();
-      }
-
-      // Draw grid cells
-      for(let idx=0;idx<CELL_COUNT;idx++){
-        const {cx,cy,cw,ch}=getCellXY(idx,W,H);
-        const plant=s.plants.get(idx);
-        const glow=plant&&plant.growth>50?plant.color:null;
-
-        ctx.save();
-        if(glow){ ctx.shadowBlur=15+Math.sin(s.frame*0.08+idx)*5; ctx.shadowColor=glow; }
-        // Cell background
-        ctx.fillStyle=plant?`${plant.color}22`:'rgba(10,40,15,0.5)';
-        ctx.strokeStyle=plant?plant.color:'rgba(70,120,70,0.3)';
-        ctx.lineWidth=plant?2:1;
-        ctx.beginPath(); ctx.roundRect(cx+3,cy+3,cw-6,ch-6,8); ctx.fill(); ctx.stroke();
-
-        if(plant){
-          // Growth bar
-          const barH=4, barY=cy+ch-10;
-          ctx.fillStyle='rgba(0,0,0,0.3)'; ctx.fillRect(cx+8,barY,cw-16,barH);
-          ctx.fillStyle=plant.growth>=100?'#fbbf24':plant.color;
-          ctx.fillRect(cx+8,barY,(cw-16)*(plant.growth/100),barH);
-
-          // Plant emoji based on growth stage
-          const stage=Math.min(4,Math.floor(plant.growth/25));
-          const emoji=PLANT_STAGES[stage];
-          const scale=0.6+plant.growth/100*0.6;
-          const fy=cy+ch*0.5+8;
-          ctx.font=`${Math.round(cw*scale*0.5)}px sans-serif`;
-          ctx.textAlign='center';
-          ctx.globalAlpha=plant.wilt?0.5:1;
-          ctx.fillText(emoji,cx+cw/2,fy);
-
-          // Bloom animation
-          if(plant.growth>=100){
-            const glimmer=Math.sin(s.frame*0.15+idx)*0.3+0.7;
-            ctx.globalAlpha=glimmer;
-            ctx.font='10px sans-serif';
-            ctx.fillText('✨',cx+cw/2+Math.sin(s.frame*0.1+idx)*8, cy+12);
-          }
+      plants.forEach(p => {
+        const pct = p.growth / p.maxGrowth;
+        // Stem
+        const stemH = Math.max(0.05, pct);
+        p.stemMesh.scale.y = stemH;
+        p.stemMesh.position.y = -0.3 + stemH * 0.5;
+        const stemMat = p.stemMesh.material as THREE.MeshStandardMaterial;
+        stemMat.color.setHex(p.wilt ? 0x7c5e42 : 0x22c55e);
+        // Flower
+        if (pct > 0.5) {
+          p.flowerMesh.visible = true;
+          const flowerScale = (pct - 0.5) * 2;
+          p.flowerMesh.scale.setScalar(flowerScale * 0.3);
+          p.flowerMesh.position.y = -0.3 + stemH + 0.18 * flowerScale;
+          p.flowerMesh.rotation.y = t * (0.5 + p.cellIdx * 0.1);
         } else {
-          // Empty cell hint
-          const a=0.2+Math.sin(s.frame*0.1+idx*0.5)*0.1;
-          ctx.globalAlpha=a; ctx.fillStyle='#4ade80';
-          ctx.font=`${Math.round(cw*0.3)}px sans-serif`; ctx.textAlign='center';
-          ctx.fillText('+',cx+cw/2,cy+ch/2+8);
+          p.flowerMesh.visible = false;
         }
-        ctx.restore();
-      }
+        // Light
+        p.light.intensity = pct * 1.5 * (p.wilt ? 0.2 : 1);
+        // Wilted lean
+        if (p.wilt) p.stemMesh.rotation.z = Math.sin(t + p.cellIdx) * 0.3;
+        else p.stemMesh.rotation.z = 0;
+      });
 
-      // Floating particles
-      for(let i=s.particles.length-1;i>=0;i--){
-        const p=s.particles[i]; p.x+=p.vx; p.y+=p.vy; p.vy-=0.05; p.alpha*=0.94;
-        if(p.alpha<0.02){ s.particles.splice(i,1); continue; }
-        ctx.save(); ctx.globalAlpha=p.alpha; ctx.fillStyle=p.color;
-        ctx.font='12px sans-serif'; ctx.textAlign='center';
-        ctx.fillText('🌸',p.x,p.y); ctx.restore();
-      }
-
-      // Bloom particles
-      for(let i=s.bloomParticles.length-1;i>=0;i--){
-        const p=s.bloomParticles[i]; p.x+=p.vx; p.y+=p.vy; p.vy+=0.05; p.alpha*=0.92; p.r*=0.97;
-        if(p.alpha<0.02){ s.bloomParticles.splice(i,1); continue; }
-        ctx.save(); ctx.globalAlpha=p.alpha; ctx.fillStyle=p.color;
-        ctx.beginPath(); ctx.arc(p.x,p.y,p.r,0,Math.PI*2); ctx.fill(); ctx.restore();
-      }
-
-      animRef.current=requestAnimationFrame(loop);
+      renderer.render(scene, camera);
+      animRef.current = requestAnimationFrame(loop);
     };
-    animRef.current=requestAnimationFrame(loop);
-  },[endGame]);
+    animRef.current = requestAnimationFrame(loop);
 
-  useEffect(()=>{
-    const canvas=canvasRef.current; if(!canvas) return;
-    const resize=()=>{ canvas.width=canvas.offsetWidth; canvas.height=canvas.offsetHeight; };
-    resize(); window.addEventListener('resize',resize);
-
-    const onPD=(e:PointerEvent)=>{
-      if(phase!=='playing') return;
-      const s=stateRef.current; if(!s.running) return;
-      const rect=canvas.getBoundingClientRect();
-      const cx=(e.clientX-rect.left)*(canvas.width/rect.width);
-      const cy=(e.clientY-rect.top)*(canvas.height/rect.height);
-      const W=canvas.width,H=canvas.height;
-
-      // Find which cell was tapped
-      let hitIdx=-1;
-      for(let idx=0;idx<CELL_COUNT;idx++){
-        const {cx:gx,cy:gy,cw,ch}=getCellXY(idx,W,H);
-        if(cx>=gx&&cx<gx+cw&&cy>=gy&&cy<gy+ch){ hitIdx=idx; break; }
+    // Tap handler — raycast to detect which plant was tapped
+    const onTap = (e: PointerEvent) => {
+      const s2 = stateRef.current;
+      if (!s2.running) return;
+      const rect = mountRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const ndcX = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+      const ndcY = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+      const raycaster = new THREE.Raycaster();
+      raycaster.setFromCamera(new THREE.Vector2(ndcX, ndcY), camera);
+      const plantMeshes = [...plants.map(p => p.stemMesh), ...plants.map(p => p.flowerMesh)];
+      const hits = raycaster.intersectObjects(plantMeshes);
+      // Also check ground for taps near plants
+      const groundHits = raycaster.intersectObject(ground);
+      let tapIdx = -1;
+      if (hits.length > 0) {
+        const hitMesh = hits[0].object;
+        tapIdx = plants.findIndex(p => p.stemMesh === hitMesh || p.flowerMesh === hitMesh);
+      } else if (groundHits.length > 0) {
+        const pt = groundHits[0].point;
+        const spacing = 1.6;
+        const offsetX = -(GRID_COLS - 1) * spacing / 2;
+        const offsetZ = -(GRID_ROWS - 1) * spacing / 2;
+        let bestDist = 0.9, bestIdx = -1;
+        plants.forEach((p, i) => {
+          const r = Math.floor(i / GRID_COLS);
+          const c = i % GRID_COLS;
+          const px2 = offsetX + c * spacing, pz = offsetZ + r * spacing;
+          const d = Math.sqrt((pt.x - px2) ** 2 + (pt.z - pz) ** 2);
+          if (d < bestDist) { bestDist = d; bestIdx = i; }
+        });
+        tapIdx = bestIdx;
       }
-      if(hitIdx<0) return;
-
-      s.sig.tapCount++;
-      const now=Date.now();
-      if(!s.plants.has(hitIdx)){
-        // Plant a new seed
-        const plant:Plant={
-          cellIdx:hitIdx, growth:15, maxGrowth:100,
-          lastTap:now, color:CELL_COLORS[hitIdx],
-          wilt:false
-        };
-        s.plants.set(hitIdx,plant);
-        s.sig.plantsGrown++; s.sig.streakCurrent++;
-        if(s.sig.streakCurrent>s.sig.maxStreak) s.sig.maxStreak=s.sig.streakCurrent;
-        s.sig.score+=1; sfx.click(); hapticScore();
-        setScore(s.sig.score);
-        s.particles.push({x:cx,y:cy,vx:(Math.random()-0.5)*2,vy:-2-Math.random()*2,alpha:1,color:CELL_COLORS[hitIdx]});
+      if (tapIdx >= 0) {
+        const p = plants[tapIdx];
+        p.lastTap = Date.now(); p.wilt = false;
+        p.growth = Math.min(p.maxGrowth, p.growth + 8);
+        s2.sig.totalTaps++; s2.sig.streakCurrent++;
+        if (s2.sig.streakCurrent > s2.sig.maxStreak) s2.sig.maxStreak = s2.sig.streakCurrent;
+        if (p.growth >= p.maxGrowth && !p.wilt) { s2.sig.plantsFullyGrown++; }
+        const pts = Math.round(p.growth / p.maxGrowth * 3) + (s2.sig.streakCurrent >= 5 ? 1 : 0);
+        s2.sig.score += pts; setScoreDisplay(s2.sig.score);
+        sfx.collect(); hapticScore();
       } else {
-        const plant=s.plants.get(hitIdx)!;
-        plant.lastTap=now; plant.wilt=false;
-        const wasBloom=plant.growth>=100;
-        plant.growth=Math.min(100,plant.growth+15);
-        if(plant.growth>=100&&!wasBloom){
-          // Full bloom!
-          s.sig.bloomedPlants++; s.sig.score+=3;
-          sfx.success(); hapticCombo(3);
-          setScore(s.sig.score);
-          const {cx:gx,cy:gy,cw,ch}=getCellXY(hitIdx,W,H);
-          for(let p=0;p<12;p++) s.bloomParticles.push({
-            x:gx+cw/2, y:gy+ch/2,
-            vx:(Math.random()-0.5)*8, vy:(Math.random()-0.5)*8,
-            alpha:1, r:6, color:CELL_COLORS[hitIdx]
-          });
-        } else {
-          s.sig.score+=1; sfx.collect(); hapticScore();
-          setScore(s.sig.score);
-          const {cx:gx,cy:gy,cw,ch}=getCellXY(hitIdx,W,H);
-          s.particles.push({x:gx+cw/2,y:gy+ch/2,vx:(Math.random()-0.5)*3,vy:-2.5,alpha:1,color:CELL_COLORS[hitIdx]});
-        }
+        s2.sig.streakCurrent = 0;
       }
     };
-    canvas.addEventListener('pointerdown',onPD);
-    return()=>{ window.removeEventListener('resize',resize); canvas.removeEventListener('pointerdown',onPD); };
-  },[phase]);
+    if (mountRef.current) mountRef.current.addEventListener('pointerdown', onTap);
+    (s as any)._tapCleanup = () => mountRef.current?.removeEventListener('pointerdown', onTap);
+  }, [endGame]);
 
-  useEffect(()=>()=>{ cancelAnimationFrame(animRef.current); if(timerRef.current) clearInterval(timerRef.current); },[]);
+  useEffect(() => () => {
+    cancelAnimationFrame(animRef.current);
+    if (timerRef.current) clearInterval(timerRef.current);
+    const s = stateRef.current;
+    if (s.renderer) s.renderer.dispose();
+    (s as any)._cleanup?.(); (s as any)._tapCleanup?.();
+  }, []);
 
-  const handleStart=useCallback(async(n:string,a:string)=>{
-    playerSessionRef.current=savePlayerSession(GAME_ID,n,a); await initAudio(); setPhase('countdown');
-  },[]);
-  const handlePlayAgain=useCallback(()=>{ setPhase('start'); setScore(0); setTimeLeft(DURATION); setFinalSig(null); },[]);
+  const handleStart = useCallback(async (n: string, a: string) => {
+    playerSessionRef.current = savePlayerSession(GAME_ID, n, a);
+    await initAudio(); setPhase('countdown');
+  }, []);
+  const handlePlayAgain = useCallback(() => { setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null); }, []);
+
+  const accent = theme.colors.accent ?? ACCENT;
 
   return (
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent??ACCENT}>
-      {phase==='start'&&<GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description={GAME_TAGLINE}
-        ctaLabel="Plant Your Garden 🌱" accentColor={theme.colors.accent??ACCENT} onStart={handleStart}/>}
-      {phase==='countdown'&&<Countdown onComplete={startLoop} accentColor={theme.colors.accent??ACCENT}/>}
-      {(phase==='playing'||phase==='countdown')&&(
-        <><canvas ref={canvasRef} style={{position:'absolute',inset:0,width:'100%',height:'100%',touchAction:'none'}}
-            role="img" aria-label="Sound garden growing canvas"/>
-          {phase==='playing'&&<GameHUD accentColor={theme.colors.accent??ACCENT}
-            items={[{label:'TIME',value:timeLeft,danger:timeLeft<=10},{label:'SCORE',value:scoreDisplay}]}/>}
-        </>
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accent}
+      background="linear-gradient(180deg, #061206 0%, #020802 100%)">
+      {phase === 'start' && (
+        <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE}
+          description="Tap 3D plants to water them and help them grow! Don't let them wilt."
+          ctaLabel="Start Growing 🌱" accentColor={accent} onStart={handleStart} />
       )}
-      {phase==='done'&&finalSig&&<EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI}
-        score={String(finalSig.score)} personality={getPersonality(finalSig)}
-        insights={[
-          {label:'Bloomed',value:`${finalSig.bloomedPlants}`,color:'#fbbf24'},
-          {label:'Planted',value:`${finalSig.plantsGrown}`,color:'#4ade80'},
-          {label:'Garden Full',value:`${finalSig.gardenFullness}%`,color:ACCENT},
-          {label:'Taps',value:`${finalSig.tapCount}`,color:'var(--color-text)'},
-        ]}
-        accentColor={theme.colors.accent??ACCENT} onPlayAgain={handlePlayAgain} didWin={finalSig.bloomedPlants>=4}/>}
+      {phase === 'countdown' && <Countdown onComplete={startLoop} accentColor={accent} />}
+      {(phase === 'playing' || phase === 'countdown') && (
+        <div ref={mountRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none' }} />
+      )}
+      {phase === 'playing' && (
+        <GameHUD accentColor={accent} items={[
+          { label: 'TIME', value: timeLeft, danger: timeLeft <= 10 },
+          { label: 'SCORE', value: scoreDisplay },
+        ]} />
+      )}
+      {phase === 'done' && finalSig && (
+        <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI}
+          score={String(finalSig.score)} personality={getPersonality(finalSig)}
+          insights={[
+            { label: 'Full Grown', value: String(finalSig.plantsFullyGrown), color: accent },
+            { label: 'Wilted', value: String(finalSig.wilted), color: finalSig.wilted === 0 ? '#4ade80' : '#ef4444' },
+            { label: 'Total Taps', value: String(finalSig.totalTaps), color: '#fbbf24' },
+            { label: 'Best Streak', value: `×${finalSig.maxStreak}`, color: '#06b6d4' },
+          ]}
+          accentColor={accent} onPlayAgain={handlePlayAgain} didWin={finalSig.plantsFullyGrown >= 8} />
+      )}
     </GameShell>
   );
 }

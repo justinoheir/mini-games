@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
+import * as THREE from 'three';
 import GameShell from '@/components/GameShell';
 import GameHUD from '@/components/GameHUD';
 import GameStartScreen from '@/components/GameStartScreen';
@@ -17,325 +18,284 @@ const GAME_EMOJI = '🔎';
 const GAME_TITLE = 'Visual Search';
 const GAME_TAGLINE = 'Find it. Tap it. Before the horde.';
 
-interface Signals {
-  total: number;
-  found: number;
-  missed: number;
-  falseAlarms: number;
-  avgReactionMs: number;
-  totalMs: number;
-  maxDistroctors: number;
-  score: number;
-  maxStreak: number;
-  streakCurrent: number;
-}
-
+interface Signals { total: number; found: number; missed: number; falseAlarms: number; avgReactionMs: number; totalMs: number; maxDistractors: number; score: number; maxStreak: number; streakCurrent: number; }
 function getPersonality(sig: Signals): string {
   const acc = (sig.found + sig.falseAlarms) > 0 ? sig.found / (sig.found + sig.falseAlarms) : 0;
   const avg = sig.found > 0 ? sig.totalMs / sig.found : 9999;
   if (acc >= 0.9 && avg < 700) return 'Eagle Eye 🦅';
-  if (sig.maxDistroctors >= 20) return 'Crowd Spotter 🔎';
+  if (sig.maxDistractors >= 20) return 'Crowd Spotter 🔎';
   if (acc >= 0.8) return 'Sharp Vision 👁️';
   if (avg < 900) return 'Fast Finder ⚡';
   return 'Scanning... 🔍';
 }
-
 type Phase = 'start' | 'countdown' | 'playing' | 'done';
 
-const ICONS = ['●', '■', '▲', '◆', '★', '✦', '⬟', '⬡', '⊕', '⊗', '⊞', '⊟'];
-
-interface SearchItem {
-  x: number; y: number;
-  symbol: string;
-  isTarget: boolean;
-  alpha: number;
-  scale: number;
-  color: string;
-  visible: boolean;
-}
-
-interface GameState {
-  running: boolean; timeLeft: number;
-  sig: Signals; frame: number; accentColor: string;
-  floats: Array<{ x: number; y: number; text: string; alpha: number; vy: number; color: string }>;
-  items: SearchItem[];
-  targetSymbol: string;
-  targetColor: string;
-  shownAt: number;
-  feedback: boolean | null;
-  feedbackTimer: number;
-  distractorCount: number;
-  roundTimer: number;
-}
+interface SearchItem3D { mesh: THREE.Mesh; isTarget: boolean; }
 
 export default function VisualSearchGame() {
   const theme = useBrandTheme();
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const animRef = useRef(0);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  const stateRef = useRef<GameState>({
-    running: false, timeLeft: DURATION,
-    sig: { total: 0, found: 0, missed: 0, falseAlarms: 0, avgReactionMs: 0, totalMs: 0, maxDistroctors: 0, score: 0, maxStreak: 0, streakCurrent: 0 },
-    frame: 0, accentColor: ACCENT, floats: [],
-    items: [], targetSymbol: '', targetColor: '#ffffff',
-    shownAt: 0, feedback: null, feedbackTimer: 0,
-    distractorCount: 6, roundTimer: 0,
+  const mountRef = useRef<HTMLDivElement>(null);
+  const stateRef = useRef({
+    running: false, timeLeft: DURATION, animId: 0,
+    intervalId: null as ReturnType<typeof setInterval> | null,
+    renderer: null as THREE.WebGLRenderer | null,
+    scene: null as THREE.Scene | null,
+    camera: null as THREE.PerspectiveCamera | null,
+    sig: { total: 0, found: 0, missed: 0, falseAlarms: 0, avgReactionMs: 0, totalMs: 0, maxDistractors: 0, score: 0, maxStreak: 0, streakCurrent: 0 } as Signals,
+    items: [] as SearchItem3D[],
+    targetSymbol: 0, // index into shape types
+    roundStart: 0, frame: 0,
+    targetMesh: null as THREE.Mesh | null,
+    roundTimer: 0,
+    flashTimer: 0, flashSuccess: true,
   });
-
   const [phase, setPhase] = useState<Phase>('start');
   const [timeLeft, setTimeLeft] = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
   const [finalSig, setFinalSig] = useState<Signals | null>(null);
+  const [targetLabel, setTargetLabel] = useState('');
   const playerSessionRef = useRef<PlayerSession | null>(null);
 
-  useEffect(() => { stateRef.current.accentColor = theme.colors.accent ?? ACCENT; }, [theme]);
-
-  const COLORS = ['#10b981', '#3b82f6', '#f43f5e', '#fbbf24', '#a855f7', '#fb923c'];
-
-  const spawnRound = useCallback(() => {
-    const s = stateRef.current;
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const W = canvas.width, H = canvas.height;
-
-    // Pick unique target (symbol + color combination)
-    const targetSym = ICONS[Math.floor(Math.random() * ICONS.length)];
-    const targetCol = COLORS[Math.floor(Math.random() * COLORS.length)];
-    s.targetSymbol = targetSym; s.targetColor = targetCol;
-
-    const count = s.distractorCount + 1; // 1 target + distractors
-    const items: SearchItem[] = [];
-    const positions: Array<{x:number,y:number}> = [];
-    let targetPlaced = false;
-    const targetIdx = Math.floor(Math.random() * count);
-
-    for (let i = 0; i < count; i++) {
-      let x = 0, y = 0, ok = false, tries = 0;
-      while (!ok && tries < 60) {
-        tries++;
-        x = 35 + Math.random() * (W - 70);
-        y = 80 + Math.random() * (H - 160);
-        ok = positions.every(p => Math.hypot(p.x - x, p.y - y) > 38);
-      }
-      positions.push({ x, y });
-
-      const isTarget = i === targetIdx;
-      if (isTarget) targetPlaced = true;
-
-      // Distractor: same symbol different color, or different symbol same color
-      let sym = targetSym, col = targetCol;
-      if (!isTarget) {
-        const diffType = Math.random() < 0.5 ? 'color' : 'symbol';
-        if (diffType === 'color') {
-          col = COLORS.filter(c => c !== targetCol)[Math.floor(Math.random() * 5)];
-        } else {
-          sym = ICONS.filter(ic => ic !== targetSym)[Math.floor(Math.random() * (ICONS.length - 1))];
-        }
-      }
-
-      items.push({
-        x, y, symbol: sym, isTarget, alpha: 1, scale: 1, color: col, visible: true,
-      });
-    }
-
-    s.items = items;
-    s.shownAt = Date.now();
-    s.feedback = null; s.feedbackTimer = 0;
-    s.roundTimer = 180 + s.distractorCount * 6; // time limit per round
-    if (s.distractorCount > s.sig.maxDistroctors) s.sig.maxDistroctors = s.distractorCount;
-  }, [COLORS]);
-
   const endGame = useCallback(() => {
-    const s = stateRef.current;
-    s.running = false;
-    cancelAnimationFrame(animRef.current);
-    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
-    const pb = parseInt(localStorage.getItem('pb_' + GAME_ID) ?? '0');
-    if (s.sig.score > pb) localStorage.setItem('pb_' + GAME_ID, String(s.sig.score));
-    setFinalSig({ ...s.sig });
-    setPhase('done');
-    hapticVictory();
+    const s = stateRef.current; s.running = false;
+    cancelAnimationFrame(s.animId);
+    if (s.intervalId) { clearInterval(s.intervalId); s.intervalId = null; }
+    if (s.renderer) { s.renderer.dispose(); s.renderer = null; }
+    setFinalSig({ ...s.sig }); setPhase('done'); hapticVictory();
   }, []);
 
   const startLoop = useCallback(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
     const s = stateRef.current;
-
-    s.running = true; s.timeLeft = DURATION;
-    s.sig = { total: 0, found: 0, missed: 0, falseAlarms: 0, avgReactionMs: 0, totalMs: 0, maxDistroctors: 0, score: 0, maxStreak: 0, streakCurrent: 0 };
-    s.frame = 0; s.floats = []; s.distractorCount = 6;
-    spawnRound();
+    s.running = true; s.timeLeft = DURATION; s.frame = 0;
+    s.sig = { total: 0, found: 0, missed: 0, falseAlarms: 0, avgReactionMs: 0, totalMs: 0, maxDistractors: 0, score: 0, maxStreak: 0, streakCurrent: 0 };
+    s.items = []; s.roundTimer = 0; s.flashTimer = 0;
     setScoreDisplay(0); setTimeLeft(DURATION); setPhase('playing');
 
-    timerRef.current = setInterval(() => {
+    const W = window.innerWidth, H = window.innerHeight;
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(W, H);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setClearColor(0x051a0f);
+    if (mountRef.current) { mountRef.current.innerHTML = ''; mountRef.current.appendChild(renderer.domElement); }
+    s.renderer = renderer;
+
+    const scene = new THREE.Scene();
+    s.scene = scene;
+    const camera = new THREE.PerspectiveCamera(70, W / H, 0.1, 100);
+    camera.position.set(0, 0, 14);
+    camera.lookAt(0, 0, 0);
+    s.camera = camera;
+
+    scene.add(new THREE.AmbientLight(0x102210, 2));
+    const pLight = new THREE.PointLight(0x10b981, 4, 30);
+    pLight.position.set(0, 5, 5);
+    scene.add(pLight);
+    const sLight = new THREE.PointLight(0x059669, 2, 20);
+    sLight.position.set(-5, 3, 3);
+    scene.add(sLight);
+
+    // Background grid
+    for (let i = -6; i <= 6; i++) {
+      const g1 = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(-8, i, -2), new THREE.Vector3(8, i, -2)]);
+      scene.add(new THREE.Line(g1, new THREE.LineBasicMaterial({ color: 0x10b981, transparent: true, opacity: 0.06 })));
+      const g2 = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(i * 1.3, -6, -2), new THREE.Vector3(i * 1.3, 6, -2)]);
+      scene.add(new THREE.Line(g2, new THREE.LineBasicMaterial({ color: 0x10b981, transparent: true, opacity: 0.06 })));
+    }
+
+    // Flash sphere
+    const flashGeo = new THREE.SphereGeometry(10, 16, 16);
+    const flashMat = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, side: THREE.BackSide });
+    scene.add(new THREE.Mesh(flashGeo, flashMat));
+
+    // Shape factory
+    const SHAPE_TYPES = ['sphere', 'box', 'cone', 'torus', 'octahedron', 'tetrahedron'];
+    const makeGeo = (type: string, r: number): THREE.BufferGeometry => {
+      switch (type) {
+        case 'sphere': return new THREE.SphereGeometry(r, 12, 12);
+        case 'box': return new THREE.BoxGeometry(r * 1.8, r * 1.8, r * 0.6);
+        case 'cone': return new THREE.ConeGeometry(r, r * 2, 8);
+        case 'torus': return new THREE.TorusGeometry(r, r * 0.3, 8, 16);
+        case 'octahedron': return new THREE.OctahedronGeometry(r * 1.2);
+        case 'tetrahedron': return new THREE.TetrahedronGeometry(r * 1.3);
+        default: return new THREE.SphereGeometry(r, 12, 12);
+      }
+    };
+
+    const SHAPE_NAMES = ['○', '□', '△', '◎', '⬡', '▽'];
+    const COLORS_DIM = [0x1a5c3a, 0x155e2e, 0x1a5c45, 0x134d2e, 0x1e6640, 0x163d26];
+    const TARGET_COLORS = [0x10b981, 0x34d399, 0x6ee7b7, 0x059669, 0x22c55e, 0x4ade80];
+
+    const spawnRound = () => {
+      // Clear old items
+      s.items.forEach(it => scene.remove(it.mesh));
+      s.items = [];
+
+      // Pick target
+      const targetType = Math.floor(Math.random() * SHAPE_TYPES.length);
+      s.targetSymbol = targetType;
+      setTargetLabel(`Find: ${SHAPE_NAMES[targetType]}`);
+
+      // Difficulty: increase distractor count with score
+      const distractorCount = Math.min(5 + Math.floor(s.sig.score * 0.3), 20);
+      if (distractorCount > s.sig.maxDistractors) s.sig.maxDistractors = distractorCount;
+
+      const positions: { x: number; y: number }[] = [];
+      const minDist = 1.4;
+      const placeItem = (isTarget: boolean) => {
+        let attempts = 0;
+        while (attempts < 50) {
+          const x = (Math.random() - 0.5) * 10;
+          const y = (Math.random() - 0.5) * 7;
+          const ok = positions.every(p => Math.hypot(p.x - x, p.y - y) >= minDist);
+          if (ok) {
+            positions.push({ x, y });
+            const type = isTarget ? SHAPE_TYPES[targetType] : SHAPE_TYPES.filter((_, i) => i !== targetType)[Math.floor(Math.random() * (SHAPE_TYPES.length - 1))];
+            const r = 0.35 + Math.random() * 0.1;
+            const geo = makeGeo(type, r);
+            const color = isTarget ? TARGET_COLORS[targetType] : COLORS_DIM[Math.floor(Math.random() * COLORS_DIM.length)];
+            const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.4, metalness: 0.3, emissive: isTarget ? color : 0x000000, emissiveIntensity: isTarget ? 0.2 : 0 });
+            const mesh = new THREE.Mesh(geo, mat);
+            mesh.position.set(x, y, 0);
+            mesh.rotation.set(Math.random(), Math.random(), Math.random());
+            scene.add(mesh);
+            s.items.push({ mesh, isTarget });
+            return;
+          }
+          attempts++;
+        }
+      };
+
+      // Place one target, rest distractors
+      placeItem(true);
+      for (let i = 0; i < distractorCount; i++) placeItem(false);
+
+      s.roundStart = Date.now();
+      s.sig.total++;
+    };
+
+    spawnRound();
+
+    // Raycaster for tap
+    const raycaster = new THREE.Raycaster();
+    const onTap = (e: PointerEvent) => {
+      if (!s.running) return;
+      const rect = renderer.domElement.getBoundingClientRect();
+      const mouse = new THREE.Vector2(
+        ((e.clientX - rect.left) / rect.width) * 2 - 1,
+        -((e.clientY - rect.top) / rect.height) * 2 + 1
+      );
+      raycaster.setFromCamera(mouse, camera);
+      const meshes = s.items.map(it => it.mesh);
+      const intersects = raycaster.intersectObjects(meshes);
+
+      if (intersects.length > 0) {
+        const tappedMesh = intersects[0].object as THREE.Mesh;
+        const item = s.items.find(it => it.mesh === tappedMesh);
+        if (!item) return;
+
+        if (item.isTarget) {
+          const elapsed = Date.now() - s.roundStart;
+          s.sig.found++; s.sig.streakCurrent++;
+          if (s.sig.streakCurrent > s.sig.maxStreak) s.sig.maxStreak = s.sig.streakCurrent;
+          s.sig.totalMs += elapsed;
+          s.sig.avgReactionMs = s.sig.totalMs / s.sig.found;
+          const bonus = elapsed < 700 ? 2 : 1;
+          const pts = bonus + (s.sig.streakCurrent >= 3 ? 1 : 0);
+          s.sig.score += pts; setScoreDisplay(s.sig.score);
+          sfx.collect(); hapticScore();
+          s.flashTimer = 20; s.flashSuccess = true;
+          flashMat.color.setHex(0x10b981);
+          spawnRound();
+        } else {
+          s.sig.falseAlarms++; s.sig.streakCurrent = 0;
+          sfx.nearMiss(); hapticFail();
+          s.flashTimer = 15; s.flashSuccess = false;
+          flashMat.color.setHex(0xef4444);
+        }
+      }
+    };
+    renderer.domElement.addEventListener('pointerdown', onTap);
+
+    // Auto-advance if too slow
+    const ROUND_TIMEOUT = 4000;
+
+    s.intervalId = setInterval(() => {
       s.timeLeft--; setTimeLeft(s.timeLeft);
       if (s.timeLeft <= 0) { sfx.fail(); endGame(); }
     }, 1000);
 
     const loop = () => {
       if (!s.running) return;
-      const W = canvas.width, H = canvas.height;
-      ctx.clearRect(0, 0, W, H);
       s.frame++;
 
-      if (s.feedbackTimer > 0) s.feedbackTimer--;
-
-      // Background - search grid dark
-      ctx.fillStyle = '#030e09'; ctx.fillRect(0, 0, W, H);
-      // Scan lines
-      ctx.strokeStyle = 'rgba(16,185,129,0.04)'; ctx.lineWidth = 1;
-      for (let y = 0; y < H; y += 20) {
-        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
-      }
-
-      if (s.feedback !== null && s.feedbackTimer > 0) {
-        ctx.fillStyle = s.feedback ? 'rgba(74,222,128,0.1)' : 'rgba(239,68,68,0.1)';
-        ctx.fillRect(0, 0, W, H);
-      }
-
-      // Target indicator at top
-      ctx.fillStyle = 'rgba(255,255,255,0.5)'; ctx.font = '13px sans-serif'; ctx.textAlign = 'center';
-      ctx.fillText('Find:', W / 2, 28);
-      ctx.save();
-      ctx.shadowBlur = 16; ctx.shadowColor = s.targetColor;
-      ctx.fillStyle = s.targetColor; ctx.font = 'bold 26px sans-serif'; ctx.textAlign = 'center';
-      ctx.fillText(s.targetSymbol, W / 2, 56);
-      ctx.restore();
-
-      // Round timer bar
-      s.roundTimer--;
-      const timerPct = Math.max(0, s.roundTimer / (180 + s.distractorCount * 6));
-      ctx.fillStyle = 'rgba(255,255,255,0.1)'; ctx.fillRect(20, 65, W - 40, 4);
-      ctx.fillStyle = timerPct > 0.5 ? ACCENT : timerPct > 0.25 ? '#fbbf24' : '#ef4444';
-      ctx.fillRect(20, 65, (W - 40) * timerPct, 4);
-
-      // Timeout
-      if (s.roundTimer <= 0 && s.feedback === null) {
-        s.sig.total++; s.sig.missed++;
-        s.sig.streakCurrent = 0;
-        sfx.collision(); hapticFail();
-        s.feedback = false; s.feedbackTimer = 15;
-        setTimeout(() => { if (s.running) spawnRound(); }, 500);
-      }
-
-      // Draw items (jitter slightly)
-      s.items.forEach(item => {
-        if (!item.visible) return;
-        const jitter = s.feedback === null ? (Math.random() - 0.5) * 0.5 : 0;
-        ctx.save();
-        ctx.globalAlpha = item.alpha;
-        ctx.shadowBlur = item.isTarget && s.feedback !== null ? 20 : 4;
-        ctx.shadowColor = item.color;
-        ctx.fillStyle = item.color;
-        ctx.font = `bold ${20 * item.scale}px sans-serif`;
-        ctx.textAlign = 'center';
-        ctx.fillText(item.symbol, item.x + jitter, item.y + jitter + 7);
-        ctx.restore();
+      // Rotate items
+      s.items.forEach((it, i) => {
+        it.mesh.rotation.y += 0.01 + i * 0.002;
+        // Pulse target
+        if (it.isTarget) {
+          const pulse = 1 + Math.sin(s.frame * 0.08) * 0.06;
+          it.mesh.scale.setScalar(pulse);
+          (it.mesh.material as THREE.MeshStandardMaterial).emissiveIntensity = 0.3 + Math.sin(s.frame * 0.1) * 0.15;
+        }
       });
 
-      // Floats
-      s.floats = s.floats.filter(f => f.alpha > 0.02);
-      s.floats.forEach(f => {
-        ctx.save(); ctx.globalAlpha = f.alpha;
-        ctx.fillStyle = f.color; ctx.font = 'bold 20px sans-serif'; ctx.textAlign = 'center';
-        ctx.fillText(f.text, f.x, f.y); ctx.restore();
-        f.y += f.vy; f.alpha *= 0.95;
-      });
-
-      animRef.current = requestAnimationFrame(loop);
-    };
-    animRef.current = requestAnimationFrame(loop);
-  }, [endGame, spawnRound]);
-
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const resize = () => { canvas.width = canvas.offsetWidth; canvas.height = canvas.offsetHeight; };
-    resize();
-    window.addEventListener('resize', resize);
-
-    const onPointerDown = (e: PointerEvent) => {
-      if (phase !== 'playing') return;
-      const s = stateRef.current;
-      if (s.feedback !== null) return;
-      const rect = canvas.getBoundingClientRect();
-      const px = (e.clientX - rect.left) * (canvas.width / rect.width);
-      const py = (e.clientY - rect.top) * (canvas.height / rect.height);
-
-      let hitItem: SearchItem | null = null;
-      s.items.forEach(item => {
-        if (Math.hypot(px - item.x, py - item.y) < 28) hitItem = item;
-      });
-
-      if (!hitItem) return;
-      const item = hitItem as SearchItem;
-      const ms = Date.now() - s.shownAt;
-      s.sig.total++;
-
-      if (item.isTarget) {
-        s.sig.found++;
-        s.sig.totalMs += ms;
-        s.sig.streakCurrent++;
-        if (s.sig.streakCurrent > s.sig.maxStreak) s.sig.maxStreak = s.sig.streakCurrent;
-        const speedPts = ms < 700 ? 3 : ms < 1500 ? 2 : 1;
-        s.sig.score += speedPts + Math.floor(s.distractorCount / 6);
-        setScoreDisplay(s.sig.score);
-        s.distractorCount = Math.min(22, s.distractorCount + 2);
-        sfx.collect(); hapticScore();
-        if (s.sig.streakCurrent >= 3) hapticCombo(s.sig.streakCurrent);
-        s.feedback = true; s.feedbackTimer = 15;
-        s.floats.push({ x: item.x, y: item.y - 25, text: `+${speedPts} FOUND!`, alpha: 1, vy: -2.5, color: '#fbbf24' });
+      // Flash decay
+      if (s.flashTimer > 0) {
+        s.flashTimer--;
+        flashMat.opacity = (s.flashTimer / 20) * 0.18;
       } else {
-        s.sig.falseAlarms++;
-        s.sig.streakCurrent = 0;
-        sfx.collision(); hapticFail();
-        s.feedback = false; s.feedbackTimer = 15;
-        s.floats.push({ x: px, y: py - 20, text: 'WRONG!', alpha: 1, vy: -2, color: '#ef4444' });
+        flashMat.opacity = 0;
       }
-      setTimeout(() => { if (s.running) spawnRound(); }, 550);
-    };
 
-    canvas.addEventListener('pointerdown', onPointerDown);
-    return () => {
-      window.removeEventListener('resize', resize);
-      canvas.removeEventListener('pointerdown', onPointerDown);
+      // Auto-advance round if timeout
+      if (Date.now() - s.roundStart > ROUND_TIMEOUT) {
+        s.sig.missed++; s.sig.streakCurrent = 0;
+        sfx.fail(); hapticFail();
+        spawnRound();
+      }
+
+      // Light pulse
+      pLight.intensity = 4 + Math.sin(s.frame * 0.05) * 0.8;
+
+      renderer.render(scene, camera);
+      s.animId = requestAnimationFrame(loop);
     };
-  }, [phase, spawnRound]);
+    s.animId = requestAnimationFrame(loop);
+  }, [endGame]);
 
   useEffect(() => () => {
-    cancelAnimationFrame(animRef.current);
-    if (timerRef.current) clearInterval(timerRef.current);
+    const s = stateRef.current; s.running = false; cancelAnimationFrame(s.animId);
+    if (s.intervalId) clearInterval(s.intervalId);
+    if (s.renderer) { s.renderer.dispose(); s.renderer = null; }
   }, []);
 
-  const handleStart = useCallback(async (n: string, a: string) => {
-    playerSessionRef.current = savePlayerSession(GAME_ID, n, a);
-    await initAudio(); setPhase('countdown');
+  const handleStart = useCallback(async (name: string, avatar: string) => {
+    playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar); await initAudio(); setPhase('countdown');
   }, []);
-  const handlePlayAgain = useCallback(() => { setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null); }, []);
+  const handlePlayAgain = useCallback(() => {
+    if (stateRef.current.renderer) { stateRef.current.renderer.dispose(); stateRef.current.renderer = null; }
+    if (mountRef.current) mountRef.current.innerHTML = '';
+    setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null);
+  }, []);
 
+  const accent = theme.colors.accent ?? ACCENT;
   return (
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
-      {phase === 'start' && <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description="Find and tap the matching symbol among distractors!" ctaLabel="Search! 🔎" accentColor={theme.colors.accent ?? ACCENT} onStart={handleStart} />}
-      {phase === 'countdown' && <Countdown onComplete={startLoop} accentColor={theme.colors.accent ?? ACCENT} />}
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accent}>
+      {phase === 'start' && <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description={GAME_TAGLINE} ctaLabel="Start Searching!" accentColor={accent} onStart={handleStart} />}
+      {phase === 'countdown' && <Countdown onComplete={startLoop} accentColor={accent} />}
       {(phase === 'playing' || phase === 'countdown') && (
-        <>
-          <canvas ref={canvasRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none' }} role="img" aria-label="Visual Search game canvas" />
-          {phase === 'playing' && <GameHUD accentColor={theme.colors.accent ?? ACCENT} items={[{ label: 'TIME', value: timeLeft, danger: timeLeft <= 10 }, { label: 'SCORE', value: scoreDisplay }]} />}
-        </>
+        <div ref={mountRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none' }} />
       )}
+      {phase === 'playing' && <>
+        <GameHUD accentColor={accent} items={[{ label: 'TIME', value: timeLeft, danger: timeLeft <= 10 }, { label: 'SCORE', value: scoreDisplay }]} />
+        <div style={{ position: 'fixed', bottom: '10%', left: '50%', transform: 'translateX(-50%)', zIndex: 50, background: 'rgba(0,0,0,0.5)', borderRadius: 20, padding: '8px 20px', border: `1px solid ${accent}44`, color: accent, fontWeight: 700, fontSize: 16, whiteSpace: 'nowrap' }}>
+          {targetLabel}
+        </div>
+      </>}
       {phase === 'done' && finalSig && (
         <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI} score={String(finalSig.score)} personality={getPersonality(finalSig)}
-          insights={[
-            { label: 'Found', value: String(finalSig.found), color: ACCENT },
-            { label: 'Avg Speed', value: `${finalSig.found > 0 ? Math.round(finalSig.totalMs / finalSig.found) : 0}ms`, color: '#fbbf24' },
-            { label: 'False Alarms', value: String(finalSig.falseAlarms), color: finalSig.falseAlarms === 0 ? '#4ade80' : '#ef4444' },
-            { label: 'Max Grid', value: String(finalSig.maxDistroctors), color: '#06b6d4' },
-          ]}
-          accentColor={theme.colors.accent ?? ACCENT} onPlayAgain={handlePlayAgain} didWin={finalSig.found >= 10} />
+          insights={[{ label: 'Found', value: `${finalSig.found}/${finalSig.total}`, color: '#4ade80' }, { label: 'False Alarms', value: String(finalSig.falseAlarms), color: finalSig.falseAlarms === 0 ? '#4ade80' : '#ef4444' }, { label: 'Best Streak', value: `×${finalSig.maxStreak}`, color: accent }, { label: 'Avg React', value: finalSig.avgReactionMs > 0 ? `${Math.round(finalSig.avgReactionMs)}ms` : '—', color: '#fbbf24' }]}
+          accentColor={accent} onPlayAgain={handlePlayAgain} didWin={finalSig.score >= 10} />
       )}
     </GameShell>
   );

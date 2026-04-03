@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
+import * as THREE from 'three';
 import GameShell from '@/components/GameShell';
 import GameHUD from '@/components/GameHUD';
 import GameStartScreen from '@/components/GameStartScreen';
@@ -17,12 +18,11 @@ const GAME_EMOJI   = '🎊';
 const GAME_TITLE   = 'Piñata Smash';
 const GAME_TAGLINE = 'Swipe fast and hard — burst the piñata for candy!';
 const PB_KEY       = 'mg_pb_pinata-smash';
-const CANDY_COLORS = ['#f43f5e','#f97316','#facc15','#4ade80','#22d3ee','#a855f7','#ec4899','#3b82f6'];
-const PINATA_COLORS = ['#ec4899','#f97316','#facc15','#22d3ee','#a855f7','#4ade80'];
+const CANDY_COLORS = [0xf43f5e, 0xf97316, 0xfacc15, 0x4ade80, 0x22d3ee, 0xa855f7, 0xec4899, 0x3b82f6];
+const PINATA_COLS  = [0xec4899, 0xf97316, 0xfacc15, 0x22d3ee, 0xa855f7, 0x4ade80];
 
-interface Candy { x:number;y:number;vx:number;vy:number;r:number;color:string;alpha:number;rot:number;vrot:number; }
-interface Crack { rx:number;ry:number;ex:number;ey:number;alpha:number; }
-interface Signals { score:number;totalHits:number;bursts:number;maxSwipeSpeed:number;totalSwipes:number; }
+interface Signals { score: number; totalHits: number; bursts: number; maxSwipeSpeed: number; totalSwipes: number; }
+type Phase = 'start' | 'countdown' | 'playing' | 'done';
 
 function getPersonality(sig: Signals): string {
   if (sig.bursts >= 4 && sig.maxSwipeSpeed >= 700) return 'Fiesta Destroyer 🎉';
@@ -31,267 +31,300 @@ function getPersonality(sig: Signals): string {
   if (sig.totalHits >= 20) return 'Steady Striker 🔨';
   return 'Gentle Swinger 🌸';
 }
-type Phase = 'start' | 'countdown' | 'playing' | 'done';
 
-function WebhookEmitter({ theme, sig, personality, player }: { theme: ReturnType<typeof useBrandTheme>; sig: Signals; personality: string; player: PlayerSession | null; }) {
-  const fired = useRef(false);
-  useEffect(() => { if (fired.current) return; fired.current = true; postWebhook(theme, GAME_ID, { personality, score: sig.score }, player); }, [theme, sig, personality, player]);
-  return null;
-}
-
-function drawStar(ctx: CanvasRenderingContext2D, cx: number, cy: number, outerR: number, innerR: number, pts: number) {
-  ctx.beginPath();
-  for (let i = 0; i < pts * 2; i++) {
-    const a = (i * Math.PI) / pts - Math.PI / 2;
-    const r = i % 2 === 0 ? outerR : innerR;
-    if (i === 0) ctx.moveTo(cx + Math.cos(a)*r, cy + Math.sin(a)*r);
-    else ctx.lineTo(cx + Math.cos(a)*r, cy + Math.sin(a)*r);
-  }
-  ctx.closePath();
-}
-
-interface GS {
-  running:boolean; timeLeft:number; sig:Signals;
-  pinX:number; pinY:number; pinW:number;
-  damage:number; colorIdx:number; swayPhase:number;
-  cracks:Crack[]; candy:Candy[];
-  pDown:boolean; lastPX:number; lastPY:number; lastPTime:number; lastHitTime:number;
-  burstFlash:number; shakeAmt:number; accentColor:string;
-}
+interface CandyParticle { mesh: THREE.Mesh; vx: number; vy: number; vz: number; life: number; }
 
 export default function PinataSmashGame() {
   const theme = useBrandTheme();
-  const accentColor = theme.id !== 'ether' ? theme.colors.accent : ACCENT;
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const mountRef = useRef<HTMLDivElement>(null);
+  const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
+  const sceneRef = useRef<THREE.Scene | null>(null);
+  const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const animRef = useRef(0);
-  const timerRef = useRef<ReturnType<typeof setInterval>|null>(null);
-  const stopMusicRef = useRef<(()=>void)|null>(null);
-  const burstRef = useRef<()=>void>(() => {});
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const stopMusicRef = useRef<(() => void) | null>(null);
+  const piñataRef = useRef<THREE.Group | null>(null);
+  const candiesRef = useRef<CandyParticle[]>([]);
+  const accentLightRef = useRef<THREE.PointLight | null>(null);
+  const playerSessionRef = useRef<PlayerSession | null>(null);
 
-  const stateRef = useRef<GS>({
-    running:false, timeLeft:DURATION,
-    sig:{score:0,totalHits:0,bursts:0,maxSwipeSpeed:0,totalSwipes:0},
-    pinX:0, pinY:0, pinW:80, damage:0, colorIdx:0, swayPhase:0,
-    cracks:[], candy:[],
-    pDown:false, lastPX:0, lastPY:0, lastPTime:0, lastHitTime:0,
-    burstFlash:0, shakeAmt:0, accentColor:ACCENT,
+  const stateRef = useRef({
+    running: false, timeLeft: DURATION,
+    sig: { score: 0, totalHits: 0, bursts: 0, maxSwipeSpeed: 0, totalSwipes: 0 } as Signals,
+    damage: 0, colorIdx: 0, swayPhase: 0,
+    pDown: false, lastPX: 0, lastPY: 0, lastPTime: 0, lastHitTime: 0,
+    shakeAmt: 0,
   });
 
   const [phase, setPhase] = useState<Phase>('start');
   const [timeLeft, setTimeLeft] = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
-  const [finalSig, setFinalSig] = useState<Signals|null>(null);
-  const playerSessionRef = useRef<PlayerSession|null>(null);
-  useEffect(() => { stateRef.current.accentColor = accentColor; }, [accentColor]);
-
-  const resetPinata = useCallback(() => {
-    const s = stateRef.current; const c = canvasRef.current; if (!c) return;
-    s.pinX = c.width/2; s.pinY = c.height*0.40; s.pinW = 78; s.damage = 0; s.cracks = [];
-  }, []);
+  const [finalSig, setFinalSig] = useState<Signals | null>(null);
 
   const endGame = useCallback(() => {
     const s = stateRef.current; s.running = false;
     cancelAnimationFrame(animRef.current);
-    if (timerRef.current){clearInterval(timerRef.current);timerRef.current=null;}
-    if (stopMusicRef.current){stopMusicRef.current();stopMusicRef.current=null;}
+    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+    if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
     sfx.gameOver(); haptic([100]);
-    const pb = parseInt(localStorage.getItem(PB_KEY) ?? '0');
-    if (s.sig.score > pb) localStorage.setItem(PB_KEY, String(s.sig.score));
-    setFinalSig({...s.sig}); setPhase('done');
+    try { const pb = parseInt(localStorage.getItem(PB_KEY) ?? '0'); if (s.sig.score > pb) localStorage.setItem(PB_KEY, String(s.sig.score)); } catch { /**/ }
+    setFinalSig({ ...s.sig }); setPhase('done');
   }, []);
 
-  const startLoop = useCallback(() => {
-    const canvas = canvasRef.current; if (!canvas) return;
-    const ctx = canvas.getContext('2d'); if (!ctx) return;
+  const buildPiñata = useCallback((scene: THREE.Scene, colorIdx: number) => {
+    if (piñataRef.current) scene.remove(piñataRef.current);
+    const group = new THREE.Group();
+    const col = PINATA_COLS[colorIdx % PINATA_COLS.length];
+    // Body: star-like icosahedron
+    const bodyGeo = new THREE.IcosahedronGeometry(1.4, 1);
+    const bodyMat = new THREE.MeshStandardMaterial({ color: col, emissive: new THREE.Color(col).multiplyScalar(0.2), roughness: 0.4, metalness: 0.3 });
+    const body = new THREE.Mesh(bodyGeo, bodyMat);
+    group.add(body);
+    // Rope
+    const ropeGeo = new THREE.CylinderGeometry(0.04, 0.04, 2, 6);
+    const ropeMat = new THREE.MeshStandardMaterial({ color: 0xa16207 });
+    const rope = new THREE.Mesh(ropeGeo, ropeMat);
+    rope.position.y = 2.4;
+    group.add(rope);
+    // Fringes
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2;
+      const fGeo = new THREE.CylinderGeometry(0.03, 0.01, 0.8, 4);
+      const fMat = new THREE.MeshStandardMaterial({ color: CANDY_COLORS[i % CANDY_COLORS.length] });
+      const fringe = new THREE.Mesh(fGeo, fMat);
+      fringe.position.set(Math.cos(a) * 1.3, -1.1, Math.sin(a) * 1.3);
+      group.add(fringe);
+    }
+    group.position.set(0, 0.5, 0);
+    scene.add(group);
+    piñataRef.current = group;
+  }, []);
+
+  const doBurst = useCallback((scene: THREE.Scene) => {
     const s = stateRef.current;
-    canvas.width = canvas.offsetWidth; canvas.height = canvas.offsetHeight;
-    s.running=true; s.timeLeft=DURATION;
-    s.sig={score:0,totalHits:0,bursts:0,maxSwipeSpeed:0,totalSwipes:0};
-    s.candy=[]; s.burstFlash=0; s.colorIdx=0; s.swayPhase=0; s.shakeAmt=0;
+    const count = 30 + s.sig.bursts * 8;
+    for (let i = 0; i < count; i++) {
+      const geo = new THREE.BoxGeometry(0.15, 0.15, 0.15);
+      const col = CANDY_COLORS[Math.floor(Math.random() * CANDY_COLORS.length)];
+      const mat = new THREE.MeshStandardMaterial({ color: col, emissive: new THREE.Color(col).multiplyScalar(0.3) });
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.position.set((Math.random()-0.5)*2, (Math.random()-0.5)*2, (Math.random()-0.5)*2);
+      scene.add(mesh);
+      candiesRef.current.push({ mesh, vx: (Math.random()-0.5)*0.15, vy: 0.1+Math.random()*0.12, vz: (Math.random()-0.5)*0.12, life: 1 });
+    }
+    s.sig.bursts++; s.sig.score += 5 + s.sig.bursts * 2;
+    setScoreDisplay(s.sig.score);
+    s.colorIdx = (s.colorIdx + 1) % PINATA_COLS.length;
+    s.damage = 0;
+    sfx.collect(); haptic([30,20,30,20,60]);
+    buildPiñata(scene, s.colorIdx);
+  }, [buildPiñata]);
+
+  const startLoop = useCallback(() => {
+    const mount = mountRef.current; if (!mount) return;
+    const s = stateRef.current;
+    s.running = true; s.timeLeft = DURATION;
+    s.sig = { score: 0, totalHits: 0, bursts: 0, maxSwipeSpeed: 0, totalSwipes: 0 };
+    s.damage = 0; s.colorIdx = 0; s.swayPhase = 0; s.shakeAmt = 0;
     setScoreDisplay(0); setTimeLeft(DURATION); setPhase('playing');
     stopMusicRef.current = startMusic('holiday');
-    resetPinata();
 
-    // Store burst fn in ref so input handler can access latest without stale closure
-    const doBurst = () => {
-      const spawnCount = 28 + s.sig.bursts*6;
-      for (let i = 0; i < spawnCount; i++) {
-        const a = Math.random()*Math.PI*2, spd = 2+Math.random()*10;
-        s.candy.push({x:s.pinX,y:s.pinY,vx:Math.cos(a)*spd,vy:Math.sin(a)*spd-5,
-          r:3+Math.random()*8,color:CANDY_COLORS[Math.floor(Math.random()*CANDY_COLORS.length)],
-          alpha:1,rot:Math.random()*Math.PI*2,vrot:(Math.random()-0.5)*0.28});
-      }
-      s.sig.bursts++; s.sig.score += 5+s.sig.bursts*2;
-      s.burstFlash=1; s.shakeAmt=12;
-      s.colorIdx=(s.colorIdx+1)%PINATA_COLORS.length;
-      sfx.collect(); haptic([30,20,30,20,60]);
-      setScoreDisplay(s.sig.score);
-      resetPinata();
+    const W = window.innerWidth, H = window.innerHeight;
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x1a0030);
+    scene.fog = new THREE.Fog(0x1a0030, 15, 30);
+    sceneRef.current = scene;
+
+    const camera = new THREE.PerspectiveCamera(65, W / H, 0.1, 60);
+    camera.position.set(0, 0, 8);
+    cameraRef.current = camera;
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(W, H);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    mount.appendChild(renderer.domElement);
+    rendererRef.current = renderer;
+
+    scene.add(new THREE.AmbientLight(0x220022, 3));
+    const pl = new THREE.PointLight(0xf97316, 60, 20);
+    pl.position.set(3, 3, 6);
+    scene.add(pl);
+    const aLight = new THREE.PointLight(0xfacc15, 80, 15);
+    aLight.position.set(0, 2, 5);
+    scene.add(aLight);
+    accentLightRef.current = aLight;
+
+    // Confetti streamers
+    const starGeo = new THREE.BufferGeometry();
+    const sp = new Float32Array(300);
+    for (let i = 0; i < 300; i += 3) { sp[i] = (Math.random()-0.5)*20; sp[i+1] = (Math.random()-0.5)*20; sp[i+2] = (Math.random()-0.5)*10-5; }
+    starGeo.setAttribute('position', new THREE.BufferAttribute(sp, 3));
+    scene.add(new THREE.Points(starGeo, new THREE.PointsMaterial({ color: 0xfacc15, size: 0.08 })));
+
+    buildPiñata(scene, 0);
+
+    const onDown = (e: PointerEvent) => {
+      s.pDown = true; s.lastPX = e.clientX; s.lastPY = e.clientY; s.lastPTime = Date.now();
     };
-    burstRef.current = doBurst;
-
-    timerRef.current = setInterval(()=>{
-      s.timeLeft--; setTimeLeft(s.timeLeft);
-      if (s.timeLeft<=5&&s.timeLeft>0) sfx.collect();
-      if (s.timeLeft<=0) endGame();
-    },1000);
-
-    const loop = ()=>{
-      if (!s.running) return;
-      const W=canvas.width, H=canvas.height;
-      const bg=ctx.createLinearGradient(0,0,0,H);
-      bg.addColorStop(0,'#1a0030'); bg.addColorStop(1,'#0d001a');
-      ctx.fillStyle=bg; ctx.fillRect(0,0,W,H);
-
-      if (s.burstFlash>0){
-        ctx.fillStyle=`rgba(250,204,21,${s.burstFlash*0.32})`; ctx.fillRect(0,0,W,H);
-        s.burstFlash=Math.max(0,s.burstFlash-0.055);
-      }
-      s.shakeAmt*=0.7;
-      const shk=s.shakeAmt*(Math.random()<0.5?1:-1);
-      s.swayPhase+=0.022;
-      const swayOff=Math.sin(s.swayPhase)*28+shk;
-      const px=s.pinX+swayOff, py=s.pinY, pw=s.pinW;
-      const dmRatio=s.damage/100;
-
-      // Rope
-      ctx.save(); ctx.strokeStyle='#8b6914'; ctx.lineWidth=3; ctx.lineCap='round';
-      ctx.beginPath(); ctx.moveTo(W/2,0);
-      ctx.quadraticCurveTo(px,py*0.4,px,py-pw*0.6); ctx.stroke(); ctx.restore();
-
-      // Body
-      const col=PINATA_COLORS[s.colorIdx];
-      const f=1-dmRatio*0.6;
-      const n=parseInt(col.replace('#',''),16);
-      const [pr,pg,pb2]=[(n>>16)&255,(n>>8)&255,n&255];
-      ctx.save();
-      ctx.shadowBlur=28-dmRatio*12; ctx.shadowColor=col;
-      ctx.fillStyle=`rgb(${Math.floor(pr*f)},${Math.floor(pg*f)},${Math.floor(pb2*f)})`;
-      drawStar(ctx,px,py,pw/2,pw/4.5,8); ctx.fill();
-      ctx.strokeStyle=`rgba(255,255,255,${0.3-dmRatio*0.25})`; ctx.lineWidth=3;
-      ctx.beginPath(); ctx.moveTo(px-pw*0.25,py-pw*0.3); ctx.lineTo(px+pw*0.25,py+pw*0.3); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(px+pw*0.25,py-pw*0.3); ctx.lineTo(px-pw*0.25,py+pw*0.3); ctx.stroke();
-      ctx.restore();
-
-      // Cracks
-      for (const cr of s.cracks){
-        cr.alpha=Math.max(0,cr.alpha-0.0035);
-        ctx.strokeStyle=`rgba(30,0,0,${cr.alpha*0.9})`; ctx.lineWidth=1.5;
-        ctx.beginPath(); ctx.moveTo(px+cr.rx,py+cr.ry); ctx.lineTo(px+cr.ex,py+cr.ey); ctx.stroke();
-      }
-
-      // Damage bar
-      const bw=90,bh=8,bx=px-bw/2,by=py+pw*0.55+14;
-      ctx.fillStyle='rgba(255,255,255,0.1)'; ctx.beginPath(); ctx.roundRect(bx,by,bw,bh,4); ctx.fill();
-      const bc=dmRatio<0.5?'#4ade80':dmRatio<0.8?'#facc15':'#ef4444';
-      ctx.fillStyle=bc; ctx.shadowBlur=8; ctx.shadowColor=bc;
-      ctx.beginPath(); ctx.roundRect(bx,by,bw*dmRatio,bh,4); ctx.fill(); ctx.shadowBlur=0;
-
-      // Hint
-      ctx.fillStyle='rgba(255,255,255,0.28)'; ctx.font='bold 13px system-ui';
-      ctx.textAlign='center'; ctx.textBaseline='alphabetic';
-      ctx.fillText('← SWIPE TO SMASH →',W/2,H*0.77);
-
-      // Candy
-      s.candy=s.candy.filter(c=>c.alpha>0.04);
-      for (const c of s.candy){
-        c.x+=c.vx; c.y+=c.vy; c.vy+=0.3; c.vx*=0.99; c.rot+=c.vrot; c.alpha-=0.012;
-        ctx.save(); ctx.globalAlpha=Math.max(0,c.alpha); ctx.translate(c.x,c.y); ctx.rotate(c.rot);
-        ctx.fillStyle=c.color; ctx.shadowBlur=5; ctx.shadowColor=c.color;
-        ctx.fillRect(-c.r/2,-c.r/2,c.r,c.r); ctx.restore();
-      }
-      if (s.sig.bursts>0){
-        ctx.save(); ctx.globalAlpha=0.055; ctx.fillStyle='#facc15';
-        ctx.font=`bold 150px system-ui`; ctx.textAlign='center'; ctx.textBaseline='middle';
-        ctx.fillText(`×${s.sig.bursts}`,W/2,H*0.62); ctx.restore();
-      }
-      animRef.current=requestAnimationFrame(loop);
-    };
-    animRef.current=requestAnimationFrame(loop);
-  }, [endGame, resetPinata]);
-
-  useEffect(()=>{
-    const canvas=canvasRef.current; if (!canvas) return;
-    const resize=()=>{canvas.width=canvas.offsetWidth;canvas.height=canvas.offsetHeight;};
-    resize(); window.addEventListener('resize',resize);
-
-    const onDown=(e:PointerEvent)=>{
-      const s=stateRef.current; if(!s.running)return;
-      s.pDown=true; s.lastPX=e.clientX; s.lastPY=e.clientY; s.lastPTime=Date.now();
-    };
-    const onMove=(e:PointerEvent)=>{
-      const s=stateRef.current; if(!s.running||!s.pDown)return;
-      const now=Date.now(), dt=Math.max(8,now-s.lastPTime);
-      const dx=e.clientX-s.lastPX, dy=e.clientY-s.lastPY;
-      const speed=Math.sqrt(dx*dx+dy*dy)/dt*1000;
-      if(speed>s.sig.maxSwipeSpeed) s.sig.maxSwipeSpeed=Math.round(speed);
-      const rect=canvas.getBoundingClientRect();
-      const cx=e.clientX-rect.left, cy=e.clientY-rect.top;
-      const swayOff=Math.sin(s.swayPhase)*28;
-      const hd=Math.sqrt((cx-(s.pinX+swayOff))**2+(cy-s.pinY)**2);
-      if(speed>240&&hd<s.pinW/2+24&&(now-s.lastHitTime)>110){
-        s.lastHitTime=now; s.sig.totalHits++;
-        const dmg=Math.min(26,7+speed/85);
-        s.damage=Math.min(100,s.damage+dmg);
-        const ca=Math.random()*Math.PI*2,cl=8+Math.random()*18;
-        const crx=(Math.random()-0.5)*s.pinW*0.55, cry=(Math.random()-0.5)*s.pinW*0.55;
-        s.cracks.push({rx:crx,ry:cry,ex:crx+Math.cos(ca)*cl,ey:cry+Math.sin(ca)*cl,alpha:1});
+    const onMove = (e: PointerEvent) => {
+      if (!s.running || !s.pDown) return;
+      const now = Date.now(), dt = Math.max(8, now - s.lastPTime);
+      const dx = e.clientX - s.lastPX, dy = e.clientY - s.lastPY;
+      const speed = Math.sqrt(dx*dx+dy*dy) / dt * 1000;
+      if (speed > s.sig.maxSwipeSpeed) s.sig.maxSwipeSpeed = Math.round(speed);
+      if (speed > 240 && (now - s.lastHitTime) > 110) {
+        s.lastHitTime = now; s.sig.totalHits++;
+        const dmg = Math.min(28, 7 + speed / 85);
+        s.damage = Math.min(100, s.damage + dmg);
+        s.shakeAmt = 0.3;
         sfx.collect(); haptic([30]);
-        if(s.damage>=100) burstRef.current();
+        // Update piñata scale to show damage
+        if (piñataRef.current) piñataRef.current.scale.setScalar(1 - s.damage * 0.003);
+        if (s.damage >= 100) doBurst(scene);
       }
-      s.lastPX=e.clientX; s.lastPY=e.clientY; s.lastPTime=now;
+      s.lastPX = e.clientX; s.lastPY = e.clientY; s.lastPTime = now;
     };
-    const onUp=()=>{
-      const s=stateRef.current;
-      if(s.pDown){s.pDown=false;s.sig.totalSwipes++;}
-    };
-    canvas.addEventListener('pointerdown',onDown);
-    canvas.addEventListener('pointermove',onMove);
-    canvas.addEventListener('pointerup',onUp);
-    canvas.addEventListener('pointercancel',onUp);
-    return ()=>{
-      window.removeEventListener('resize',resize);
-      canvas.removeEventListener('pointerdown',onDown);
-      canvas.removeEventListener('pointermove',onMove);
-      canvas.removeEventListener('pointerup',onUp);
-      canvas.removeEventListener('pointercancel',onUp);
-    };
-  },[]);
+    const onUp = () => { if (s.pDown) { s.pDown = false; s.sig.totalSwipes++; } };
+    renderer.domElement.addEventListener('pointerdown', onDown);
+    renderer.domElement.addEventListener('pointermove', onMove);
+    renderer.domElement.addEventListener('pointerup', onUp);
+    renderer.domElement.addEventListener('pointercancel', onUp);
 
-  useEffect(()=>()=>{
+    timerRef.current = setInterval(() => {
+      s.timeLeft--; setTimeLeft(s.timeLeft);
+      if (s.timeLeft <= 0) endGame();
+    }, 1000);
+
+    let t = 0;
+    const loop = () => {
+      if (!s.running) return;
+      animRef.current = requestAnimationFrame(loop);
+      t += 0.018;
+      s.swayPhase = t;
+
+      if (piñataRef.current) {
+        s.shakeAmt *= 0.85;
+        piñataRef.current.rotation.z = Math.sin(t * 1.2) * 0.18 + (s.shakeAmt * (Math.random()-0.5));
+        piñataRef.current.position.x = Math.sin(t * 0.8) * 0.3;
+        piñataRef.current.rotation.y += 0.01;
+        // Damage color shift
+        const pinBody = piñataRef.current.children[0] as THREE.Mesh;
+        if (pinBody?.material) {
+          (pinBody.material as THREE.MeshStandardMaterial).emissiveIntensity = s.damage * 0.02;
+        }
+      }
+
+      // Candy physics
+      candiesRef.current = candiesRef.current.filter(c => c.life > 0.05);
+      for (const c of candiesRef.current) {
+        c.mesh.position.x += c.vx; c.mesh.position.y += c.vy; c.mesh.position.z += c.vz;
+        c.vy -= 0.006; c.life -= 0.008;
+        c.mesh.rotation.x += 0.08; c.mesh.rotation.z += 0.06;
+        (c.mesh.material as THREE.MeshStandardMaterial).opacity = c.life;
+        (c.mesh.material as THREE.MeshStandardMaterial).transparent = true;
+        if (c.life <= 0.05) sceneRef.current?.remove(c.mesh);
+      }
+
+      if (accentLightRef.current) accentLightRef.current.intensity = 40 + Math.sin(t * 3) * 20;
+      renderer.render(scene, camera);
+    };
+    animRef.current = requestAnimationFrame(loop);
+
+    return () => {
+      renderer.domElement.removeEventListener('pointerdown', onDown);
+      renderer.domElement.removeEventListener('pointermove', onMove);
+      renderer.domElement.removeEventListener('pointerup', onUp);
+      renderer.domElement.removeEventListener('pointercancel', onUp);
+    };
+  }, [endGame, buildPiñata, doBurst]);
+
+  useEffect(() => {
+    const onResize = () => {
+      if (!cameraRef.current || !rendererRef.current) return;
+      const W = window.innerWidth, H = window.innerHeight;
+      cameraRef.current.aspect = W / H; cameraRef.current.updateProjectionMatrix();
+      rendererRef.current.setSize(W, H);
+    };
+    window.addEventListener('resize', onResize);
+    return () => {
+      window.removeEventListener('resize', onResize);
+      cancelAnimationFrame(animRef.current);
+      if (timerRef.current) clearInterval(timerRef.current);
+      if (stopMusicRef.current) stopMusicRef.current();
+      if (rendererRef.current && mountRef.current) {
+        try { mountRef.current.removeChild(rendererRef.current.domElement); } catch { /**/ }
+        rendererRef.current.dispose();
+      }
+    };
+  }, []);
+
+  const handleStart = useCallback((name: string, avatar: string) => {
+    playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar);
+    initAudio(); setPhase('countdown');
+  }, []);
+  const handleCountdownDone = useCallback(() => { startLoop(); }, [startLoop]);
+  const handlePlayAgain = useCallback(() => {
+    stateRef.current.running = false;
     cancelAnimationFrame(animRef.current);
-    if(timerRef.current)clearInterval(timerRef.current);
-    if(stopMusicRef.current)stopMusicRef.current();
-  },[]);
+    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+    if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
+    if (rendererRef.current && mountRef.current) {
+      try { mountRef.current.removeChild(rendererRef.current.domElement); } catch { /**/ }
+      rendererRef.current.dispose(); rendererRef.current = null;
+    }
+    candiesRef.current = [];
+    setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null);
+    setPhase('countdown');
+  }, []);
 
-  const handleStart=useCallback(async(name:string,avatar:string)=>{
-    playerSessionRef.current=savePlayerSession(GAME_ID,name,avatar);
-    await initAudio(); sfx.click(); setPhase('countdown');
-  },[]);
-  const handleCountdownDone=useCallback(()=>{startLoop();},[startLoop]);
-  const handlePlayAgain=useCallback(()=>{setPhase('start');setScoreDisplay(0);setTimeLeft(DURATION);setFinalSig(null);},[]);
-  const buildInsights=useCallback((sig:Signals)=>{
-    const pb=parseInt(localStorage.getItem(PB_KEY)??'0');
-    return [
-      {label:'Piñatas Burst',value:String(sig.bursts),color:sig.bursts>=3?'#4ade80':sig.bursts>=1?'#facc15':'#ef4444'},
-      {label:'Total Hits',value:String(sig.totalHits),color:ACCENT},
-      {label:'Max Swipe Speed',value:`${Math.round(sig.maxSwipeSpeed)}px/s`,color:ACCENT},
-      {label:'Personal Best',value:String(pb),color:'var(--color-text)'},
-    ];
-  },[]);
-
+  const accent = theme.id !== 'ether' ? theme.colors.accent : ACCENT;
   return (
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accentColor} gameId={GAME_ID}>
-      {phase==='start'&&<GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description={GAME_TAGLINE} ctaLabel="Smash It!" accentColor={accentColor} onStart={handleStart}/>}
-      {phase==='countdown'&&<Countdown onComplete={handleCountdownDone} accentColor={accentColor}/>}
-      {(phase==='playing'||phase==='countdown')&&<>
-        <canvas ref={canvasRef} role="img" aria-label="Piñata Smash canvas" style={{position:'absolute',inset:0,width:'100%',height:'100%',touchAction:'none'}}/>
-        {phase==='playing'&&<GameHUD accentColor={accentColor} items={[{label:'TIME',value:timeLeft,danger:timeLeft<=5,testId:'timer'},{label:'SCORE',value:scoreDisplay,testId:'score'}]}/>}
-      </>}
-      {phase==='done'&&finalSig&&<>
-        <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI} score={String(finalSig.score)} personality={getPersonality(finalSig)} insights={buildInsights(finalSig)} accentColor={accentColor} onPlayAgain={handlePlayAgain} didWin={finalSig.bursts>=2}/>
-        <WebhookEmitter theme={theme} sig={finalSig} personality={getPersonality(finalSig)} player={playerSessionRef.current}/>
-      </>}
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accent ?? ACCENT} gameId={GAME_ID}>
+      {phase === 'start' && (
+        <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description={GAME_TAGLINE}
+          ctaLabel="Smash It!" accentColor={accent ?? ACCENT} onStart={handleStart} />
+      )}
+      {phase === 'countdown' && <Countdown onComplete={handleCountdownDone} accentColor={accent ?? ACCENT} />}
+      {(phase === 'playing' || phase === 'countdown') && (
+        <>
+          <div ref={mountRef} style={{ position: 'absolute', inset: 0, touchAction: 'none' }} />
+          {phase === 'playing' && (
+            <>
+              <GameHUD accentColor={accent ?? ACCENT} items={[
+                { label: 'TIME', value: timeLeft, danger: timeLeft <= 5, testId: 'timer' },
+                { label: 'SCORE', value: scoreDisplay, testId: 'score' },
+              ]} />
+              <div style={{ position: 'absolute', bottom: '10%', left: '50%', transform: 'translateX(-50%)',
+                color: 'rgba(255,255,255,0.5)', fontSize: 13, pointerEvents: 'none', textAlign: 'center' }}>
+                ← SWIPE TO SMASH →
+              </div>
+            </>
+          )}
+        </>
+      )}
+      {phase === 'done' && finalSig && (
+        <>
+          <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI}
+            score={String(finalSig.score)} personality={getPersonality(finalSig)}
+            insights={[
+              { label: 'Piñatas Burst', value: String(finalSig.bursts), color: finalSig.bursts >= 3 ? '#4ade80' : finalSig.bursts >= 1 ? '#facc15' : '#ef4444' },
+              { label: 'Total Hits', value: String(finalSig.totalHits), color: accent ?? ACCENT },
+              { label: 'Max Swipe Speed', value: `${Math.round(finalSig.maxSwipeSpeed)}px/s`, color: accent ?? ACCENT },
+              { label: 'Personal Best', value: String(parseInt(localStorage.getItem(PB_KEY) ?? '0')), color: 'var(--color-text)' },
+            ]}
+            accentColor={accent ?? ACCENT} onPlayAgain={handlePlayAgain} didWin={finalSig.bursts >= 2} />
+          <WebhookEmitter theme={theme} sig={finalSig} personality={getPersonality(finalSig)} player={playerSessionRef.current} />
+        </>
+      )}
     </GameShell>
   );
+}
+
+function WebhookEmitter({ theme, sig, personality, player }: { theme: ReturnType<typeof useBrandTheme>; sig: Signals; personality: string; player: PlayerSession | null; }) {
+  const fired = useRef(false);
+  useEffect(() => {
+    if (fired.current) return; fired.current = true;
+    postWebhook(theme, GAME_ID, { personality, score: sig.score }, player);
+  }, [theme, sig, personality, player]);
+  return null;
 }

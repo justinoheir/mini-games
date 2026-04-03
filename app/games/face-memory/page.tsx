@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
+import * as THREE from 'three';
 import GameShell from '@/components/GameShell';
 import GameHUD from '@/components/GameHUD';
 import GameStartScreen from '@/components/GameStartScreen';
@@ -17,19 +18,7 @@ const GAME_EMOJI = '👤';
 const GAME_TITLE = 'Face Memory';
 const GAME_TAGLINE = 'Remember who you met. Find them again.';
 
-interface Signals {
-  total: number;
-  hits: number;
-  misses: number;
-  falseAlarms: number;
-  avgReactionMs: number;
-  totalMs: number;
-  maxStudyLoad: number;
-  score: number;
-  maxStreak: number;
-  streakCurrent: number;
-}
-
+interface Signals { total: number; hits: number; misses: number; falseAlarms: number; avgReactionMs: number; totalMs: number; maxStudyLoad: number; score: number; maxStreak: number; streakCurrent: number; }
 function getPersonality(sig: Signals): string {
   const acc = sig.total > 0 ? sig.hits / sig.total : 0;
   if (acc >= 0.88 && sig.falseAlarms === 0) return 'Face Expert 🎭';
@@ -38,403 +27,380 @@ function getPersonality(sig: Signals): string {
   if (sig.falseAlarms <= 1) return 'Careful Recognizer 👁️';
   return 'Building Memory 📸';
 }
-
 type Phase = 'start' | 'countdown' | 'playing' | 'done';
 type SubPhase = 'study' | 'test';
 
-// Face features for procedural generation
-const HAIR_STYLES = [
-  (ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number, color: string) => {
-    ctx.fillStyle = color;
-    ctx.beginPath(); ctx.ellipse(cx, cy - r * 0.7, r * 0.7, r * 0.5, 0, Math.PI, 0); ctx.fill();
-  },
-  (ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number, color: string) => {
-    ctx.fillStyle = color;
-    ctx.beginPath(); ctx.arc(cx, cy - r * 0.6, r * 0.65, Math.PI, 0); ctx.fill();
-    ctx.fillRect(cx - r * 0.65, cy - r * 1.0, r * 0.2, r * 0.4);
-    ctx.fillRect(cx + r * 0.45, cy - r * 1.0, r * 0.2, r * 0.4);
-  },
-  (ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number, color: string) => {
-    ctx.fillStyle = color;
-    ctx.beginPath(); ctx.arc(cx, cy - r * 0.5, r * 0.7, Math.PI, 0); ctx.fill();
-    for (let i = -3; i <= 3; i++) {
-      ctx.fillRect(cx + i * r * 0.15 - r * 0.05, cy - r * 1.15, r * 0.1, r * 0.4);
-    }
-  },
-];
+const SKIN_TONES = [0xfdbcb4, 0xf1c27d, 0xe0ac69, 0xc68642, 0x8d5524, 0x4a2c1a];
+const HAIR_COLORS = [0x1a0a00, 0x4a3728, 0x8b5e3c, 0xd4a017, 0xc0392b, 0x6c3483];
+const EYE_COLORS_NUM = [0x3b82f6, 0x22c55e, 0x8b5cf6, 0x6b4226, 0x64748b];
 
-const SKIN_TONES = ['#FDBCB4', '#F1C27D', '#E0AC69', '#C68642', '#8D5524', '#4a2c1a'];
-const HAIR_COLORS = ['#1a0a00', '#4a3728', '#8B5E3C', '#D4A017', '#e8c89f', '#c0392b', '#6c3483'];
-
-interface Face {
-  id: number;
-  skinTone: string;
-  hairColor: string;
-  hairStyle: number;
-  eyeColor: string;
-  hasGlasses: boolean;
-  hasBeard: boolean;
-  eyebrowThick: boolean;
+interface Face3D {
+  id: number; skinTone: number; hairColor: number; hairStyle: number;
+  eyeColor: number; hasGlasses: boolean; hasBeard: boolean; eyebrowThick: boolean;
 }
 
-function makeFace(id: number): Face {
+function makeFace(id: number): Face3D {
   return {
     id,
     skinTone: SKIN_TONES[Math.floor(Math.random() * SKIN_TONES.length)],
     hairColor: HAIR_COLORS[Math.floor(Math.random() * HAIR_COLORS.length)],
-    hairStyle: Math.floor(Math.random() * HAIR_STYLES.length),
-    eyeColor: ['#3b82f6', '#22c55e', '#8b5cf6', '#6b4226', '#64748b'][Math.floor(Math.random() * 5)],
+    hairStyle: Math.floor(Math.random() * 3),
+    eyeColor: EYE_COLORS_NUM[Math.floor(Math.random() * EYE_COLORS_NUM.length)],
     hasGlasses: Math.random() < 0.35,
     hasBeard: Math.random() < 0.3,
     eyebrowThick: Math.random() < 0.4,
   };
 }
 
-function drawFace(ctx: CanvasRenderingContext2D, face: Face, cx: number, cy: number, r: number) {
-  ctx.save();
-
-  // Hair (behind head)
-  HAIR_STYLES[face.hairStyle](ctx, cx, cy, r, face.hairColor);
-
+function buildFaceGroup(face: Face3D): THREE.Group {
+  const group = new THREE.Group();
   // Head
-  ctx.fillStyle = face.skinTone;
-  ctx.strokeStyle = face.skinTone === '#FDBCB4' ? '#e8a898' : '#6b3e26';
-  ctx.lineWidth = 1.5;
-  ctx.beginPath(); ctx.ellipse(cx, cy, r * 0.7, r * 0.85, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  const headGeo = new THREE.SphereGeometry(0.7, 18, 16);
+  headGeo.scale(1, 1.1, 0.9);
+  const headMesh = new THREE.Mesh(headGeo, new THREE.MeshStandardMaterial({ color: face.skinTone, roughness: 0.7, metalness: 0.1 }));
+  group.add(headMesh);
 
-  // Eyes
-  const eyeOffset = r * 0.25;
-  [-1, 1].forEach(side => {
-    const ex = cx + side * eyeOffset, ey = cy - r * 0.1;
-    ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.ellipse(ex, ey, r * 0.14, r * 0.1, 0, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = face.eyeColor; ctx.beginPath(); ctx.arc(ex, ey, r * 0.08, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = '#000'; ctx.beginPath(); ctx.arc(ex, ey, r * 0.04, 0, Math.PI * 2); ctx.fill();
-    // Eyebrows
-    ctx.strokeStyle = face.hairColor; ctx.lineWidth = face.eyebrowThick ? 2.5 : 1.5;
-    ctx.beginPath(); ctx.moveTo(ex - r * 0.14, ey - r * 0.14); ctx.lineTo(ex + r * 0.14, ey - r * 0.18); ctx.stroke();
-  });
-
-  // Glasses
-  if (face.hasGlasses) {
-    ctx.strokeStyle = '#374151'; ctx.lineWidth = 1.5;
-    [-1, 1].forEach(side => {
-      const ex = cx + side * eyeOffset, ey = cy - r * 0.1;
-      ctx.beginPath(); ctx.arc(ex, ey, r * 0.18, 0, Math.PI * 2); ctx.stroke();
-    });
-    ctx.beginPath(); ctx.moveTo(cx - eyeOffset + r * 0.18, cy - r * 0.1);
-    ctx.lineTo(cx + eyeOffset - r * 0.18, cy - r * 0.1); ctx.stroke();
+  // Hair
+  const hairMat = new THREE.MeshStandardMaterial({ color: face.hairColor, roughness: 0.8 });
+  if (face.hairStyle === 0) {
+    const hair = new THREE.Mesh(new THREE.SphereGeometry(0.72, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2.2), hairMat);
+    hair.position.y = 0.1;
+    group.add(hair);
+  } else if (face.hairStyle === 1) {
+    const hair = new THREE.Mesh(new THREE.CylinderGeometry(0.72, 0.72, 0.3, 16, 1, true, 0, Math.PI * 2), hairMat);
+    hair.position.y = 0.52;
+    group.add(hair);
+    const top = new THREE.Mesh(new THREE.SphereGeometry(0.72, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2.5), hairMat);
+    top.position.y = 0.52;
+    group.add(top);
+  } else {
+    for (let s = 0; s < 5; s++) {
+      const strand = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.05, 0.4 + Math.random() * 0.3, 6), hairMat);
+      const angle = (s / 5) * Math.PI * 2;
+      strand.position.set(Math.cos(angle) * 0.55, 0.6 + Math.random() * 0.1, Math.sin(angle) * 0.4);
+      strand.rotation.z = Math.cos(angle) * 0.3;
+      group.add(strand);
+    }
   }
 
+  // Eyes
+  const eyeMat = new THREE.MeshStandardMaterial({ color: face.eyeColor, roughness: 0.5 });
+  const pupilMat = new THREE.MeshStandardMaterial({ color: 0x111111 });
+  [[-0.22, 0.12], [0.22, 0.12]].forEach(([ex, ey]) => {
+    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.12, 10, 10), eyeMat);
+    eye.position.set(ex, ey, 0.63);
+    group.add(eye);
+    const pupil = new THREE.Mesh(new THREE.SphereGeometry(0.06, 8, 8), pupilMat);
+    pupil.position.set(ex, ey, 0.73);
+    group.add(pupil);
+  });
+
+  // Eyebrows
+  const browThick = face.eyebrowThick ? 0.065 : 0.04;
+  const browMat = new THREE.MeshStandardMaterial({ color: face.hairColor });
+  [[-0.22, 0.28], [0.22, 0.28]].forEach(([bx, by]) => {
+    const brow = new THREE.Mesh(new THREE.BoxGeometry(0.28, browThick, 0.04), browMat);
+    brow.position.set(bx, by, 0.65);
+    group.add(brow);
+  });
+
   // Nose
-  ctx.strokeStyle = face.skinTone === '#FDBCB4' ? '#d4a090' : '#5a3020';
-  ctx.lineWidth = 1.5; ctx.fillStyle = 'transparent';
-  ctx.beginPath(); ctx.moveTo(cx, cy - r * 0.05);
-  ctx.lineTo(cx - r * 0.08, cy + r * 0.18); ctx.lineTo(cx + r * 0.08, cy + r * 0.18); ctx.stroke();
+  const nose = new THREE.Mesh(new THREE.SphereGeometry(0.08, 8, 8), new THREE.MeshStandardMaterial({ color: face.skinTone, roughness: 0.8 }));
+  nose.scale.set(0.7, 1, 0.6);
+  nose.position.set(0, 0, 0.72);
+  group.add(nose);
 
   // Mouth
-  ctx.strokeStyle = '#b04060'; ctx.lineWidth = 2; ctx.fillStyle = 'transparent';
-  ctx.beginPath(); ctx.arc(cx, cy + r * 0.32, r * 0.18, 0, Math.PI); ctx.stroke();
+  const mouthGeo = new THREE.TorusGeometry(0.14, 0.03, 6, 16, Math.PI);
+  const mouth = new THREE.Mesh(mouthGeo, new THREE.MeshStandardMaterial({ color: 0xc0392b, roughness: 0.7 }));
+  mouth.rotation.x = Math.PI / 2;
+  mouth.position.set(0, -0.22, 0.65);
+  group.add(mouth);
 
   // Beard
   if (face.hasBeard) {
-    ctx.fillStyle = face.hairColor + 'aa';
-    ctx.beginPath(); ctx.ellipse(cx, cy + r * 0.55, r * 0.4, r * 0.25, 0, 0, Math.PI); ctx.fill();
+    const beardGeo = new THREE.SphereGeometry(0.45, 12, 8, 0, Math.PI * 2, Math.PI * 0.4, Math.PI * 0.4);
+    const beard = new THREE.Mesh(beardGeo, new THREE.MeshStandardMaterial({ color: face.hairColor, roughness: 0.9 }));
+    beard.position.set(0, -0.4, 0.3);
+    group.add(beard);
   }
 
-  ctx.restore();
+  // Glasses
+  if (face.hasGlasses) {
+    const glassMat = new THREE.MeshStandardMaterial({ color: 0x111111, metalness: 0.8 });
+    [[-0.22, 0.12], [0.22, 0.12]].forEach(([gx, gy]) => {
+      const frame = new THREE.Mesh(new THREE.TorusGeometry(0.16, 0.025, 8, 24), glassMat);
+      frame.position.set(gx, gy, 0.7);
+      group.add(frame);
+    });
+    const bridge = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.08, 6), glassMat);
+    bridge.rotation.z = Math.PI / 2; bridge.position.set(0, 0.12, 0.7);
+    group.add(bridge);
+  }
+
+  return group;
 }
 
-interface GridFace {
-  face: Face;
-  x: number; y: number;
-  isStudied: boolean;
+interface GS {
+  running: boolean; timeLeft: number; sig: Signals;
+  subPhase: SubPhase; studiedFaces: Face3D[]; testFaces: Face3D[];
+  studyTime: number; correctFaceId: number;
+  roundStart: number; qTimeout: ReturnType<typeof setTimeout> | null;
+  nextId: number;
 }
 
-interface GameState {
-  running: boolean; timeLeft: number;
-  sig: Signals; frame: number; accentColor: string;
-  floats: Array<{ x: number; y: number; text: string; alpha: number; vy: number; color: string }>;
-  subPhase: SubPhase;
-  studyFaces: Face[];
-  studyIdx: number;       // which study face to show
-  studyTimer: number;     // frames to show each face
-  gridFaces: GridFace[];
-  studyLoad: number;
-  selectedGridIdx: number;
-  feedback: boolean | null;
-  feedbackTimer: number;
-  shownAt: number;
-}
-
-export default function FaceMemoryGame() {
+export default function FaceMemory() {
   const theme = useBrandTheme();
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const animRef = useRef(0);
+  const mountRef = useRef<HTMLDivElement>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  const stateRef = useRef<GameState>({
+  const stateRef = useRef<GS>({
     running: false, timeLeft: DURATION,
     sig: { total: 0, hits: 0, misses: 0, falseAlarms: 0, avgReactionMs: 0, totalMs: 0, maxStudyLoad: 0, score: 0, maxStreak: 0, streakCurrent: 0 },
-    frame: 0, accentColor: ACCENT, floats: [],
-    subPhase: 'study', studyFaces: [], studyIdx: 0, studyTimer: 100,
-    gridFaces: [], studyLoad: 2, selectedGridIdx: -1,
-    feedback: null, feedbackTimer: 0, shownAt: 0,
+    subPhase: 'study', studiedFaces: [], testFaces: [],
+    studyTime: 4000, correctFaceId: -1, roundStart: 0,
+    qTimeout: null, nextId: 0,
   });
+  const threeRef = useRef<{
+    renderer: THREE.WebGLRenderer; scene: THREE.Scene; camera: THREE.PerspectiveCamera;
+    faceGroups: THREE.Group[]; faceMeta: Array<{ faceId: number; isTarget: boolean }>;
+    animId: number; frame: number;
+  } | null>(null);
 
   const [phase, setPhase] = useState<Phase>('start');
+  const [subPhase, setSubPhase] = useState<SubPhase>('study');
   const [timeLeft, setTimeLeft] = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
   const [finalSig, setFinalSig] = useState<Signals | null>(null);
   const playerSessionRef = useRef<PlayerSession | null>(null);
-  let faceIdCounter = 0;
-
-  useEffect(() => { stateRef.current.accentColor = theme.colors.accent ?? ACCENT; }, [theme]);
-
-  const startStudy = useCallback(() => {
-    const s = stateRef.current;
-    // Create study faces
-    const faces = Array.from({ length: s.studyLoad }, () => makeFace(faceIdCounter++));
-    s.studyFaces = faces;
-    s.studyIdx = 0;
-    s.studyTimer = 90;
-    s.subPhase = 'study';
-    if (s.studyLoad > s.sig.maxStudyLoad) s.sig.maxStudyLoad = s.studyLoad;
-  }, []);
-
-  const startTest = useCallback(() => {
-    const s = stateRef.current;
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const W = canvas.width, H = canvas.height;
-
-    // Create grid: some studied, some new
-    const gridCount = s.studyLoad + Math.floor(Math.random() * s.studyLoad) + 1;
-    const newFaces = Array.from({ length: gridCount - s.studyLoad }, () => makeFace(faceIdCounter++));
-    const allFaces = [...s.studyFaces, ...newFaces].sort(() => Math.random() - 0.5);
-
-    const cols = Math.min(3, allFaces.length);
-    const rows = Math.ceil(allFaces.length / cols);
-    const cellW = Math.min((W - 40) / cols, 100);
-    const cellH = Math.min((H * 0.7) / rows, 110);
-    const gridX = (W - cols * cellW) / 2;
-    const gri = H * 0.2;
-
-    s.gridFaces = allFaces.map((face, i) => {
-      const col = i % cols, row = Math.floor(i / cols);
-      return {
-        face,
-        x: gridX + col * cellW + cellW / 2,
-        y: gri + row * cellH + cellH / 2,
-        isStudied: s.studyFaces.some(sf => sf.id === face.id),
-      };
-    });
-    s.subPhase = 'test';
-    s.shownAt = Date.now();
-    s.selectedGridIdx = -1;
-    s.feedback = null; s.feedbackTimer = 0;
-  }, []);
 
   const endGame = useCallback(() => {
-    const s = stateRef.current;
-    s.running = false;
-    cancelAnimationFrame(animRef.current);
+    const s = stateRef.current; s.running = false;
+    if (s.qTimeout) clearTimeout(s.qTimeout);
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
-    const pb = parseInt(localStorage.getItem('pb_' + GAME_ID) ?? '0');
-    if (s.sig.score > pb) localStorage.setItem('pb_' + GAME_ID, String(s.sig.score));
-    setFinalSig({ ...s.sig });
-    setPhase('done');
-    hapticVictory();
+    const t = threeRef.current;
+    if (t) { cancelAnimationFrame(t.animId); t.renderer.dispose(); }
+    const pb = parseInt(localStorage.getItem(`pb_${GAME_ID}`) ?? '0');
+    if (s.sig.score > pb) localStorage.setItem(`pb_${GAME_ID}`, String(s.sig.score));
+    setFinalSig({ ...s.sig }); setPhase('done'); hapticVictory();
   }, []);
 
-  const startLoop = useCallback(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    const s = stateRef.current;
+  const showFacesOnScene = useCallback((faces: Face3D[], scene: THREE.Scene, faceGroups: THREE.Group[], faceMeta: Array<{ faceId: number; isTarget: boolean }>, correctId: number) => {
+    // Clear existing
+    for (const g of faceGroups) scene.remove(g);
+    faceGroups.length = 0; faceMeta.length = 0;
+    const N = faces.length;
+    const spacing = Math.min(2.5, 10 / N);
+    const startX = -(N - 1) * spacing / 2;
+    faces.forEach((face, i) => {
+      const group = buildFaceGroup(face);
+      group.position.set(startX + i * spacing, 0, 0);
+      group.scale.setScalar(0.85);
+      scene.add(group);
+      faceGroups.push(group);
+      faceMeta.push({ faceId: face.id, isTarget: face.id === correctId });
+    });
+  }, []);
 
+  const startRound = useCallback(() => {
+    const s = stateRef.current;
+    const t = threeRef.current; if (!t) return;
+    if (!s.running) return;
+
+    // How many study faces
+    const studyCount = Math.min(3 + Math.floor(s.sig.hits / 5), 6);
+    s.sig.maxStudyLoad = Math.max(s.sig.maxStudyLoad, studyCount);
+    const studyFaces = Array.from({ length: studyCount }, (_, i) => makeFace(s.nextId++));
+    s.studiedFaces = studyFaces;
+    s.correctFaceId = studyFaces[Math.floor(Math.random() * studyFaces.length)].id;
+    s.subPhase = 'study';
+    setSubPhase('study');
+    sfx.collect?.();
+
+    showFacesOnScene(studyFaces, t.scene, t.faceGroups, t.faceMeta, -1);
+
+    // After study time, show test faces
+    const studyDur = Math.max(2500, 5000 - s.sig.hits * 100);
+    s.qTimeout = setTimeout(() => {
+      if (!s.running) return;
+      // Create test faces: target + distractors
+      const distractorCount = Math.min(2 + Math.floor(s.sig.hits / 3), 4);
+      const targetFace = studyFaces.find(f => f.id === s.correctFaceId)!;
+      const distractors = Array.from({ length: distractorCount }, (_, i) => makeFace(s.nextId++));
+      const testFaces = [...distractors, targetFace].sort(() => Math.random() - 0.5);
+      s.testFaces = testFaces;
+      s.subPhase = 'test';
+      setSubPhase('test');
+      s.roundStart = Date.now();
+      s.sig.total++;
+      showFacesOnScene(testFaces, t.scene, t.faceGroups, t.faceMeta, s.correctFaceId);
+      sfx.tick?.();
+
+      // Auto-miss after 5s
+      s.qTimeout = setTimeout(() => {
+        if (!s.running || s.subPhase !== 'test') return;
+        s.sig.misses++; s.sig.streakCurrent = 0;
+        sfx.fail?.(); hapticFail();
+        setTimeout(() => { if (s.running) startRound(); }, 600);
+      }, 5000);
+    }, studyDur);
+  }, [showFacesOnScene]);
+
+  const startLoop = useCallback(() => {
+    const mount = mountRef.current; if (!mount) return;
+    const s = stateRef.current;
     s.running = true; s.timeLeft = DURATION;
     s.sig = { total: 0, hits: 0, misses: 0, falseAlarms: 0, avgReactionMs: 0, totalMs: 0, maxStudyLoad: 0, score: 0, maxStreak: 0, streakCurrent: 0 };
-    s.frame = 0; s.floats = []; s.studyLoad = 2;
-    startStudy();
-    setScoreDisplay(0); setTimeLeft(DURATION); setPhase('playing');
+    s.nextId = 0;
+    setScoreDisplay(0); setTimeLeft(DURATION); setSubPhase('study'); setPhase('playing');
+
+    const W = mount.clientWidth, H = mount.clientHeight;
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(W, H); renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setClearColor(0x0a0008);
+    mount.innerHTML = ''; mount.appendChild(renderer.domElement);
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0a0008);
+    const camera = new THREE.PerspectiveCamera(60, W / H, 0.1, 100);
+    camera.position.set(0, 0, 6);
+
+    scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+    const pinkLight = new THREE.PointLight(0xfb7185, 2, 15);
+    pinkLight.position.set(2, 3, 4);
+    scene.add(pinkLight);
+    const blueLight = new THREE.PointLight(0x818cf8, 1.5, 12);
+    blueLight.position.set(-3, -2, 3);
+    scene.add(blueLight);
+
+    // Stars
+    const starPos = new Float32Array(200 * 3);
+    for (let i = 0; i < 200; i++) { starPos[i*3] = (Math.random()-0.5)*20; starPos[i*3+1] = (Math.random()-0.5)*15; starPos[i*3+2] = -5 - Math.random()*10; }
+    const starGeo = new THREE.BufferGeometry(); starGeo.setAttribute('position', new THREE.BufferAttribute(starPos, 3));
+    scene.add(new THREE.Points(starGeo, new THREE.PointsMaterial({ color: 0xfb7185, size: 0.06, transparent: true, opacity: 0.4 })));
+
+    const faceGroups: THREE.Group[] = [];
+    const faceMeta: Array<{ faceId: number; isTarget: boolean }> = [];
+    const obj = { renderer, scene, camera, faceGroups, faceMeta, animId: 0, frame: 0 };
+    threeRef.current = obj;
 
     timerRef.current = setInterval(() => {
       s.timeLeft--; setTimeLeft(s.timeLeft);
-      if (s.timeLeft <= 0) { sfx.fail(); endGame(); }
+      if (s.timeLeft <= 0) endGame();
     }, 1000);
 
-    const loop = () => {
-      if (!s.running) return;
-      const W = canvas.width, H = canvas.height;
-      ctx.clearRect(0, 0, W, H);
-      s.frame++;
+    setTimeout(() => { if (s.running) startRound(); }, 400);
 
-      if (s.feedbackTimer > 0) s.feedbackTimer--;
-
-      // Background - warm gallery
-      ctx.fillStyle = '#140a0c'; ctx.fillRect(0, 0, W, H);
-      for (let i = 0; i < 6; i++) {
-        ctx.strokeStyle = 'rgba(251,113,133,0.04)'; ctx.lineWidth = 1;
-        ctx.beginPath(); ctx.moveTo(0, i * H / 6); ctx.lineTo(W, i * H / 6); ctx.stroke();
-      }
-
-      if (s.feedback !== null && s.feedbackTimer > 0) {
-        ctx.fillStyle = s.feedback ? 'rgba(74,222,128,0.1)' : 'rgba(239,68,68,0.1)';
-        ctx.fillRect(0, 0, W, H);
-      }
-
-      if (s.subPhase === 'study') {
-        s.studyTimer--;
-        if (s.studyTimer <= 0) {
-          s.studyIdx++;
-          if (s.studyIdx >= s.studyFaces.length) {
-            setTimeout(() => { if (s.running) startTest(); }, 400);
-            s.studyTimer = 99999;
-          } else {
-            s.studyTimer = 90;
-          }
-        }
-
-        const face = s.studyFaces[Math.min(s.studyIdx, s.studyFaces.length - 1)];
-        const faceR = Math.min(W, H) * 0.18;
-        const pct = Math.min(1, (90 - s.studyTimer) / 20);
-
-        ctx.fillStyle = 'rgba(255,255,255,0.6)'; ctx.font = '14px sans-serif'; ctx.textAlign = 'center';
-        ctx.fillText(`Memorize! (${s.studyIdx + 1}/${s.studyFaces.length})`, W / 2, H * 0.15);
-
-        ctx.save(); ctx.globalAlpha = pct;
-        drawFace(ctx, face, W / 2, H * 0.45, faceR);
-        ctx.restore();
-
-        // Progress dots
-        s.studyFaces.forEach((_, i) => {
-          ctx.fillStyle = i <= s.studyIdx ? ACCENT : 'rgba(255,255,255,0.2)';
-          const dotX = W / 2 + (i - (s.studyFaces.length - 1) / 2) * 20;
-          ctx.beginPath(); ctx.arc(dotX, H * 0.75, 5, 0, Math.PI * 2); ctx.fill();
-        });
-
-      } else if (s.subPhase === 'test') {
-        ctx.fillStyle = 'rgba(255,255,255,0.6)'; ctx.font = '14px sans-serif'; ctx.textAlign = 'center';
-        ctx.fillText(`Tap the ${s.studyFaces.length} face${s.studyFaces.length > 1 ? 's' : ''} you saw!`, W / 2, H * 0.1);
-
-        s.gridFaces.forEach((gf, i) => {
-          const r = Math.min(35, (canvas.width / (Math.min(3, s.gridFaces.length) + 1)) * 0.4);
-          const isSelected = s.selectedGridIdx === i;
-
-          ctx.save();
-          if (isSelected) {
-            ctx.shadowBlur = 20;
-            ctx.shadowColor = gf.isStudied ? '#4ade80' : '#ef4444';
-          }
-          ctx.strokeStyle = isSelected ? (gf.isStudied ? '#4ade80' : '#ef4444') : 'rgba(255,255,255,0.2)';
-          ctx.lineWidth = isSelected ? 3 : 1;
-          ctx.beginPath(); ctx.arc(gf.x, gf.y, r + 4, 0, Math.PI * 2);
-          ctx.stroke();
-          drawFace(ctx, gf.face, gf.x, gf.y, r);
-          ctx.restore();
-        });
-      }
-
-      // Floats
-      s.floats = s.floats.filter(f => f.alpha > 0.02);
-      s.floats.forEach(f => {
-        ctx.save(); ctx.globalAlpha = f.alpha;
-        ctx.fillStyle = f.color; ctx.font = 'bold 20px sans-serif'; ctx.textAlign = 'center';
-        ctx.fillText(f.text, f.x, f.y); ctx.restore();
-        f.y += f.vy; f.alpha *= 0.95;
+    const animate = () => {
+      obj.animId = requestAnimationFrame(animate);
+      obj.frame++;
+      const t0 = obj.frame * 0.02;
+      // Gentle face rotation
+      faceGroups.forEach((g, i) => {
+        g.rotation.y = Math.sin(t0 * 0.4 + i * 0.8) * 0.08;
+        g.position.y = Math.sin(t0 * 0.6 + i * 1.2) * 0.05;
       });
-
-      animRef.current = requestAnimationFrame(loop);
+      renderer.render(scene, camera);
     };
-    animRef.current = requestAnimationFrame(loop);
-  }, [endGame, startStudy, startTest]);
+    animate();
+
+    const handleResize = () => {
+      const w = mount.clientWidth, h = mount.clientHeight;
+      camera.aspect = w / h; camera.updateProjectionMatrix(); renderer.setSize(w, h);
+    };
+    window.addEventListener('resize', handleResize);
+  }, [endGame, startRound]);
 
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const resize = () => { canvas.width = canvas.offsetWidth; canvas.height = canvas.offsetHeight; };
-    resize();
-    window.addEventListener('resize', resize);
-
-    const onPointerDown = (e: PointerEvent) => {
-      if (phase !== 'playing') return;
+    const mount = mountRef.current; if (!mount || phase !== 'playing') return;
+    const onTap = (e: PointerEvent) => {
+      e.preventDefault();
+      const t = threeRef.current; if (!t) return;
       const s = stateRef.current;
-      if (s.subPhase !== 'test') return;
-      const rect = canvas.getBoundingClientRect();
-      const px = (e.clientX - rect.left) * (canvas.width / rect.width);
-      const py = (e.clientY - rect.top) * (canvas.height / rect.height);
+      if (!s.running || s.subPhase !== 'test') return;
+      const rect = mount.getBoundingClientRect();
+      const ndcX = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+      const ndcY = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+      const raycaster = new THREE.Raycaster();
+      raycaster.setFromCamera(new THREE.Vector2(ndcX, ndcY), t.camera);
+      const hits = raycaster.intersectObjects(t.faceGroups, true);
+      if (hits.length === 0) return;
+      let hitObj = hits[0].object;
+      while (hitObj.parent && !t.faceGroups.includes(hitObj as THREE.Group)) hitObj = hitObj.parent;
+      const groupIdx = t.faceGroups.indexOf(hitObj as THREE.Group);
+      if (groupIdx < 0 || !t.faceMeta[groupIdx]) return;
+      const { isTarget } = t.faceMeta[groupIdx];
 
-      let hitIdx = -1;
-      const r = Math.min(35, (canvas.width / (Math.min(3, s.gridFaces.length) + 1)) * 0.4);
-      s.gridFaces.forEach((gf, i) => {
-        if (Math.hypot(px - gf.x, py - gf.y) < r + 8) hitIdx = i;
-      });
+      if (s.qTimeout) clearTimeout(s.qTimeout);
+      s.subPhase = 'study'; // prevent double-tap
 
-      if (hitIdx < 0) return;
-      const ms = Date.now() - s.shownAt;
-      s.sig.total++; s.sig.totalMs += ms;
-      s.selectedGridIdx = hitIdx;
+      const rt = Date.now() - s.roundStart;
+      s.sig.totalMs += rt;
 
-      if (s.gridFaces[hitIdx].isStudied) {
+      if (isTarget) {
         s.sig.hits++;
         s.sig.streakCurrent++;
         if (s.sig.streakCurrent > s.sig.maxStreak) s.sig.maxStreak = s.sig.streakCurrent;
-        const pts = ms < 2000 ? 3 : 2;
-        s.sig.score += pts; setScoreDisplay(s.sig.score);
-        sfx.collect(); hapticScore();
-        if (s.sig.streakCurrent >= 3) hapticCombo(s.sig.streakCurrent);
-        s.feedback = true; s.feedbackTimer = 15;
-        s.floats.push({ x: s.gridFaces[hitIdx].x, y: s.gridFaces[hitIdx].y - 40, text: '+' + pts + ' ✓', alpha: 1, vy: -2.5, color: '#fbbf24' });
-        s.studyLoad = Math.min(6, 2 + Math.floor(s.sig.hits / 3));
-        setTimeout(() => { if (s.running) startStudy(); }, 500);
+        const pts = 3 + Math.floor(s.sig.streakCurrent / 3);
+        s.sig.score += pts;
+        setScoreDisplay(s.sig.score);
+        sfx.success?.(); hapticScore();
+        // Glow the correct face
+        (hitObj as THREE.Group).scale.setScalar(1.05);
+        setTimeout(() => { (hitObj as THREE.Group).scale.setScalar(0.85); }, 300);
       } else {
         s.sig.falseAlarms++;
         s.sig.streakCurrent = 0;
-        sfx.collision(); hapticFail();
-        s.feedback = false; s.feedbackTimer = 15;
-        s.floats.push({ x: s.gridFaces[hitIdx].x, y: s.gridFaces[hitIdx].y - 30, text: 'NOT THEM!', alpha: 1, vy: -2, color: '#ef4444' });
-        setTimeout(() => { if (s.running) startStudy(); }, 600);
+        sfx.fail?.(); hapticFail();
       }
-    };
 
-    canvas.addEventListener('pointerdown', onPointerDown);
-    return () => {
-      window.removeEventListener('resize', resize);
-      canvas.removeEventListener('pointerdown', onPointerDown);
+      s.sig.avgReactionMs = s.sig.totalMs / (s.sig.hits + s.sig.falseAlarms + s.sig.misses || 1);
+      setTimeout(() => { if (s.running) startRound(); }, 700);
     };
-  }, [phase, startStudy]);
+    mount.addEventListener('pointerdown', onTap);
+    return () => mount.removeEventListener('pointerdown', onTap);
+  }, [phase, startRound]);
 
   useEffect(() => () => {
-    cancelAnimationFrame(animRef.current);
     if (timerRef.current) clearInterval(timerRef.current);
+    const s = stateRef.current;
+    if (s.qTimeout) clearTimeout(s.qTimeout);
+    const t = threeRef.current;
+    if (t) { cancelAnimationFrame(t.animId); t.renderer.dispose(); }
   }, []);
 
-  const handleStart = useCallback(async (n: string, a: string) => {
-    playerSessionRef.current = savePlayerSession(GAME_ID, n, a);
+  const handleStart = useCallback(async (name: string, avatar: string) => {
+    playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar);
     await initAudio(); setPhase('countdown');
   }, []);
-  const handlePlayAgain = useCallback(() => { setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null); }, []);
+  const handleCountdownDone = useCallback(() => { startLoop(); }, [startLoop]);
+  const handlePlayAgain = useCallback(() => { setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null); setSubPhase('study'); }, []);
+  const buildInsights = (sig: Signals) => [
+    { label: 'Recognized', value: String(sig.hits), color: ACCENT },
+    { label: 'False IDs', value: String(sig.falseAlarms), color: sig.falseAlarms === 0 ? '#4ade80' : '#ef4444' },
+    { label: 'Best Streak', value: `×${sig.maxStreak}`, color: '#fbbf24' },
+    { label: 'Max Load', value: String(sig.maxStudyLoad) + ' faces', color: '#818cf8' },
+  ];
+
+  const statusMsg = subPhase === 'study' ? '👀 Study these faces...' : '🎯 Find the face you saw!';
+  const statusColor = subPhase === 'study' ? 'rgba(255,255,255,0.7)' : ACCENT;
 
   return (
     <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
-      {phase === 'start' && <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description="Memorize the faces, then find them in the crowd!" ctaLabel="Meet them! 👤" accentColor={theme.colors.accent ?? ACCENT} onStart={handleStart} />}
-      {phase === 'countdown' && <Countdown onComplete={startLoop} accentColor={theme.colors.accent ?? ACCENT} />}
+      {phase === 'start' && <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description={GAME_TAGLINE} ctaLabel="Start Memorizing 👤" accentColor={theme.colors.accent ?? ACCENT} onStart={handleStart} />}
+      {phase === 'countdown' && <Countdown onComplete={handleCountdownDone} accentColor={theme.colors.accent ?? ACCENT} />}
       {(phase === 'playing' || phase === 'countdown') && (
         <>
-          <canvas ref={canvasRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none' }} role="img" aria-label="Face Memory game canvas" />
-          {phase === 'playing' && <GameHUD accentColor={theme.colors.accent ?? ACCENT} items={[{ label: 'TIME', value: timeLeft, danger: timeLeft <= 10 }, { label: 'SCORE', value: scoreDisplay }]} />}
+          <div ref={mountRef} style={{ position: 'absolute', inset: 0, touchAction: 'none' }} />
+          {phase === 'playing' && (
+            <>
+              <GameHUD accentColor={theme.colors.accent ?? ACCENT} items={[{ label: 'TIME', value: timeLeft, danger: timeLeft <= 10 }, { label: 'SCORE', value: scoreDisplay }]} />
+              <div style={{ position: 'absolute', bottom: '12%', left: '50%', transform: 'translateX(-50%)', color: statusColor, fontSize: 18, fontWeight: 800, textAlign: 'center', pointerEvents: 'none', whiteSpace: 'nowrap', textShadow: `0 0 12px ${statusColor}` }}>{statusMsg}</div>
+            </>
+          )}
         </>
       )}
       {phase === 'done' && finalSig && (
-        <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI} score={String(finalSig.score)} personality={getPersonality(finalSig)}
-          insights={[
-            { label: 'Found', value: String(finalSig.hits), color: ACCENT },
-            { label: 'False Alarms', value: String(finalSig.falseAlarms), color: finalSig.falseAlarms === 0 ? '#4ade80' : '#ef4444' },
-            { label: 'Max Study', value: `${finalSig.maxStudyLoad} faces`, color: '#fbbf24' },
-            { label: 'Streak', value: `×${finalSig.maxStreak}`, color: '#06b6d4' },
-          ]}
-          accentColor={theme.colors.accent ?? ACCENT} onPlayAgain={handlePlayAgain} didWin={finalSig.hits >= 8 && finalSig.falseAlarms <= 2} />
+        <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI} score={String(finalSig.score)} personality={getPersonality(finalSig)} insights={buildInsights(finalSig)} accentColor={theme.colors.accent ?? ACCENT} onPlayAgain={handlePlayAgain} didWin={finalSig.hits >= 5} />
       )}
     </GameShell>
   );

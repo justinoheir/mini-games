@@ -1,5 +1,9 @@
 'use client';
-import { useEffect, useRef, useState, useCallback, type CSSProperties } from 'react';
+/**
+ * LOVE NOTE — 3D hearts floating in space. Simon Says with glowing 3D hearts.
+ */
+import { useEffect, useRef, useState, useCallback } from 'react';
+import * as THREE from 'three';
 import GameShell from '@/components/GameShell';
 import GameHUD from '@/components/GameHUD';
 import GameStartScreen from '@/components/GameStartScreen';
@@ -14,734 +18,375 @@ import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
 import { motion, AnimatePresence } from 'framer-motion';
 import ScorePopEffect, { useScorePop } from '@/components/ScorePopEffect';
 import StreakBadge from '@/components/StreakBadge';
-import { CATEGORY_THEMES } from '@/lib/theme';
-import SwipeInstructions from '@/components/SwipeInstructions';
 
-const CATEGORY_ACCENT = CATEGORY_THEMES.holiday.primaryAccent;
-
-// ─── SPEC CONSTANTS ──────────────────────────────────────────────────────────
-
-
-// --- SPRITE CACHE -------------------------------------------------------------
-const _spriteCache = new Map<string, HTMLImageElement>();
-function _loadSprite(src: string): HTMLImageElement {
-  if (_spriteCache.has(src)) return _spriteCache.get(src)!;
-  const img = new Image();
-  img.src = src;
-  _spriteCache.set(src, img);
-  return img;
-}
-if (typeof window !== 'undefined') {
-  _loadSprite('/sprites/love-note/heart.svg');
-  _loadSprite('/sprites/love-note/note.svg');
-}
-
-const GAME_ID      = 'love-note';
-const PB_KEY       = 'pb_love-note';
-const ACCENT       = '#ec4899';
-const GAME_EMOJI   = '💌';
-const GAME_TITLE   = 'Love Note';
+const GAME_ID = 'love-note';
+const PB_KEY = 'pb_love-note';
+const ACCENT = '#ec4899';
+const GAME_EMOJI = '💌';
+const GAME_TITLE = 'Love Note';
 const GAME_TAGLINE = 'Remember the sequence. Tap it back. From the heart.';
-const GAME_BG      = 'radial-gradient(ellipse 80% 70% at 50% 30%, #1a0510 0%, #0e030a 60%, #050108 100%)';
-const MAX_LIVES    = 3;
-
-// ─── HEART DEFINITIONS ───────────────────────────────────────────────────────
+const MAX_LIVES = 3;
 
 type HeartId = 'red' | 'pink' | 'purple' | 'gold';
 
-interface Heart {
-  id: HeartId;
-  emoji: string;
-  color: string;
-  glow: string;
-  idleDelay: string;
-}
+const HEART_DATA: Record<HeartId, { color: number; emissive: number; css: string }> = {
+  red:    { color: 0xef4444, emissive: 0x7f1d1d, css: '#ef4444' },
+  pink:   { color: 0xec4899, emissive: 0x831843, css: '#ec4899' },
+  purple: { color: 0xa855f7, emissive: 0x581c87, css: '#a855f7' },
+  gold:   { color: 0xfbbf24, emissive: 0x92400e, css: '#fbbf24' },
+};
+const HEART_IDS: HeartId[] = ['red', 'pink', 'purple', 'gold'];
 
-const HEARTS: Heart[] = [
-  { id: 'red',    emoji: '❤️',  color: '#ef4444', glow: 'rgba(239,68,68,0.7)',   idleDelay: '0s'   },
-  { id: 'pink',   emoji: '🩷',  color: '#ec4899', glow: 'rgba(236,72,153,0.7)',  idleDelay: '0.5s' },
-  { id: 'purple', emoji: '💜',  color: '#a855f7', glow: 'rgba(168,85,247,0.7)',  idleDelay: '1.0s' },
-  { id: 'gold',   emoji: '💛',  color: '#f59e0b', glow: 'rgba(245,158,11,0.7)',  idleDelay: '1.5s' },
-];
-
-// Pre-computed petal layout — stable, never re-randomized per render
-const PETALS = [
-  { left: '5%',  size: '14px', duration: '11s', delay: '-2s'   },
-  { left: '14%', size: '10px', duration: '9s',  delay: '-7s'   },
-  { left: '23%', size: '16px', duration: '13s', delay: '-1s'   },
-  { left: '35%', size: '12px', duration: '10s', delay: '-5s'   },
-  { left: '47%', size: '14px', duration: '12s', delay: '-3.5s' },
-  { left: '58%', size: '10px', duration: '8s',  delay: '-8s'   },
-  { left: '67%', size: '16px', duration: '14s', delay: '-0.5s' },
-  { left: '76%', size: '12px', duration: '9s',  delay: '-4s'   },
-  { left: '85%', size: '14px', duration: '11s', delay: '-6s'   },
-  { left: '93%', size: '10px', duration: '10s', delay: '-2.5s' },
-];
-
-// ─── SPEED PROGRESSION ───────────────────────────────────────────────────────
-
-// ─── PER-HEART AUDIO ─────────────────────────────────────────────────────────
-// Each heart has a distinct sound so players can learn the pattern by ear.
-// Maps to a love-chord arpeggio approximation using available sfx:
-//   red    → sfx.tick()    (low note — root, C)
-//   pink   → sfx.collect() (warm note — major third, E)
-//   purple → sfx.shimmer() (ethereal note — perfect fifth, G)
-//   gold   → sfx.defuse()  (bright golden note — major seventh, B)
-function playHeartSfx(id: HeartId): void {
-  switch (id) {
-    case 'red':    sfx.tick();    break;
-    case 'pink':   sfx.collect(); break;
-    case 'purple': sfx.shimmer(); break;
-    case 'gold':   sfx.defuse();  break;
-  }
-}
-
-function getShowSpeed(round: number): number {
-  if (round >= 12) return 300;
-  if (round >= 8)  return 400;
-  if (round >= 5)  return 550;
-  return 700;
-}
-
-function randomHeart(): HeartId {
-  const ids: HeartId[] = ['red', 'pink', 'purple', 'gold'];
-  return ids[Math.floor(Math.random() * 4)];
-}
-
-// ─── BEHAVIORAL SIGNALS ──────────────────────────────────────────────────────
-
-interface Signals {
-  sequenceLength: number;   // current sequence length at game end
-  round: number;            // rounds played
-  livesRemaining: number;   // lives left at end
-  perfectRounds: number;    // rounds with all taps < 600ms
-  longestSequence: number;  // longest sequence successfully completed
-  wrongTaps: number;        // total wrong taps
-  score: number;            // cumulative score
-}
-
-// ─── PERSONALITY CLASSIFICATION ──────────────────────────────────────────────
-// Deterministic: same inputs → same archetype. Always returns a value.
+interface HeartMesh { mesh: THREE.Mesh; light: THREE.PointLight; id: HeartId; }
+interface Signals { score: number; roundsCompleted: number; maxSequenceLength: number; totalErrors: number; maxStreak: number; perfectRounds: number; }
 
 function getPersonality(sig: Signals): string {
-  if (sig.longestSequence >= 12)                       return 'Love Poet 📝';
-  if (sig.longestSequence >= 8 && sig.wrongTaps <= 1)  return 'Devoted ❤️‍🔥';
-  if (sig.perfectRounds >= 5)                          return 'Sweet Talker 💬';
-  if (sig.longestSequence >= 6)                        return 'Hopeful Romantic 🌹';
-  return 'Short Love Note 💌';
+  if (sig.perfectRounds >= 5 && sig.maxSequenceLength >= 7) return 'Heart Whisperer 💖';
+  if (sig.roundsCompleted >= 8) return 'Love Note Master 💌';
+  if (sig.maxSequenceLength >= 6) return 'Memory of Love 💝';
+  if (sig.roundsCompleted >= 4) return 'Romantic Recall 💕';
+  return 'Learning to Love 🌸';
 }
 
-// ─── PHASE TYPES ─────────────────────────────────────────────────────────────
+type Phase = 'start' | 'countdown' | 'playing' | 'done';
 
-type OuterPhase = 'start' | 'countdown' | 'playing' | 'done';
-type GamePhase  = 'showing' | 'input' | 'wrong-pause' | 'round-complete';
+function createHeart3D(color: number, emissive: number): THREE.Group {
+  // Approximate heart with two spheres + a cone
+  const group = new THREE.Group();
+  const mat = new THREE.MeshPhongMaterial({ color, emissive, emissiveIntensity: 0.4, shininess: 80 });
 
-// ─── COMPONENT ───────────────────────────────────────────────────────────────
+  const leftSphere = new THREE.Mesh(new THREE.SphereGeometry(0.45, 14, 14), mat);
+  leftSphere.position.set(-0.38, 0.25, 0);
+  group.add(leftSphere);
+
+  const rightSphere = new THREE.Mesh(new THREE.SphereGeometry(0.45, 14, 14), mat);
+  rightSphere.position.set(0.38, 0.25, 0);
+  group.add(rightSphere);
+
+  const bottomCone = new THREE.Mesh(new THREE.ConeGeometry(0.6, 1.1, 4), mat);
+  bottomCone.rotation.z = Math.PI;
+  bottomCone.position.set(0, -0.1, 0);
+  group.add(bottomCone);
+
+  return group;
+}
 
 export default function LoveNoteGame() {
-  const theme        = useBrandTheme();
+  const theme = useBrandTheme();
+  const mountRef = useRef<HTMLDivElement>(null);
+  const animRef = useRef(0);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const stopMusicRef = useRef<(() => void) | null>(null);
-  const timeoutRefs  = useRef<ReturnType<typeof setTimeout>[]>([]);
-
-  // ── Outer phase ────────────────────────────────────────────────────────────
-  const [outerPhase,  setOuterPhase]  = useState<OuterPhase>('start');
-
-  // ── Display state (drives re-renders) ──────────────────────────────────────
-  const [gamePhase,   setGamePhase]   = useState<GamePhase>('showing');
-  const [sequence,    setSequence]    = useState<HeartId[]>([]);
-  const [showInstructions, setShowInstructions] = useState(true);
-  const [lives,       setLives]       = useState(MAX_LIVES);
-  const [round,       setRound]       = useState(1);
-  const [activeHeart, setActiveHeart] = useState<HeartId | null>(null);
-  const [wrongHeart,  setWrongHeart]  = useState<HeartId | null>(null);
-  const [roundFlash,  setRoundFlash]  = useState(false);
-  const [finalSig,    setFinalSig]    = useState<Signals | null>(null);
-
-  // ── Mutable logic refs (no stale closures in callbacks) ────────────────────
-  const sequenceRef     = useRef<HeartId[]>([]);
-  const playerIndexRef  = useRef(0);
-  const livesRef        = useRef(MAX_LIVES);
-  const roundRef        = useRef(1);
-  const gamePhasRef     = useRef<GamePhase>('showing');
-  const tapTimesRef     = useRef<number[]>([]);
-  const lastTapTimeRef  = useRef(0);
-  const sigRef          = useRef<Signals>({
-    sequenceLength: 1, round: 1, livesRemaining: MAX_LIVES,
-    perfectRounds: 0, longestSequence: 0, wrongTaps: 0, score: 0,
-  });
-
-  // ── Player session ─────────────────────────────────────────────────────────
-  const [playerName,   setPlayerName]   = useState('');
-  const [playerAvatar, setPlayerAvatar] = useState('🎮');
-  const { pops, triggerPop } = useScorePop();
-  const [streak, setStreak] = useState(0);
-  const [isNewBest, setIsNewBest] = useState(false);
-  const prevScoreRef = useRef(0);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => {
-    const numScore = 0;
-    if (numScore > prevScoreRef.current) {
-      triggerPop(`+${numScore - prevScoreRef.current}`, window.innerWidth / 2, 200);
-      hapticScore();
-      playScoreHit('default', numScore - prevScoreRef.current);
-      setStreak(Math.floor(numScore / 5));
-    }
-    prevScoreRef.current = numScore;
-  }, [0]);
   const playerSessionRef = useRef<PlayerSession | null>(null);
 
-  // ─── TIMEOUT HELPERS ───────────────────────────────────────────────────────
+  const stateRef = useRef({
+    running: false, lives: MAX_LIVES,
+    sig: { score: 0, roundsCompleted: 0, maxSequenceLength: 0, totalErrors: 0, maxStreak: 0, perfectRounds: 0 } as Signals,
+    sequence: [] as HeartId[],
+    playerInput: [] as HeartId[],
+    roundPhase: 'watch' as 'watch' | 'recall',
+    hearts: [] as HeartMesh[],
+    streakCurrent: 0,
+    roundErrors: 0,
+    scene: null as THREE.Scene | null,
+    renderer: null as THREE.WebGLRenderer | null,
+    camera: null as THREE.PerspectiveCamera | null,
+    raycaster: new THREE.Raycaster(),
+    pendingClick: null as THREE.Vector2 | null,
+    flashTimeouts: [] as ReturnType<typeof setTimeout>[],
+    particles: [] as { mesh: THREE.Mesh; vx: number; vy: number; vz: number; life: number; color: number }[],
+  });
 
-  const clearAllTimeouts = useCallback(() => {
-    timeoutRefs.current.forEach(clearTimeout);
-    timeoutRefs.current = [];
+  const [phase, setPhase] = useState<Phase>('start');
+  const [lives, setLives] = useState(MAX_LIVES);
+  const [scoreDisplay, setScoreDisplay] = useState(0);
+  const [finalSig, setFinalSig] = useState<Signals | null>(null);
+  const [roundPhaseDisplay, setRoundPhaseDisplay] = useState<'watch' | 'recall'>('watch');
+  const [isNewBest, setIsNewBest] = useState(false);
+  const { pops, triggerPop } = useScorePop();
+
+  const flashHeart = useCallback((id: HeartId, duration = 400) => {
+    const s = stateRef.current;
+    const hm = s.hearts.find(h => h.id === id);
+    if (!hm) return;
+    const data = HEART_DATA[id];
+    (hm.mesh.material as THREE.MeshPhongMaterial).emissiveIntensity = 2;
+    hm.light.intensity = 5;
+    setTimeout(() => {
+      (hm.mesh.material as THREE.MeshPhongMaterial).emissiveIntensity = 0.4;
+      hm.light.intensity = 0.5;
+    }, duration);
   }, []);
 
-  const addTimeout = useCallback((fn: () => void, ms: number) => {
-    const id = setTimeout(fn, ms);
-    timeoutRefs.current.push(id);
-  }, []);
-
-  // ─── END GAME ──────────────────────────────────────────────────────────────
-
-  const endGame = useCallback(() => {
-    clearAllTimeouts();
+  const endGame = useCallback((outOfLives = false) => {
+    const s = stateRef.current;
+    s.running = false;
+    s.flashTimeouts.forEach(t => clearTimeout(t));
+    cancelAnimationFrame(animRef.current);
+    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
     if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
-    // Personal best tracking
     try {
-      const _pbPrev = parseInt(localStorage.getItem(PB_KEY) || '0', 10);
-      const _pbVal = parseFloat(String(sigRef.current?.longestSequence ?? 0));
-      if (!isNaN(_pbVal) && _pbVal > _pbPrev) {
-        localStorage.setItem(PB_KEY, String(Math.round(_pbVal)));
-        setIsNewBest(true);
-      }
-    } catch { /* ignore */ }
+      const pb = parseInt(localStorage.getItem(PB_KEY) ?? '0');
+      if (s.sig.score > pb) { localStorage.setItem(PB_KEY, String(s.sig.score)); setIsNewBest(true); }
+    } catch { /**/ }
+    setFinalSig({ ...s.sig }); setPhase('done');
+    hapticVictory(); playVictoryFanfare();
+  }, []);
 
+  const startRound = useCallback((seqLen: number) => {
+    const s = stateRef.current;
+    const seq = Array.from({ length: seqLen }, () => HEART_IDS[Math.floor(Math.random() * 4)]);
+    s.sequence = seq; s.playerInput = []; s.roundPhase = 'watch'; s.roundErrors = 0;
+    if (seq.length > s.sig.maxSequenceLength) s.sig.maxSequenceLength = seq.length;
+    setRoundPhaseDisplay('watch');
 
-    setFinalSig({ ...sigRef.current });
-    setOuterPhase('done');
-  }, [clearAllTimeouts]);
+    s.flashTimeouts.forEach(t => clearTimeout(t));
+    s.flashTimeouts = [];
 
-  // ─── SHOW SEQUENCE ─────────────────────────────────────────────────────────
-  // Lights up each heart in the sequence in order, then opens input phase.
+    let delay = 400;
+    seq.forEach((id, i) => {
+      const t = setTimeout(() => {
+        if (s.running) { flashHeart(id, 400); sfx.countdown(); haptic([20]); }
+      }, delay + i * 650);
+      s.flashTimeouts.push(t);
+    });
+    const totalDelay = delay + seq.length * 650 + 200;
+    const t2 = setTimeout(() => {
+      if (s.running) { s.roundPhase = 'recall'; setRoundPhaseDisplay('recall'); }
+    }, totalDelay);
+    s.flashTimeouts.push(t2);
+  }, [flashHeart]);
 
-  const showSequence = useCallback((seq: HeartId[]) => {
-    clearAllTimeouts();
-    setGamePhase('showing');
-    gamePhasRef.current = 'showing';
-    setActiveHeart(null);
-    setWrongHeart(null);
+  const startLoop = useCallback(() => {
+    if (!mountRef.current) return;
+    const s = stateRef.current;
+    s.running = true; s.lives = MAX_LIVES;
+    s.sig = { score: 0, roundsCompleted: 0, maxSequenceLength: 0, totalErrors: 0, maxStreak: 0, perfectRounds: 0 };
+    s.streakCurrent = 0; s.hearts = []; s.particles = [];
+    setLives(MAX_LIVES); setScoreDisplay(0); setPhase('playing');
+    stopMusicRef.current = startMusic('chill');
 
-    const speed       = getShowSpeed(roundRef.current);
-    const litDuration = Math.round(speed * 0.55); // how long each heart stays lit
+    const W = window.innerWidth, H = window.innerHeight;
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(W, H);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setClearColor(0x0a0510);
+    mountRef.current.innerHTML = '';
+    mountRef.current.appendChild(renderer.domElement);
+    s.renderer = renderer;
 
-    seq.forEach((heartId, i) => {
-      // Light up — each heart plays its distinct note (love chord arpeggio)
-      addTimeout(() => {
-        setActiveHeart(heartId);
-        playHeartSfx(heartId);
-        haptic([15]);
-      }, 450 + i * speed);
+    const scene = new THREE.Scene();
+    scene.fog = new THREE.FogExp2(0x0a0510, 0.04);
+    s.scene = scene;
+    const camera = new THREE.PerspectiveCamera(65, W / H, 0.1, 200);
+    camera.position.set(0, 0, 10);
+    s.camera = camera;
 
-      // Turn off
-      addTimeout(() => {
-        setActiveHeart(null);
-      }, 450 + i * speed + litDuration);
+    scene.add(new THREE.AmbientLight(0x1a0818, 5));
+    const pinkLight = new THREE.PointLight(0xec4899, 2, 20);
+    pinkLight.position.set(0, 5, 5);
+    scene.add(pinkLight);
+
+    // Star field
+    const starGeo = new THREE.BufferGeometry();
+    const starPos = new Float32Array(500 * 3);
+    for (let i = 0; i < 500; i++) {
+      starPos[i * 3] = (Math.random() - 0.5) * 40;
+      starPos[i * 3 + 1] = (Math.random() - 0.5) * 30;
+      starPos[i * 3 + 2] = (Math.random() - 0.5) * 20 - 5;
+    }
+    starGeo.setAttribute('position', new THREE.BufferAttribute(starPos, 3));
+    scene.add(new THREE.Points(starGeo, new THREE.PointsMaterial({ color: 0xffc0cb, size: 0.04, transparent: true, opacity: 0.4 })));
+
+    // Place 4 hearts in a 2x2 grid
+    const positions = [[-2.5, 2], [2.5, 2], [-2.5, -1.5], [2.5, -1.5]];
+    HEART_IDS.forEach((id, i) => {
+      const data = HEART_DATA[id];
+      const group = createHeart3D(data.color, data.emissive);
+      group.position.set(positions[i][0], positions[i][1], 0);
+      scene.add(group);
+
+      // Find mesh for raycasting (use first child)
+      const mesh = group.children[0] as THREE.Mesh;
+      mesh.userData.heartId = id;
+
+      const light = new THREE.PointLight(data.color, 0.5, 5);
+      light.position.set(positions[i][0], positions[i][1], 2);
+      scene.add(light);
+
+      s.hearts.push({ mesh, light, id });
     });
 
-    // Transition to input phase after all hearts shown
-    addTimeout(() => {
-      setGamePhase('input');
-      gamePhasRef.current = 'input';
-      playerIndexRef.current = 0;
-      tapTimesRef.current    = [];
-      lastTapTimeRef.current = Date.now();
-    }, 450 + seq.length * speed + 350);
-  }, [clearAllTimeouts, addTimeout]);
+    setTimeout(() => { if (s.running) startRound(3); }, 600);
 
-  // ─── HANDLE HEART TAP ──────────────────────────────────────────────────────
-
-  const handleHeartTap = useCallback((heartId: HeartId) => {
-    if (gamePhasRef.current !== 'input') return;
-
-    const seq      = sequenceRef.current;
-    const idx      = playerIndexRef.current;
-    const expected = seq[idx];
-    const now      = Date.now();
-
-    if (heartId === expected) {
-      // ✅ Correct tap — play heart's distinct note (matches the sequence sound)
-      playHeartSfx(heartId);
-      haptic([20]);
-      tapTimesRef.current.push(now - lastTapTimeRef.current);
-      lastTapTimeRef.current = now;
-      playerIndexRef.current++;
-
-      if (playerIndexRef.current >= seq.length) {
-        // 🎉 Round complete!
-        setGamePhase('round-complete');
-        gamePhasRef.current = 'round-complete';
-
-        // Perfect round: all taps were fast (< 600ms between taps)
-        const isPerfect =
-          tapTimesRef.current.length > 0 &&
-          tapTimesRef.current.every(t => t < 600);
-        if (isPerfect) {
-          sigRef.current.perfectRounds++;
-          sigRef.current.score += 1; // bonus point
-        }
-
-        // Update longest sequence
-        if (seq.length > sigRef.current.longestSequence) {
-          sigRef.current.longestSequence = seq.length;
-        }
-        sigRef.current.score += seq.length;
-
-        sfx.success();
-        haptic([30, 40, 30]);
-        setRoundFlash(true);
-
-        // Advance to next round after brief celebration
-        addTimeout(() => {
-          setRoundFlash(false);
-          const newRound = roundRef.current + 1;
-          roundRef.current = newRound;
-          setRound(newRound);
-
-          const newSeq: HeartId[] = [...seq, randomHeart()];
-          sequenceRef.current = newSeq;
-          setSequence([...newSeq]);
-
-          sigRef.current.round          = newRound;
-          sigRef.current.sequenceLength = newSeq.length;
-
-          showSequence(newSeq);
-        }, 900);
-      }
-
-    } else {
-      // ❌ Wrong tap
-      sfx.collision();
-      haptic([200]);
-
-      setWrongHeart(heartId);
-      sigRef.current.wrongTaps++;
-
-      const newLives = livesRef.current - 1;
-      livesRef.current              = newLives;
-      sigRef.current.livesRemaining = newLives;
-      setLives(newLives);
-      setGamePhase('wrong-pause');
-      gamePhasRef.current = 'wrong-pause';
-
-      // Clear wrong heart highlight after animation
-      addTimeout(() => setWrongHeart(null), 700);
-
-      if (newLives <= 0) {
-        // Update longest sequence on death
-        if (seq.length > sigRef.current.longestSequence) {
-          sigRef.current.longestSequence = seq.length;
-        }
-        sfx.fail();
-        addTimeout(() => endGame(), 900);
-      } else {
-        // Re-show sequence after pause
-        addTimeout(() => showSequence(seq), 1400);
-      }
-    }
-  }, [addTimeout, showSequence, endGame]);
-
-  // ─── START GAME ────────────────────────────────────────────────────────────
-
-  const startGameLoop = useCallback(() => {
-    const firstHeart      = randomHeart();
-    const initialSeq: HeartId[] = [firstHeart];
-
-    sequenceRef.current    = initialSeq;
-    livesRef.current       = MAX_LIVES;
-    roundRef.current       = 1;
-    playerIndexRef.current = 0;
-    tapTimesRef.current    = [];
-    lastTapTimeRef.current = 0;
-    sigRef.current = {
-      sequenceLength: 1, round: 1, livesRemaining: MAX_LIVES,
-      perfectRounds: 0, longestSequence: 0, wrongTaps: 0, score: 0,
+    const handleResize = () => {
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
     };
+    window.addEventListener('resize', handleResize);
 
-    setSequence(initialSeq);
-    setLives(MAX_LIVES);
-    setRound(1);
-    setActiveHeart(null);
-    setWrongHeart(null);
-    setRoundFlash(false);
-    setOuterPhase('playing');
+    let t = 0;
+    const loop = () => {
+      if (!s.running) { renderer.dispose(); return; }
+      t += 0.016;
 
-    stopMusicRef.current = startMusic('calm');
-    showSequence(initialSeq);
-  }, [showSequence]);
+      // Process click
+      if (s.pendingClick && s.roundPhase === 'recall') {
+        s.raycaster.setFromCamera(s.pendingClick, camera);
+        const heartMeshes = s.hearts.map(h => h.mesh);
+        const hits = s.raycaster.intersectObjects(heartMeshes);
+        if (hits.length > 0) {
+          const hitMesh = hits[0].object as THREE.Mesh;
+          const heartId = hitMesh.userData.heartId as HeartId;
+          const expectedId = s.sequence[s.playerInput.length];
 
-  // ─── PHASE TRANSITIONS ────────────────────────────────────────────────────
+          flashHeart(heartId, 300);
 
-  const handleStart = useCallback(async (name: string, avatar: string) => {
-    setPlayerName(name);
-    setPlayerAvatar(avatar);
-    await initAudio(); sfx.click();
-    playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar);
-    setOuterPhase('countdown');
-  }, []);
+          if (heartId === expectedId) {
+            s.playerInput.push(heartId);
+            sfx.collect(); haptic([20]);
 
-  const handleCountdownDone = useCallback(() => {
-    startGameLoop();
-  }, [startGameLoop]);
+            if (s.playerInput.length === s.sequence.length) {
+              // Round complete!
+              s.sig.roundsCompleted++;
+              s.streakCurrent++;
+              if (s.streakCurrent > s.sig.maxStreak) s.sig.maxStreak = s.streakCurrent;
+              if (s.roundErrors === 0) s.sig.perfectRounds++;
+              const pts = s.sequence.length * 15;
+              s.sig.score += pts; setScoreDisplay(s.sig.score);
+              playScoreHit(); hapticScore();
+              triggerPop(`+${pts}`, window.innerWidth / 2, 150);
+              // Burst particles from all hearts
+              s.hearts.forEach(hm => {
+                const data = HEART_DATA[hm.id];
+                for (let p = 0; p < 5; p++) {
+                  const pm = new THREE.Mesh(new THREE.SphereGeometry(0.06, 6, 6), new THREE.MeshBasicMaterial({ color: data.color, transparent: true, opacity: 1 }));
+                  pm.position.copy(hm.mesh.position);
+                  scene.add(pm);
+                  s.particles.push({ mesh: pm, vx: (Math.random() - 0.5) * 0.12, vy: 0.08, vz: 0.05, life: 1, color: data.color });
+                }
+              });
+              setTimeout(() => { if (s.running) startRound(Math.min(3 + Math.floor(s.sig.roundsCompleted / 2), 8)); }, 700);
+            }
+          } else {
+            s.sig.totalErrors++; s.roundErrors++; s.streakCurrent = 0;
+            sfx.collision(); hapticFail();
+            s.lives--;
+            setLives(s.lives);
+            s.playerInput = [];
+            if (s.lives <= 0) { endGame(); return; }
+            setTimeout(() => { if (s.running) startRound(s.sequence.length); }, 600);
+          }
+        }
+        s.pendingClick = null;
+      }
 
-  const handlePlayAgain = useCallback(() => {
-    setOuterPhase('start');
-    setFinalSig(null);
-  
-    setIsNewBest(false);
-    setStreak(0);
-    prevScoreRef.current = 0;
-  }, []);
+      // Pulse hearts
+      s.hearts.forEach((hm, i) => {
+        const mat = hm.mesh.material as THREE.MeshPhongMaterial;
+        if (s.roundPhase === 'recall') {
+          mat.emissiveIntensity = 0.3 + Math.sin(t * 3 + i * 1.5) * 0.15;
+        }
+      });
 
-  // ─── CLEANUP ON UNMOUNT ───────────────────────────────────────────────────
+      // Particles
+      for (let i = s.particles.length - 1; i >= 0; i--) {
+        const p = s.particles[i];
+        p.mesh.position.x += p.vx; p.mesh.position.y += p.vy; p.mesh.position.z += p.vz;
+        p.vy -= 0.004; p.life -= 0.03;
+        (p.mesh.material as THREE.MeshBasicMaterial).opacity = p.life;
+        if (p.life <= 0) { scene.remove(p.mesh); s.particles.splice(i, 1); }
+      }
+
+      pinkLight.intensity = 1.5 + Math.sin(t * 2) * 0.5;
+      renderer.render(scene, camera);
+      animRef.current = requestAnimationFrame(loop);
+    };
+    animRef.current = requestAnimationFrame(loop);
+
+    return () => {
+      s.running = false;
+      s.flashTimeouts.forEach(t2 => clearTimeout(t2));
+      window.removeEventListener('resize', handleResize);
+      renderer.dispose();
+    };
+  }, [endGame, startRound, flashHeart, triggerPop]);
 
   useEffect(() => {
-    return () => {
-      clearAllTimeouts();
-      if (stopMusicRef.current) stopMusicRef.current();
+    const el = mountRef.current; if (!el) return;
+    const onDown = (e: PointerEvent) => {
+      if (phase !== 'playing') return;
+      const s = stateRef.current; if (!s.renderer) return;
+      const rect = s.renderer.domElement.getBoundingClientRect();
+      s.pendingClick = new THREE.Vector2(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1);
     };
-  }, [clearAllTimeouts]);
+    el.addEventListener('pointerdown', onDown);
+    return () => el.removeEventListener('pointerdown', onDown);
+  }, [phase]);
 
-  // ─── END SCREEN INSIGHTS ─────────────────────────────────────────────────
+  useEffect(() => () => {
+    cancelAnimationFrame(animRef.current);
+    if (timerRef.current) clearInterval(timerRef.current);
+    if (stopMusicRef.current) stopMusicRef.current();
+    stateRef.current.flashTimeouts.forEach(t => clearTimeout(t));
+    stateRef.current.renderer?.dispose();
+  }, []);
 
-  function buildInsights(sig: Signals) {
-    return [
-      {
-        label: 'Note Length',
-        value: `${sig.longestSequence} hearts`,
-        color: sig.longestSequence >= 8 ? '#4ade80' : sig.longestSequence >= 5 ? '#facc15' : '#ef4444',
-      },
-      {
-        label: 'Perfect Rounds',
-        value: String(sig.perfectRounds),
-        color: ACCENT,
-      },
-      {
-        label: 'Wrong Taps',
-        value: String(sig.wrongTaps),
-        color: sig.wrongTaps <= 2 ? '#4ade80' : sig.wrongTaps <= 5 ? '#facc15' : '#ef4444',
-      },
-      {
-        label: 'Rounds Survived',
-        value: String(sig.round),
-        color: 'var(--color-text)',
-      },
-    ];
-  }
+  const handleStart = useCallback(async (n: string, a: string) => {
+    playerSessionRef.current = savePlayerSession(GAME_ID, n, a);
+    await initAudio(); sfx.click(); setPhase('countdown');
+  }, []);
+  const handlePlayAgain = useCallback(() => { setPhase('start'); setScoreDisplay(0); setFinalSig(null); setLives(MAX_LIVES); setIsNewBest(false); }, []);
 
-  // ─── HEART BUTTON STYLE ───────────────────────────────────────────────────
-
-  function heartButtonStyle(heart: Heart): CSSProperties {
-    const isActive = activeHeart === heart.id;
-    const isWrong  = wrongHeart  === heart.id;
-    const canTap   = gamePhase === 'input';
-
-    return {
-      width: 100,
-      height: 100,
-      borderRadius: '50%',
-      border: `3px solid ${isWrong ? '#ef4444' : heart.color}`,
-      background: isActive
-        ? `radial-gradient(circle at 40% 35%, ${heart.color}ee 0%, ${heart.color}88 50%, ${heart.color}22 100%)`
-        : isWrong
-        ? 'radial-gradient(circle at 40% 35%, rgba(239,68,68,0.5) 0%, rgba(239,68,68,0.1) 100%)'
-        : `radial-gradient(circle at 40% 35%, ${heart.color}44 0%, ${heart.color}11 100%)`,
-      boxShadow: isActive
-        ? `0 0 36px 14px ${heart.glow}, 0 0 80px 32px ${heart.glow.replace('0.7', '0.25')}, inset 0 0 20px ${heart.color}44`
-        : isWrong
-        ? '0 0 28px 12px rgba(239,68,68,0.55), inset 0 0 14px rgba(239,68,68,0.3)'
-        : `0 0 12px 4px ${heart.glow.replace('0.7', '0.1')}`,
-      fontSize: 44,
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      cursor: canTap ? 'pointer' : 'default',
-      transform: isActive ? 'scale(1.18)' : isWrong ? 'scale(0.88)' : 'scale(1)',
-      transition: 'transform 0.13s ease-out, box-shadow 0.13s ease-out, background 0.13s ease-out, border-color 0.13s ease-out',
-      animation: !isActive && !isWrong
-        ? `heartIdle 2.4s ${heart.idleDelay} ease-in-out infinite`
-        : 'none',
-      userSelect: 'none',
-      WebkitUserSelect: 'none',
-      touchAction: 'manipulation',
-      outline: 'none',
-      flexShrink: 0,
-    };
-  }
-
-  // ─── PHASE STATUS LABEL ───────────────────────────────────────────────────
-
-  function getPhaseLabel(): string {
-    switch (gamePhase) {
-      case 'showing':        return 'Watch closely... 👀';
-      case 'input':          return 'Your turn! 💕';
-      case 'round-complete': return 'Perfect! ✨';
-      case 'wrong-pause':    return 'Oops! 💔';
-    }
-  }
-
-  const accentColor = theme.colors.accent ?? ACCENT;
-
-  // ─── RENDER ───────────────────────────────────────────────────────────────
+  const livesHtml = Array.from({ length: MAX_LIVES }, (_, i) => (
+    <span key={i} style={{ fontSize: 18, opacity: i < lives ? 1 : 0.3 }}>💖</span>
+  ));
 
   return (
-    <>
-      {outerPhase === 'start' && showInstructions && (
-        <SwipeInstructions
-          gameId="love-note"
-          steps={[{ icon: "👀", title: "Watch the sequence", body: "Hearts light up in order — memorize which ones and when." }, { icon: "💕", title: "Repeat it back", body: "Tap the same hearts in the exact same order." }, { icon: "📝", title: "Sequences get longer", body: "Each round adds one more heart. Don't lose your lives!" }]}
-          onDone={() => setShowInstructions(false)}
-        />
-      )}
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accentColor}
-      background="linear-gradient(160deg, #1a0520 0%, #2a0835 25%, #350a45 50%, #2a0830 75%, #1a0520 100%), radial-gradient(ellipse at 60% 30%, rgba(255,100,150,0.12) 0%, transparent 55%)">
-
-
-      {/* ── CSS Keyframes ─────────────────────────────────────────────────── */}
-      <style dangerouslySetInnerHTML={{ __html: `
-        @keyframes heartIdle {
-          0%, 100% { transform: scale(1); }
-          50%       { transform: scale(1.06); }
-        }
-        @keyframes petalDrift {
-          0%   { transform: translateY(105vh) rotate(0deg);   opacity: 0;    }
-          8%   { opacity: 0.6; }
-          50%  { transform: translateY(50vh)  rotate(180deg) translateX(12px); opacity: 0.4; }
-          92%  { opacity: 0.2; }
-          100% { transform: translateY(-8vh)  rotate(360deg) translateX(-8px); opacity: 0; }
-        }
-        @keyframes roundGlow {
-          0%   { background: #0a0308; }
-          35%  { background: #1a0514; }
-          100% { background: #0a0308; }
-        }
-      `}} />
-
-      {/* ── Start Screen ──────────────────────────────────────────────────── */}
-      {outerPhase === 'start' && (
-        <GameStartScreen
-          emoji={GAME_EMOJI}
-          title={GAME_TITLE}
-          description={GAME_TAGLINE}
-          ctaLabel="Play 💌"
-          accentColor={accentColor}
-          onStart={handleStart}
-          gradient="radial-gradient(ellipse 80% 70% at 50% 30%, #1a0510 0%, #0e030a 55%, #060206 100%)"
-        />
-      )}
-
-      {/* ── Countdown ─────────────────────────────────────────────────────── */}
-      {outerPhase === 'countdown' && (
-        <Countdown onComplete={handleCountdownDone} accentColor={accentColor} />
-      )}
-
-      {/* ── Playing ───────────────────────────────────────────────────────── */}
-      {outerPhase === 'playing' && (
-        <div
-          data-game="love-note"
-          style={{
-            position: 'absolute',
-            inset: 0,
-            top: 56,
-            background: GAME_BG,
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            justifyContent: 'center',
-            paddingTop: 80,   // clear the floating HUD
-            paddingBottom: 24,
-            overflow: 'hidden',
-            boxShadow: 'inset 0 0 80px rgba(0,0,0,0.5)',
-            animation: roundFlash ? 'roundGlow 0.7s ease-out' : 'none',
-          }}
-        >
-          {/* ── Rose petals background ──────────────────────────────────── */}
-          {PETALS.map((p, i) => (
-            <div
-              key={i}
-              style={{
-                position: 'absolute',
-                left: p.left,
-                bottom: 0,
-                fontSize: p.size,
-                animation: `petalDrift ${p.duration} ${p.delay} ease-in-out infinite`,
-                pointerEvents: 'none',
-                zIndex: 0,
-                willChange: 'transform',
-              }}
-            >
-              🌸
-            </div>
-          ))}
-
-          {/* ── HUD ─────────────────────────────────────────────────────── */}
-          <GameHUD
-            accentColor={accentColor}
-            items={[
-              { label: 'NOTE LENGTH 💌', value: sequence.length, testId: 'score' },
-              { label: 'HEARTS ❤️',     value: lives },
-              { label: 'ROUND',          value: round, testId: 'timer' },
-            ]}
-          />
-
-          {/* ── Lives ───────────────────────────────────────────────────── */}
-          <div style={{ display: 'flex', gap: 10, marginBottom: 18, zIndex: 1 }}>
-            {Array.from({ length: MAX_LIVES }).map((_, i) => (
-              <span
-                key={i}
-                style={{
-                  fontSize: 28,
-                  display: 'inline-block',
-                  transition: 'all 0.35s ease',
-                  opacity: i < lives ? 1 : 0.22,
-                  transform: i === lives ? 'scale(0.75) rotate(-10deg)' : 'scale(1)',
-                  filter: i >= lives ? 'grayscale(1)' : 'none',
-                }}
-              >
-                {i < lives ? '💗' : '🩶'}
-              </span>
-            ))}
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}
+      background="radial-gradient(ellipse 80% 70% at 50% 30%,#1a0510 0%,#0e030a 60%,#050108 100%)">
+      {phase === 'start' && <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description={GAME_TAGLINE} ctaLabel="Tap From the Heart 💖" accentColor={theme.colors.accent ?? ACCENT} onStart={handleStart} />}
+      {phase === 'countdown' && <Countdown onComplete={startLoop} accentColor={theme.colors.accent ?? ACCENT} />}
+      <div ref={mountRef} style={{ position: 'absolute', inset: 0, display: phase === 'playing' ? 'block' : 'none', touchAction: 'none' }} />
+      {phase === 'playing' && (
+        <>
+          <GameHUD accentColor={theme.colors.accent ?? ACCENT} items={[{ label: 'SCORE', value: scoreDisplay }]} />
+          <div style={{ position: 'fixed', top: 70, left: '50%', transform: 'translateX(-50%)', zIndex: 50, display: 'flex', gap: 4 }}>{livesHtml}</div>
+          <div style={{ position: 'fixed', top: 100, left: '50%', transform: 'translateX(-50%)', zIndex: 50, pointerEvents: 'none', background: roundPhaseDisplay === 'watch' ? 'rgba(236,72,153,0.2)' : 'rgba(74,222,128,0.2)', border: `1px solid ${roundPhaseDisplay === 'watch' ? '#ec4899' : '#4ade80'}`, borderRadius: 20, padding: '5px 16px', color: roundPhaseDisplay === 'watch' ? '#fbcfe8' : '#86efac', fontSize: 13, fontWeight: 700 }}>
+            {roundPhaseDisplay === 'watch' ? '💖 WATCH' : '✋ REPEAT'}
           </div>
-
-          {/* ── Phase status ────────────────────────────────────────────── */}
-          <div style={{
-            color: 'rgba(255,255,255,0.6)',
-            fontSize: 14,
-            letterSpacing: '0.05em',
-            marginBottom: 6,
-            zIndex: 1,
-            minHeight: 20,
-          }}>
-            {getPhaseLabel()}
-          </div>
-
-          {/* ── Sequence length label ────────────────────────────────────── */}
-          <div style={{
-            color: accentColor,
-            fontSize: 15,
-            fontWeight: 700,
-            marginBottom: 28,
-            zIndex: 1,
-            letterSpacing: '-0.2px',
-          }}>
-            Your love note is {sequence.length} heart{sequence.length !== 1 ? 's' : ''} long 💌
-          </div>
-
-          {/* ── 2×2 Heart grid ──────────────────────────────────────────── */}
-          <div style={{
-            display: 'grid',
-            gridTemplateColumns: '1fr 1fr',
-            gap: 24,
-            zIndex: 1,
-          }}>
-            {HEARTS.map((heart) => (
-              <button
-                key={heart.id}
-                onClick={() => handleHeartTap(heart.id)}
-                disabled={gamePhase !== 'input'}
-                style={heartButtonStyle(heart)}
-                aria-label={`${heart.id} heart`}
-              >
-                {heart.emoji}
-              </button>
-            ))}
-          </div>
-        </div>
+          <ScorePopEffect pops={pops} accentColor={ACCENT} />
+        </>
       )}
-      {/* New best banner */}
+      {phase === 'done' && finalSig && (
+        <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI} score={String(finalSig.score)} personality={getPersonality(finalSig)}
+          insights={[
+            { label: 'Rounds Done', value: `${finalSig.roundsCompleted}`, color: ACCENT },
+            { label: 'Max Length', value: `${finalSig.maxSequenceLength}`, color: '#fbbf24' },
+            { label: 'Perfect Rounds', value: `${finalSig.perfectRounds}`, color: '#4ade80' },
+            { label: 'Best Streak', value: `×${finalSig.maxStreak}`, color: '#a855f7' },
+          ]}
+          accentColor={theme.colors.accent ?? ACCENT} onPlayAgain={handlePlayAgain} didWin={finalSig.roundsCompleted >= 5} />
+      )}
+      {phase === 'done' && finalSig && <WebhookEmitter theme={theme} sig={finalSig} personality={getPersonality(finalSig)} player={playerSessionRef.current} />}
       <AnimatePresence>
         {isNewBest && (
-          <motion.div
-            key="new-best"
-            initial={{ opacity: 0, y: -20, scale: 0.8 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -20 }}
-            transition={{ duration: 0.4, delay: 0.5 }}
-            style={{
-              position: 'fixed', top: '10%', left: '50%', transform: 'translateX(-50%)',
-              zIndex: 90, pointerEvents: 'none',
-              background: 'linear-gradient(135deg, #fbbf24, #f59e0b)',
-              borderRadius: 20, padding: '8px 20px', fontSize: 20,
-              fontWeight: 900, color: '#000', whiteSpace: 'nowrap',
-              boxShadow: '0 4px 20px rgba(251,191,36,0.5)',
-            }}
-          >
+          <motion.div key="pb" initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
+            style={{ position: 'fixed', top: '10%', left: '50%', transform: 'translateX(-50%)', zIndex: 90, pointerEvents: 'none', background: 'linear-gradient(135deg,#fbbf24,#f59e0b)', borderRadius: 20, padding: '8px 20px', fontSize: 20, fontWeight: 900, color: '#000' }}>
             🏆 New Best!
           </motion.div>
         )}
       </AnimatePresence>
-
-
-
-      {/* ── End Screen ────────────────────────────────────────────────────── */}
-      {outerPhase === 'done' && finalSig && (
-        <EndScreen
-          gameId={GAME_ID}
-          title={`Love Note: ${finalSig.longestSequence} hearts 💌`}
-          emoji={GAME_EMOJI}
-          score={String(finalSig.longestSequence)}
-          personality={getPersonality(finalSig)}
-          insights={buildInsights(finalSig)}
-          accentColor={accentColor}
-          onPlayAgain={handlePlayAgain}
-          didWin={finalSig.longestSequence >= 6}
-        />
-      )}
-
-      {/* ── Webhook (fires exactly once on mount) ─────────────────────────── */}
-      {outerPhase === 'done' && finalSig && (
-        <WebhookEmitter
-          theme={theme}
-          sig={finalSig}
-          personality={getPersonality(finalSig)}
-          player={playerSessionRef.current}
-        />
-      )}
-
-      {outerPhase === 'playing' && (
-        <>
-          <ScorePopEffect pops={pops} accentColor={CATEGORY_ACCENT} />
-          <StreakBadge streak={streak} accentColor={CATEGORY_ACCENT} />
-        </>
-      )}
     </GameShell>
-    </>
   );
 }
 
-// ─── WEBHOOK EMITTER ─────────────────────────────────────────────────────────
-// Isolated component so postWebhook fires exactly once on mount.
-
-function WebhookEmitter({ theme, sig, personality, player }: {
-  theme: ReturnType<typeof useBrandTheme>;
-  sig: Signals;
-  personality: string;
-  player: PlayerSession | null;
-}) {
+function WebhookEmitter({ theme, sig, personality, player }: { theme: ReturnType<typeof useBrandTheme>; sig: Signals; personality: string; player: PlayerSession | null; }) {
   const fired = useRef(false);
   useEffect(() => {
-    if (fired.current) return;
-    fired.current = true;
-    postWebhook(theme, GAME_ID, {
-      personality,
-      score:           sig.longestSequence,
-      longestSequence: sig.longestSequence,
-      sequenceLength:  sig.sequenceLength,
-      round:           sig.round,
-      livesRemaining:  sig.livesRemaining,
-      perfectRounds:   sig.perfectRounds,
-      wrongTaps:       sig.wrongTaps,
-    }, player);
+    if (fired.current) return; fired.current = true;
+    postWebhook(theme, GAME_ID, { personality, score: sig.score, roundsCompleted: sig.roundsCompleted }, player);
   }, [theme, sig, personality, player]);
   return null;
 }

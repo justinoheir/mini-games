@@ -1,15 +1,9 @@
-/**
- * ══════════════════════════════════════════════════════════════════
- *  ETHER MINI-GAMES — MIRROR MIND
- *  Half a symmetrical pattern is shown on the left.
- *  Tap the right-half cells to complete the mirror image.
- *
- *  Signals: roundsCompleted, correctTaps, wrongTaps, maxStreak
- * ══════════════════════════════════════════════════════════════════
- */
-
 'use client';
+/**
+ * MIRROR MIND — 3D grid with mirror plane. Complete the left pattern on the right.
+ */
 import { useEffect, useRef, useState, useCallback } from 'react';
+import * as THREE from 'three';
 import GameShell from '@/components/GameShell';
 import GameHUD from '@/components/GameHUD';
 import GameStartScreen from '@/components/GameStartScreen';
@@ -20,432 +14,318 @@ import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
 
-// ── Constants ────────────────────────────────────────────────────────────────
-const GAME_ID   = 'mirror-mind';
-const PB_KEY    = 'mg_pb_mirror-mind';
-const ACCENT    = '#8b5cf6';
-const DURATION  = 45;
-const GAME_EMOJI   = '🪞';
-const GAME_TITLE   = 'Mirror Mind';
+const GAME_ID = 'mirror-mind';
+const PB_KEY = 'mg_pb_mirror-mind';
+const ACCENT = '#8b5cf6';
+const DURATION = 45;
+const GAME_EMOJI = '🪞';
+const GAME_TITLE = 'Mirror Mind';
 const GAME_TAGLINE = 'Half the pattern is shown — tap cells to complete the mirror image.';
 
-const ROWS      = 4;
-const HALF_COLS = 3;   // 3 cols per side, 6 total
-const FLASH_MS  = 340;
-const PAUSE_MS  = 550;
+const ROWS = 4, HALF_COLS = 3;
 
-// ── Signals ──────────────────────────────────────────────────────────────────
-interface Signals {
-  score: number;
-  roundsCompleted: number;
-  correctTaps: number;
-  wrongTaps: number;
-  maxStreak: number;
-}
+interface Signals { score: number; roundsCompleted: number; correctTaps: number; wrongTaps: number; maxStreak: number; }
 
 function getPersonality(sig: Signals): string {
   const total = sig.correctTaps + sig.wrongTaps;
   const acc = total > 0 ? sig.correctTaps / total : 0;
   if (sig.roundsCompleted >= 8 && acc >= 0.90) return 'Mirror Master 🪞';
   if (sig.roundsCompleted >= 5 && acc >= 0.75) return 'Spatial Thinker 🧠';
-  if (sig.correctTaps >= 18)                    return 'Pattern Finder 🔍';
-  return 'Learning Reflections 🌊';
+  if (acc >= 0.8) return 'Reflective Mind ✨';
+  if (sig.roundsCompleted >= 3) return 'Pattern Seeker 🔍';
+  return 'Getting Symmetric 🌀';
 }
 
 type Phase = 'start' | 'countdown' | 'playing' | 'done';
 
-// ── Layout ───────────────────────────────────────────────────────────────────
-interface Layout {
-  cellSize: number; gap: number; divGap: number;
-  startX: number; startY: number; totalW: number; totalH: number;
-}
-function getLayout(W: number, H: number): Layout {
-  const margin = 20, gap = 6, divGap = 16;
-  const availW = W - margin * 2;
-  const cellSize = Math.floor((availW - 4 * gap - divGap) / 6);
-  const totalW = cellSize * 6 + 4 * gap + divGap;
-  const totalH = cellSize * ROWS + gap * (ROWS - 1);
-  const startX = Math.floor((W - totalW) / 2);
-  const startY = Math.max(130, Math.floor((H - totalH) / 2));
-  return { cellSize, gap, divGap, startX, startY, totalW, totalH };
-}
-function cellX(col: number, l: Layout): number {
-  return col < HALF_COLS
-    ? l.startX + col * (l.cellSize + l.gap)
-    : l.startX + HALF_COLS * (l.cellSize + l.gap) + l.divGap + (col - HALF_COLS) * (l.cellSize + l.gap);
+interface CellObj {
+  mesh: THREE.Mesh; row: number; col: number; side: 'left' | 'right';
+  isPattern: boolean; tapped: boolean; correct: boolean;
 }
 
-// ── Pattern helpers ───────────────────────────────────────────────────────────
-function generateLeft(round: number): boolean[] {
-  const count = Math.min(2 + Math.floor(round * 0.7), 7);
-  const cells  = ROWS * HALF_COLS;
-  const pat    = new Array<boolean>(cells).fill(false);
-  let filled   = 0;
-  while (filled < count) {
-    const i = Math.floor(Math.random() * cells);
-    if (!pat[i]) { pat[i] = true; filled++; }
-  }
-  return pat;
-}
-function mirrorRight(left: boolean[]): boolean[] {
-  const right = new Array<boolean>(ROWS * HALF_COLS).fill(false);
-  for (let row = 0; row < ROWS; row++)
-    for (let c = 0; c < HALF_COLS; c++)
-      right[row * HALF_COLS + c] = left[row * HALF_COLS + (HALF_COLS - 1 - c)];
-  return right;
-}
-
-// ── Rounded rect ─────────────────────────────────────────────────────────────
-function rRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
-  const rad = Math.min(r, w / 2, h / 2);
-  ctx.beginPath();
-  ctx.moveTo(x + rad, y); ctx.lineTo(x + w - rad, y); ctx.quadraticCurveTo(x + w, y, x + w, y + rad);
-  ctx.lineTo(x + w, y + h - rad); ctx.quadraticCurveTo(x + w, y + h, x + w - rad, y + h);
-  ctx.lineTo(x + rad, y + h); ctx.quadraticCurveTo(x, y + h, x, y + h - rad);
-  ctx.lineTo(x, y + rad); ctx.quadraticCurveTo(x, y, x + rad, y);
-  ctx.closePath();
-}
-
-// ── Game state ────────────────────────────────────────────────────────────────
-interface CellFlash { color: string; end: number; }
-interface GameState {
-  running: boolean; timeLeft: number; sig: Signals; accentColor: string;
-  leftPattern: boolean[]; expectedRight: boolean[];
-  foundRight: boolean[]; rightFlashes: (CellFlash | null)[];
-  streak: number; remainingCorrect: number;
-  pauseUntil: number; pauseSuccess: boolean; round: number;
-}
-
-// ── Draw ──────────────────────────────────────────────────────────────────────
-function drawFrame(ctx: CanvasRenderingContext2D, W: number, H: number, s: GameState) {
-  const now    = performance.now();
-  const accent = s.accentColor;
-  const l      = getLayout(W, H);
-  const r      = Math.max(6, l.cellSize * 0.12);
-
-  // Background
-  const bg = ctx.createRadialGradient(W * 0.5, H * 0.3, 0, W * 0.5, H * 0.7, Math.max(W, H) * 0.9);
-  bg.addColorStop(0, '#0d0720'); bg.addColorStop(0.6, '#080414'); bg.addColorStop(1, '#040208');
-  ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
-
-  const fs = Math.max(13, Math.floor(W * 0.032));
-  ctx.save(); ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
-  ctx.font = `700 ${fs}px -apple-system, sans-serif`;
-
-  // Column labels
-  const leftMid  = l.startX + (HALF_COLS * l.cellSize + (HALF_COLS - 1) * l.gap) / 2;
-  const rightStartX = l.startX + HALF_COLS * (l.cellSize + l.gap) + l.divGap;
-  const rightMid = rightStartX + (HALF_COLS * l.cellSize + (HALF_COLS - 1) * l.gap) / 2;
-
-  ctx.fillStyle = `${accent}cc`;
-  ctx.fillText('PATTERN', leftMid, l.startY - 10);
-  ctx.fillStyle = 'rgba(255,255,255,0.65)';
-  ctx.fillText('MIRROR IT', rightMid, l.startY - 10);
-  ctx.restore();
-
-  // Divider
-  const divX = l.startX + HALF_COLS * (l.cellSize + l.gap) + l.divGap / 2;
-  ctx.save(); ctx.strokeStyle = `${accent}44`; ctx.lineWidth = 1.5;
-  ctx.setLineDash([5, 5]);
-  ctx.beginPath(); ctx.moveTo(divX, l.startY - 6); ctx.lineTo(divX, l.startY + l.totalH + 6); ctx.stroke();
-  ctx.setLineDash([]); ctx.restore();
-
-  // All cells
-  for (let row = 0; row < ROWS; row++) {
-    for (let side = 0; side < 2; side++) {
-      for (let c = 0; c < HALF_COLS; c++) {
-        const col = side * HALF_COLS + c;
-        const cx  = cellX(col, l);
-        const cy  = l.startY + row * (l.cellSize + l.gap);
-        const idx = row * HALF_COLS + c;
-
-        ctx.save();
-        if (side === 0) {
-          // Left: source pattern
-          if (s.leftPattern[idx]) {
-            ctx.shadowBlur = 18; ctx.shadowColor = accent;
-            ctx.fillStyle = `${accent}bb`; ctx.strokeStyle = accent; ctx.lineWidth = 2;
-          } else {
-            ctx.shadowBlur = 0; ctx.fillStyle = 'rgba(255,255,255,0.03)';
-            ctx.strokeStyle = 'rgba(255,255,255,0.10)'; ctx.lineWidth = 1;
-          }
-          rRect(ctx, cx, cy, l.cellSize, l.cellSize, r); ctx.fill(); ctx.stroke();
-        } else {
-          // Right: player fills
-          const flash = s.rightFlashes[idx];
-          const flashAlive = flash !== null && now < flash.end;
-          if (s.foundRight[idx]) {
-            ctx.shadowBlur = 16; ctx.shadowColor = '#4ade80';
-            ctx.fillStyle = '#4ade8044'; ctx.strokeStyle = '#4ade80'; ctx.lineWidth = 2;
-          } else if (flashAlive && flash) {
-            const t = (flash.end - now) / FLASH_MS;
-            ctx.shadowBlur = t * 16; ctx.shadowColor = flash.color;
-            ctx.fillStyle = `${flash.color}33`; ctx.strokeStyle = flash.color; ctx.lineWidth = 2;
-          } else {
-            ctx.shadowBlur = 0; ctx.fillStyle = 'rgba(255,255,255,0.04)';
-            ctx.strokeStyle = 'rgba(255,255,255,0.16)'; ctx.lineWidth = 1.5;
-          }
-          rRect(ctx, cx, cy, l.cellSize, l.cellSize, r); ctx.fill(); ctx.stroke();
-
-          // Checkmark on found
-          if (s.foundRight[idx]) {
-            ctx.shadowBlur = 0; ctx.strokeStyle = '#4ade80';
-            ctx.lineWidth = l.cellSize * 0.065; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-            const s2 = l.cellSize * 0.15, mx = cx + l.cellSize / 2, my = cy + l.cellSize / 2;
-            ctx.beginPath(); ctx.moveTo(mx - s2, my);
-            ctx.lineTo(mx - s2 * 0.3, my + s2 * 0.9); ctx.lineTo(mx + s2, my - s2 * 0.8); ctx.stroke();
-          }
-        }
-        ctx.restore();
-      }
-    }
-  }
-
-  // Round feedback
-  if (s.pauseUntil > now) {
-    const msg = s.pauseSuccess ? `✓  +${15 + s.streak * 2}` : 'Reset!';
-    const col = s.pauseSuccess ? '#4ade80' : '#ef4444';
-    ctx.save(); ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.font = `800 ${Math.max(18, Math.floor(W * 0.048))}px -apple-system, sans-serif`;
-    ctx.shadowBlur = 20; ctx.shadowColor = col; ctx.fillStyle = col;
-    ctx.fillText(msg, W / 2, l.startY + l.totalH + 38);
-    ctx.restore();
-  }
-
-  // Streak
-  if (s.streak >= 3) {
-    ctx.save(); ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.font = `700 ${Math.max(12, Math.floor(W * 0.030))}px -apple-system, sans-serif`;
-    ctx.fillStyle = '#facc15'; ctx.shadowBlur = 8; ctx.shadowColor = '#facc15';
-    ctx.fillText(`×${s.streak} STREAK`, W / 2,
-      l.startY + l.totalH + (s.pauseUntil > now ? 64 : 38));
-    ctx.restore();
-  }
-}
-
-// ── Component ──────────────────────────────────────────────────────────────────
 export default function MirrorMindGame() {
-  const theme       = useBrandTheme();
-  const canvasRef   = useRef<HTMLCanvasElement>(null);
-  const animRef     = useRef(0);
-  const timerRef    = useRef<ReturnType<typeof setInterval> | null>(null);
+  const theme = useBrandTheme();
+  const mountRef = useRef<HTMLDivElement>(null);
+  const animRef = useRef(0);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const stopMusicRef = useRef<(() => void) | null>(null);
-  const phaseRef    = useRef<Phase>('start');
+  const playerSessionRef = useRef<PlayerSession | null>(null);
 
-  const stateRef = useRef<GameState>({
-    running: false, timeLeft: DURATION, accentColor: ACCENT,
-    sig: { score: 0, roundsCompleted: 0, correctTaps: 0, wrongTaps: 0, maxStreak: 0 },
-    leftPattern: [], expectedRight: [], foundRight: [], rightFlashes: [],
-    streak: 0, remainingCorrect: 0, pauseUntil: 0, pauseSuccess: false, round: 1,
+  const stateRef = useRef({
+    running: false, timeLeft: DURATION,
+    sig: { score: 0, roundsCompleted: 0, correctTaps: 0, wrongTaps: 0, maxStreak: 0 } as Signals,
+    cells: [] as CellObj[],
+    leftPattern: [] as boolean[][],
+    rightTarget: [] as boolean[][],
+    roundPhase: 'show' as 'show' | 'input',
+    streakCurrent: 0,
+    scene: null as THREE.Scene | null,
+    renderer: null as THREE.WebGLRenderer | null,
+    camera: null as THREE.PerspectiveCamera | null,
+    raycaster: new THREE.Raycaster(),
+    pendingClick: null as THREE.Vector2 | null,
+    mirrorPlane: null as THREE.Mesh | null,
   });
 
-  const [phase, setPhase]           = useState<Phase>('start');
-  const [timeLeft, setTimeLeft]     = useState(DURATION);
+  const [phase, setPhase] = useState<Phase>('start');
+  const [timeLeft, setTimeLeft] = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
-  const [finalSig, setFinalSig]     = useState<Signals | null>(null);
-  const [isNewBest, setIsNewBest]   = useState(false);
-  const playerSessionRef            = useRef<PlayerSession | null>(null);
-
-  useEffect(() => { stateRef.current.accentColor = theme.colors.accent ?? ACCENT; }, [theme]);
-
-  const newRound = useCallback((s: GameState) => {
-    const left     = generateLeft(s.round);
-    const expected = mirrorRight(left);
-    s.leftPattern     = left;
-    s.expectedRight   = expected;
-    s.foundRight      = new Array(ROWS * HALF_COLS).fill(false);
-    s.rightFlashes    = new Array(ROWS * HALF_COLS).fill(null);
-    s.remainingCorrect = expected.filter(Boolean).length;
-    s.pauseUntil      = 0;
-  }, []);
+  const [finalSig, setFinalSig] = useState<Signals | null>(null);
+  const [roundPhaseDisplay, setRoundPhaseDisplay] = useState<'show' | 'input'>('show');
 
   const endGame = useCallback(() => {
-    const s = stateRef.current;
-    s.running = false;
+    const s = stateRef.current; s.running = false;
     cancelAnimationFrame(animRef.current);
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
     if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
-    sfx.success(); haptic([100]);
-    try {
-      const pb = parseInt(localStorage.getItem(PB_KEY) ?? '0', 10);
-      if (s.sig.score > pb) { localStorage.setItem(PB_KEY, String(s.sig.score)); setIsNewBest(true); }
-    } catch { /* ignore */ }
-    setFinalSig({ ...s.sig });
-    phaseRef.current = 'done'; setPhase('done');
+    const pb = parseInt(localStorage.getItem(PB_KEY) ?? '0');
+    if (s.sig.score > pb) localStorage.setItem(PB_KEY, String(s.sig.score));
+    setFinalSig({ ...s.sig }); setPhase('done');
   }, []);
 
-  const startLoop = useCallback(() => {
-    const canvas = canvasRef.current; if (!canvas) return;
-    const ctx = canvas.getContext('2d'); if (!ctx) return;
+  const buildRound = useCallback((scene: THREE.Scene) => {
     const s = stateRef.current;
+    // Clear old cells
+    s.cells.forEach(c => scene.remove(c.mesh));
+    s.cells = [];
 
-    s.running = true; s.timeLeft = DURATION; s.round = 1; s.streak = 0;
-    s.sig = { score: 0, roundsCompleted: 0, correctTaps: 0, wrongTaps: 0, maxStreak: 0 };
-    newRound(s); setScoreDisplay(0); setTimeLeft(DURATION);
-    phaseRef.current = 'playing'; setPhase('playing');
-    stopMusicRef.current = startMusic('minimal');
+    const CELL = 1.1, GAP = 0.12;
+    const totalW = HALF_COLS * CELL + (HALF_COLS - 1) * GAP;
+    const totalH = ROWS * CELL + (ROWS - 1) * GAP;
+    const offsetX = -totalW - 0.5;
+    const offsetY = totalH / 2 - CELL / 2;
 
-    const dpr = window.devicePixelRatio || 1;
-    canvas.width = window.innerWidth * dpr; canvas.height = window.innerHeight * dpr;
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    // Generate random left pattern
+    const leftPat = Array.from({ length: ROWS }, () =>
+      Array.from({ length: HALF_COLS }, () => Math.random() > 0.45)
+    );
+    s.leftPattern = leftPat;
 
-    timerRef.current = setInterval(() => {
-      s.timeLeft--;
-      setTimeLeft(s.timeLeft);
-      if (s.timeLeft === 10) sfx.warning();
-      if (s.timeLeft > 0 && s.timeLeft < 10) sfx.tick();
-      if (s.timeLeft <= 0) endGame();
-    }, 1000);
+    // Mirror: mirror horizontally (col HALF_COLS-1-c)
+    const rightTarget = leftPat.map(row => [...row].reverse());
+    s.rightTarget = rightTarget;
 
-    const loop = () => {
-      if (!s.running) return;
-      drawFrame(ctx, window.innerWidth, window.innerHeight, s);
-      animRef.current = requestAnimationFrame(loop);
-    };
-    animRef.current = requestAnimationFrame(loop);
-  }, [endGame, newRound]);
+    for (let side = 0; side < 2; side++) {
+      const baseX = side === 0 ? offsetX : 0.5;
+      const sideLabel = side === 0 ? 'left' : 'right';
 
-  const handleTap = useCallback((clientX: number, clientY: number) => {
-    const canvas = canvasRef.current; if (!canvas) return;
-    const s = stateRef.current;
-    if (!s.running || performance.now() < s.pauseUntil) return;
+      for (let r = 0; r < ROWS; r++) {
+        for (let c = 0; c < HALF_COLS; c++) {
+          const x = baseX + c * (CELL + GAP);
+          const y = offsetY - r * (CELL + GAP);
 
-    const rect = canvas.getBoundingClientRect();
-    const x = (clientX - rect.left) * (canvas.offsetWidth / rect.width);
-    const y = (clientY - rect.top)  * (canvas.offsetHeight / rect.height);
-    const l = getLayout(window.innerWidth, window.innerHeight);
-
-    for (let row = 0; row < ROWS; row++) {
-      for (let c = 0; c < HALF_COLS; c++) {
-        const cx = cellX(c + HALF_COLS, l);
-        const cy = l.startY + row * (l.cellSize + l.gap);
-        if (x >= cx && x <= cx + l.cellSize && y >= cy && y <= cy + l.cellSize) {
-          const rightIdx = row * HALF_COLS + c;
-          if (s.foundRight[rightIdx]) return;
-
-          if (s.expectedRight[rightIdx]) {
-            s.foundRight[rightIdx] = true;
-            s.sig.correctTaps++;
-            s.streak++;
-            if (s.streak > s.sig.maxStreak) s.sig.maxStreak = s.streak;
-            const pts = 5 + (s.streak >= 3 ? 3 : 0);
-            s.sig.score += pts; setScoreDisplay(s.sig.score);
-            sfx.collect(); haptic([30]);
-            s.remainingCorrect--;
-            if (s.remainingCorrect <= 0) {
-              const bonus = 15 + s.streak * 2;
-              s.sig.score += bonus; setScoreDisplay(s.sig.score);
-              s.sig.roundsCompleted++; s.round++;
-              sfx.success(); haptic([30, 50, 30]);
-              s.pauseUntil = performance.now() + PAUSE_MS; s.pauseSuccess = true;
-              setTimeout(() => { if (s.running) newRound(s); }, PAUSE_MS);
-            }
-          } else {
-            s.rightFlashes[rightIdx] = { color: '#ef4444', end: performance.now() + FLASH_MS };
-            s.sig.wrongTaps++; s.streak = 0;
-            s.sig.score = Math.max(0, s.sig.score - 3); setScoreDisplay(s.sig.score);
-            sfx.collision(); haptic([20, 30, 20]);
-          }
-          return;
+          const isPattern = side === 0 ? leftPat[r][c] : false;
+          const geo = new THREE.BoxGeometry(CELL, CELL, 0.2);
+          const mat = new THREE.MeshPhongMaterial({
+            color: side === 0 && isPattern ? 0x8b5cf6 : 0x1a0a3a,
+            emissive: side === 0 && isPattern ? 0x4c1d95 : 0x050318,
+            emissiveIntensity: isPattern ? 0.6 : 0.1,
+            transparent: true, opacity: 0.9,
+          });
+          const mesh = new THREE.Mesh(geo, mat);
+          mesh.position.set(x, y, 0);
+          scene.add(mesh);
+          s.cells.push({ mesh, row: r, col: c, side: sideLabel as 'left' | 'right', isPattern, tapped: false, correct: false });
         }
       }
     }
-  }, [newRound]);
+
+    s.roundPhase = 'input';
+    setRoundPhaseDisplay('input');
+  }, []);
+
+  const checkRound = useCallback((scene: THREE.Scene) => {
+    const s = stateRef.current;
+    const rightCells = s.cells.filter(c => c.side === 'right');
+    const allCorrect = rightCells.every(c => c.tapped === s.rightTarget[c.row][c.col]);
+    if (allCorrect) {
+      s.sig.roundsCompleted++;
+      s.streakCurrent++;
+      if (s.streakCurrent > s.sig.maxStreak) s.sig.maxStreak = s.streakCurrent;
+      const pts = 5 * (s.streakCurrent >= 3 ? 2 : 1);
+      s.sig.score += pts;
+      setScoreDisplay(s.sig.score);
+      sfx.success(); haptic([30, 20, 50]);
+      setTimeout(() => { if (s.running) buildRound(scene); }, 500);
+    }
+  }, [buildRound]);
+
+  const startLoop = useCallback(() => {
+    if (!mountRef.current) return;
+    const s = stateRef.current;
+    s.running = true; s.timeLeft = DURATION;
+    s.sig = { score: 0, roundsCompleted: 0, correctTaps: 0, wrongTaps: 0, maxStreak: 0 };
+    s.streakCurrent = 0; s.cells = [];
+    setScoreDisplay(0); setTimeLeft(DURATION); setPhase('playing');
+    stopMusicRef.current = startMusic('ambient');
+
+    const W = window.innerWidth, H = window.innerHeight;
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(W, H);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setClearColor(0x050318);
+    mountRef.current.innerHTML = '';
+    mountRef.current.appendChild(renderer.domElement);
+    s.renderer = renderer;
+
+    const scene = new THREE.Scene();
+    s.scene = scene;
+    const camera = new THREE.PerspectiveCamera(60, W / H, 0.1, 200);
+    camera.position.set(0, 0, 10);
+    s.camera = camera;
+
+    // Lights
+    scene.add(new THREE.AmbientLight(0x1a0a3a, 5));
+    const topLight = new THREE.PointLight(0x8b5cf6, 3, 20);
+    topLight.position.set(0, 5, 5);
+    scene.add(topLight);
+
+    // Mirror plane
+    const mirrorGeo = new THREE.PlaneGeometry(0.08, ROWS * 1.1 + 0.5);
+    const mirrorMat = new THREE.MeshPhongMaterial({ color: 0x60a5fa, emissive: 0x1e3a5f, transparent: true, opacity: 0.7 });
+    const mirrorPlane = new THREE.Mesh(mirrorGeo, mirrorMat);
+    mirrorPlane.position.set(0, 0, 0.15);
+    scene.add(mirrorPlane);
+    s.mirrorPlane = mirrorPlane;
+
+    // Mirror glow light
+    const mirrorLight = new THREE.PointLight(0x60a5fa, 2, 8);
+    mirrorLight.position.set(0, 0, 1);
+    scene.add(mirrorLight);
+
+    // Star field
+    const starGeo = new THREE.BufferGeometry();
+    const starPos = new Float32Array(400 * 3);
+    for (let i = 0; i < 400; i++) {
+      starPos[i * 3] = (Math.random() - 0.5) * 40;
+      starPos[i * 3 + 1] = (Math.random() - 0.5) * 30;
+      starPos[i * 3 + 2] = (Math.random() - 0.5) * 20 - 5;
+    }
+    starGeo.setAttribute('position', new THREE.BufferAttribute(starPos, 3));
+    scene.add(new THREE.Points(starGeo, new THREE.PointsMaterial({ color: 0xc4b5fd, size: 0.04, transparent: true, opacity: 0.4 })));
+
+    // Labels
+    buildRound(scene);
+
+    timerRef.current = setInterval(() => {
+      s.timeLeft--; setTimeLeft(s.timeLeft);
+      if (s.timeLeft <= 0) endGame();
+    }, 1000);
+
+    const handleResize = () => {
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+    };
+    window.addEventListener('resize', handleResize);
+
+    let t = 0;
+    const loop = () => {
+      if (!s.running) { renderer.dispose(); return; }
+      t += 0.016;
+
+      // Process click on right side cells
+      if (s.pendingClick && s.roundPhase === 'input') {
+        s.raycaster.setFromCamera(s.pendingClick, camera);
+        const rightMeshes = s.cells.filter(c => c.side === 'right').map(c => c.mesh);
+        const hits = s.raycaster.intersectObjects(rightMeshes);
+        if (hits.length > 0) {
+          const hitMesh = hits[0].object as THREE.Mesh;
+          const cell = s.cells.find(c => c.mesh === hitMesh && c.side === 'right');
+          if (cell) {
+            cell.tapped = !cell.tapped;
+            const shouldBeTapped = s.rightTarget[cell.row][cell.col];
+            const correct = cell.tapped === shouldBeTapped;
+
+            (cell.mesh.material as THREE.MeshPhongMaterial).color.setHex(cell.tapped ? 0x8b5cf6 : 0x1a0a3a);
+            (cell.mesh.material as THREE.MeshPhongMaterial).emissive.setHex(cell.tapped ? 0x4c1d95 : 0x050318);
+            (cell.mesh.material as THREE.MeshPhongMaterial).emissiveIntensity = cell.tapped ? 0.6 : 0.1;
+
+            if (correct) { s.sig.correctTaps++; sfx.collect(); haptic([20]); }
+            else { s.sig.wrongTaps++; sfx.click(); haptic([15]); }
+
+            checkRound(scene);
+          }
+        }
+        s.pendingClick = null;
+      }
+
+      // Mirror plane pulse
+      if (s.mirrorPlane) {
+        (s.mirrorPlane.material as THREE.MeshPhongMaterial).opacity = 0.5 + Math.sin(t * 3) * 0.2;
+      }
+
+      renderer.render(scene, camera);
+      animRef.current = requestAnimationFrame(loop);
+    };
+    animRef.current = requestAnimationFrame(loop);
+
+    return () => {
+      s.running = false;
+      window.removeEventListener('resize', handleResize);
+      renderer.dispose();
+    };
+  }, [endGame, buildRound, checkRound]);
 
   useEffect(() => {
-    const canvas = canvasRef.current; if (!canvas) return;
-    const resize = () => {
-      const dpr = window.devicePixelRatio || 1;
-      canvas.style.width  = window.innerWidth  + 'px';
-      canvas.style.height = window.innerHeight + 'px';
-      canvas.width  = window.innerWidth  * dpr;
-      canvas.height = window.innerHeight * dpr;
-      const c = canvas.getContext('2d');
-      if (c) c.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const el = mountRef.current; if (!el) return;
+    const onDown = (e: PointerEvent) => {
+      if (phase !== 'playing') return;
+      const s = stateRef.current; if (!s.renderer) return;
+      const rect = s.renderer.domElement.getBoundingClientRect();
+      s.pendingClick = new THREE.Vector2(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1);
     };
-    resize(); window.addEventListener('resize', resize);
-    const onDown = (e: PointerEvent) => { if (phaseRef.current === 'playing') handleTap(e.clientX, e.clientY); };
-    canvas.addEventListener('pointerdown', onDown);
-    return () => { window.removeEventListener('resize', resize); canvas.removeEventListener('pointerdown', onDown); };
-  }, [handleTap]);
+    el.addEventListener('pointerdown', onDown);
+    return () => el.removeEventListener('pointerdown', onDown);
+  }, [phase]);
 
   useEffect(() => () => {
     cancelAnimationFrame(animRef.current);
     if (timerRef.current) clearInterval(timerRef.current);
     if (stopMusicRef.current) stopMusicRef.current();
+    stateRef.current.renderer?.dispose();
   }, []);
 
-  const handleStart = useCallback((name: string, avatar: string) => {
-    playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar);
-    initAudio(); phaseRef.current = 'countdown'; setPhase('countdown');
+  const handleStart = useCallback(async (n: string, a: string) => {
+    playerSessionRef.current = savePlayerSession(GAME_ID, n, a);
+    await initAudio(); setPhase('countdown');
   }, []);
-  const handleCountdownDone = useCallback(() => { startLoop(); }, [startLoop]);
-  const handlePlayAgain = useCallback(() => {
-    setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null); setIsNewBest(false);
-    phaseRef.current = 'countdown'; setPhase('countdown');
-  }, []);
-
-  const buildInsights = useCallback((sig: Signals) => {
-    const total = sig.correctTaps + sig.wrongTaps;
-    const acc   = total > 0 ? Math.round(sig.correctTaps / total * 100) : 0;
-    const ac    = theme.colors.accent ?? ACCENT;
-    return [
-      { label: 'Rounds Done', value: String(sig.roundsCompleted), color: ac },
-      { label: 'Accuracy',    value: `${acc}%`, color: acc >= 80 ? '#4ade80' : acc >= 55 ? '#facc15' : '#ef4444' },
-      { label: 'Best Streak', value: `×${sig.maxStreak}`, color: sig.maxStreak >= 5 ? '#4ade80' : ac },
-      { label: 'Score',       value: String(sig.score), color: ac },
-    ];
-  }, [theme]);
-
-  const accent = theme.colors.accent ?? ACCENT;
+  const handlePlayAgain = useCallback(() => { setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null); }, []);
 
   return (
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accent}
-      background="radial-gradient(ellipse at 50% 0%, rgba(139,92,246,0.14) 0%, transparent 55%), linear-gradient(180deg, #0d0720 0%, #08031a 50%, #04010a 100%)">
-      {phase === 'start' && (
-        <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description={GAME_TAGLINE}
-          ctaLabel="Start" accentColor={accent} onStart={handleStart} />
-      )}
-      {phase === 'countdown' && <Countdown onComplete={handleCountdownDone} accentColor={accent} />}
-      {(phase === 'playing' || phase === 'countdown') && (
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}
+      background="linear-gradient(180deg,#050318 0%,#080528 100%)">
+      {phase === 'start' && <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description={GAME_TAGLINE} ctaLabel="See Your Reflection 🪞" accentColor={theme.colors.accent ?? ACCENT} onStart={handleStart} />}
+      {phase === 'countdown' && <Countdown onComplete={startLoop} accentColor={theme.colors.accent ?? ACCENT} />}
+      <div ref={mountRef} style={{ position: 'absolute', inset: 0, display: phase === 'playing' ? 'block' : 'none', touchAction: 'none' }} />
+      {phase === 'playing' && (
         <>
-          <canvas ref={canvasRef} role="img" aria-label="Mirror Mind game canvas"
-            style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none' }} />
-          {phase === 'playing' && (
-            <GameHUD accentColor={accent} items={[
-              { label: 'TIME', value: timeLeft, danger: timeLeft <= 10, testId: 'timer' },
-              { label: 'SCORE', value: scoreDisplay, testId: 'score' },
-            ]} />
-          )}
+          <GameHUD accentColor={theme.colors.accent ?? ACCENT} items={[{ label: 'TIME', value: timeLeft, danger: timeLeft <= 10 }, { label: 'SCORE', value: scoreDisplay }]} />
+          <div style={{ position: 'fixed', bottom: 20, left: '50%', transform: 'translateX(-50%)', color: 'rgba(139,92,246,0.7)', fontSize: 13, fontWeight: 700, pointerEvents: 'none', zIndex: 50 }}>
+            👈 Left: pattern shown | Right: tap to mirror 👉
+          </div>
         </>
-      )}
-      {isNewBest && phase === 'done' && (
-        <div style={{ position: 'fixed', top: '10%', left: '50%', transform: 'translateX(-50%)',
-          zIndex: 90, background: 'linear-gradient(135deg,#fbbf24,#f59e0b)', borderRadius: 20,
-          padding: '8px 20px', fontSize: 20, fontWeight: 900, color: '#000',
-          whiteSpace: 'nowrap', boxShadow: '0 4px 20px rgba(251,191,36,0.5)' }}>🏆 New Best!</div>
       )}
       {phase === 'done' && finalSig && (
-        <>
-          <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI}
-            score={String(finalSig.score)} personality={getPersonality(finalSig)}
-            insights={buildInsights(finalSig)} accentColor={accent}
-            onPlayAgain={handlePlayAgain} didWin={finalSig.roundsCompleted >= 3} />
-          <WebhookEmitter theme={theme} sig={finalSig} personality={getPersonality(finalSig)} player={playerSessionRef.current} />
-        </>
+        <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI} score={String(finalSig.score)} personality={getPersonality(finalSig)}
+          insights={[
+            { label: 'Rounds Done', value: `${finalSig.roundsCompleted}`, color: ACCENT },
+            { label: 'Correct Taps', value: `${finalSig.correctTaps}`, color: '#4ade80' },
+            { label: 'Wrong Taps', value: `${finalSig.wrongTaps}`, color: '#ef4444' },
+            { label: 'Best Streak', value: `×${finalSig.maxStreak}`, color: '#fbbf24' },
+          ]}
+          accentColor={theme.colors.accent ?? ACCENT} onPlayAgain={handlePlayAgain} didWin={finalSig.roundsCompleted >= 5} />
       )}
+      {phase === 'done' && finalSig && <WebhookEmitter theme={theme} sig={finalSig} personality={getPersonality(finalSig)} player={playerSessionRef.current} />}
     </GameShell>
   );
 }
 
-// ── Webhook ───────────────────────────────────────────────────────────────────
-function WebhookEmitter({ theme, sig, personality, player }: {
-  theme: ReturnType<typeof useBrandTheme>; sig: Signals; personality: string; player: PlayerSession | null;
-}) {
+function WebhookEmitter({ theme, sig, personality, player }: { theme: ReturnType<typeof useBrandTheme>; sig: Signals; personality: string; player: PlayerSession | null; }) {
   const fired = useRef(false);
   useEffect(() => {
     if (fired.current) return; fired.current = true;
-    postWebhook(theme, GAME_ID, { personality, score: sig.score }, player);
+    postWebhook(theme, GAME_ID, { personality, score: sig.score, roundsCompleted: sig.roundsCompleted }, player);
   }, [theme, sig, personality, player]);
   return null;
 }

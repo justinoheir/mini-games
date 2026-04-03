@@ -1,5 +1,9 @@
 'use client';
+/**
+ * LOGIC GATE — 3D circuit board with glowing gates. Solve boolean logic puzzles.
+ */
 import { useEffect, useRef, useState, useCallback } from 'react';
+import * as THREE from 'three';
 import GameShell from '@/components/GameShell';
 import GameHUD from '@/components/GameHUD';
 import GameStartScreen from '@/components/GameStartScreen';
@@ -17,18 +21,27 @@ const GAME_EMOJI = '⚙️';
 const GAME_TITLE = 'Logic Gate';
 const GAME_TAGLINE = 'Wire the circuit. Get the output.';
 
-interface Signals {
-  total: number;
-  correct: number;
-  wrong: number;
-  andGates: number;
-  orGates: number;
-  notGates: number;
-  avgSolveMs: number;
-  totalMs: number;
-  score: number;
-  maxStreak: number;
-  streakCurrent: number;
+type GateType = 'AND' | 'OR' | 'NOT' | 'NAND' | 'NOR' | 'XOR';
+
+interface Gate { type: GateType; inputs: boolean[]; output: boolean; }
+interface Signals { total: number; correct: number; wrong: number; andGates: number; orGates: number; notGates: number; avgSolveMs: number; totalMs: number; score: number; maxStreak: number; streakCurrent: number; }
+
+function evalGate(type: GateType, inputs: boolean[]): boolean {
+  switch (type) {
+    case 'AND': return inputs.every(Boolean);
+    case 'OR': return inputs.some(Boolean);
+    case 'NOT': return !inputs[0];
+    case 'NAND': return !inputs.every(Boolean);
+    case 'NOR': return !inputs.some(Boolean);
+    case 'XOR': return inputs.filter(Boolean).length % 2 === 1;
+  }
+}
+
+function makeGatePuzzle(level: number): Gate {
+  const types: GateType[] = level >= 4 ? ['AND', 'OR', 'NOT', 'NAND', 'NOR', 'XOR'] : level >= 2 ? ['AND', 'OR', 'NOT', 'NAND'] : ['AND', 'OR', 'NOT'];
+  const type = types[Math.floor(Math.random() * types.length)];
+  const inputs = type === 'NOT' ? [Math.random() > 0.5] : [Math.random() > 0.5, Math.random() > 0.5];
+  return { type, inputs, output: evalGate(type, inputs) };
 }
 
 function getPersonality(sig: Signals): string {
@@ -36,351 +49,204 @@ function getPersonality(sig: Signals): string {
   if (acc >= 0.9 && sig.total >= 15) return 'Logic Engineer ⚡';
   if (sig.total >= 12) return 'Circuit Master 🔌';
   if (acc >= 0.8) return 'Boolean Brain ⚙️';
-  if (sig.avgSolveMs < 1500) return 'Quick Solver 💡';
   return 'Learning Logic 🔧';
 }
 
 type Phase = 'start' | 'countdown' | 'playing' | 'done';
-type GateType = 'AND' | 'OR' | 'NOT' | 'NAND' | 'NOR' | 'XOR';
-
-interface Gate {
-  type: GateType;
-  inputs: boolean[];
-  output: boolean;
-}
-
-function evaluateGate(type: GateType, inputs: boolean[]): boolean {
-  switch (type) {
-    case 'AND': return inputs[0] && inputs[1];
-    case 'OR': return inputs[0] || inputs[1];
-    case 'NOT': return !inputs[0];
-    case 'NAND': return !(inputs[0] && inputs[1]);
-    case 'NOR': return !(inputs[0] || inputs[1]);
-    case 'XOR': return inputs[0] !== inputs[1];
-  }
-}
-
-interface Circuit {
-  gate: Gate;
-  answer: boolean;
-  // Optional second gate (chained)
-  gate2?: Gate;
-  gate2Answer?: boolean;
-}
-
-function makeCircuit(level: number): Circuit {
-  const basicGates: GateType[] = ['AND', 'OR', 'NOT'];
-  const advancedGates: GateType[] = ['AND', 'OR', 'NOT', 'NAND', 'NOR', 'XOR'];
-  const gates = level >= 4 ? advancedGates : basicGates;
-  const gateType = gates[Math.floor(Math.random() * gates.length)];
-  const isNot = gateType === 'NOT';
-  const inputs = isNot ? [Math.random() < 0.5] : [Math.random() < 0.5, Math.random() < 0.5];
-  const output = evaluateGate(gateType, inputs);
-
-  if (level >= 5) {
-    // Chained: output of gate1 feeds into gate2
-    const gateType2 = gates[Math.floor(Math.random() * gates.length)];
-    const isNot2 = gateType2 === 'NOT';
-    const input2 = isNot2 ? [output] : [output, Math.random() < 0.5];
-    const output2 = evaluateGate(gateType2, input2);
-    return {
-      gate: { type: gateType, inputs, output },
-      gate2: { type: gateType2, inputs: input2, output: output2 },
-      gate2Answer: output2,
-      answer: output2,
-    };
-  }
-
-  return { gate: { type: gateType, inputs, output }, answer: output };
-}
-
-function gateSymbol(type: GateType): string {
-  const map: Record<GateType, string> = {
-    AND: '⋅', OR: '+', NOT: '¬', NAND: '⊼', NOR: '⊽', XOR: '⊕',
-  };
-  return map[type];
-}
-
-interface GameState {
-  running: boolean; timeLeft: number;
-  sig: Signals; frame: number; accentColor: string;
-  floats: Array<{ x: number; y: number; text: string; alpha: number; vy: number; color: string }>;
-  circuit: Circuit | null;
-  shownAt: number;
-  feedback: boolean | null;
-  feedbackTimer: number;
-  level: number;
-}
 
 export default function LogicGateGame() {
   const theme = useBrandTheme();
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const animRef = useRef(0);
+  const mountRef = useRef<HTMLDivElement>(null);
+  const bgAnimRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const stateRef = useRef<GameState>({
+  const stateRef = useRef({
     running: false, timeLeft: DURATION,
-    sig: { total: 0, correct: 0, wrong: 0, andGates: 0, orGates: 0, notGates: 0, avgSolveMs: 0, totalMs: 0, score: 0, maxStreak: 0, streakCurrent: 0 },
-    frame: 0, accentColor: ACCENT, floats: [],
-    circuit: null, shownAt: 0, feedback: null, feedbackTimer: 0, level: 1,
+    sig: { total: 0, correct: 0, wrong: 0, andGates: 0, orGates: 0, notGates: 0, avgSolveMs: 0, totalMs: 0, score: 0, maxStreak: 0, streakCurrent: 0 } as Signals,
+    gate: null as Gate | null, shownAt: 0, feedback: null as boolean | null,
+    level: 1,
+    gateMesh: null as THREE.Mesh | null, gateLight: null as THREE.PointLight | null,
+    wireMeshes: [] as THREE.Mesh[],
   });
 
   const [phase, setPhase] = useState<Phase>('start');
   const [timeLeft, setTimeLeft] = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
   const [finalSig, setFinalSig] = useState<Signals | null>(null);
+  const [gateDisplay, setGateDisplay] = useState<{ gate: Gate | null; feedback: boolean | null }>({ gate: null, feedback: null });
   const playerSessionRef = useRef<PlayerSession | null>(null);
 
-  useEffect(() => { stateRef.current.accentColor = theme.colors.accent ?? ACCENT; }, [theme]);
-
-  const nextCircuit = useCallback(() => {
+  const nextGate = useCallback(() => {
     const s = stateRef.current;
-    s.circuit = makeCircuit(s.level);
-    s.shownAt = Date.now();
-    s.feedback = null; s.feedbackTimer = 0;
+    const g = makeGatePuzzle(s.level);
+    s.gate = g; s.shownAt = Date.now(); s.feedback = null;
+    setGateDisplay({ gate: g, feedback: null });
+    if (g.type === 'AND') s.sig.andGates++;
+    else if (g.type === 'OR') s.sig.orGates++;
+    else if (g.type === 'NOT') s.sig.notGates++;
   }, []);
 
   const endGame = useCallback(() => {
-    const s = stateRef.current;
-    s.running = false;
-    cancelAnimationFrame(animRef.current);
+    const s = stateRef.current; s.running = false;
+    cancelAnimationFrame(bgAnimRef.current);
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
-    const pb = parseInt(localStorage.getItem('pb_' + GAME_ID) ?? '0');
-    if (s.sig.score > pb) localStorage.setItem('pb_' + GAME_ID, String(s.sig.score));
-    setFinalSig({ ...s.sig });
-    setPhase('done');
-    hapticVictory();
+    setFinalSig({ ...s.sig }); setPhase('done'); hapticVictory();
   }, []);
 
-  const startLoop = useCallback(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    const s = stateRef.current;
+  // 3D circuit board background
+  useEffect(() => {
+    if (phase !== 'playing') return;
+    if (!mountRef.current) return;
+    const mount = mountRef.current;
 
-    s.running = true; s.timeLeft = DURATION;
+    const W = window.innerWidth, H = window.innerHeight;
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(W, H);
+    renderer.setClearColor(0x050a10, 1);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    mount.innerHTML = '';
+    mount.appendChild(renderer.domElement);
+
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(60, W / H, 0.1, 200);
+    camera.position.set(0, 4, 10);
+    camera.lookAt(0, 0, 0);
+
+    scene.add(new THREE.AmbientLight(0x0a1020, 5));
+    const blueLight = new THREE.PointLight(0x3b82f6, 2, 20);
+    blueLight.position.set(0, 5, 5);
+    scene.add(blueLight);
+    const greenLight = new THREE.PointLight(0x10b981, 1.5, 15);
+    greenLight.position.set(-5, 3, 3);
+    scene.add(greenLight);
+    stateRef.current.gateLight = blueLight;
+
+    // Circuit board surface
+    const boardGeo = new THREE.PlaneGeometry(20, 14);
+    const boardMat = new THREE.MeshPhongMaterial({ color: 0x0d2137, emissive: 0x051020 });
+    const board = new THREE.Mesh(boardGeo, boardMat);
+    board.rotation.x = -Math.PI / 4;
+    board.position.y = -2;
+    scene.add(board);
+
+    // Circuit traces
+    for (let i = 0; i < 12; i++) {
+      const traceGeo = new THREE.BoxGeometry(0.05, 8 + Math.random() * 4, 0.02);
+      const traceMat = new THREE.MeshBasicMaterial({ color: 0x065f46, transparent: true, opacity: 0.4 });
+      const trace = new THREE.Mesh(traceGeo, traceMat);
+      trace.rotation.x = -Math.PI / 4;
+      trace.position.set((Math.random() - 0.5) * 16, -1 + Math.random() * 2, Math.random() * -2);
+      scene.add(trace);
+    }
+
+    // Gate shape (hexagonal chip)
+    const gateGeo = new THREE.CylinderGeometry(1.2, 1.2, 0.4, 6);
+    const gateMat = new THREE.MeshPhongMaterial({ color: 0x1e3a5f, emissive: 0x0c2040, shininess: 100 });
+    const gateMesh = new THREE.Mesh(gateGeo, gateMat);
+    gateMesh.position.y = 1;
+    scene.add(gateMesh);
+    stateRef.current.gateMesh = gateMesh;
+
+    // Gate connection nodes
+    for (let i = -1; i <= 1; i += 2) {
+      const nodeGeo = new THREE.SphereGeometry(0.15, 10, 10);
+      const nodeMat = new THREE.MeshPhongMaterial({ color: 0x3b82f6, emissive: 0x1e3a5f });
+      const node = new THREE.Mesh(nodeGeo, nodeMat);
+      node.position.set(i * 2, 1, 0);
+      scene.add(node);
+    }
+
+    // Floating bit particles
+    const bits: { mesh: THREE.Mesh; vy: number; life: number }[] = [];
+
+    const handleResize = () => {
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+    };
+    window.addEventListener('resize', handleResize);
+
+    let t = 0;
+    const loop = () => {
+      bgAnimRef.current = requestAnimationFrame(loop);
+      t += 0.012;
+
+      gateMesh.rotation.y += 0.01;
+      const s = stateRef.current;
+      const correct = s.feedback === true;
+      const wrong = s.feedback === false;
+      gateMat.color.setHex(correct ? 0x065f46 : wrong ? 0x7f1d1d : 0x1e3a5f);
+      gateMat.emissive.setHex(correct ? 0x022c22 : wrong ? 0x450a0a : 0x0c2040);
+      blueLight.intensity = 1.5 + Math.sin(t * 2) * 0.5;
+      blueLight.color.setHex(correct ? 0x22c55e : wrong ? 0xef4444 : 0x3b82f6);
+
+      // Spawn bit particles occasionally
+      if (Math.random() < 0.05) {
+        const bGeo = new THREE.BoxGeometry(0.1, 0.1, 0.05);
+        const bMat = new THREE.MeshBasicMaterial({ color: Math.random() > 0.5 ? 0x22c55e : 0xef4444, transparent: true, opacity: 0.8 });
+        const bm = new THREE.Mesh(bGeo, bMat);
+        bm.position.set((Math.random() - 0.5) * 8, -2, (Math.random() - 0.5) * 4);
+        scene.add(bm);
+        bits.push({ mesh: bm, vy: 0.02 + Math.random() * 0.03, life: 1 });
+      }
+      for (let i = bits.length - 1; i >= 0; i--) {
+        const b = bits[i];
+        b.mesh.position.y += b.vy; b.life -= 0.015;
+        (b.mesh.material as THREE.MeshBasicMaterial).opacity = b.life * 0.8;
+        if (b.life <= 0) { scene.remove(b.mesh); bits.splice(i, 1); }
+      }
+
+      renderer.render(scene, camera);
+    };
+    loop();
+
+    return () => {
+      stateRef.current.gateMesh = null; stateRef.current.gateLight = null;
+      cancelAnimationFrame(bgAnimRef.current);
+      window.removeEventListener('resize', handleResize);
+      renderer.dispose();
+    };
+  }, [phase]);
+
+  useEffect(() => {
+    if (phase !== 'playing') return;
+    const s = stateRef.current;
+    s.running = true; s.timeLeft = DURATION; s.level = 1;
     s.sig = { total: 0, correct: 0, wrong: 0, andGates: 0, orGates: 0, notGates: 0, avgSolveMs: 0, totalMs: 0, score: 0, maxStreak: 0, streakCurrent: 0 };
-    s.frame = 0; s.floats = []; s.level = 1;
-    nextCircuit();
-    setScoreDisplay(0); setTimeLeft(DURATION); setPhase('playing');
+    setScoreDisplay(0); setTimeLeft(DURATION);
+    nextGate();
 
     timerRef.current = setInterval(() => {
       s.timeLeft--; setTimeLeft(s.timeLeft);
       if (s.timeLeft <= 0) { sfx.fail(); endGame(); }
     }, 1000);
+    return () => { s.running = false; if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; } };
+  }, [phase, endGame, nextGate]);
 
-    const loop = () => {
-      if (!s.running) return;
-      const W = canvas.width, H = canvas.height;
-      ctx.clearRect(0, 0, W, H);
-      s.frame++;
+  const handleAnswer = useCallback((answer: boolean) => {
+    const s = stateRef.current;
+    if (!s.gate || s.feedback !== null) return;
+    const ms = Date.now() - s.shownAt;
+    s.sig.total++; s.sig.totalMs += ms;
+    const correct = answer === s.gate.output;
+    s.feedback = correct;
+    setGateDisplay(prev => ({ ...prev, feedback: correct }));
 
-      if (s.feedbackTimer > 0) s.feedbackTimer--;
-
-      // Background - circuit board dark
-      ctx.fillStyle = '#060c0e'; ctx.fillRect(0, 0, W, H);
-      // PCB trace grid
-      ctx.strokeStyle = 'rgba(100,116,139,0.06)'; ctx.lineWidth = 1;
-      for (let x = 20; x < W; x += 30) {
-        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
-      }
-      for (let y = 20; y < H; y += 30) {
-        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
-      }
-
-      if (s.feedback !== null && s.feedbackTimer > 0) {
-        ctx.fillStyle = s.feedback ? 'rgba(74,222,128,0.1)' : 'rgba(239,68,68,0.1)';
-        ctx.fillRect(0, 0, W, H);
-      }
-
-      const c = s.circuit;
-      if (!c) return;
-
-      // Draw circuit diagram
-      const cx = W / 2, cy = H * 0.42;
-      const gateW = 80, gateH = 50;
-      const isNot = c.gate.type === 'NOT';
-
-      // Input wires and labels
-      const wireColor = '#94a3b8';
-      ctx.strokeStyle = wireColor; ctx.lineWidth = 2.5;
-
-      if (!isNot) {
-        // Two inputs
-        ctx.beginPath(); ctx.moveTo(cx - 120, cy - 14); ctx.lineTo(cx - 40, cy - 14); ctx.stroke();
-        ctx.beginPath(); ctx.moveTo(cx - 120, cy + 14); ctx.lineTo(cx - 40, cy + 14); ctx.stroke();
-
-        // Input labels
-        ctx.fillStyle = c.gate.inputs[0] ? '#4ade80' : '#ef4444';
-        ctx.font = 'bold 18px monospace'; ctx.textAlign = 'center';
-        ctx.fillText(c.gate.inputs[0] ? '1' : '0', cx - 130, cy - 10);
-        ctx.fillStyle = c.gate.inputs[1] ? '#4ade80' : '#ef4444';
-        ctx.fillText(c.gate.inputs[1] ? '1' : '0', cx - 130, cy + 18);
-      } else {
-        // Single input
-        ctx.beginPath(); ctx.moveTo(cx - 120, cy); ctx.lineTo(cx - 40, cy); ctx.stroke();
-        ctx.fillStyle = c.gate.inputs[0] ? '#4ade80' : '#ef4444';
-        ctx.font = 'bold 18px monospace'; ctx.textAlign = 'center';
-        ctx.fillText(c.gate.inputs[0] ? '1' : '0', cx - 130, cy + 7);
-      }
-
-      // Gate box
-      ctx.fillStyle = 'rgba(100,116,139,0.2)'; ctx.strokeStyle = ACCENT;
-      ctx.lineWidth = 2;
-      ctx.beginPath(); (ctx as any).roundRect?.(cx - gateW / 2, cy - gateH / 2, gateW, gateH, 6) ?? ctx.rect(cx - gateW / 2, cy - gateH / 2, gateW, gateH);
-      ctx.fill(); ctx.stroke();
-      ctx.fillStyle = '#e2e8f0'; ctx.font = `bold ${Math.min(16, gateW * 0.2)}px monospace`; ctx.textAlign = 'center';
-      ctx.fillText(c.gate.type, cx, cy + 6);
-
-      // Output wire to question mark
-      ctx.strokeStyle = wireColor; ctx.lineWidth = 2.5;
-      ctx.beginPath(); ctx.moveTo(cx + 40, cy); ctx.lineTo(cx + 100, cy); ctx.stroke();
-
-      // Output question mark (or revealed answer)
-      const showOutput = s.feedback !== null;
-      ctx.save();
-      ctx.shadowBlur = 16; ctx.shadowColor = showOutput ? (c.answer ? '#4ade80' : '#ef4444') : ACCENT;
-      ctx.fillStyle = 'rgba(100,116,139,0.2)'; ctx.strokeStyle = showOutput ? (c.answer ? '#4ade80' : '#ef4444') : ACCENT;
-      ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.arc(cx + 115, cy, 16, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
-      ctx.fillStyle = '#fff'; ctx.font = 'bold 16px monospace'; ctx.textAlign = 'center';
-      ctx.fillText(showOutput ? (c.answer ? '1' : '0') : '?', cx + 115, cy + 6);
-      ctx.restore();
-
-      // Gate reference table (small)
-      ctx.fillStyle = 'rgba(255,255,255,0.3)'; ctx.font = '11px monospace'; ctx.textAlign = 'center';
-      const gateRef: Record<GateType, string> = {
-        AND: 'A·B = 1 only if both 1',
-        OR: 'A+B = 1 if any 1',
-        NOT: '¬A flips the bit',
-        NAND: '!(A·B)',
-        NOR: '!(A+B)',
-        XOR: 'A⊕B: different→1',
-      };
-      ctx.fillText(gateRef[c.gate.type], W / 2, H * 0.22);
-
-      // TRUE / FALSE buttons
-      const btnW = Math.min((W - 60) / 2, 130);
-      const btnH = 56;
-      const btnY = H * 0.65;
-
-      // TRUE
-      const trueX = W / 2 - btnW - 10;
-      ctx.save();
-      ctx.shadowBlur = 12; ctx.shadowColor = '#4ade80';
-      ctx.fillStyle = s.feedback === true ? (c.answer ? 'rgba(74,222,128,0.4)' : 'rgba(239,68,68,0.4)') : 'rgba(74,222,128,0.12)';
-      ctx.strokeStyle = '#4ade80'; ctx.lineWidth = 2.5;
-      ctx.beginPath(); (ctx as any).roundRect?.(trueX, btnY, btnW, btnH, 10) ?? ctx.rect(trueX, btnY, btnW, btnH);
-      ctx.fill(); ctx.stroke();
-      ctx.fillStyle = '#fff'; ctx.font = 'bold 20px sans-serif'; ctx.textAlign = 'center';
-      ctx.fillText('TRUE  1', trueX + btnW / 2, btnY + 37);
-      ctx.restore();
-
-      // FALSE
-      const falseX = W / 2 + 10;
-      ctx.save();
-      ctx.shadowBlur = 12; ctx.shadowColor = '#ef4444';
-      ctx.fillStyle = s.feedback === false ? (!c.answer ? 'rgba(74,222,128,0.4)' : 'rgba(239,68,68,0.4)') : 'rgba(239,68,68,0.12)';
-      ctx.strokeStyle = '#ef4444'; ctx.lineWidth = 2.5;
-      ctx.beginPath(); (ctx as any).roundRect?.(falseX, btnY, btnW, btnH, 10) ?? ctx.rect(falseX, btnY, btnW, btnH);
-      ctx.fill(); ctx.stroke();
-      ctx.fillStyle = '#fff'; ctx.font = 'bold 20px sans-serif'; ctx.textAlign = 'center';
-      ctx.fillText('FALSE  0', falseX + btnW / 2, btnY + 37);
-      ctx.restore();
-
-      // Timer
-      const elapsed = (Date.now() - s.shownAt) / 1000;
-      const limit = Math.max(2, 5 - s.level * 0.3);
-      const pct = Math.max(0, 1 - elapsed / limit);
-      ctx.fillStyle = 'rgba(255,255,255,0.1)'; ctx.fillRect(20, H * 0.59, W - 40, 4);
-      ctx.fillStyle = pct > 0.5 ? ACCENT : pct > 0.25 ? '#fbbf24' : '#ef4444';
-      ctx.fillRect(20, H * 0.59, (W - 40) * pct, 4);
-
-      if (elapsed > limit && s.feedback === null) {
-        s.sig.total++; s.sig.wrong++; s.sig.streakCurrent = 0;
-        sfx.collision(); hapticFail();
-        s.feedback = !c.answer; s.feedbackTimer = 15;
-        setTimeout(() => { if (s.running) nextCircuit(); }, 600);
-      }
-
-      // Floats
-      s.floats = s.floats.filter(f => f.alpha > 0.02);
-      s.floats.forEach(f => {
-        ctx.save(); ctx.globalAlpha = f.alpha;
-        ctx.fillStyle = f.color; ctx.font = 'bold 20px sans-serif'; ctx.textAlign = 'center';
-        ctx.fillText(f.text, f.x, f.y); ctx.restore();
-        f.y += f.vy; f.alpha *= 0.95;
-      });
-
-      animRef.current = requestAnimationFrame(loop);
-    };
-    animRef.current = requestAnimationFrame(loop);
-  }, [endGame, nextCircuit]);
-
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const resize = () => { canvas.width = canvas.offsetWidth; canvas.height = canvas.offsetHeight; };
-    resize();
-    window.addEventListener('resize', resize);
-
-    const onPointerDown = (e: PointerEvent) => {
-      if (phase !== 'playing') return;
-      const s = stateRef.current;
-      if (s.feedback !== null || !s.circuit) return;
-      const rect = canvas.getBoundingClientRect();
-      const px = (e.clientX - rect.left) * (canvas.width / rect.width);
-      const py = (e.clientY - rect.top) * (canvas.height / rect.height);
-      const W = canvas.width, H = canvas.height;
-      const btnW = Math.min((W - 60) / 2, 130);
-      const btnH = 56, btnY = H * 0.65;
-      const trueX = W / 2 - btnW - 10, falseX = W / 2 + 10;
-
-      let playerAnswer: boolean | null = null;
-      if (px >= trueX && px <= trueX + btnW && py >= btnY && py <= btnY + btnH) playerAnswer = true;
-      if (px >= falseX && px <= falseX + btnW && py >= btnY && py <= btnY + btnH) playerAnswer = false;
-      if (playerAnswer === null) return;
-
-      const ms = Date.now() - s.shownAt;
-      s.sig.total++; s.sig.totalMs += ms;
-      s.feedback = playerAnswer; s.feedbackTimer = 15;
-
-      // Track gate type
-      const gt = s.circuit.gate.type;
-      if (gt === 'AND' || gt === 'NAND') s.sig.andGates++;
-      if (gt === 'OR' || gt === 'NOR') s.sig.orGates++;
-      if (gt === 'NOT') s.sig.notGates++;
-
-      if (playerAnswer === s.circuit.answer) {
-        s.sig.correct++;
-        s.sig.streakCurrent++;
-        if (s.sig.streakCurrent > s.sig.maxStreak) s.sig.maxStreak = s.sig.streakCurrent;
-        const speedPts = ms < 1000 ? 3 : ms < 2000 ? 2 : 1;
-        s.sig.score += speedPts; setScoreDisplay(s.sig.score);
-        s.level = Math.min(7, 1 + Math.floor(s.sig.correct / 4));
-        sfx.collect(); hapticScore();
-        if (s.sig.streakCurrent >= 3) hapticCombo(s.sig.streakCurrent);
-        s.floats.push({ x: W / 2, y: H * 0.62, text: `+${speedPts} ✓`, alpha: 1, vy: -2.5, color: '#fbbf24' });
-      } else {
-        s.sig.wrong++; s.sig.streakCurrent = 0;
-        sfx.collision(); hapticFail();
-        s.floats.push({ x: W / 2, y: H * 0.62, text: `Answer: ${s.circuit.answer ? '1' : '0'}`, alpha: 1, vy: -2, color: '#ef4444' });
-      }
-      setTimeout(() => { if (s.running) nextCircuit(); }, 600);
-    };
-
-    canvas.addEventListener('pointerdown', onPointerDown);
-    return () => {
-      window.removeEventListener('resize', resize);
-      canvas.removeEventListener('pointerdown', onPointerDown);
-    };
-  }, [phase, nextCircuit]);
-
-  useEffect(() => () => {
-    cancelAnimationFrame(animRef.current);
-    if (timerRef.current) clearInterval(timerRef.current);
-  }, []);
+    if (correct) {
+      s.sig.correct++; s.sig.streakCurrent++;
+      if (s.sig.streakCurrent > s.sig.maxStreak) s.sig.maxStreak = s.sig.streakCurrent;
+      const speedPts = ms < 2000 ? 3 : ms < 4000 ? 2 : 1;
+      s.sig.score += speedPts; setScoreDisplay(s.sig.score);
+      s.sig.avgSolveMs = Math.round(s.sig.totalMs / s.sig.correct);
+      s.level = Math.min(5, 1 + Math.floor(s.sig.correct / 4));
+      sfx.collect(); hapticScore();
+      if (s.sig.streakCurrent >= 3) hapticCombo(s.sig.streakCurrent);
+    } else {
+      s.sig.wrong++; s.sig.streakCurrent = 0;
+      sfx.collision(); hapticFail();
+    }
+    setTimeout(() => { if (s.running) nextGate(); }, 600);
+  }, [nextGate]);
 
   const handleStart = useCallback(async (n: string, a: string) => {
     playerSessionRef.current = savePlayerSession(GAME_ID, n, a);
@@ -388,25 +254,62 @@ export default function LogicGateGame() {
   }, []);
   const handlePlayAgain = useCallback(() => { setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null); }, []);
 
+  const { gate, feedback } = gateDisplay;
+  const gateColor = feedback === true ? '#22c55e' : feedback === false ? '#ef4444' : '#64748b';
+
   return (
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
-      {phase === 'start' && <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description="Read the logic gate circuit and tap TRUE or FALSE for its output!" ctaLabel="Wire it! ⚙️" accentColor={theme.colors.accent ?? ACCENT} onStart={handleStart} />}
-      {phase === 'countdown' && <Countdown onComplete={startLoop} accentColor={theme.colors.accent ?? ACCENT} />}
-      {(phase === 'playing' || phase === 'countdown') && (
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}
+      background="linear-gradient(180deg,#050a10 0%,#08101a 100%)">
+      {phase === 'start' && <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description={GAME_TAGLINE} ctaLabel="Wire Up! ⚙️" accentColor={theme.colors.accent ?? ACCENT} onStart={handleStart} />}
+      {phase === 'countdown' && <Countdown onComplete={() => setPhase('playing')} accentColor={theme.colors.accent ?? ACCENT} />}
+      <div ref={mountRef} style={{ position: 'absolute', inset: 0, display: phase === 'playing' ? 'block' : 'none' }} />
+
+      {phase === 'playing' && (
         <>
-          <canvas ref={canvasRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none' }} role="img" aria-label="Logic Gate game canvas" />
-          {phase === 'playing' && <GameHUD accentColor={theme.colors.accent ?? ACCENT} items={[{ label: 'TIME', value: timeLeft, danger: timeLeft <= 10 }, { label: 'SCORE', value: scoreDisplay }]} />}
+          <GameHUD accentColor={theme.colors.accent ?? ACCENT} items={[{ label: 'TIME', value: timeLeft, danger: timeLeft <= 10 }, { label: 'SCORE', value: scoreDisplay }]} />
+          <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', alignItems: 'center', padding: '0 20px 60px', pointerEvents: 'none', zIndex: 10 }}>
+            {gate && (
+              <div style={{ width: '100%', maxWidth: 360, pointerEvents: 'auto' }}>
+                {/* Gate visual */}
+                <div style={{ background: 'rgba(30,58,95,0.3)', border: `2px solid rgba(59,130,246,0.3)`, borderRadius: 16, padding: '20px', marginBottom: 16, textAlign: 'center' }}>
+                  <div style={{ color: 'rgba(255,255,255,0.5)', fontSize: 12, marginBottom: 8 }}>LOGIC GATE</div>
+                  <div style={{ color: gateColor, fontSize: 32, fontWeight: 900, textShadow: `0 0 12px ${gateColor}`, fontFamily: 'monospace', marginBottom: 12 }}>{gate.type}</div>
+                  {/* Inputs */}
+                  <div style={{ display: 'flex', gap: 16, justifyContent: 'center', marginBottom: 8 }}>
+                    {gate.inputs.map((input, i) => (
+                      <div key={i} style={{ background: input ? 'rgba(34,197,94,0.3)' : 'rgba(239,68,68,0.3)', border: `1px solid ${input ? '#22c55e' : '#ef4444'}`, borderRadius: 10, padding: '8px 16px', color: input ? '#4ade80' : '#f87171', fontWeight: 700, fontFamily: 'monospace', fontSize: 18 }}>
+                        {`IN${i + 1}: ${input ? '1' : '0'}`}
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{ color: 'rgba(255,255,255,0.4)', fontSize: 12 }}>→ OUTPUT = ?</div>
+                </div>
+                {/* Answer buttons */}
+                <div style={{ display: 'flex', gap: 12 }}>
+                  <button onClick={() => handleAnswer(true)} disabled={feedback !== null}
+                    style={{ flex: 1, background: feedback !== null && gate.output ? 'rgba(34,197,94,0.4)' : 'rgba(34,197,94,0.15)', border: '2px solid #22c55e', borderRadius: 14, padding: '20px', color: '#4ade80', fontWeight: 900, fontSize: 28, cursor: 'pointer', boxShadow: '0 0 10px rgba(34,197,94,0.2)' }}>
+                    1 (TRUE)
+                  </button>
+                  <button onClick={() => handleAnswer(false)} disabled={feedback !== null}
+                    style={{ flex: 1, background: feedback !== null && !gate.output ? 'rgba(34,197,94,0.4)' : 'rgba(239,68,68,0.15)', border: '2px solid #ef4444', borderRadius: 14, padding: '20px', color: '#f87171', fontWeight: 900, fontSize: 28, cursor: 'pointer', boxShadow: '0 0 10px rgba(239,68,68,0.2)' }}>
+                    0 (FALSE)
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
         </>
       )}
+
       {phase === 'done' && finalSig && (
         <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI} score={String(finalSig.score)} personality={getPersonality(finalSig)}
           insights={[
-            { label: 'Accuracy', value: `${finalSig.total > 0 ? Math.round(finalSig.correct / finalSig.total * 100) : 0}%`, color: ACCENT },
-            { label: 'Avg Speed', value: `${finalSig.total > 0 ? Math.round(finalSig.totalMs / finalSig.total) : 0}ms`, color: '#fbbf24' },
-            { label: 'Circuits', value: String(finalSig.total), color: '#4ade80' },
-            { label: 'Best Streak', value: `×${finalSig.maxStreak}`, color: '#06b6d4' },
+            { label: 'Accuracy', value: `${finalSig.total > 0 ? Math.round(finalSig.correct / finalSig.total * 100) : 0}%`, color: '#4ade80' },
+            { label: 'Total Solved', value: `${finalSig.total}`, color: ACCENT },
+            { label: 'Best Streak', value: `×${finalSig.maxStreak}`, color: '#fbbf24' },
+            { label: 'Avg Speed', value: finalSig.correct > 0 ? `${finalSig.avgSolveMs}ms` : '—', color: '#06b6d4' },
           ]}
-          accentColor={theme.colors.accent ?? ACCENT} onPlayAgain={handlePlayAgain} didWin={finalSig.correct >= 12} />
+          accentColor={theme.colors.accent ?? ACCENT} onPlayAgain={handlePlayAgain} didWin={finalSig.correct >= 10} />
       )}
     </GameShell>
   );

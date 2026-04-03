@@ -1,11 +1,10 @@
 'use client';
 /**
- * MAGNET MAZE
- * Real mechanic: Tilt device (DeviceOrientationEvent gamma/beta) to steer a metal
- * ball through a magnetic maze. Magnets attract the ball — use them wisely or get stuck.
- * Fallback: touch drag if no orientation events fire.
+ * MAGNET MAZE — 3D maze with magnetic particle effects.
+ * Tilt or drag to steer a metal ball through a maze with attracting magnets.
  */
 import { useEffect, useRef, useState, useCallback } from 'react';
+import * as THREE from 'three';
 import GameShell from '@/components/GameShell';
 import GameHUD from '@/components/GameHUD';
 import GameStartScreen from '@/components/GameStartScreen';
@@ -26,9 +25,10 @@ const GAME_TAGLINE = 'Tilt to steer. Magnets will try to stop you.';
 const PB_KEY = 'mg_pb_magnet-maze';
 
 const GRID = 5;
+const CELL_SIZE = 2.5;
 
-interface Cell { top: number; right: number; bottom: number; left: number; }
-interface Magnet { x: number; y: number; strength: number; polarity: 1 | -1; }
+interface MazeCell { top: boolean; right: boolean; bottom: boolean; left: boolean; }
+interface MagnetObj { mesh: THREE.Mesh; light: THREE.PointLight; x: number; z: number; strength: number; polarity: 1 | -1; }
 
 interface Signals { score: number; completionTime: number | null; collisions: number; timedOut: boolean; }
 
@@ -42,399 +42,403 @@ function getPersonality(sig: Signals): string {
 
 type Phase = 'start' | 'countdown' | 'playing' | 'done';
 
-function WebhookEmitter({ theme, sig, personality, player }: { theme: ReturnType<typeof useBrandTheme>; sig: Signals; personality: string; player: PlayerSession | null; }) {
-  const fired = useRef(false);
-  useEffect(() => { if (fired.current) return; fired.current = true; postWebhook(theme, GAME_ID, { personality, score: sig.score }, player); }, [theme, sig, personality, player]);
-  return null;
-}
-
-function generateMaze(grid: number): Cell[][] {
-  const cells: Cell[][] = Array.from({ length: grid }, () =>
-    Array.from({ length: grid }, () => ({ top: 1, right: 1, bottom: 1, left: 1 }))
+function generateMaze(rows: number, cols: number): MazeCell[][] {
+  const grid: MazeCell[][] = Array.from({ length: rows }, () =>
+    Array.from({ length: cols }, () => ({ top: true, right: true, bottom: true, left: true }))
   );
-  const visited = Array.from({ length: grid }, () => new Array<boolean>(grid).fill(false));
-  function carve(r: number, c: number) {
-    visited[r][c] = true;
-    const dirs: [number, number, keyof Cell, keyof Cell][] = (
-      [[0, 1, 'right', 'left'], [-1, 0, 'top', 'bottom'], [0, -1, 'left', 'right'], [1, 0, 'bottom', 'top']] as [number, number, keyof Cell, keyof Cell][]
-    ).sort(() => Math.random() - 0.5);
-    for (const [dr, dc, wall, opp] of dirs) {
+  const visited = new Set<string>();
+
+  function dfs(r: number, c: number) {
+    visited.add(`${r},${c}`);
+    const dirs = [[-1, 0, 'top', 'bottom'], [1, 0, 'bottom', 'top'], [0, -1, 'left', 'right'], [0, 1, 'right', 'left']].sort(() => Math.random() - 0.5);
+    for (const [dr, dc, w1, w2] of dirs as [number, number, keyof MazeCell, keyof MazeCell][]) {
       const nr = r + dr, nc = c + dc;
-      if (nr >= 0 && nr < grid && nc >= 0 && nc < grid && !visited[nr][nc]) {
-        cells[r][c][wall] = 0; cells[nr][nc][opp] = 0; carve(nr, nc);
+      if (nr >= 0 && nr < rows && nc >= 0 && nc < cols && !visited.has(`${nr},${nc}`)) {
+        grid[r][c][w1] = false;
+        grid[nr][nc][w2] = false;
+        dfs(nr, nc);
       }
     }
   }
-  carve(0, 0);
-  for (let i = 0; i < grid; i++) {
-    cells[0][i].top = 1; cells[grid - 1][i].bottom = 1;
-    cells[i][0].left = 1; cells[i][grid - 1].right = 1;
-  }
-  return cells;
-}
-
-function placeMagnets(cells: Cell[][], cs: number, ox: number, oy: number, grid: number): Magnet[] {
-  const magnets: Magnet[] = [];
-  const positions = [[1, 2], [2, 1], [3, 3], [1, 4], [3, 1]];
-  for (const [r, c] of positions) {
-    if (r < grid && c < grid) {
-      magnets.push({
-        x: ox + c * cs + cs / 2,
-        y: oy + r * cs + cs / 2,
-        strength: 800 + Math.random() * 600,
-        polarity: Math.random() > 0.4 ? 1 : -1,
-      });
-    }
-  }
-  return magnets;
+  dfs(0, 0);
+  return grid;
 }
 
 export default function MagnetMazeGame() {
   const theme = useBrandTheme();
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const mountRef = useRef<HTMLDivElement>(null);
   const animRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const stopMusicRef = useRef<(() => void) | null>(null);
-  const orientRef = useRef<((e: DeviceOrientationEvent) => void) | null>(null);
+  const playerSessionRef = useRef<PlayerSession | null>(null);
 
   const stateRef = useRef({
-    running: false,
-    timeLeft: DURATION,
-    sig: { score: 0, completionTime: null as number | null, collisions: 0, timedOut: false } as Signals,
-    ballX: 0, ballY: 0, velX: 0, velY: 0,
-    tiltX: 0, tiltY: 0,
-    maze: [] as Cell[][],
-    magnets: [] as Magnet[],
-    cellSize: 0, offsetX: 0, offsetY: 0,
+    running: false, timeLeft: DURATION,
+    sig: { score: 0, completionTime: null, collisions: 0, timedOut: false } as Signals,
+    ballPos: new THREE.Vector3(0, 0.4, 0),
+    ballVel: new THREE.Vector3(0, 0, 0),
+    ball: null as THREE.Mesh | null,
+    magnets: [] as MagnetObj[],
+    mazeWalls: [] as THREE.Mesh[],
+    goalMesh: null as THREE.Mesh | null,
+    tiltX: 0, tiltZ: 0,
+    lastTouchX: null as number | null, lastTouchZ: null as number | null,
+    orientation: { gamma: 0, beta: 0 },
     startTime: 0,
-    wallFlash: 0,
-    celebrateUntil: 0,
-    touchFallback: false,
-    touchX: 0, touchY: 0,
-    trail: [] as { x: number; y: number }[],
-    accentColor: ACCENT,
-    lastCollision: 0,
+    mazeCells: [] as MazeCell[][],
+    fieldParticles: [] as { mesh: THREE.Mesh; angle: number; radius: number; magnetIdx: number }[],
+    scene: null as THREE.Scene | null,
+    renderer: null as THREE.WebGLRenderer | null,
+    camera: null as THREE.PerspectiveCamera | null,
   });
 
   const [phase, setPhase] = useState<Phase>('start');
   const [timeLeft, setTimeLeft] = useState(DURATION);
-  const [useFallback, setUseFallback] = useState(false);
+  const [scoreDisplay, setScoreDisplay] = useState(0);
   const [finalSig, setFinalSig] = useState<Signals | null>(null);
-  const [scorePop, setScorePop] = useState<string | null>(null);
-  const playerSessionRef = useRef<PlayerSession | null>(null);
+  const [wonDisplay, setWonDisplay] = useState(false);
 
-  useEffect(() => { stateRef.current.accentColor = theme.colors.accent ?? ACCENT; }, [theme]);
-
-  const endGame = useCallback((timedOut = false) => {
-    const s = stateRef.current;
-    if (!s.running) return;
-    s.running = false;
+  const endGame = useCallback((won: boolean) => {
+    const s = stateRef.current; s.running = false;
     cancelAnimationFrame(animRef.current);
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
     if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
-    if (orientRef.current) { window.removeEventListener('deviceorientation', orientRef.current); orientRef.current = null; }
-    if (timedOut) { s.sig.timedOut = true; sfx.gameOver(); haptic([100]); }
-    try {
-      const pb = parseInt(localStorage.getItem(PB_KEY) ?? '0', 10);
-      if (s.sig.score > pb) localStorage.setItem(PB_KEY, String(s.sig.score));
-    } catch { /* noop */ }
-    setFinalSig({ ...s.sig });
-    setPhase('done');
+    if (!won) s.sig.timedOut = true;
+    const pb = parseInt(localStorage.getItem(PB_KEY) ?? '0');
+    if (s.sig.score > pb) localStorage.setItem(PB_KEY, String(s.sig.score));
+    setFinalSig({ ...s.sig }); setPhase('done');
   }, []);
 
   const startLoop = useCallback(() => {
-    const canvas = canvasRef.current; if (!canvas) return;
-    const ctx = canvas.getContext('2d'); if (!ctx) return;
-    const W = window.innerWidth, H = window.innerHeight;
+    if (!mountRef.current) return;
     const s = stateRef.current;
-    const cs = Math.min(W, H) * 0.145;
-    const ox = (W - GRID * cs) / 2;
-    const oy = (H - GRID * cs) / 2;
-    s.running = true;
-    s.timeLeft = DURATION;
+    s.running = true; s.timeLeft = DURATION;
     s.sig = { score: 0, completionTime: null, collisions: 0, timedOut: false };
-    s.maze = generateMaze(GRID);
-    s.magnets = placeMagnets(s.maze, cs, ox, oy, GRID);
-    s.cellSize = cs; s.offsetX = ox; s.offsetY = oy;
-    s.ballX = ox + cs * 0.5; s.ballY = oy + cs * 0.5;
-    s.velX = 0; s.velY = 0; s.tiltX = 0; s.tiltY = 0;
-    s.trail = []; s.wallFlash = 0; s.celebrateUntil = 0;
-    s.startTime = Date.now();
-    s.lastCollision = 0;
-    setTimeLeft(DURATION);
-    setPhase('playing');
-    stopMusicRef.current = startMusic('tense');
+    s.ballPos.set(0, 0.4, 0); s.ballVel.set(0, 0, 0);
+    s.tiltX = 0; s.tiltZ = 0; s.startTime = Date.now();
+    s.magnets = []; s.fieldParticles = [];
+    setScoreDisplay(0); setTimeLeft(DURATION); setWonDisplay(false); setPhase('playing');
+    stopMusicRef.current = startMusic('ambient');
 
-    // DeviceOrientation
-    const oriHandler = (e: DeviceOrientationEvent) => {
-      s.tiltX = (e.gamma ?? 0) / 45; // -1..1
-      s.tiltY = (e.beta ?? 0) / 45;
-    };
-    orientRef.current = oriHandler;
-    window.addEventListener('deviceorientation', oriHandler);
-    // Fallback after 1.5s
-    const fallbackTimer = setTimeout(() => {
-      if (s.running && Math.abs(s.tiltX) < 0.01 && Math.abs(s.tiltY) < 0.01) {
-        s.touchFallback = true;
-        setUseFallback(true);
-      }
-    }, 1500);
+    const W = window.innerWidth, H = window.innerHeight;
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(W, H);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setClearColor(0x030110);
+    mountRef.current.innerHTML = '';
+    mountRef.current.appendChild(renderer.domElement);
+    s.renderer = renderer;
 
-    timerRef.current = setInterval(() => {
-      s.timeLeft--;
-      setTimeLeft(s.timeLeft);
-      if (s.timeLeft === 10) { sfx.warning(); haptic([50, 30, 50]); }
-      else if (s.timeLeft > 0) sfx.tick();
-      if (s.timeLeft <= 0) { clearTimeout(fallbackTimer); endGame(true); }
-    }, 1000);
+    const scene = new THREE.Scene();
+    scene.fog = new THREE.FogExp2(0x030110, 0.04);
+    s.scene = scene;
+    const camera = new THREE.PerspectiveCamera(60, W / H, 0.1, 200);
+    camera.position.set(0, 14, 12);
+    camera.lookAt(0, 0, 0);
+    s.camera = camera;
 
-    const radius = cs * 0.2;
-    const exitX = ox + GRID * cs - cs / 2;
-    const exitY = oy + GRID * cs - cs / 2;
+    // Lights
+    scene.add(new THREE.AmbientLight(0x110025, 4));
+    const topLight = new THREE.PointLight(0xa78bfa, 2, 30);
+    topLight.position.set(0, 10, 0);
+    scene.add(topLight);
 
-    const checkWalls = (bx: number, by: number, vx: number, vy: number) => {
-      let nvx = vx, nvy = vy, hit = false;
-      const col = Math.floor((bx - ox) / cs);
-      const row = Math.floor((by - oy) / cs);
-      if (row >= 0 && row < GRID && col >= 0 && col < GRID) {
-        const w = s.maze[row][col];
-        const cx2 = ox + col * cs, cy2 = oy + row * cs;
-        if (w.top && by - radius < cy2) { nvy = Math.abs(nvy); hit = true; }
-        if (w.bottom && by + radius > cy2 + cs) { nvy = -Math.abs(nvy); hit = true; }
-        if (w.left && bx - radius < cx2) { nvx = Math.abs(nvx); hit = true; }
-        if (w.right && bx + radius > cx2 + cs) { nvx = -Math.abs(nvx); hit = true; }
-      }
-      if (bx - radius < ox) { nvx = Math.abs(nvx); hit = true; }
-      if (bx + radius > ox + GRID * cs) { nvx = -Math.abs(nvx); hit = true; }
-      if (by - radius < oy) { nvy = Math.abs(nvy); hit = true; }
-      if (by + radius > oy + GRID * cs) { nvy = -Math.abs(nvy); hit = true; }
-      if (hit) {
-        const now = Date.now();
-        if (now - s.lastCollision > 150) { s.sig.collisions++; sfx.nearMiss(); haptic([20, 30, 20]); s.lastCollision = now; }
-        s.wallFlash = now + 160;
-      }
-      return { nvx, nvy };
-    };
+    // Floor
+    const floorGeo = new THREE.PlaneGeometry(GRID * CELL_SIZE + 1, GRID * CELL_SIZE + 1);
+    const floorMat = new THREE.MeshPhongMaterial({ color: 0x0a0520, emissive: 0x050210 });
+    const floor = new THREE.Mesh(floorGeo, floorMat);
+    floor.rotation.x = -Math.PI / 2;
+    scene.add(floor);
 
-    const loop = () => {
-      if (!s.running) return;
-      const accent = s.accentColor;
-      ctx.clearRect(0, 0, W, H);
+    // Maze generation
+    const maze = generateMaze(GRID, GRID);
+    s.mazeCells = maze;
+    const wallMat = new THREE.MeshPhongMaterial({ color: 0x4c1d95, emissive: 0x1e0066, transparent: true, opacity: 0.9 });
+    const wallH = 0.8, wallT = 0.15;
+    const offsetX = -(GRID * CELL_SIZE) / 2;
+    const offsetZ = -(GRID * CELL_SIZE) / 2;
 
-      // Background
-      const bg = ctx.createRadialGradient(W / 2, H / 2, 0, W / 2, H / 2, Math.max(W, H) * 0.8);
-      bg.addColorStop(0, '#0d0520'); bg.addColorStop(1, '#060210');
-      ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
+    for (let r = 0; r < GRID; r++) {
+      for (let c = 0; c < GRID; c++) {
+        const cx = offsetX + c * CELL_SIZE + CELL_SIZE / 2;
+        const cz = offsetZ + r * CELL_SIZE + CELL_SIZE / 2;
+        const cell = maze[r][c];
 
-      // Wall flash
-      if (Date.now() < s.wallFlash) {
-        const p = Math.max(0, 1 - (Date.now() - (s.wallFlash - 160)) / 160);
-        ctx.fillStyle = `rgba(239,68,68,${p * 0.3})`; ctx.fillRect(0, 0, W, H);
-      }
-
-      // Magnetic field gradient aura
-      for (const mag of s.magnets) {
-        const mGrad = ctx.createRadialGradient(mag.x, mag.y, 0, mag.x, mag.y, cs * 1.2);
-        const col = mag.polarity === 1 ? '168,85,247' : '239,68,68';
-        mGrad.addColorStop(0, `rgba(${col},0.15)`); mGrad.addColorStop(1, 'rgba(0,0,0,0)');
-        ctx.fillStyle = mGrad; ctx.fillRect(0, 0, W, H);
-      }
-
-      // Draw maze walls
-      ctx.save();
-      ctx.strokeStyle = accent; ctx.lineWidth = 2;
-      ctx.shadowBlur = 8; ctx.shadowColor = accent + '66';
-      for (let r = 0; r < GRID; r++) {
-        for (let c = 0; c < GRID; c++) {
-          const x = ox + c * cs, y = oy + r * cs;
-          const w = s.maze[r][c];
-          const draw = (x1: number, y1: number, x2: number, y2: number) => {
-            ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
-          };
-          if (w.top) draw(x, y, x + cs, y);
-          if (w.right) draw(x + cs, y, x + cs, y + cs);
-          if (w.bottom) draw(x, y + cs, x + cs, y + cs);
-          if (w.left) draw(x, y, x, y + cs);
+        // Top wall
+        if (cell.top && r === 0) {
+          const wGeo = new THREE.BoxGeometry(CELL_SIZE + wallT, wallH, wallT);
+          const w = new THREE.Mesh(wGeo, wallMat.clone());
+          w.position.set(cx, wallH / 2, offsetZ + r * CELL_SIZE);
+          scene.add(w); s.mazeWalls.push(w);
+        }
+        if (cell.bottom) {
+          const wGeo = new THREE.BoxGeometry(CELL_SIZE + wallT, wallH, wallT);
+          const w = new THREE.Mesh(wGeo, wallMat.clone());
+          w.position.set(cx, wallH / 2, offsetZ + (r + 1) * CELL_SIZE);
+          scene.add(w); s.mazeWalls.push(w);
+        }
+        if (cell.left && c === 0) {
+          const wGeo = new THREE.BoxGeometry(wallT, wallH, CELL_SIZE + wallT);
+          const w = new THREE.Mesh(wGeo, wallMat.clone());
+          w.position.set(offsetX + c * CELL_SIZE, wallH / 2, cz);
+          scene.add(w); s.mazeWalls.push(w);
+        }
+        if (cell.right) {
+          const wGeo = new THREE.BoxGeometry(wallT, wallH, CELL_SIZE + wallT);
+          const w = new THREE.Mesh(wGeo, wallMat.clone());
+          w.position.set(offsetX + (c + 1) * CELL_SIZE, wallH / 2, cz);
+          scene.add(w); s.mazeWalls.push(w);
         }
       }
-      ctx.restore();
+    }
 
-      // Magnets
-      for (const mag of s.magnets) {
-        ctx.save();
-        const col = mag.polarity === 1 ? '#a855f7' : '#ef4444';
-        ctx.shadowBlur = 18; ctx.shadowColor = col;
-        ctx.strokeStyle = col; ctx.lineWidth = 2;
-        ctx.beginPath(); ctx.arc(mag.x, mag.y, cs * 0.18, 0, Math.PI * 2); ctx.stroke();
-        ctx.fillStyle = col + '33'; ctx.fill();
-        ctx.fillStyle = col; ctx.font = `bold ${Math.round(cs * 0.18)}px sans-serif`;
-        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-        ctx.fillText(mag.polarity === 1 ? 'N' : 'S', mag.x, mag.y);
-        ctx.restore();
+    // Goal at far corner
+    const goalX = offsetX + (GRID - 0.5) * CELL_SIZE;
+    const goalZ = offsetZ + (GRID - 0.5) * CELL_SIZE;
+    const goalGeo = new THREE.CylinderGeometry(0.5, 0.5, 0.1, 16);
+    const goalMat = new THREE.MeshPhongMaterial({ color: 0xfbbf24, emissive: 0x92400e });
+    const goalMesh = new THREE.Mesh(goalGeo, goalMat);
+    goalMesh.position.set(goalX, 0.05, goalZ);
+    scene.add(goalMesh);
+    s.goalMesh = goalMesh;
+    const goalLight = new THREE.PointLight(0xfbbf24, 3, 5);
+    goalLight.position.set(goalX, 1, goalZ);
+    scene.add(goalLight);
+
+    // Magnets (2-3 scattered in maze)
+    const magnetCount = 2 + Math.floor(Math.random() * 2);
+    for (let m = 0; m < magnetCount; m++) {
+      const mc = Math.floor(1 + Math.random() * (GRID - 2));
+      const mr = Math.floor(1 + Math.random() * (GRID - 2));
+      const mx = offsetX + mc * CELL_SIZE + CELL_SIZE / 2;
+      const mz = offsetZ + mr * CELL_SIZE + CELL_SIZE / 2;
+      const polarity: 1 | -1 = Math.random() > 0.5 ? 1 : -1;
+
+      const magnetGeo = new THREE.CylinderGeometry(0.3, 0.3, 0.5, 8);
+      const magnetMat = new THREE.MeshPhongMaterial({
+        color: polarity === 1 ? 0xef4444 : 0x3b82f6,
+        emissive: polarity === 1 ? 0x7f1d1d : 0x1e3a5f,
+        shininess: 100,
+      });
+      const magnetMesh = new THREE.Mesh(magnetGeo, magnetMat);
+      magnetMesh.position.set(mx, 0.25, mz);
+      scene.add(magnetMesh);
+
+      const magnetLight = new THREE.PointLight(polarity === 1 ? 0xff4444 : 0x4488ff, 2, 4);
+      magnetLight.position.set(mx, 0.5, mz);
+      scene.add(magnetLight);
+
+      s.magnets.push({ mesh: magnetMesh, light: magnetLight, x: mx, z: mz, strength: 1 + Math.random(), polarity });
+
+      // Field particles orbiting magnet
+      for (let fp = 0; fp < 6; fp++) {
+        const fpGeo = new THREE.SphereGeometry(0.06, 6, 6);
+        const fpMat = new THREE.MeshBasicMaterial({ color: polarity === 1 ? 0xff6666 : 0x6688ff, transparent: true, opacity: 0.8 });
+        const fpMesh = new THREE.Mesh(fpGeo, fpMat);
+        scene.add(fpMesh);
+        s.fieldParticles.push({ mesh: fpMesh, angle: (fp / 6) * Math.PI * 2, radius: 0.8 + Math.random() * 0.4, magnetIdx: s.magnets.length - 1 });
       }
+    }
 
-      // Exit portal
-      const pr = 14 + Math.sin(Date.now() / 220) * 4;
-      ctx.save(); ctx.shadowBlur = 22; ctx.shadowColor = '#00ff88';
-      ctx.strokeStyle = '#00ff88'; ctx.lineWidth = 3;
-      ctx.beginPath(); ctx.arc(exitX, exitY, pr, 0, Math.PI * 2); ctx.stroke();
-      ctx.fillStyle = 'rgba(0,255,136,0.2)'; ctx.fill(); ctx.restore();
+    // Ball
+    const ballGeo = new THREE.SphereGeometry(0.3, 16, 16);
+    const ballMat = new THREE.MeshPhongMaterial({ color: 0xc0c0c0, emissive: 0x303030, shininess: 200 });
+    const ball = new THREE.Mesh(ballGeo, ballMat);
+    ball.position.copy(s.ballPos);
+    scene.add(ball);
+    s.ball = ball;
+    const ballLight = new THREE.PointLight(0xa78bfa, 1.5, 3);
+    scene.add(ballLight);
 
-      // Ball physics
-      let inputX = s.tiltX, inputY = s.tiltY;
-      if (s.touchFallback) {
-        // Touch drag gives direction from center
-        const tcx = s.touchX - s.ballX, tcy = s.touchY - s.ballY;
-        const td = Math.hypot(tcx, tcy);
-        if (td > 10) { inputX = (tcx / td) * Math.min(1, td / 100); inputY = (tcy / td) * Math.min(1, td / 100); }
-        else { inputX = 0; inputY = 0; }
-      }
+    // Tilt via device orientation
+    const onOrient = (e: DeviceOrientationEvent) => {
+      s.orientation.gamma = e.gamma ?? 0;
+      s.orientation.beta = e.beta ?? 0;
+    };
+    window.addEventListener('deviceorientation', onOrient);
+
+    timerRef.current = setInterval(() => {
+      s.timeLeft--; setTimeLeft(s.timeLeft);
+      if (s.timeLeft <= 0) endGame(false);
+    }, 1000);
+
+    const handleResize = () => {
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+    };
+    window.addEventListener('resize', handleResize);
+
+    const BOUNDS = (GRID * CELL_SIZE) / 2 - 0.35;
+    let t = 0;
+    const loop = () => {
+      if (!s.running) { renderer.dispose(); return; }
+      t += 0.016;
+
+      // Physics: tilt drives ball
+      const tiltX = s.tiltX + (s.orientation.gamma ?? 0) * 0.005;
+      const tiltZ = s.tiltZ + (s.orientation.beta ?? 0) * 0.003;
+
+      s.ballVel.x += tiltX * 0.01;
+      s.ballVel.z += tiltZ * 0.01;
+
       // Magnet forces
-      let magX = 0, magY = 0;
       for (const mag of s.magnets) {
-        const dx = mag.x - s.ballX, dy = mag.y - s.ballY;
-        const dist = Math.max(20, Math.hypot(dx, dy));
-        const force = (mag.polarity * mag.strength) / (dist * dist);
-        magX += (dx / dist) * force; magY += (dy / dist) * force;
-      }
-      s.velX += inputX * 0.45 + magX * 0.002;
-      s.velY += inputY * 0.45 + magY * 0.002;
-      s.velX *= 0.84; s.velY *= 0.84;
-      s.velX = Math.max(-6, Math.min(6, s.velX));
-      s.velY = Math.max(-6, Math.min(6, s.velY));
-      const { nvx, nvy } = checkWalls(s.ballX + s.velX, s.ballY + s.velY, s.velX, s.velY);
-      s.velX = nvx; s.velY = nvy;
-      s.ballX += nvx; s.ballY += nvy;
-
-      // Trail
-      s.trail.push({ x: s.ballX, y: s.ballY });
-      if (s.trail.length > 10) s.trail.shift();
-      const [tr, tg, tb] = [168, 139, 250];
-      for (let i = 0; i < s.trail.length; i++) {
-        ctx.beginPath(); ctx.arc(s.trail[i].x, s.trail[i].y, radius * (0.3 + i / 14), 0, Math.PI * 2);
-        ctx.fillStyle = `rgba(${tr},${tg},${tb},${(i / s.trail.length) * 0.35})`; ctx.fill();
+        const dx = mag.x - s.ballPos.x;
+        const dz = mag.z - s.ballPos.z;
+        const dist = Math.sqrt(dx * dx + dz * dz);
+        if (dist < 3 && dist > 0.3) {
+          const force = (mag.polarity * mag.strength * 0.008) / (dist * dist);
+          s.ballVel.x += (dx / dist) * force;
+          s.ballVel.z += (dz / dist) * force;
+        }
       }
 
-      // Ball
-      const bGrad = ctx.createRadialGradient(s.ballX - radius * 0.3, s.ballY - radius * 0.3, 0, s.ballX, s.ballY, radius);
-      bGrad.addColorStop(0, '#ffffff'); bGrad.addColorStop(0.5, accent); bGrad.addColorStop(1, '#5b21b6');
-      ctx.save(); ctx.shadowBlur = 24; ctx.shadowColor = accent;
-      ctx.beginPath(); ctx.arc(s.ballX, s.ballY, radius, 0, Math.PI * 2); ctx.fillStyle = bGrad; ctx.fill();
-      ctx.restore();
+      // Damping
+      s.ballVel.multiplyScalar(0.88);
 
-      // Check exit
-      if (Math.hypot(s.ballX - exitX, s.ballY - exitY) < radius + 18 && s.celebrateUntil === 0) {
-        s.sig.completionTime = Date.now() - s.startTime;
-        s.sig.score = Math.max(0, Math.round(1000 - s.sig.completionTime / 60));
-        sfx.collect(); haptic([40, 20, 60, 20, 80]);
-        setScorePop(`${(s.sig.completionTime / 1000).toFixed(1)}s!`);
-        setTimeout(() => setScorePop(null), 2000);
-        s.celebrateUntil = Date.now() + 900;
-      }
-      if (s.celebrateUntil > 0 && Date.now() >= s.celebrateUntil) {
-        s.celebrateUntil = 0;
-        if (s.running) endGame(false);
-        return;
+      // Clamp velocity
+      const speed = s.ballVel.length();
+      if (speed > 0.12) s.ballVel.multiplyScalar(0.12 / speed);
+
+      // Move
+      s.ballPos.x += s.ballVel.x;
+      s.ballPos.z += s.ballVel.z;
+
+      // Wall bounds (simple)
+      s.ballPos.x = Math.max(-BOUNDS, Math.min(BOUNDS, s.ballPos.x));
+      s.ballPos.z = Math.max(-BOUNDS, Math.min(BOUNDS, s.ballPos.z));
+
+      if (s.ball) {
+        s.ball.position.copy(s.ballPos);
+        s.ball.rotation.x += s.ballVel.z * 5;
+        s.ball.rotation.z -= s.ballVel.x * 5;
+        ballLight.position.copy(s.ballPos).y += 0.5;
       }
 
+      // Check goal
+      if (s.goalMesh) {
+        const gdx = s.ballPos.x - s.goalMesh.position.x;
+        const gdz = s.ballPos.z - s.goalMesh.position.z;
+        if (Math.sqrt(gdx * gdx + gdz * gdz) < 0.6) {
+          s.sig.completionTime = Date.now() - s.startTime;
+          s.sig.score = Math.max(0, 100 - Math.floor(s.sig.completionTime / 500));
+          setScoreDisplay(s.sig.score);
+          sfx.success(); haptic([50, 30, 80]);
+          setWonDisplay(true);
+          endGame(true);
+          return;
+        }
+        s.goalMesh.rotation.y += 0.03;
+      }
+
+      // Field particles orbit magnets
+      s.fieldParticles.forEach(fp => {
+        fp.angle += 0.05;
+        const mag = s.magnets[fp.magnetIdx];
+        fp.mesh.position.set(
+          mag.x + Math.cos(fp.angle) * fp.radius,
+          0.4,
+          mag.z + Math.sin(fp.angle) * fp.radius,
+        );
+      });
+
+      // Pulse magnets
+      s.magnets.forEach((mag, i) => {
+        const scale = 1 + Math.sin(t * 3 + i) * 0.1;
+        mag.mesh.scale.setScalar(scale);
+        mag.light.intensity = 1.5 + Math.sin(t * 2 + i) * 0.5;
+      });
+
+      renderer.render(scene, camera);
       animRef.current = requestAnimationFrame(loop);
     };
     animRef.current = requestAnimationFrame(loop);
+
+    return () => {
+      s.running = false;
+      window.removeEventListener('resize', handleResize);
+      window.removeEventListener('deviceorientation', onOrient);
+      renderer.dispose();
+    };
   }, [endGame]);
 
+  // Touch drag fallback
   useEffect(() => {
-    const canvas = canvasRef.current; if (!canvas) return;
-    const dpr = window.devicePixelRatio || 1;
-    const resize = () => {
-      canvas.width = window.innerWidth * dpr; canvas.height = window.innerHeight * dpr;
-      canvas.style.width = window.innerWidth + 'px'; canvas.style.height = window.innerHeight + 'px';
-      const ctx = canvas.getContext('2d'); if (ctx) ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    };
-    resize();
-    window.addEventListener('resize', resize);
-    const onMove = (e: TouchEvent) => {
+    const el = mountRef.current; if (!el) return;
+    let lastX = 0, lastY = 0;
+    const onPD = (e: PointerEvent) => { lastX = e.clientX; lastY = e.clientY; };
+    const onPM = (e: PointerEvent) => {
       const s = stateRef.current;
-      if (!s.running || !s.touchFallback) return;
-      const t = e.touches[0]; if (!t) return;
-      s.touchX = t.clientX; s.touchY = t.clientY;
+      if (!s.running) return;
+      const dx = e.clientX - lastX;
+      const dy = e.clientY - lastY;
+      s.tiltX = dx * 0.008;
+      s.tiltZ = dy * 0.008;
+      lastX = e.clientX; lastY = e.clientY;
     };
-    canvas.addEventListener('touchmove', onMove, { passive: true });
-    return () => { window.removeEventListener('resize', resize); canvas.removeEventListener('touchmove', onMove); };
+    const onPU = () => { const s = stateRef.current; s.tiltX = 0; s.tiltZ = 0; };
+    el.addEventListener('pointerdown', onPD);
+    el.addEventListener('pointermove', onPM);
+    el.addEventListener('pointerup', onPU);
+    return () => { el.removeEventListener('pointerdown', onPD); el.removeEventListener('pointermove', onPM); el.removeEventListener('pointerup', onPU); };
   }, []);
 
   useEffect(() => () => {
     cancelAnimationFrame(animRef.current);
     if (timerRef.current) clearInterval(timerRef.current);
     if (stopMusicRef.current) stopMusicRef.current();
-    if (orientRef.current) window.removeEventListener('deviceorientation', orientRef.current);
+    stateRef.current.renderer?.dispose();
   }, []);
 
-  const handleStart = useCallback(async (name: string, avatar: string) => {
-    playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar);
-    await initAudio();
-    const DO = DeviceOrientationEvent as typeof DeviceOrientationEvent & { requestPermission?: () => Promise<string> };
-    if (typeof DO.requestPermission === 'function') {
-      try { await DO.requestPermission(); } catch { stateRef.current.touchFallback = true; setUseFallback(true); }
-    }
-    setPhase('countdown');
+  const handleStart = useCallback(async (n: string, a: string) => {
+    playerSessionRef.current = savePlayerSession(GAME_ID, n, a);
+    await initAudio(); setPhase('countdown');
   }, []);
-
-  const handlePlayAgain = useCallback(() => {
-    stateRef.current.touchFallback = false;
-    setUseFallback(false);
-    setPhase('start'); setTimeLeft(DURATION); setFinalSig(null);
-  }, []);
-
-  const accent = theme.colors.accent ?? ACCENT;
+  const handlePlayAgain = useCallback(() => { setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null); setWonDisplay(false); }, []);
 
   return (
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accent}
-      background="linear-gradient(180deg, #0d0520 0%, #060210 100%)">
-      {phase === 'start' && (
-        <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description={GAME_TAGLINE}
-          ctaLabel="Enable Motion & Start →" accentColor={accent} onStart={handleStart}
-          sensorNote="Uses tilt sensor"
-          gradient="radial-gradient(ellipse 80% 70% at 50% 30%, #0d0520 0%, #040110 100%)" />
-      )}
-      {phase === 'countdown' && <Countdown onComplete={() => startLoop()} accentColor={accent} />}
-      {(phase === 'playing' || phase === 'countdown') && (
-        <canvas ref={canvasRef} role="img" aria-label="Magnet Maze game canvas"
-          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none' }} />
-      )}
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}
+      background="linear-gradient(180deg,#030110 0%,#060225 100%)">
+      {phase === 'start' && <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description={GAME_TAGLINE} ctaLabel="Enter the Maze 🧲" accentColor={theme.colors.accent ?? ACCENT} onStart={handleStart} />}
+      {phase === 'countdown' && <Countdown onComplete={startLoop} accentColor={theme.colors.accent ?? ACCENT} />}
+      <div ref={mountRef} style={{ position: 'absolute', inset: 0, display: phase === 'playing' ? 'block' : 'none', touchAction: 'none' }} />
       {phase === 'playing' && (
         <>
-          <GameHUD accentColor={accent} items={[
-            { label: 'TIME', value: `${timeLeft}s`, danger: timeLeft <= 10, testId: 'timer' },
-          ]} />
-          {useFallback && (
-            <div style={{ position: 'fixed', bottom: 32, left: '50%', transform: 'translateX(-50%)', zIndex: 60, color: 'rgba(255,255,255,0.5)', fontSize: 14, whiteSpace: 'nowrap' }}>
-              📱 Touch mode active — drag to move
-            </div>
-          )}
+          <GameHUD accentColor={theme.colors.accent ?? ACCENT} items={[{ label: 'TIME', value: timeLeft, danger: timeLeft <= 10 }, { label: 'SCORE', value: scoreDisplay }]} />
+          <div style={{ position: 'fixed', bottom: 20, left: '50%', transform: 'translateX(-50%)', color: 'rgba(167,139,250,0.6)', fontSize: 12, pointerEvents: 'none', zIndex: 50 }}>
+            Drag to steer — reach the ✨ goal
+          </div>
         </>
       )}
       <AnimatePresence>
-        {scorePop && (
-          <motion.div key="pop" initial={{ opacity: 0, scale: 0.6 }} animate={{ opacity: 1, scale: 1.2 }} exit={{ opacity: 0, y: -40 }} transition={{ duration: 0.7 }}
-            style={{ position: 'fixed', top: '30%', left: '50%', transform: 'translateX(-50%)', zIndex: 80, pointerEvents: 'none', fontSize: 44, fontWeight: 900, color: '#00ff88', textShadow: '0 0 24px #00ff88' }}>
-            {scorePop}
+        {wonDisplay && (
+          <motion.div key="won" initial={{ opacity: 0, scale: 0.5 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0 }}
+            style={{ position: 'fixed', top: '30%', left: '50%', transform: 'translateX(-50%)', zIndex: 90, pointerEvents: 'none', fontSize: 32, fontWeight: 900, color: '#fbbf24', textShadow: '0 0 20px #fbbf24' }}>
+            🏆 YOU MADE IT!
           </motion.div>
         )}
       </AnimatePresence>
       {phase === 'done' && finalSig && (
-        <>
-          <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI}
-            score={finalSig.completionTime ? `${(finalSig.completionTime / 1000).toFixed(1)}s` : 'DNF'}
-            personality={getPersonality(finalSig)}
-            insights={[
-              { label: 'Result', value: finalSig.completionTime ? `${(finalSig.completionTime / 1000).toFixed(1)}s` : 'Time out', color: finalSig.completionTime ? '#00ff88' : '#ef4444' },
-              { label: 'Wall Hits', value: String(finalSig.collisions), color: finalSig.collisions < 5 ? '#4ade80' : '#facc15' },
-              { label: 'Score', value: String(finalSig.score), color: accent },
-            ]}
-            accentColor={accent} onPlayAgain={handlePlayAgain} didWin={!!finalSig.completionTime} finalScore={finalSig.score} />
-          <WebhookEmitter theme={theme} sig={finalSig} personality={getPersonality(finalSig)} player={playerSessionRef.current} />
-        </>
+        <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI} score={String(finalSig.score)} personality={getPersonality(finalSig)}
+          insights={[
+            { label: 'Completed', value: finalSig.completionTime ? `${(finalSig.completionTime / 1000).toFixed(1)}s` : 'Not yet', color: finalSig.completionTime ? '#4ade80' : '#ef4444' },
+            { label: 'Collisions', value: `${finalSig.collisions}`, color: '#fbbf24' },
+            { label: 'Score', value: `${finalSig.score}`, color: ACCENT },
+            { label: 'Timed Out', value: finalSig.timedOut ? 'Yes' : 'No', color: finalSig.timedOut ? '#ef4444' : '#4ade80' },
+          ]}
+          accentColor={theme.colors.accent ?? ACCENT} onPlayAgain={handlePlayAgain} didWin={!!finalSig.completionTime} />
       )}
+      {phase === 'done' && finalSig && <WebhookEmitter theme={theme} sig={finalSig} personality={getPersonality(finalSig)} player={playerSessionRef.current} />}
     </GameShell>
   );
+}
+
+function WebhookEmitter({ theme, sig, personality, player }: { theme: ReturnType<typeof useBrandTheme>; sig: Signals; personality: string; player: PlayerSession | null; }) {
+  const fired = useRef(false);
+  useEffect(() => {
+    if (fired.current) return; fired.current = true;
+    postWebhook(theme, GAME_ID, { personality, score: sig.score }, player);
+  }, [theme, sig, personality, player]);
+  return null;
 }

@@ -1,12 +1,13 @@
 'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
+import * as THREE from 'three';
 import GameShell from '@/components/GameShell';
 import GameHUD from '@/components/GameHUD';
 import GameStartScreen from '@/components/GameStartScreen';
 import Countdown from '@/components/Countdown';
 import EndScreen from '@/components/EndScreen';
 import { initAudio, sfx } from '@/lib/audio';
-import { hapticScore, hapticFail, hapticVictory, hapticCombo } from '@/lib/haptics';
+import { hapticScore, hapticFail, hapticVictory } from '@/lib/haptics';
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
 
@@ -18,16 +19,11 @@ const GAME_TITLE = 'Odd One Out';
 const GAME_TAGLINE = "Spot what doesn't belong. Quick!";
 
 interface Signals {
-  total: number;
-  correct: number;
-  wrong: number;
-  avgReactionMs: number;
-  totalMs: number;
-  hardestLevel: number;
-  score: number;
-  maxStreak: number;
-  streakCurrent: number;
+  total: number; correct: number; wrong: number;
+  avgReactionMs: number; totalMs: number; hardestLevel: number;
+  score: number; maxStreak: number; streakCurrent: number;
 }
+type Phase = 'start' | 'countdown' | 'playing' | 'done';
 
 function getPersonality(sig: Signals): string {
   const acc = sig.total > 0 ? sig.correct / sig.total : 0;
@@ -39,315 +35,272 @@ function getPersonality(sig: Signals): string {
   return 'Training Vision 🔮';
 }
 
-type Phase = 'start' | 'countdown' | 'playing' | 'done';
+const COLORS_HEX = [0x3b82f6, 0xef4444, 0x22c55e, 0xeab308, 0xa855f7, 0xf97316];
+const GEOMETRIES = ['sphere', 'box', 'cone', 'octahedron', 'torus'];
 
-// Each puzzle: grid of items where one is different
-// Difference types: color, shape, size, rotation, count
-
-type DiffType = 'color' | 'shape' | 'rotation' | 'size';
-
-interface Item {
-  x: number; y: number;
-  shape: string; // 'circle' | 'square' | 'triangle' | 'diamond'
-  color: string;
-  size: number;
-  rotation: number;
-  isOdd: boolean;
+function makeGeometry(type: string): THREE.BufferGeometry {
+  switch (type) {
+    case 'box': return new THREE.BoxGeometry(0.7, 0.7, 0.7);
+    case 'cone': return new THREE.ConeGeometry(0.4, 0.8, 8);
+    case 'octahedron': return new THREE.OctahedronGeometry(0.45);
+    case 'torus': return new THREE.TorusGeometry(0.3, 0.12, 8, 16);
+    default: return new THREE.SphereGeometry(0.4, 16, 16);
+  }
 }
 
-const SHAPES = ['circle', 'square', 'triangle', 'diamond'];
-const COLORS = ['#3b82f6', '#ef4444', '#22c55e', '#eab308', '#a855f7', '#f97316'];
+interface PuzzleItem { geoType: string; color: number; scale: number; rotation: number; isOdd: boolean; }
 
-function makePuzzle(W: number, H: number, level: number): { items: Item[], diffType: DiffType } {
-  const count = 4 + Math.min(level * 2, 12);
-  const oddIdx = Math.floor(Math.random() * count);
-  const diffTypes: DiffType[] = ['color', 'shape', 'rotation', 'size'];
-  const diffType = diffTypes[Math.floor(Math.random() * (level >= 3 ? 4 : 2))];
-
-  const baseShape = SHAPES[Math.floor(Math.random() * SHAPES.length)];
-  const baseColor = COLORS[Math.floor(Math.random() * COLORS.length)];
-  const baseSize = 22;
-  const baseRotation = 0;
-
-  const margin = 45;
-  const gridCols = Math.ceil(Math.sqrt(count));
-  const cellW = (W - margin * 2) / gridCols;
-  const rows = Math.ceil(count / gridCols);
-  const cellH = Math.min((H * 0.65 - 60) / rows, cellW);
-
-  const items: Item[] = [];
-  for (let i = 0; i < count; i++) {
-    const col = i % gridCols;
-    const row = Math.floor(i / gridCols);
-    const x = margin + cellW * col + cellW / 2;
-    const y = H * 0.3 + cellH * row + cellH / 2;
-
-    let shape = baseShape, color = baseColor, size = baseSize, rotation = baseRotation;
-    if (i === oddIdx) {
+function generatePuzzle(level: number): PuzzleItem[] {
+  const GRID = 9; // 3x3
+  const diffType = ['color', 'shape', 'size', 'rotation'][Math.min(level - 1, 3)];
+  const baseGeo = GEOMETRIES[Math.floor(Math.random() * GEOMETRIES.length)];
+  const baseColor = COLORS_HEX[Math.floor(Math.random() * COLORS_HEX.length)];
+  const oddIdx = Math.floor(Math.random() * GRID);
+  const items: PuzzleItem[] = [];
+  for (let i = 0; i < GRID; i++) {
+    const isOdd = i === oddIdx;
+    let geoType = baseGeo, color = baseColor, scale = 1, rotation = 0;
+    if (isOdd) {
       if (diffType === 'color') {
-        color = COLORS.filter(c => c !== baseColor)[Math.floor(Math.random() * 5)];
+        const others = COLORS_HEX.filter(c => c !== baseColor);
+        color = others[Math.floor(Math.random() * others.length)];
       } else if (diffType === 'shape') {
-        shape = SHAPES.filter(s => s !== baseShape)[Math.floor(Math.random() * 3)];
-      } else if (diffType === 'rotation') {
-        rotation = 45 + Math.floor(Math.random() * 3) * 30;
+        const others = GEOMETRIES.filter(g => g !== baseGeo);
+        geoType = others[Math.floor(Math.random() * others.length)];
       } else if (diffType === 'size') {
-        size = baseSize * 1.8;
+        scale = 1.7;
+      } else {
+        rotation = Math.PI / 3;
       }
     }
-    items.push({ x, y, shape, color, size, rotation, isOdd: i === oddIdx });
+    items.push({ geoType, color, scale, rotation, isOdd });
   }
-  return { items, diffType };
-}
-
-function drawItem(ctx: CanvasRenderingContext2D, item: Item) {
-  ctx.save();
-  ctx.translate(item.x, item.y);
-  ctx.rotate(item.rotation * Math.PI / 180);
-  ctx.fillStyle = item.color + '44';
-  ctx.strokeStyle = item.color;
-  ctx.lineWidth = 2;
-
-  if (item.shape === 'circle') {
-    ctx.beginPath(); ctx.arc(0, 0, item.size, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
-  } else if (item.shape === 'square') {
-    ctx.fillRect(-item.size, -item.size, item.size * 2, item.size * 2);
-    ctx.strokeRect(-item.size, -item.size, item.size * 2, item.size * 2);
-  } else if (item.shape === 'triangle') {
-    ctx.beginPath(); ctx.moveTo(0, -item.size); ctx.lineTo(item.size, item.size); ctx.lineTo(-item.size, item.size); ctx.closePath(); ctx.fill(); ctx.stroke();
-  } else if (item.shape === 'diamond') {
-    ctx.beginPath(); ctx.moveTo(0, -item.size); ctx.lineTo(item.size, 0); ctx.lineTo(0, item.size); ctx.lineTo(-item.size, 0); ctx.closePath(); ctx.fill(); ctx.stroke();
-  }
-  ctx.restore();
-}
-
-interface GameState {
-  running: boolean; timeLeft: number;
-  sig: Signals; frame: number; accentColor: string;
-  floats: Array<{ x: number; y: number; text: string; alpha: number; vy: number; color: string }>;
-  items: Item[];
-  diffType: DiffType;
-  shownAt: number;
-  feedback: boolean | null;
-  feedbackTimer: number;
-  level: number;
-  selectedIdx: number;
+  return items;
 }
 
 export default function OddOneOutGame() {
   const theme = useBrandTheme();
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const mountRef = useRef<HTMLDivElement>(null);
+  const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
+  const sceneRef = useRef<THREE.Scene | null>(null);
+  const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const animRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const meshesRef = useRef<THREE.Mesh[]>([]);
+  const playerSessionRef = useRef<PlayerSession | null>(null);
 
-  const stateRef = useRef<GameState>({
+  const stateRef = useRef({
     running: false, timeLeft: DURATION,
-    sig: { total: 0, correct: 0, wrong: 0, avgReactionMs: 0, totalMs: 0, hardestLevel: 0, score: 0, maxStreak: 0, streakCurrent: 0 },
-    frame: 0, accentColor: ACCENT, floats: [],
-    items: [], diffType: 'color', shownAt: 0, feedback: null, feedbackTimer: 0, level: 1, selectedIdx: -1,
+    sig: { total: 0, correct: 0, wrong: 0, avgReactionMs: 0, totalMs: 0, hardestLevel: 1, score: 0, maxStreak: 0, streakCurrent: 0 } as Signals,
+    level: 1, puzzleStart: 0, answered: false, puzzle: [] as PuzzleItem[],
   });
 
   const [phase, setPhase] = useState<Phase>('start');
   const [timeLeft, setTimeLeft] = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
   const [finalSig, setFinalSig] = useState<Signals | null>(null);
-  const playerSessionRef = useRef<PlayerSession | null>(null);
 
-  useEffect(() => { stateRef.current.accentColor = theme.colors.accent ?? ACCENT; }, [theme]);
-
-  const nextPuzzle = useCallback(() => {
-    const s = stateRef.current;
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const p = makePuzzle(canvas.width, canvas.height, s.level);
-    s.items = p.items;
-    s.diffType = p.diffType;
-    s.shownAt = Date.now();
-    s.feedback = null; s.feedbackTimer = 0; s.selectedIdx = -1;
-  }, []);
+  useEffect(() => { /* accent sync */ }, [theme]);
 
   const endGame = useCallback(() => {
-    const s = stateRef.current;
-    s.running = false;
+    const s = stateRef.current; s.running = false;
     cancelAnimationFrame(animRef.current);
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
-    const pb = parseInt(localStorage.getItem('pb_' + GAME_ID) ?? '0');
-    if (s.sig.score > pb) localStorage.setItem('pb_' + GAME_ID, String(s.sig.score));
-    setFinalSig({ ...s.sig });
-    setPhase('done');
     hapticVictory();
+    if (s.sig.total > 0) s.sig.avgReactionMs = s.sig.totalMs / s.sig.total;
+    setFinalSig({ ...s.sig }); setPhase('done');
+  }, []);
+
+  const buildPuzzle = useCallback(() => {
+    const s = stateRef.current;
+    const scene = sceneRef.current; if (!scene) return;
+    // Remove old meshes
+    meshesRef.current.forEach(m => scene.remove(m));
+    meshesRef.current = [];
+    const puzzle = generatePuzzle(s.level);
+    s.puzzle = puzzle;
+    s.puzzleStart = Date.now();
+    s.answered = false;
+    // 3x3 grid layout
+    const spacing = 2.2;
+    const offset = spacing;
+    puzzle.forEach((item, i) => {
+      const col = i % 3 - 1;
+      const row = Math.floor(i / 3) - 1;
+      const geo = makeGeometry(item.geoType);
+      const mat = new THREE.MeshStandardMaterial({ color: item.color, emissive: new THREE.Color(item.color).multiplyScalar(0.15), roughness: 0.4, metalness: 0.5 });
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.position.set(col * spacing, -row * spacing, 0);
+      mesh.scale.setScalar(item.scale);
+      mesh.rotation.z = item.rotation;
+      mesh.userData = { isOdd: item.isOdd, idx: i };
+      scene.add(mesh);
+      meshesRef.current.push(mesh);
+    });
   }, []);
 
   const startLoop = useCallback(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+    const mount = mountRef.current; if (!mount) return;
     const s = stateRef.current;
-
-    s.running = true; s.timeLeft = DURATION;
-    s.sig = { total: 0, correct: 0, wrong: 0, avgReactionMs: 0, totalMs: 0, hardestLevel: 0, score: 0, maxStreak: 0, streakCurrent: 0 };
-    s.frame = 0; s.floats = []; s.level = 1;
-    nextPuzzle();
+    s.running = true; s.timeLeft = DURATION; s.level = 1;
+    s.sig = { total: 0, correct: 0, wrong: 0, avgReactionMs: 0, totalMs: 0, hardestLevel: 1, score: 0, maxStreak: 0, streakCurrent: 0 };
     setScoreDisplay(0); setTimeLeft(DURATION); setPhase('playing');
+
+    const W = window.innerWidth, H = window.innerHeight;
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0a0a1a);
+    sceneRef.current = scene;
+
+    const camera = new THREE.PerspectiveCamera(65, W / H, 0.1, 100);
+    camera.position.set(0, 0, 10);
+    cameraRef.current = camera;
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(W, H);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    mount.appendChild(renderer.domElement);
+    rendererRef.current = renderer;
+
+    scene.add(new THREE.AmbientLight(0x334, 2));
+    const pl = new THREE.PointLight(0xf97316, 60, 30);
+    pl.position.set(3, 3, 8);
+    scene.add(pl);
+    const pl2 = new THREE.PointLight(0x6366f1, 40, 20);
+    pl2.position.set(-3, -2, 6);
+    scene.add(pl2);
+
+    // Subtle particle field
+    const starGeo = new THREE.BufferGeometry();
+    const sp = new Float32Array(600);
+    for (let i = 0; i < 600; i += 3) { sp[i] = (Math.random()-0.5)*40; sp[i+1] = (Math.random()-0.5)*40; sp[i+2] = (Math.random()-0.5)*10-8; }
+    starGeo.setAttribute('position', new THREE.BufferAttribute(sp, 3));
+    scene.add(new THREE.Points(starGeo, new THREE.PointsMaterial({ color: 0xffffff, size: 0.06 })));
+
+    buildPuzzle();
+
+    const raycaster = new THREE.Raycaster();
+    const onTap = (e: PointerEvent) => {
+      if (!s.running || s.answered) return;
+      const rect = renderer.domElement.getBoundingClientRect();
+      const mouse = new THREE.Vector2(
+        ((e.clientX - rect.left) / rect.width) * 2 - 1,
+        -((e.clientY - rect.top) / rect.height) * 2 + 1,
+      );
+      raycaster.setFromCamera(mouse, camera);
+      const hits = raycaster.intersectObjects(meshesRef.current);
+      if (!hits.length) return;
+      const obj = hits[0].object as THREE.Mesh;
+      const { isOdd } = obj.userData as { isOdd: boolean };
+      s.answered = true;
+      const rt = Date.now() - s.puzzleStart;
+      s.sig.total++; s.sig.totalMs += rt;
+      if (isOdd) {
+        s.sig.correct++; s.sig.streakCurrent++;
+        if (s.sig.streakCurrent > s.sig.maxStreak) s.sig.maxStreak = s.sig.streakCurrent;
+        const pts = Math.max(1, 3 - Math.floor(rt / 1000));
+        s.sig.score += pts; setScoreDisplay(s.sig.score);
+        (obj.material as THREE.MeshStandardMaterial).emissive.set(0x4ade80);
+        (obj.material as THREE.MeshStandardMaterial).emissiveIntensity = 2;
+        sfx.collect(); hapticScore();
+        s.level = Math.min(6, s.level + 1);
+        if (s.level > s.sig.hardestLevel) s.sig.hardestLevel = s.level;
+      } else {
+        s.sig.wrong++; s.sig.streakCurrent = 0;
+        (obj.material as THREE.MeshStandardMaterial).emissive.set(0xef4444);
+        (obj.material as THREE.MeshStandardMaterial).emissiveIntensity = 2;
+        sfx.collision(); hapticFail();
+        s.sig.score = Math.max(0, s.sig.score - 1); setScoreDisplay(s.sig.score);
+      }
+      setTimeout(() => { if (s.running) buildPuzzle(); }, 600);
+    };
+    renderer.domElement.addEventListener('pointerdown', onTap);
 
     timerRef.current = setInterval(() => {
       s.timeLeft--; setTimeLeft(s.timeLeft);
-      if (s.timeLeft <= 0) { sfx.fail(); endGame(); }
+      if (s.timeLeft === 10) sfx.warning();
+      if (s.timeLeft <= 0) endGame();
     }, 1000);
 
+    let t = 0;
     const loop = () => {
       if (!s.running) return;
-      const W = canvas.width, H = canvas.height;
-      ctx.clearRect(0, 0, W, H);
-      s.frame++;
-
-      if (s.feedbackTimer > 0) s.feedbackTimer--;
-
-      // Background - warm dark
-      ctx.fillStyle = '#0f0803'; ctx.fillRect(0, 0, W, H);
-      // Subtle pattern
-      for (let i = 0; i < 20; i++) {
-        ctx.fillStyle = `rgba(249,115,22,0.03)`;
-        ctx.beginPath(); ctx.arc((i * 61 + s.frame * 0.1) % W, (i * 37 + s.frame * 0.08) % (H * 0.25), 6, 0, Math.PI * 2); ctx.fill();
-      }
-
-      // Feedback flash
-      if (s.feedback !== null && s.feedbackTimer > 0) {
-        ctx.fillStyle = s.feedback ? 'rgba(74,222,128,0.12)' : 'rgba(239,68,68,0.12)';
-        ctx.fillRect(0, 0, W, H);
-      }
-
-      // Diff type hint
-      const diffLabels: Record<DiffType, string> = {
-        color: 'Find the different COLOR', shape: 'Find the different SHAPE',
-        rotation: 'Find the rotated one', size: 'Find the different SIZE',
-      };
-      ctx.fillStyle = 'rgba(255,255,255,0.6)'; ctx.font = 'bold 14px sans-serif'; ctx.textAlign = 'center';
-      ctx.fillText(diffLabels[s.diffType], W / 2, H * 0.15);
-
-      // Timer bar (per question: 5 seconds)
-      const elapsed = (Date.now() - s.shownAt) / 1000;
-      const limit = Math.max(2, 5 - s.level * 0.3);
-      ctx.fillStyle = 'rgba(255,255,255,0.1)'; ctx.fillRect(20, H * 0.2, W - 40, 5);
-      const pct = Math.max(0, 1 - elapsed / limit);
-      ctx.fillStyle = pct > 0.5 ? '#4ade80' : pct > 0.25 ? '#fbbf24' : '#ef4444';
-      ctx.fillRect(20, H * 0.2, (W - 40) * pct, 5);
-
-      // Auto-fail
-      if (elapsed > limit && s.feedback === null) {
-        s.sig.total++; s.sig.wrong++;
-        s.sig.streakCurrent = 0; s.feedback = false; s.feedbackTimer = 15;
-        sfx.collision(); hapticFail();
-        setTimeout(() => { if (s.running) nextPuzzle(); }, 600);
-      }
-
-      // Draw items
-      s.items.forEach((item, i) => {
-        ctx.save();
-        if (s.selectedIdx === i) {
-          ctx.shadowBlur = 20; ctx.shadowColor = item.isOdd ? '#4ade80' : '#ef4444';
-        }
-        drawItem(ctx, item);
-        ctx.restore();
-      });
-
-      // Floats
-      s.floats = s.floats.filter(f => f.alpha > 0.02);
-      s.floats.forEach(f => {
-        ctx.save(); ctx.globalAlpha = f.alpha;
-        ctx.fillStyle = f.color; ctx.font = 'bold 20px sans-serif'; ctx.textAlign = 'center';
-        ctx.fillText(f.text, f.x, f.y); ctx.restore();
-        f.y += f.vy; f.alpha *= 0.95;
-      });
-
       animRef.current = requestAnimationFrame(loop);
+      t += 0.01;
+      meshesRef.current.forEach((m, i) => { m.rotation.y += 0.012; m.position.y += Math.sin(t + i) * 0.003; });
+      pl.position.x = Math.sin(t * 0.5) * 4;
+      renderer.render(scene, camera);
     };
     animRef.current = requestAnimationFrame(loop);
-  }, [endGame, nextPuzzle]);
+
+    return () => { renderer.domElement.removeEventListener('pointerdown', onTap); };
+  }, [endGame, buildPuzzle]);
 
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const resize = () => { canvas.width = canvas.offsetWidth; canvas.height = canvas.offsetHeight; };
-    resize();
-    window.addEventListener('resize', resize);
-
-    const onPointerDown = (e: PointerEvent) => {
-      if (phase !== 'playing') return;
-      const s = stateRef.current;
-      if (s.feedback !== null) return;
-      const rect = canvas.getBoundingClientRect();
-      const px = (e.clientX - rect.left) * (canvas.width / rect.width);
-      const py = (e.clientY - rect.top) * (canvas.height / rect.height);
-
-      let hitIdx = -1;
-      s.items.forEach((item, i) => {
-        if (Math.hypot(px - item.x, py - item.y) < item.size + 15) hitIdx = i;
-      });
-
-      if (hitIdx < 0) return;
-      const ms = Date.now() - s.shownAt;
-      s.sig.total++; s.sig.totalMs += ms;
-      s.selectedIdx = hitIdx;
-
-      if (s.items[hitIdx].isOdd) {
-        s.sig.correct++;
-        s.sig.streakCurrent++;
-        if (s.sig.streakCurrent > s.sig.maxStreak) s.sig.maxStreak = s.sig.streakCurrent;
-        const speedPts = ms < 800 ? 3 : ms < 1500 ? 2 : 1;
-        s.sig.score += speedPts; setScoreDisplay(s.sig.score);
-        if (s.level > s.sig.hardestLevel) s.sig.hardestLevel = s.level;
-        s.level = Math.min(7, 1 + Math.floor(s.sig.correct / 4));
-        sfx.collect(); hapticScore();
-        if (s.sig.streakCurrent >= 3) hapticCombo(s.sig.streakCurrent);
-        s.floats.push({ x: s.items[hitIdx].x, y: s.items[hitIdx].y - 30, text: `+${speedPts} ✓`, alpha: 1, vy: -2.5, color: '#4ade80' });
-        s.feedback = true; s.feedbackTimer = 15;
-      } else {
-        s.sig.wrong++; s.sig.streakCurrent = 0;
-        sfx.collision(); hapticFail();
-        s.feedback = false; s.feedbackTimer = 15;
-        s.floats.push({ x: px, y: py - 20, text: 'WRONG!', alpha: 1, vy: -2, color: '#ef4444' });
-      }
-      setTimeout(() => { if (s.running) nextPuzzle(); }, 550);
+    const onResize = () => {
+      if (!cameraRef.current || !rendererRef.current) return;
+      const W = window.innerWidth, H = window.innerHeight;
+      cameraRef.current.aspect = W / H; cameraRef.current.updateProjectionMatrix();
+      rendererRef.current.setSize(W, H);
     };
-
-    canvas.addEventListener('pointerdown', onPointerDown);
+    window.addEventListener('resize', onResize);
     return () => {
-      window.removeEventListener('resize', resize);
-      canvas.removeEventListener('pointerdown', onPointerDown);
+      window.removeEventListener('resize', onResize);
+      cancelAnimationFrame(animRef.current);
+      if (timerRef.current) clearInterval(timerRef.current);
+      if (rendererRef.current && mountRef.current) {
+        try { mountRef.current.removeChild(rendererRef.current.domElement); } catch { /**/ }
+        rendererRef.current.dispose();
+      }
     };
-  }, [phase, nextPuzzle]);
+  }, []);
 
-  useEffect(() => () => {
+  const handleStart = useCallback((name: string, avatar: string) => {
+    playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar);
+    initAudio(); setPhase('countdown');
+  }, []);
+  const handleCountdownDone = useCallback(() => { startLoop(); }, [startLoop]);
+  const handlePlayAgain = useCallback(() => {
+    stateRef.current.running = false;
     cancelAnimationFrame(animRef.current);
-    if (timerRef.current) clearInterval(timerRef.current);
+    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+    if (rendererRef.current && mountRef.current) {
+      try { mountRef.current.removeChild(rendererRef.current.domElement); } catch { /**/ }
+      rendererRef.current.dispose(); rendererRef.current = null;
+    }
+    setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null);
+    setPhase('countdown');
   }, []);
 
-  const handleStart = useCallback(async (n: string, a: string) => {
-    playerSessionRef.current = savePlayerSession(GAME_ID, n, a);
-    await initAudio(); setPhase('countdown');
-  }, []);
-  const handlePlayAgain = useCallback(() => { setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null); }, []);
-
+  const accent = theme.colors.accent ?? ACCENT;
   return (
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
-      {phase === 'start' && <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description="Spot the item that doesn't belong in each grid!" ctaLabel="Spot it! 🔍" accentColor={theme.colors.accent ?? ACCENT} onStart={handleStart} />}
-      {phase === 'countdown' && <Countdown onComplete={startLoop} accentColor={theme.colors.accent ?? ACCENT} />}
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accent}
+      background="radial-gradient(ellipse at 50% 30%, rgba(249,115,22,0.1) 0%, transparent 60%), linear-gradient(180deg, #0a0a1a 0%, #050510 100%)">
+      {phase === 'start' && (
+        <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description={GAME_TAGLINE}
+          ctaLabel="Find It!" accentColor={accent} onStart={handleStart} />
+      )}
+      {phase === 'countdown' && <Countdown onComplete={handleCountdownDone} accentColor={accent} />}
       {(phase === 'playing' || phase === 'countdown') && (
         <>
-          <canvas ref={canvasRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none' }} role="img" aria-label="Odd One Out game canvas" />
-          {phase === 'playing' && <GameHUD accentColor={theme.colors.accent ?? ACCENT} items={[{ label: 'TIME', value: timeLeft, danger: timeLeft <= 10 }, { label: 'SCORE', value: scoreDisplay }]} />}
+          <div ref={mountRef} style={{ position: 'absolute', inset: 0, touchAction: 'none' }} />
+          {phase === 'playing' && (
+            <GameHUD accentColor={accent} items={[
+              { label: 'TIME', value: timeLeft, danger: timeLeft <= 10, testId: 'timer' },
+              { label: 'SCORE', value: scoreDisplay, testId: 'score' },
+            ]} />
+          )}
         </>
       )}
       {phase === 'done' && finalSig && (
-        <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI} score={String(finalSig.score)} personality={getPersonality(finalSig)}
+        <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI}
+          score={String(finalSig.score)} personality={getPersonality(finalSig)}
           insights={[
-            { label: 'Accuracy', value: `${finalSig.total > 0 ? Math.round(finalSig.correct / finalSig.total * 100) : 0}%`, color: ACCENT },
-            { label: 'Avg Speed', value: `${finalSig.total > 0 ? Math.round(finalSig.totalMs / finalSig.total) : 0}ms`, color: '#fbbf24' },
-            { label: 'Best Streak', value: `×${finalSig.maxStreak}`, color: '#4ade80' },
-            { label: 'Hardest Level', value: String(finalSig.hardestLevel), color: '#06b6d4' },
+            { label: 'Correct', value: `${finalSig.correct}/${finalSig.total}`, color: '#4ade80' },
+            { label: 'Avg Speed', value: finalSig.total > 0 ? `${Math.round(finalSig.totalMs/finalSig.total)}ms` : '—', color: accent },
+            { label: 'Best Streak', value: `×${finalSig.maxStreak}`, color: '#fbbf24' },
+            { label: 'Hardest Level', value: `Lv ${finalSig.hardestLevel}`, color: accent },
           ]}
-          accentColor={theme.colors.accent ?? ACCENT} onPlayAgain={handlePlayAgain} didWin={finalSig.correct >= 10} />
+          accentColor={accent} onPlayAgain={handlePlayAgain} didWin={finalSig.correct >= 8} />
       )}
     </GameShell>
   );

@@ -1,10 +1,6 @@
 'use client';
-/**
- * THREAD NEEDLE
- * Real mechanic: The needle oscillates left/right. Drag the thread endpoint through
- * the needle's eye (small gap) to score. As score increases the needle moves faster.
- */
 import { useEffect, useRef, useState, useCallback } from 'react';
+import * as THREE from 'three';
 import GameShell from '@/components/GameShell';
 import GameHUD from '@/components/GameHUD';
 import GameStartScreen from '@/components/GameStartScreen';
@@ -24,10 +20,7 @@ const GAME_TITLE = 'Thread Needle';
 const GAME_TAGLINE = 'Guide the thread through the moving eye.';
 const PB_KEY = 'mg_pb_thread-needle';
 
-interface Signals {
-  score: number; attempts: number; maxStreak: number; streakCurrent: number; nearMisses: number;
-}
-
+interface Signals { score: number; attempts: number; maxStreak: number; streakCurrent: number; nearMisses: number; }
 function getPersonality(sig: Signals): string {
   const acc = sig.attempts > 0 ? sig.score / sig.attempts : 0;
   if (acc >= 0.8 && sig.score >= 6) return 'Master Tailor 🧵';
@@ -36,9 +29,7 @@ function getPersonality(sig: Signals): string {
   if (sig.nearMisses > sig.score * 2) return 'Almost Had It 😤';
   return 'Tangled Beginner 🤕';
 }
-
 type Phase = 'start' | 'countdown' | 'playing' | 'done';
-
 function WebhookEmitter({ theme, sig, personality, player }: { theme: ReturnType<typeof useBrandTheme>; sig: Signals; personality: string; player: PlayerSession | null; }) {
   const fired = useRef(false);
   useEffect(() => { if (fired.current) return; fired.current = true; postWebhook(theme, GAME_ID, { personality, score: sig.score }, player); }, [theme, sig, personality, player]);
@@ -47,37 +38,23 @@ function WebhookEmitter({ theme, sig, personality, player }: { theme: ReturnType
 
 export default function ThreadNeedleGame() {
   const theme = useBrandTheme();
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const animRef = useRef(0);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const mountRef = useRef<HTMLDivElement>(null);
   const stopMusicRef = useRef<(() => void) | null>(null);
-
   const stateRef = useRef({
-    running: false,
-    timeLeft: DURATION,
+    running: false, timeLeft: DURATION, animId: 0,
+    intervalId: null as ReturnType<typeof setInterval> | null,
+    renderer: null as THREE.WebGLRenderer | null,
     sig: { score: 0, attempts: 0, maxStreak: 0, streakCurrent: 0, nearMisses: 0 } as Signals,
-    // Needle
-    needleX: 0,       // center X of needle eye
-    needleY: 0,       // center Y of needle
-    needleOscPhase: 0,
-    needleSpeed: 1.2, // oscillation speed factor
-    // Thread anchor (fixed bottom center)
-    anchorX: 0, anchorY: 0,
-    // Thread endpoint (dragged by player)
-    threadX: 0, threadY: 0,
-    dragging: false,
-    // Threading state
-    inEye: false,
-    threaded: false,       // currently inside the eye
-    flashGreen: 0,         // timestamp for success flash
-    flashRed: 0,
-    // Eye geometry
-    eyeWidth: 22,
-    eyeHeight: 10,
-    accentColor: ACCENT,
+    needleOscPhase: 0, needleSpeed: 1.2,
+    threadX: 0, threadY: -2, anchorX: 0, anchorY: -3.5,
+    dragging: false, threaded: false, inEye: false,
+    flashGreen: 0, flashRed: 0,
     lastNearMiss: 0,
+    frame: 0,
+    needleMesh: null as THREE.Group | null,
+    threadLineMesh: null as THREE.Line | null,
+    threadEndMesh: null as THREE.Mesh | null,
   });
-
   const [phase, setPhase] = useState<Phase>('start');
   const [timeLeft, setTimeLeft] = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
@@ -87,176 +64,190 @@ export default function ThreadNeedleGame() {
   const [nearMsg, setNearMsg] = useState(false);
   const playerSessionRef = useRef<PlayerSession | null>(null);
 
-  useEffect(() => { stateRef.current.accentColor = theme.colors.accent ?? ACCENT; }, [theme]);
-
   const endGame = useCallback(() => {
-    const s = stateRef.current;
-    if (!s.running) return;
-    s.running = false;
-    cancelAnimationFrame(animRef.current);
-    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+    const s = stateRef.current; if (!s.running) return;
+    s.running = false; cancelAnimationFrame(s.animId);
+    if (s.intervalId) { clearInterval(s.intervalId); s.intervalId = null; }
     if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
+    if (s.renderer) { s.renderer.dispose(); s.renderer = null; }
     sfx.gameOver(); haptic([100]);
-    try {
-      const pb = parseInt(localStorage.getItem(PB_KEY) ?? '0', 10);
-      if (s.sig.score > pb) localStorage.setItem(PB_KEY, String(s.sig.score));
-    } catch { /* noop */ }
-    setFinalSig({ ...s.sig });
-    setPhase('done');
+    try { const pb = parseInt(localStorage.getItem(PB_KEY) ?? '0', 10); if (s.sig.score > pb) localStorage.setItem(PB_KEY, String(s.sig.score)); } catch { }
+    setFinalSig({ ...s.sig }); setPhase('done');
   }, []);
 
   const startLoop = useCallback(() => {
-    const canvas = canvasRef.current; if (!canvas) return;
-    const ctx = canvas.getContext('2d'); if (!ctx) return;
-    const W = window.innerWidth, H = window.innerHeight;
     const s = stateRef.current;
-    s.running = true;
-    s.timeLeft = DURATION;
+    s.running = true; s.timeLeft = DURATION; s.frame = 0;
     s.sig = { score: 0, attempts: 0, maxStreak: 0, streakCurrent: 0, nearMisses: 0 };
-    s.anchorX = W / 2; s.anchorY = H - 60;
-    s.threadX = W / 2; s.threadY = H - 60;
-    s.needleX = W / 2; s.needleY = H * 0.3;
     s.needleOscPhase = 0; s.needleSpeed = 1.2;
-    s.dragging = false; s.threaded = false;
-    s.flashGreen = 0; s.flashRed = 0;
-    setScoreDisplay(0); setStreakDisplay(0); setTimeLeft(DURATION);
-    setPhase('playing');
+    s.threadX = 0; s.threadY = -2; s.anchorX = 0; s.anchorY = -3.5;
+    s.dragging = false; s.threaded = false; s.inEye = false;
+    setScoreDisplay(0); setStreakDisplay(0); setTimeLeft(DURATION); setPhase('playing');
     stopMusicRef.current = startMusic('minimal');
 
-    timerRef.current = setInterval(() => {
-      s.timeLeft--;
-      setTimeLeft(s.timeLeft);
+    const W = window.innerWidth, H = window.innerHeight;
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(W, H);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setClearColor(0x1a0010);
+    if (mountRef.current) { mountRef.current.innerHTML = ''; mountRef.current.appendChild(renderer.domElement); }
+    s.renderer = renderer;
+
+    const scene = new THREE.Scene();
+    scene.fog = new THREE.Fog(0x1a0010, 15, 40);
+    const camera = new THREE.PerspectiveCamera(65, W / H, 0.1, 100);
+    camera.position.set(0, 0, 10);
+    camera.lookAt(0, 0, 0);
+
+    scene.add(new THREE.AmbientLight(0x220011, 2));
+    const pLight = new THREE.PointLight(0xf472b6, 4, 20);
+    pLight.position.set(0, 5, 3);
+    scene.add(pLight);
+    const sLight = new THREE.PointLight(0xe879f9, 2, 15);
+    sLight.position.set(-4, 0, 5);
+    scene.add(sLight);
+
+    // Fabric texture background (grid lines)
+    for (let i = -5; i <= 5; i++) {
+      const hGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(-6, i * 0.6, -1), new THREE.Vector3(6, i * 0.6, -1)]);
+      scene.add(new THREE.Line(hGeo, new THREE.LineBasicMaterial({ color: 0xf472b6, transparent: true, opacity: 0.06 })));
+    }
+
+    // Needle group
+    const needleGroup = new THREE.Group();
+    scene.add(needleGroup);
+    s.needleMesh = needleGroup;
+
+    // Needle body (metallic silver)
+    const needleBodyGeo = new THREE.CylinderGeometry(0.05, 0.02, 3, 8);
+    const needleBodyMat = new THREE.MeshStandardMaterial({ color: 0xcccccc, roughness: 0.2, metalness: 0.9, emissive: 0x888888, emissiveIntensity: 0.1 });
+    const needleBody = new THREE.Mesh(needleBodyGeo, needleBodyMat);
+    needleBody.position.y = -0.5;
+    needleGroup.add(needleBody);
+
+    // Needle eye hole (highlighted ring)
+    const eyeGeo = new THREE.TorusGeometry(0.18, 0.04, 8, 32);
+    const eyeMat = new THREE.MeshStandardMaterial({ color: 0xf472b6, emissive: 0xf472b6, emissiveIntensity: 0.8 });
+    const eyeMesh = new THREE.Mesh(eyeGeo, eyeMat);
+    eyeMesh.position.y = 1.0;
+    needleGroup.add(eyeMesh);
+
+    // Needle tip
+    const tipGeo = new THREE.ConeGeometry(0.06, 0.4, 8);
+    const tipMat = new THREE.MeshStandardMaterial({ color: 0xdddddd, roughness: 0.1, metalness: 1 });
+    const tip = new THREE.Mesh(tipGeo, tipMat);
+    tip.position.y = -2.1;
+    needleGroup.add(tip);
+
+    // Anchor (bobbin)
+    const anchorGeo = new THREE.CylinderGeometry(0.25, 0.25, 0.3, 16);
+    const anchorMat = new THREE.MeshStandardMaterial({ color: 0xf472b6, emissive: 0xf472b6, emissiveIntensity: 0.5 });
+    const anchor = new THREE.Mesh(anchorGeo, anchorMat);
+    anchor.position.set(s.anchorX, s.anchorY, 0);
+    scene.add(anchor);
+
+    // Thread endpoint
+    const threadEndGeo = new THREE.SphereGeometry(0.12, 12, 12);
+    const threadEndMat = new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xf472b6, emissiveIntensity: 0.6 });
+    const threadEnd = new THREE.Mesh(threadEndGeo, threadEndMat);
+    threadEnd.position.set(s.threadX, s.threadY, 0);
+    scene.add(threadEnd);
+    s.threadEndMesh = threadEnd;
+
+    // Thread line
+    const threadPoints = [new THREE.Vector3(s.anchorX, s.anchorY, 0), new THREE.Vector3(s.threadX, s.threadY, 0)];
+    const threadGeo = new THREE.BufferGeometry().setFromPoints(threadPoints);
+    const threadLine = new THREE.Line(threadGeo, new THREE.LineBasicMaterial({ color: 0xf472b6, linewidth: 2 }));
+    scene.add(threadLine);
+    s.threadLineMesh = threadLine;
+
+    // Glow sphere for success flash
+    const flashGeo = new THREE.SphereGeometry(5, 16, 16);
+    const flashMat = new THREE.MeshBasicMaterial({ color: 0x4ade80, transparent: true, opacity: 0, side: THREE.BackSide });
+    const flashSphere = new THREE.Mesh(flashGeo, flashMat);
+    scene.add(flashSphere);
+
+    const SWING = 3.5;
+
+    const onDown = (e: PointerEvent) => {
+      if (!s.running) return;
+      const rect = renderer.domElement.getBoundingClientRect();
+      const nx = ((e.clientX - rect.left) / rect.width - 0.5) * 12;
+      const ny = -((e.clientY - rect.top) / rect.height - 0.5) * 9;
+      const dist = Math.hypot(nx - s.threadX, ny - s.threadY);
+      if (dist < 0.8) {
+        s.dragging = true;
+        s.sig.attempts++;
+        renderer.domElement.setPointerCapture(e.pointerId);
+      }
+    };
+    const onMove = (e: PointerEvent) => {
+      if (!s.running || !s.dragging) return;
+      const rect = renderer.domElement.getBoundingClientRect();
+      s.threadX = ((e.clientX - rect.left) / rect.width - 0.5) * 12;
+      s.threadY = -((e.clientY - rect.top) / rect.height - 0.5) * 9;
+    };
+    const onUp = () => {
+      if (!s.dragging) return;
+      s.dragging = false;
+      if (!s.threaded) { s.sig.streakCurrent = 0; setStreakDisplay(0); }
+      s.threadX = s.anchorX; s.threadY = s.anchorY;
+      s.threaded = false;
+    };
+    renderer.domElement.addEventListener('pointerdown', onDown);
+    renderer.domElement.addEventListener('pointermove', onMove);
+    renderer.domElement.addEventListener('pointerup', onUp);
+    renderer.domElement.addEventListener('pointercancel', onUp);
+
+    s.intervalId = setInterval(() => {
+      s.timeLeft--; setTimeLeft(s.timeLeft);
       if (s.timeLeft === 10) { sfx.warning(); haptic([50, 30, 50]); }
       else if (s.timeLeft > 0) sfx.tick();
       if (s.timeLeft <= 0) endGame();
     }, 1000);
 
-    // Needle height and geometry
-    const needleH = 100;
-    const eyeW = s.eyeWidth;
-    const eyeH = s.eyeHeight;
-    const eyeOffsetFromTop = needleH * 0.22; // eye is near the tip
-
-    const SWING = W * 0.32; // oscillation amplitude
-
     const loop = () => {
       if (!s.running) return;
+      s.frame++;
       const now = Date.now();
-      const accent = s.accentColor;
-      ctx.clearRect(0, 0, W, H);
-
-      // Background
-      ctx.fillStyle = '#1a0010'; ctx.fillRect(0, 0, W, H);
-      const vg = ctx.createRadialGradient(W / 2, H / 2, 0, W / 2, H / 2, Math.max(W, H) * 0.7);
-      vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(1, 'rgba(0,0,0,0.5)');
-      ctx.fillStyle = vg; ctx.fillRect(0, 0, W, H);
-
-      // Success/fail flash
-      if (now < s.flashGreen) {
-        const p = Math.max(0, 1 - (now - (s.flashGreen - 300)) / 300);
-        ctx.fillStyle = `rgba(74,222,128,${p * 0.2})`; ctx.fillRect(0, 0, W, H);
-      }
-      if (now < s.flashRed) {
-        const p = Math.max(0, 1 - (now - (s.flashRed - 200)) / 200);
-        ctx.fillStyle = `rgba(239,68,68,${p * 0.25})`; ctx.fillRect(0, 0, W, H);
-      }
 
       // Oscillate needle
       s.needleOscPhase += 0.018 * s.needleSpeed;
-      s.needleX = W / 2 + Math.sin(s.needleOscPhase) * SWING;
-      const needleCX = s.needleX;
-      const needleCY = s.needleY;
-      const eyeCX = needleCX;
-      const eyeCY = needleCY - needleH / 2 + eyeOffsetFromTop + eyeH / 2;
+      const needleX = Math.sin(s.needleOscPhase) * SWING;
+      const needleY = 1.5;
+      if (needleGroup) needleGroup.position.set(needleX, needleY, 0);
 
-      // Draw fabric threads background
-      ctx.save(); ctx.globalAlpha = 0.08;
-      ctx.strokeStyle = '#f472b6'; ctx.lineWidth = 1;
-      for (let y = 0; y < H; y += 18) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
-      ctx.restore();
+      // Eye position in world space
+      const eyeX = needleX;
+      const eyeY = needleY + 1.0;
 
-      // Guide line (faint) from anchor area to eye
-      ctx.save();
-      ctx.strokeStyle = 'rgba(244,114,182,0.15)'; ctx.lineWidth = 1; ctx.setLineDash([8, 12]);
-      ctx.beginPath(); ctx.moveTo(s.anchorX, s.anchorY); ctx.lineTo(eyeCX, eyeCY);
-      ctx.stroke(); ctx.setLineDash([]); ctx.restore();
+      // Update thread line
+      const pts = [
+        new THREE.Vector3(s.anchorX, s.anchorY, 0),
+        new THREE.Vector3((s.anchorX + s.threadX) / 2, (s.anchorY + s.threadY) / 2 - 0.3, 0.2),
+        new THREE.Vector3(s.threadX, s.threadY, 0),
+      ];
+      if (threadLine && threadLine.geometry) {
+        threadLine.geometry.setFromPoints(pts);
+      }
+      if (threadEnd) threadEnd.position.set(s.threadX, s.threadY, 0);
 
-      // Draw needle
-      ctx.save();
-      // Needle body (silver metallic)
-      const nGrad = ctx.createLinearGradient(needleCX - 4, 0, needleCX + 4, 0);
-      nGrad.addColorStop(0, '#888'); nGrad.addColorStop(0.4, '#eee'); nGrad.addColorStop(0.7, '#aaa'); nGrad.addColorStop(1, '#666');
-      ctx.fillStyle = nGrad;
-      ctx.shadowBlur = 10; ctx.shadowColor = '#ffffff44';
-      // Body above eye
-      ctx.fillRect(needleCX - 4, needleCY - needleH / 2, 8, eyeOffsetFromTop - eyeH / 2);
-      // Body below eye
-      ctx.fillRect(needleCX - 4, eyeCY + eyeH / 2, 8, needleH - eyeOffsetFromTop - eyeH / 2 - 2);
-      // Left side of eye
-      ctx.fillRect(needleCX - 4, eyeCY - eyeH / 2, (4 - eyeW / 2), eyeH);
-      // Right side of eye
-      ctx.fillRect(needleCX + eyeW / 2, eyeCY - eyeH / 2, (4 - eyeW / 2 + 4), eyeH);
-      // Needle tip
-      ctx.beginPath(); ctx.moveTo(needleCX - 4, needleCY + needleH / 2 - 2);
-      ctx.lineTo(needleCX + 4, needleCY + needleH / 2 - 2); ctx.lineTo(needleCX, needleCY + needleH / 2 + 14);
-      ctx.closePath(); ctx.fill();
-      ctx.restore();
+      // Check eye collision
+      const dEye = Math.hypot(s.threadX - eyeX, s.threadY - eyeY);
+      const inEyeNow = dEye < 0.2 && s.dragging;
+      const nearEye = dEye < 0.5 && s.dragging;
 
-      // Eye outline/glow
-      const eyeInRange = s.dragging && Math.abs(s.threadX - eyeCX) < eyeW && Math.abs(s.threadY - eyeCY) < eyeH + 8;
-      ctx.save();
-      ctx.strokeStyle = eyeInRange ? '#4ade80' : (accent + '99');
-      ctx.lineWidth = 1.5;
-      ctx.shadowBlur = eyeInRange ? 18 : 8;
-      ctx.shadowColor = eyeInRange ? '#4ade80' : accent;
-      ctx.beginPath(); ctx.ellipse(eyeCX, eyeCY, eyeW / 2, eyeH / 2, 0, 0, Math.PI * 2); ctx.stroke();
-      ctx.restore();
-
-      // Thread (anchor to thread endpoint)
-      ctx.save();
-      ctx.shadowBlur = 10; ctx.shadowColor = accent;
-      ctx.strokeStyle = accent; ctx.lineWidth = 2.5; ctx.lineCap = 'round';
-      ctx.beginPath();
-      ctx.moveTo(s.anchorX, s.anchorY);
-      // Slight curve for natural thread look
-      const cpX = (s.anchorX + s.threadX) / 2 + (s.threadX - s.anchorX) * 0.1;
-      const cpY = (s.anchorY + s.threadY) / 2 - 30;
-      ctx.quadraticCurveTo(cpX, cpY, s.threadX, s.threadY);
-      ctx.stroke();
-      ctx.restore();
-
-      // Thread endpoint dot
-      ctx.save();
-      ctx.fillStyle = '#ffffff'; ctx.shadowBlur = 12; ctx.shadowColor = accent;
-      ctx.beginPath(); ctx.arc(s.threadX, s.threadY, 6, 0, Math.PI * 2); ctx.fill();
-      ctx.restore();
-
-      // Anchor bobbin
-      ctx.save();
-      ctx.fillStyle = accent; ctx.shadowBlur = 8; ctx.shadowColor = accent;
-      ctx.beginPath(); ctx.arc(s.anchorX, s.anchorY, 12, 0, Math.PI * 2); ctx.fill();
-      ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.stroke();
-      ctx.restore();
-
-      // Threading check: thread endpoint passes through eye
-      const inEyeNow = (
-        Math.abs(s.threadX - eyeCX) < eyeW / 2 - 1 &&
-        Math.abs(s.threadY - eyeCY) < eyeH / 2 + 4
-      );
-
-      // Near miss detection
-      const nearEye = Math.abs(s.threadX - eyeCX) < eyeW + 10 && Math.abs(s.threadY - eyeCY) < eyeH + 15;
+      // Eye glow based on proximity
+      (eyeMat as THREE.MeshStandardMaterial).emissiveIntensity = nearEye ? 2 : 0.8;
+      (eyeMat as THREE.MeshStandardMaterial).color.setHex(nearEye ? 0x4ade80 : 0xf472b6);
 
       if (inEyeNow && !s.threaded && s.dragging) {
         s.threaded = true;
-        s.sig.score++;
-        s.sig.attempts++;
-        s.sig.streakCurrent++;
+        s.sig.score++; s.sig.streakCurrent++;
         if (s.sig.streakCurrent > s.sig.maxStreak) s.sig.maxStreak = s.sig.streakCurrent;
         s.needleSpeed = Math.min(3.5, 1.2 + s.sig.score * 0.2);
         s.flashGreen = now + 300;
-        setScoreDisplay(s.sig.score);
-        setStreakDisplay(s.sig.streakCurrent);
+        setScoreDisplay(s.sig.score); setStreakDisplay(s.sig.streakCurrent);
         sfx.collect(); haptic([30]);
         const bonus = s.sig.streakCurrent >= 3 ? '+2 🔥' : '+1';
         setScorePop(bonus);
@@ -265,146 +256,72 @@ export default function ThreadNeedleGame() {
         s.threaded = false;
       }
 
-      // Near miss feedback (only while dragging, not in eye, close to eye)
+      // Near miss
       if (s.dragging && !inEyeNow && nearEye) {
-        const nmt = Date.now();
-        if (nmt - s.lastNearMiss > 2000) {
-          s.lastNearMiss = nmt;
-          s.sig.nearMisses++;
-          setNearMsg(true);
-          setTimeout(() => setNearMsg(false), 1000);
+        if (now - s.lastNearMiss > 2000) {
+          s.lastNearMiss = now; s.sig.nearMisses++;
+          setNearMsg(true); setTimeout(() => setNearMsg(false), 1000);
         }
       }
 
-      animRef.current = requestAnimationFrame(loop);
+      // Flash effects
+      if (now < s.flashGreen) {
+        const p = Math.max(0, 1 - (now - (s.flashGreen - 300)) / 300);
+        flashMat.opacity = p * 0.15;
+        flashMat.color.setHex(0x4ade80);
+      } else {
+        flashMat.opacity = 0;
+      }
+
+      // Pulse needle eye
+      eyeMesh.rotation.y = s.frame * 0.03;
+
+      // Light pulse
+      pLight.intensity = 4 + Math.sin(s.frame * 0.05) * 0.8;
+
+      renderer.render(scene, camera);
+      s.animId = requestAnimationFrame(loop);
     };
-    animRef.current = requestAnimationFrame(loop);
+    s.animId = requestAnimationFrame(loop);
   }, [endGame]);
 
-  useEffect(() => {
-    const canvas = canvasRef.current; if (!canvas) return;
-    const dpr = window.devicePixelRatio || 1;
-    const resize = () => {
-      canvas.width = window.innerWidth * dpr; canvas.height = window.innerHeight * dpr;
-      canvas.style.width = window.innerWidth + 'px'; canvas.style.height = window.innerHeight + 'px';
-      const ctx = canvas.getContext('2d'); if (ctx) ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    };
-    resize();
-    window.addEventListener('resize', resize);
-
-    const getPos = (e: PointerEvent) => {
-      const rect = canvas.getBoundingClientRect();
-      return { x: e.clientX - rect.left, y: e.clientY - rect.top };
-    };
-    const onDown = (e: PointerEvent) => {
-      const s = stateRef.current; if (!s.running) return;
-      const pos = getPos(e);
-      // Only start drag if near thread endpoint
-      if (Math.hypot(pos.x - s.threadX, pos.y - s.threadY) < 40) {
-        s.dragging = true;
-        s.sig.attempts++;
-        canvas.setPointerCapture(e.pointerId);
-      }
-    };
-    const onMove = (e: PointerEvent) => {
-      const s = stateRef.current; if (!s.running || !s.dragging) return;
-      const pos = getPos(e);
-      s.threadX = pos.x; s.threadY = pos.y;
-    };
-    const onUp = (e: PointerEvent) => {
-      const s = stateRef.current;
-      if (!s.running || !s.dragging) return;
-      s.dragging = false;
-      // Snap thread back to anchor if missed
-      if (!s.threaded) {
-        s.sig.streakCurrent = 0;
-        setStreakDisplay(0);
-      }
-      s.threadX = s.anchorX; s.threadY = s.anchorY;
-      s.threaded = false;
-    };
-
-    canvas.addEventListener('pointerdown', onDown);
-    canvas.addEventListener('pointermove', onMove);
-    canvas.addEventListener('pointerup', onUp);
-    canvas.addEventListener('pointercancel', onUp);
-
-    return () => {
-      window.removeEventListener('resize', resize);
-      canvas.removeEventListener('pointerdown', onDown);
-      canvas.removeEventListener('pointermove', onMove);
-      canvas.removeEventListener('pointerup', onUp);
-      canvas.removeEventListener('pointercancel', onUp);
-    };
-  }, []);
-
   useEffect(() => () => {
-    cancelAnimationFrame(animRef.current);
-    if (timerRef.current) clearInterval(timerRef.current);
+    const s = stateRef.current; s.running = false; cancelAnimationFrame(s.animId);
+    if (s.intervalId) clearInterval(s.intervalId);
     if (stopMusicRef.current) stopMusicRef.current();
+    if (s.renderer) { s.renderer.dispose(); s.renderer = null; }
   }, []);
 
   const handleStart = useCallback(async (name: string, avatar: string) => {
-    playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar);
-    await initAudio();
-    setPhase('countdown');
+    playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar); await initAudio(); setPhase('countdown');
   }, []);
   const handlePlayAgain = useCallback(() => {
+    if (stateRef.current.renderer) { stateRef.current.renderer.dispose(); stateRef.current.renderer = null; }
+    if (mountRef.current) mountRef.current.innerHTML = '';
     setPhase('start'); setScoreDisplay(0); setStreakDisplay(0); setTimeLeft(DURATION); setFinalSig(null);
   }, []);
 
   const accent = theme.colors.accent ?? ACCENT;
-
   return (
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accent}
-      background="linear-gradient(180deg, #1a0010 0%, #0d0008 100%)">
-      {phase === 'start' && (
-        <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description={GAME_TAGLINE}
-          ctaLabel="Start Threading →" accentColor={accent} onStart={handleStart}
-          gradient="radial-gradient(ellipse 80% 70% at 50% 30%, #1a0010 0%, #0a0006 100%)" />
-      )}
-      {phase === 'countdown' && <Countdown onComplete={() => startLoop()} accentColor={accent} />}
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accent} background="linear-gradient(180deg,#1a0010 0%,#0d0008 100%)">
+      {phase === 'start' && <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description={GAME_TAGLINE} ctaLabel="Start Threading →" accentColor={accent} onStart={handleStart} />}
+      {phase === 'countdown' && <Countdown onComplete={startLoop} accentColor={accent} />}
       {(phase === 'playing' || phase === 'countdown') && (
-        <canvas ref={canvasRef} role="img" aria-label="Thread Needle game canvas"
-          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none' }} />
+        <div ref={mountRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none' }} />
       )}
-      {phase === 'playing' && (
-        <GameHUD accentColor={accent} items={[
-          { label: 'TIME', value: `${timeLeft}s`, danger: timeLeft <= 10, testId: 'timer' },
-          { label: 'SCORE', value: scoreDisplay, testId: 'score' },
-          { label: 'STREAK', value: streakDisplay, testId: 'streak' },
-        ]} />
-      )}
+      {phase === 'playing' && <GameHUD accentColor={accent} items={[{ label: 'TIME', value: `${timeLeft}s`, danger: timeLeft <= 10, testId: 'timer' }, { label: 'SCORE', value: scoreDisplay, testId: 'score' }, { label: 'STREAK', value: streakDisplay, testId: 'streak' }]} />}
       <AnimatePresence>
-        {scorePop && (
-          <motion.div key="pop" initial={{ opacity: 0, scale: 0.5 }} animate={{ opacity: 1, scale: 1.3 }} exit={{ opacity: 0, y: -40 }} transition={{ duration: 0.5 }}
-            style={{ position: 'fixed', top: '35%', left: '50%', transform: 'translateX(-50%)', zIndex: 80, pointerEvents: 'none', fontSize: 48, fontWeight: 900, color: '#4ade80', textShadow: '0 0 20px #4ade80' }}>
-            {scorePop}
-          </motion.div>
-        )}
+        {scorePop && <motion.div key="pop" initial={{ opacity: 0, scale: 0.5 }} animate={{ opacity: 1, scale: 1.3 }} exit={{ opacity: 0, y: -40 }} transition={{ duration: 0.5 }} style={{ position: 'fixed', top: '35%', left: '50%', transform: 'translateX(-50%)', zIndex: 80, pointerEvents: 'none', fontSize: 48, fontWeight: 900, color: '#4ade80', textShadow: '0 0 20px #4ade80' }}>{scorePop}</motion.div>}
       </AnimatePresence>
       <AnimatePresence>
-        {nearMsg && (
-          <motion.div key="near" initial={{ opacity: 0, scale: 0.7 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }}
-            style={{ position: 'fixed', top: '22%', left: '50%', transform: 'translateX(-50%)', zIndex: 80, pointerEvents: 'none', fontSize: 22, fontWeight: 800, color: '#fbbf24', whiteSpace: 'nowrap' }}>
-            Almost! 🪡
-          </motion.div>
-        )}
+        {nearMsg && <motion.div key="near" initial={{ opacity: 0, scale: 0.7 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }} style={{ position: 'fixed', top: '22%', left: '50%', transform: 'translateX(-50%)', zIndex: 80, pointerEvents: 'none', fontSize: 22, fontWeight: 800, color: '#fbbf24', whiteSpace: 'nowrap' }}>Almost! 🪡</motion.div>}
       </AnimatePresence>
-      {phase === 'done' && finalSig && (
-        <>
-          <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI}
-            score={String(finalSig.score)} personality={getPersonality(finalSig)}
-            insights={[
-              { label: 'Threads Passed', value: String(finalSig.score), color: accent },
-              { label: 'Attempts', value: String(finalSig.attempts), color: '#94a3b8' },
-              { label: 'Best Streak', value: `${finalSig.maxStreak}x`, color: '#fbbf24' },
-              { label: 'Near Misses', value: String(finalSig.nearMisses), color: '#f97316' },
-            ]}
-            accentColor={accent} onPlayAgain={handlePlayAgain} didWin={finalSig.score >= 3} finalScore={finalSig.score} />
-          <WebhookEmitter theme={theme} sig={finalSig} personality={getPersonality(finalSig)} player={playerSessionRef.current} />
-        </>
-      )}
+      {phase === 'done' && finalSig && <>
+        <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI} score={String(finalSig.score)} personality={getPersonality(finalSig)}
+          insights={[{ label: 'Threads Passed', value: String(finalSig.score), color: accent }, { label: 'Attempts', value: String(finalSig.attempts), color: '#94a3b8' }, { label: 'Best Streak', value: `${finalSig.maxStreak}x`, color: '#fbbf24' }, { label: 'Near Misses', value: String(finalSig.nearMisses), color: '#f97316' }]}
+          accentColor={accent} onPlayAgain={handlePlayAgain} didWin={finalSig.score >= 3} finalScore={finalSig.score} />
+        <WebhookEmitter theme={theme} sig={finalSig} personality={getPersonality(finalSig)} player={playerSessionRef.current} />
+      </>}
     </GameShell>
   );
 }

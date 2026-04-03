@@ -1,5 +1,10 @@
 'use client';
+/**
+ * INFERENCE TRAIL — Logic deduction puzzles with 3D detective atmosphere.
+ * 3D scene provides atmospheric background; gameplay via HTML overlay.
+ */
 import { useEffect, useRef, useState, useCallback } from 'react';
+import * as THREE from 'three';
 import GameShell from '@/components/GameShell';
 import GameHUD from '@/components/GameHUD';
 import GameStartScreen from '@/components/GameStartScreen';
@@ -17,17 +22,7 @@ const GAME_EMOJI = '🕵️';
 const GAME_TITLE = 'Inference Trail';
 const GAME_TAGLINE = 'Follow the clues. Crack the logic.';
 
-interface Signals {
-  total: number;
-  correct: number;
-  wrong: number;
-  avgSolveMs: number;
-  totalMs: number;
-  hardestLevel: number;
-  score: number;
-  maxStreak: number;
-  streakCurrent: number;
-}
+interface Signals { total: number; correct: number; wrong: number; avgSolveMs: number; totalMs: number; hardestLevel: number; score: number; maxStreak: number; streakCurrent: number; }
 
 function getPersonality(sig: Signals): string {
   const acc = sig.total > 0 ? sig.correct / sig.total : 0;
@@ -40,417 +35,222 @@ function getPersonality(sig: Signals): string {
 }
 
 type Phase = 'start' | 'countdown' | 'playing' | 'done';
+type InferenceType = 'ordering' | 'comparison' | 'conditional';
 
-// Inference puzzle types
-type InferenceType = 'ordering' | 'membership' | 'comparison' | 'conditional';
-
-interface InferencePuzzle {
-  type: InferenceType;
-  clues: string[];
-  question: string;
-  options: string[];
-  answer: string;
-  level: number;
-}
+interface InferencePuzzle { type: InferenceType; clues: string[]; question: string; options: string[]; answer: string; level: number; }
 
 const NAMES_3 = ['Alex', 'Blake', 'Casey'];
 const NAMES_4 = ['Alex', 'Blake', 'Casey', 'Dana'];
-const NAMES_5 = ['Alex', 'Blake', 'Casey', 'Dana', 'Eli'];
 
 function makeOrderingPuzzle(level: number): InferencePuzzle {
-  const names = level >= 4 ? NAMES_5 : level >= 3 ? NAMES_4 : NAMES_3;
-  const n = names.length;
-  // Create random ordering
+  const names = level >= 3 ? NAMES_4 : NAMES_3;
   const order = [...names].sort(() => Math.random() - 0.5);
-  const attrs = ['tall', 'fast', 'smart', 'old', 'heavy', 'skilled'];
+  const attrs = ['tall', 'fast', 'smart', 'old'];
   const attr = attrs[Math.floor(Math.random() * attrs.length)];
-
-  // Generate clues (pair-wise comparisons)
-  const clues: string[] = [];
-  for (let i = 0; i < n - 1 && i < 3; i++) {
-    clues.push(`${order[i]} is more ${attr} than ${order[i + 1]}.`);
-  }
-
-  const questions = [
-    { q: `Who is the LEAST ${attr}?`, a: order[n - 1] },
-    { q: `Who is the MOST ${attr}?`, a: order[0] },
-  ];
-  const chosen = questions[Math.floor(Math.random() * questions.length)];
-
-  const wrongNames = names.filter(nm => nm !== chosen.a);
-  const options = [chosen.a, ...wrongNames.slice(0, 2)].sort(() => Math.random() - 0.5);
-
-  return {
-    type: 'ordering', clues, question: chosen.q,
-    options, answer: chosen.a, level,
-  };
-}
-
-function makeMembershipPuzzle(level: number): InferencePuzzle {
-  const categories: Array<{ cat: string; members: string[]; nonMembers: string[] }> = [
-    { cat: 'birds', members: ['Eagle', 'Parrot', 'Penguin', 'Sparrow'], nonMembers: ['Shark', 'Lizard', 'Whale', 'Frog'] },
-    { cat: 'fruits', members: ['Apple', 'Mango', 'Berry', 'Grape'], nonMembers: ['Carrot', 'Onion', 'Potato', 'Pea'] },
-    { cat: 'planets', members: ['Mars', 'Venus', 'Saturn', 'Jupiter'], nonMembers: ['Moon', 'Pluto', 'Sun', 'Comet'] },
-  ];
-  const cat = categories[Math.floor(Math.random() * categories.length)];
-  const trueItem = cat.members[Math.floor(Math.random() * cat.members.length)];
-  const falseItems = cat.nonMembers.slice(0, 2);
-
-  const ruleSubject = cat.members.filter(m => m !== trueItem)[0];
-  const clues = [
-    `All ${cat.cat} have wings.`,
-    `${ruleSubject} is a ${cat.cat.slice(0, -1)}.`,
-    `${trueItem} is a ${cat.cat.slice(0, -1)}.`,
-  ];
-  if (level >= 3) {
-    clues.splice(1, 0, `${falseItems[0]} is NOT a ${cat.cat.slice(0, -1)}.`);
-  }
-
-  const question = `Does ${trueItem} have wings?`;
-  const options = ['Yes', 'No', 'Cannot tell'];
-
-  return {
-    type: 'membership', clues, question,
-    options, answer: 'Yes', level,
-  };
+  const clues = order.slice(0, order.length - 1).map((n, i) => `${n} is more ${attr} than ${order[i + 1]}.`);
+  const qa = [{ q: `Who is LEAST ${attr}?`, a: order[order.length - 1] }, { q: `Who is MOST ${attr}?`, a: order[0] }];
+  const chosen = qa[Math.floor(Math.random() * qa.length)];
+  const options = [chosen.a, ...names.filter(n => n !== chosen.a).slice(0, 2)].sort(() => Math.random() - 0.5);
+  return { type: 'ordering', clues, question: chosen.q, options, answer: chosen.a, level };
 }
 
 function makeComparisonPuzzle(level: number): InferencePuzzle {
   const names = level >= 3 ? NAMES_4 : NAMES_3;
-  const attrs = ['coins', 'points', 'apples', 'books', 'steps'];
+  const attrs = ['coins', 'points', 'apples'];
   const attr = attrs[Math.floor(Math.random() * attrs.length)];
-
-  // A > B > C > ...
   const order = [...names].sort(() => Math.random() - 0.5);
-  const amounts = order.map((_, i) => 100 - i * 15 + Math.floor(Math.random() * 5));
-
-  const clues = [];
-  for (let i = 0; i < order.length - 1; i++) {
-    clues.push(`${order[i]} has more ${attr} than ${order[i + 1]}.`);
-  }
-
-  // Ask to compare non-adjacent
-  const i1 = 0, i2 = order.length - 1;
-  const question = `Who has more ${attr}: ${order[i1]} or ${order[i2]}?`;
-  const answer = order[i1]; // always more
-
-  const options = [answer, order[i2], 'Same amount'].sort(() => Math.random() - 0.5);
-  return { type: 'comparison', clues, question, options, answer, level };
+  const clues = order.slice(0, order.length - 1).map((n, i) => `${n} has more ${attr} than ${order[i + 1]}.`);
+  const question = `Who has more ${attr}: ${order[0]} or ${order[order.length - 1]}?`;
+  const options = [order[0], order[order.length - 1], 'Same amount'].sort(() => Math.random() - 0.5);
+  return { type: 'comparison', clues, question, options, answer: order[0], level };
 }
 
 function makeConditionalPuzzle(level: number): InferencePuzzle {
   const scenarios = [
-    {
-      clues: ['If it rains, Alex brings an umbrella.', 'It is raining today.'],
-      question: 'Does Alex have an umbrella?',
-      answer: 'Yes',
-      options: ['Yes', 'No', 'Maybe'],
-    },
-    {
-      clues: ['Only students with a pass can enter.', 'Blake has a pass.'],
-      question: 'Can Blake enter?',
-      answer: 'Yes',
-      options: ['Yes', 'No', 'Cannot tell'],
-    },
-    {
-      clues: ['All wizards can cast spells.', 'Merlin is a wizard.'],
-      question: 'Can Merlin cast spells?',
-      answer: 'Yes',
-      options: ['Yes', 'No', 'We don\'t know'],
-    },
+    { clues: ['If it rains, Alex brings an umbrella.', 'It is raining today.'], question: 'Does Alex have an umbrella?', answer: 'Yes', options: ['Yes', 'No', 'Maybe'] },
+    { clues: ['All wizards can cast spells.', 'Merlin is a wizard.'], question: 'Can Merlin cast spells?', answer: 'Yes', options: ['Yes', 'No', 'We don\'t know'] },
+    { clues: ['If A then B.', 'If B then C.', 'A is true.'], question: 'Is C true?', answer: 'Yes', options: ['Yes', 'No', 'Cannot tell'] },
   ];
-
-  const harder = [
-    {
-      clues: ['If A then B.', 'If B then C.', 'A is true.'],
-      question: 'Is C true?',
-      answer: 'Yes',
-      options: ['Yes', 'No', 'Cannot tell'],
-    },
-    {
-      clues: ['All that glitters is not gold.', 'This ring glitters.'],
-      question: 'Is this ring gold?',
-      answer: 'Cannot tell',
-      options: ['Yes', 'No', 'Cannot tell'],
-    },
-  ];
-
-  const pool = level >= 3 ? [...scenarios, ...harder] : scenarios;
-  const chosen = pool[Math.floor(Math.random() * pool.length)];
-  return { type: 'conditional', clues: chosen.clues, question: chosen.question, options: chosen.options, answer: chosen.answer, level };
+  const chosen = scenarios[Math.floor(Math.random() * scenarios.length)];
+  return { type: 'conditional', ...chosen, level };
 }
 
 function makePuzzle(level: number): InferencePuzzle {
-  const types: InferenceType[] = level >= 4
-    ? ['ordering', 'comparison', 'conditional', 'membership']
-    : level >= 2
-      ? ['ordering', 'comparison', 'conditional']
-      : ['ordering', 'comparison'];
+  const types: InferenceType[] = level >= 3 ? ['ordering', 'comparison', 'conditional'] : ['ordering', 'comparison'];
   const type = types[Math.floor(Math.random() * types.length)];
-
-  switch (type) {
-    case 'ordering': return makeOrderingPuzzle(level);
-    case 'comparison': return makeComparisonPuzzle(level);
-    case 'membership': return makeMembershipPuzzle(level);
-    case 'conditional': return makeConditionalPuzzle(level);
-    default: return makeOrderingPuzzle(level);
-  }
-}
-
-interface GameState {
-  running: boolean; timeLeft: number;
-  sig: Signals; frame: number; accentColor: string;
-  floats: Array<{ x: number; y: number; text: string; alpha: number; vy: number; color: string }>;
-  puzzle: InferencePuzzle | null;
-  shownAt: number;
-  feedback: number | null;
-  feedbackTimer: number;
-  level: number;
+  if (type === 'ordering') return makeOrderingPuzzle(level);
+  if (type === 'comparison') return makeComparisonPuzzle(level);
+  return makeConditionalPuzzle(level);
 }
 
 export default function InferenceTrailGame() {
   const theme = useBrandTheme();
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const animRef = useRef(0);
+  const mountRef = useRef<HTMLDivElement>(null);
+  const bgAnimRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const bgRendererRef = useRef<THREE.WebGLRenderer | null>(null);
 
-  const stateRef = useRef<GameState>({
+  const stateRef = useRef({
     running: false, timeLeft: DURATION,
-    sig: { total: 0, correct: 0, wrong: 0, avgSolveMs: 0, totalMs: 0, hardestLevel: 0, score: 0, maxStreak: 0, streakCurrent: 0 },
-    frame: 0, accentColor: ACCENT, floats: [],
-    puzzle: null, shownAt: 0, feedback: null, feedbackTimer: 0, level: 1,
+    sig: { total: 0, correct: 0, wrong: 0, avgSolveMs: 0, totalMs: 0, hardestLevel: 0, score: 0, maxStreak: 0, streakCurrent: 0 } as Signals,
+    puzzle: null as InferencePuzzle | null,
+    shownAt: 0, feedback: null as number | null, feedbackTimer: 0, level: 1,
+    floats: [] as Array<{ x: number; y: number; text: string; alpha: number }>,
   });
 
   const [phase, setPhase] = useState<Phase>('start');
   const [timeLeft, setTimeLeft] = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
   const [finalSig, setFinalSig] = useState<Signals | null>(null);
+  const [puzzleState, setPuzzleState] = useState<{ puzzle: InferencePuzzle | null; feedback: number | null; timeBarPct: number }>({ puzzle: null, feedback: null, timeBarPct: 1 });
   const playerSessionRef = useRef<PlayerSession | null>(null);
-
-  useEffect(() => { stateRef.current.accentColor = theme.colors.accent ?? ACCENT; }, [theme]);
 
   const nextPuzzle = useCallback(() => {
     const s = stateRef.current;
-    s.puzzle = makePuzzle(s.level);
-    s.shownAt = Date.now();
-    s.feedback = null; s.feedbackTimer = 0;
+    const p = makePuzzle(s.level);
+    s.puzzle = p; s.shownAt = Date.now(); s.feedback = null; s.feedbackTimer = 0;
+    setPuzzleState({ puzzle: p, feedback: null, timeBarPct: 1 });
   }, []);
 
   const endGame = useCallback(() => {
-    const s = stateRef.current;
-    s.running = false;
-    cancelAnimationFrame(animRef.current);
+    const s = stateRef.current; s.running = false;
+    cancelAnimationFrame(bgAnimRef.current);
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
-    const pb = parseInt(localStorage.getItem('pb_' + GAME_ID) ?? '0');
-    if (s.sig.score > pb) localStorage.setItem('pb_' + GAME_ID, String(s.sig.score));
-    setFinalSig({ ...s.sig });
-    setPhase('done');
-    hapticVictory();
+    setFinalSig({ ...s.sig }); setPhase('done'); hapticVictory();
   }, []);
 
-  const startLoop = useCallback(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    const s = stateRef.current;
+  // 3D background: floating detective clues / particles
+  useEffect(() => {
+    if (phase !== 'playing') return;
+    if (!mountRef.current) return;
+    const mount = mountRef.current;
 
+    const W = window.innerWidth, H = window.innerHeight;
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    renderer.setSize(W, H);
+    renderer.setClearColor(0x08070f, 1);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    mount.innerHTML = '';
+    mount.appendChild(renderer.domElement);
+    bgRendererRef.current = renderer;
+
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(60, W / H, 0.1, 200);
+    camera.position.set(0, 0, 10);
+
+    scene.add(new THREE.AmbientLight(0x1a0a3a, 5));
+    const purpleLight = new THREE.PointLight(0x7c3aed, 2, 20);
+    purpleLight.position.set(0, 5, 5);
+    scene.add(purpleLight);
+
+    // Floating geometric shapes (clue nodes)
+    const nodes: { mesh: THREE.Mesh; vx: number; vy: number; vz: number }[] = [];
+    for (let i = 0; i < 20; i++) {
+      const geo = Math.random() > 0.5 ? new THREE.OctahedronGeometry(0.15 + Math.random() * 0.2) : new THREE.TetrahedronGeometry(0.2 + Math.random() * 0.15);
+      const mat = new THREE.MeshPhongMaterial({ color: 0x7c3aed, emissive: 0x3b1a6e, transparent: true, opacity: 0.3 + Math.random() * 0.4, wireframe: Math.random() > 0.5 });
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.position.set((Math.random() - 0.5) * 16, (Math.random() - 0.5) * 12, (Math.random() - 0.5) * 8 - 2);
+      scene.add(mesh);
+      nodes.push({ mesh, vx: (Math.random() - 0.5) * 0.005, vy: (Math.random() - 0.5) * 0.005, vz: (Math.random() - 0.5) * 0.003 });
+    }
+
+    // Connecting lines between some nodes
+    for (let i = 0; i < 8; i++) {
+      const a = nodes[Math.floor(Math.random() * nodes.length)];
+      const b = nodes[Math.floor(Math.random() * nodes.length)];
+      const lineGeo = new THREE.BufferGeometry().setFromPoints([a.mesh.position.clone(), b.mesh.position.clone()]);
+      const lineMat = new THREE.LineBasicMaterial({ color: 0x4c1d95, transparent: true, opacity: 0.2 });
+      scene.add(new THREE.Line(lineGeo, lineMat));
+    }
+
+    const handleResize = () => {
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+    };
+    window.addEventListener('resize', handleResize);
+
+    let t = 0;
+    const loop = () => {
+      bgAnimRef.current = requestAnimationFrame(loop);
+      t += 0.008;
+      nodes.forEach(n => {
+        n.mesh.position.x += n.vx;
+        n.mesh.position.y += n.vy;
+        n.mesh.position.z += n.vz;
+        if (Math.abs(n.mesh.position.x) > 9) n.vx *= -1;
+        if (Math.abs(n.mesh.position.y) > 7) n.vy *= -1;
+        if (Math.abs(n.mesh.position.z) > 5) n.vz *= -1;
+        n.mesh.rotation.x += 0.01;
+        n.mesh.rotation.y += 0.008;
+      });
+      purpleLight.intensity = 1.5 + Math.sin(t * 2) * 0.5;
+      renderer.render(scene, camera);
+    };
+    loop();
+
+    return () => {
+      cancelAnimationFrame(bgAnimRef.current);
+      window.removeEventListener('resize', handleResize);
+      renderer.dispose();
+      bgRendererRef.current = null;
+    };
+  }, [phase]);
+
+  useEffect(() => {
+    if (phase !== 'playing') return;
+    const s = stateRef.current;
     s.running = true; s.timeLeft = DURATION;
     s.sig = { total: 0, correct: 0, wrong: 0, avgSolveMs: 0, totalMs: 0, hardestLevel: 0, score: 0, maxStreak: 0, streakCurrent: 0 };
-    s.frame = 0; s.floats = []; s.level = 1;
+    s.level = 1; setScoreDisplay(0); setTimeLeft(DURATION);
     nextPuzzle();
-    setScoreDisplay(0); setTimeLeft(DURATION); setPhase('playing');
 
     timerRef.current = setInterval(() => {
       s.timeLeft--; setTimeLeft(s.timeLeft);
       if (s.timeLeft <= 0) { sfx.fail(); endGame(); }
+      // Update time bar
+      if (s.puzzle) {
+        const elapsed = (Date.now() - s.shownAt) / 1000;
+        const limit = Math.max(5, 12 - s.level * 0.8);
+        const pct = Math.max(0, 1 - elapsed / limit);
+        setPuzzleState(prev => ({ ...prev, timeBarPct: pct }));
+        if (elapsed > limit && s.feedback === null) {
+          s.sig.total++; s.sig.wrong++; s.sig.streakCurrent = 0;
+          sfx.collision(); hapticFail();
+          s.feedback = -1;
+          setPuzzleState(prev => ({ ...prev, feedback: -1 }));
+          setTimeout(() => { if (s.running) nextPuzzle(); }, 700);
+        }
+      }
     }, 1000);
 
-    const loop = () => {
-      if (!s.running) return;
-      const W = canvas.width, H = canvas.height;
-      ctx.clearRect(0, 0, W, H);
-      s.frame++;
+    return () => { s.running = false; if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; } };
+  }, [phase, endGame, nextPuzzle]);
 
-      if (s.feedbackTimer > 0) s.feedbackTimer--;
+  const handleOptionTap = useCallback((optIdx: number) => {
+    const s = stateRef.current;
+    if (s.feedback !== null || !s.puzzle) return;
+    const ms = Date.now() - s.shownAt;
+    s.sig.total++; s.sig.totalMs += ms;
+    s.feedback = optIdx;
 
-      // Background - detective noir
-      ctx.fillStyle = '#08070f'; ctx.fillRect(0, 0, W, H);
-      // Magnifying glass grid
-      ctx.strokeStyle = 'rgba(124,58,237,0.04)'; ctx.lineWidth = 1;
-      for (let x = 0; x < W; x += 35) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke(); }
-      for (let y = 0; y < H; y += 35) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
-
-      if (s.feedback !== null && s.feedbackTimer > 0 && s.puzzle) {
-        const correct = s.puzzle.options[s.feedback] === s.puzzle.answer;
-        ctx.fillStyle = correct ? 'rgba(74,222,128,0.1)' : 'rgba(239,68,68,0.1)';
-        ctx.fillRect(0, 0, W, H);
-      }
-
-      const p = s.puzzle;
-      if (!p) return;
-
-      // Clue label
-      ctx.fillStyle = 'rgba(255,255,255,0.5)'; ctx.font = '12px sans-serif'; ctx.textAlign = 'center';
-      ctx.fillText(`CLUE${p.clues.length > 1 ? 'S' : ''}:`, W / 2, H * 0.1);
-
-      // Draw clues (scrolling if needed)
-      const clueY0 = H * 0.15;
-      p.clues.forEach((clue, i) => {
-        const bgY = clueY0 + i * 30 - 8;
-        ctx.fillStyle = 'rgba(124,58,237,0.12)';
-        ctx.fillRect(10, bgY, W - 20, 26);
-        ctx.fillStyle = 'rgba(255,255,255,0.8)'; ctx.font = '13px sans-serif'; ctx.textAlign = 'center';
-        ctx.fillText(clue, W / 2, bgY + 18);
-      });
-
-      // Question
-      const qY = clueY0 + p.clues.length * 30 + 18;
-      ctx.save();
-      ctx.shadowBlur = 10; ctx.shadowColor = ACCENT;
-      ctx.fillStyle = ACCENT; ctx.font = `bold ${Math.min(15, W * 0.038)}px sans-serif`; ctx.textAlign = 'center';
-      // Wrap long question
-      const maxW = W - 30;
-      const words = p.question.split(' ');
-      let line = '', lineY = qY;
-      words.forEach(word => {
-        const test = line + word + ' ';
-        if (ctx.measureText(test).width > maxW && line !== '') {
-          ctx.fillText(line.trim(), W / 2, lineY);
-          line = word + ' '; lineY += 22;
-        } else { line = test; }
-      });
-      ctx.fillText(line.trim(), W / 2, lineY);
-      ctx.restore();
-
-      // Options (2 or 3 buttons)
-      const numOpts = p.options.length;
-      const optW = Math.min((W - 20 - (numOpts - 1) * 8) / numOpts, 120);
-      const optH = 50;
-      const optGridX = (W - (optW * numOpts + 8 * (numOpts - 1))) / 2;
-      const optY = H * 0.7;
-
-      p.options.forEach((opt, i) => {
-        const bx = optGridX + i * (optW + 8);
-        const isSelected = s.feedback === i;
-        const isCorrect = opt === p.answer;
-
-        let bg = 'rgba(124,58,237,0.12)', border = ACCENT;
-        if (isSelected) {
-          bg = isCorrect ? 'rgba(74,222,128,0.3)' : 'rgba(239,68,68,0.3)';
-          border = isCorrect ? '#4ade80' : '#ef4444';
-        } else if (s.feedback !== null && isCorrect) {
-          border = '#4ade80'; bg = 'rgba(74,222,128,0.15)';
-        }
-
-        ctx.save();
-        ctx.fillStyle = bg; ctx.strokeStyle = border; ctx.lineWidth = 2;
-        ctx.shadowBlur = 8; ctx.shadowColor = border;
-        ctx.beginPath(); (ctx as any).roundRect?.(bx, optY, optW, optH, 8) ?? ctx.rect(bx, optY, optW, optH);
-        ctx.fill(); ctx.stroke();
-        ctx.fillStyle = '#ffffff'; ctx.font = `bold ${Math.min(16, optW * 0.14)}px sans-serif`; ctx.textAlign = 'center';
-        // Word wrap option text
-        if (ctx.measureText(opt).width > optW - 10) {
-          const mid = Math.ceil(opt.length / 2);
-          ctx.fillText(opt.slice(0, mid), bx + optW / 2, optY + optH / 2 - 5);
-          ctx.fillText(opt.slice(mid), bx + optW / 2, optY + optH / 2 + 14);
-        } else {
-          ctx.fillText(opt, bx + optW / 2, optY + optH / 2 + 7);
-        }
-        ctx.restore();
-      });
-
-      // Timer
-      const elapsed = (Date.now() - s.shownAt) / 1000;
-      const limit = Math.max(5, 12 - s.level * 0.8);
-      const pct = Math.max(0, 1 - elapsed / limit);
-      ctx.fillStyle = 'rgba(255,255,255,0.1)'; ctx.fillRect(20, H * 0.64, W - 40, 4);
-      ctx.fillStyle = pct > 0.5 ? ACCENT : pct > 0.25 ? '#fbbf24' : '#ef4444';
-      ctx.fillRect(20, H * 0.64, (W - 40) * pct, 4);
-
-      if (elapsed > limit && s.feedback === null) {
-        s.sig.total++; s.sig.wrong++; s.sig.streakCurrent = 0;
-        sfx.collision(); hapticFail();
-        s.feedback = -1; s.feedbackTimer = 15;
-        setTimeout(() => { if (s.running) nextPuzzle(); }, 700);
-      }
-
-      // Floats
-      s.floats = s.floats.filter(f => f.alpha > 0.02);
-      s.floats.forEach(f => {
-        ctx.save(); ctx.globalAlpha = f.alpha;
-        ctx.fillStyle = f.color; ctx.font = 'bold 20px sans-serif'; ctx.textAlign = 'center';
-        ctx.fillText(f.text, f.x, f.y); ctx.restore();
-        f.y += f.vy; f.alpha *= 0.95;
-      });
-
-      animRef.current = requestAnimationFrame(loop);
-    };
-    animRef.current = requestAnimationFrame(loop);
-  }, [endGame, nextPuzzle]);
-
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const resize = () => { canvas.width = canvas.offsetWidth; canvas.height = canvas.offsetHeight; };
-    resize();
-    window.addEventListener('resize', resize);
-
-    const onPointerDown = (e: PointerEvent) => {
-      if (phase !== 'playing') return;
-      const s = stateRef.current;
-      if (s.feedback !== null || !s.puzzle) return;
-      const rect = canvas.getBoundingClientRect();
-      const px = (e.clientX - rect.left) * (canvas.width / rect.width);
-      const py = (e.clientY - rect.top) * (canvas.height / rect.height);
-      const W = canvas.width, H = canvas.height;
-      const p = s.puzzle;
-      const numOpts = p.options.length;
-      const optW = Math.min((W - 20 - (numOpts - 1) * 8) / numOpts, 120);
-      const optH = 50;
-      const optGridX = (W - (optW * numOpts + 8 * (numOpts - 1))) / 2;
-      const optY = H * 0.7;
-
-      for (let i = 0; i < numOpts; i++) {
-        const bx = optGridX + i * (optW + 8);
-        if (px >= bx && px <= bx + optW && py >= optY && py <= optY + optH) {
-          const ms = Date.now() - s.shownAt;
-          s.sig.total++; s.sig.totalMs += ms;
-          s.feedback = i; s.feedbackTimer = 16;
-
-          if (p.options[i] === p.answer) {
-            s.sig.correct++;
-            s.sig.streakCurrent++;
-            if (s.sig.streakCurrent > s.sig.maxStreak) s.sig.maxStreak = s.sig.streakCurrent;
-            const speedPts = ms < 3000 ? 4 : ms < 6000 ? 3 : 2;
-            s.sig.score += speedPts; setScoreDisplay(s.sig.score);
-            if (s.level > s.sig.hardestLevel) s.sig.hardestLevel = s.level;
-            s.level = Math.min(5, 1 + Math.floor(s.sig.correct / 3));
-            sfx.collect(); hapticScore();
-            if (s.sig.streakCurrent >= 3) hapticCombo(s.sig.streakCurrent);
-            s.floats.push({ x: W / 2, y: H * 0.65, text: `+${speedPts} DEDUCED!`, alpha: 1, vy: -2.5, color: '#fbbf24' });
-          } else {
-            s.sig.wrong++; s.sig.streakCurrent = 0;
-            sfx.collision(); hapticFail();
-            s.floats.push({ x: W / 2, y: H * 0.65, text: `Ans: ${p.answer}`, alpha: 1, vy: -2, color: '#ef4444' });
-          }
-          setTimeout(() => { if (s.running) nextPuzzle(); }, 700);
-          break;
-        }
-      }
-    };
-
-    canvas.addEventListener('pointerdown', onPointerDown);
-    return () => {
-      window.removeEventListener('resize', resize);
-      canvas.removeEventListener('pointerdown', onPointerDown);
-    };
-  }, [phase, nextPuzzle]);
-
-  useEffect(() => () => {
-    cancelAnimationFrame(animRef.current);
-    if (timerRef.current) clearInterval(timerRef.current);
-  }, []);
+    const isCorrect = s.puzzle.options[optIdx] === s.puzzle.answer;
+    if (isCorrect) {
+      s.sig.correct++; s.sig.streakCurrent++;
+      if (s.sig.streakCurrent > s.sig.maxStreak) s.sig.maxStreak = s.sig.streakCurrent;
+      const speedPts = ms < 3000 ? 4 : ms < 6000 ? 3 : 2;
+      s.sig.score += speedPts; setScoreDisplay(s.sig.score);
+      if (s.level > s.sig.hardestLevel) s.sig.hardestLevel = s.level;
+      s.level = Math.min(5, 1 + Math.floor(s.sig.correct / 3));
+      sfx.collect(); hapticScore();
+      if (s.sig.streakCurrent >= 3) hapticCombo(s.sig.streakCurrent);
+    } else {
+      s.sig.wrong++; s.sig.streakCurrent = 0;
+      sfx.collision(); hapticFail();
+    }
+    setPuzzleState(prev => ({ ...prev, feedback: optIdx }));
+    setTimeout(() => { if (s.running) nextPuzzle(); }, 700);
+  }, [nextPuzzle]);
 
   const handleStart = useCallback(async (n: string, a: string) => {
     playerSessionRef.current = savePlayerSession(GAME_ID, n, a);
@@ -458,16 +258,66 @@ export default function InferenceTrailGame() {
   }, []);
   const handlePlayAgain = useCallback(() => { setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null); }, []);
 
+  const { puzzle, feedback, timeBarPct } = puzzleState;
+  const barColor = timeBarPct > 0.5 ? ACCENT : timeBarPct > 0.25 ? '#fbbf24' : '#ef4444';
+
   return (
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}
+      background="linear-gradient(180deg,#08070f 0%,#0d0a1a 100%)">
       {phase === 'start' && <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description="Read the clues and deduce the correct answer!" ctaLabel="Deduce! 🕵️" accentColor={theme.colors.accent ?? ACCENT} onStart={handleStart} />}
-      {phase === 'countdown' && <Countdown onComplete={startLoop} accentColor={theme.colors.accent ?? ACCENT} />}
-      {(phase === 'playing' || phase === 'countdown') && (
+      {phase === 'countdown' && <Countdown onComplete={() => setPhase('playing')} accentColor={theme.colors.accent ?? ACCENT} />}
+
+      {/* 3D BG */}
+      <div ref={mountRef} style={{ position: 'absolute', inset: 0, display: phase === 'playing' ? 'block' : 'none' }} />
+
+      {/* Game UI overlay */}
+      {phase === 'playing' && (
         <>
-          <canvas ref={canvasRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none' }} role="img" aria-label="Inference Trail deduction game canvas" />
-          {phase === 'playing' && <GameHUD accentColor={theme.colors.accent ?? ACCENT} items={[{ label: 'TIME', value: timeLeft, danger: timeLeft <= 10 }, { label: 'SCORE', value: scoreDisplay }]} />}
+          <GameHUD accentColor={theme.colors.accent ?? ACCENT} items={[{ label: 'TIME', value: timeLeft, danger: timeLeft <= 10 }, { label: 'SCORE', value: scoreDisplay }]} />
+          <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', padding: 20, pointerEvents: 'none', zIndex: 10 }}>
+            {puzzle && (
+              <div style={{ width: '100%', maxWidth: 400, pointerEvents: 'auto' }}>
+                {/* Clues */}
+                <div style={{ marginBottom: 16 }}>
+                  {puzzle.clues.map((clue, i) => (
+                    <div key={i} style={{ background: 'rgba(124,58,237,0.15)', border: '1px solid rgba(124,58,237,0.3)', borderRadius: 10, padding: '8px 12px', marginBottom: 6, color: 'rgba(255,255,255,0.85)', fontSize: 13, fontFamily: 'monospace' }}>
+                      {clue}
+                    </div>
+                  ))}
+                </div>
+                {/* Time bar */}
+                <div style={{ background: 'rgba(255,255,255,0.1)', borderRadius: 4, height: 4, marginBottom: 14 }}>
+                  <div style={{ background: barColor, width: `${timeBarPct * 100}%`, height: '100%', borderRadius: 4, transition: 'width 0.5s' }} />
+                </div>
+                {/* Question */}
+                <div style={{ color: ACCENT, fontSize: 15, fontWeight: 800, textAlign: 'center', marginBottom: 16, textShadow: `0 0 8px ${ACCENT}` }}>
+                  {puzzle.question}
+                </div>
+                {/* Options */}
+                <div style={{ display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
+                  {puzzle.options.map((opt, i) => {
+                    const isSelected = feedback === i;
+                    const isCorrect = opt === puzzle.answer;
+                    let bg = 'rgba(124,58,237,0.15)';
+                    let border = ACCENT;
+                    if (feedback !== null) {
+                      if (isSelected) { bg = isCorrect ? 'rgba(74,222,128,0.3)' : 'rgba(239,68,68,0.3)'; border = isCorrect ? '#4ade80' : '#ef4444'; }
+                      else if (isCorrect) { bg = 'rgba(74,222,128,0.15)'; border = '#4ade80'; }
+                    }
+                    return (
+                      <button key={i} onClick={() => handleOptionTap(i)} disabled={feedback !== null}
+                        style={{ background: bg, border: `2px solid ${border}`, borderRadius: 12, padding: '14px 20px', color: '#fff', fontWeight: 700, fontSize: 14, cursor: feedback !== null ? 'default' : 'pointer', minWidth: 90, boxShadow: `0 0 8px ${border}44`, transition: 'all 0.2s' }}>
+                        {opt}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
         </>
       )}
+
       {phase === 'done' && finalSig && (
         <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI} score={String(finalSig.score)} personality={getPersonality(finalSig)}
           insights={[

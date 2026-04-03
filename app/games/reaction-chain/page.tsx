@@ -1,5 +1,6 @@
-﻿'use client';
+'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
+import * as THREE from 'three';
 import GameShell from '@/components/GameShell';
 import GameHUD from '@/components/GameHUD';
 import GameStartScreen from '@/components/GameStartScreen';
@@ -9,28 +10,8 @@ import { initAudio, sfx, haptic, startMusic, playComboSfx, playSuccess, playFail
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
-import { Particle, spawnBurst, updateAndDrawParticles } from '@/lib/particles';
-import SwipeInstructions from '@/components/SwipeInstructions';
-import { ShakeState, triggerShake, applyShake } from '@/lib/screenShake';
 import StreakBadge from '@/components/StreakBadge';
 import ScorePopEffect, { useScorePop } from '@/components/ScorePopEffect';
-
-// ─── SPEC CONSTANTS ───────────────────────────────────────────────────────────
-
-
-// --- SPRITE CACHE -------------------------------------------------------------
-const _spriteCache = new Map<string, HTMLImageElement>();
-function _loadSprite(src: string): HTMLImageElement {
-  if (_spriteCache.has(src)) return _spriteCache.get(src)!;
-  const img = new Image();
-  img.src = src;
-  _spriteCache.set(src, img);
-  return img;
-}
-if (typeof window !== 'undefined') {
-  _loadSprite('/sprites/reaction-chain/node.svg');
-  _loadSprite('/sprites/reaction-chain/link.svg');
-}
 
 const GAME_ID      = 'reaction-chain';
 const ACCENT       = '#facc15';
@@ -38,674 +19,338 @@ const DURATION     = 45;
 const GAME_EMOJI   = '⚡';
 const GAME_TITLE   = 'Reaction Chain';
 const GAME_TAGLINE = 'Tap fast. Keep the chain alive.';
-const NODE_RADIUS  = 44;
-const EDGE_MARGIN  = 70;
+const NODE_RADIUS_3D = 0.7;
 
-// ─── HELPERS (outside component — pure, no stale closures) ────────────────────
-
-/** Returns the node expiry window in ms based on elapsed game seconds.
- *  Smooth linear ramp: 1100ms at t=0 → 420ms at t=45s.
- *  Keeps the first ~20 seconds accessible to casual players (700ms reaction time)
- *  while still creating meaningful speed pressure in the final third.
- */
 function getWindowMs(elapsed: number): number {
   const t = Math.min(elapsed / 45, 1);
   return Math.round(1100 - t * (1100 - 420));
 }
 
-// ─── BEHAVIORAL SIGNALS ───────────────────────────────────────────────────────
-
-interface Signals {
-  reactionTimes: number[]; // ms between node appearing and player tapping it
-  longestChain:  number;   // longest unbroken tap chain
-  chainBreaks:   number;   // number of times the chain was broken
-  totalNodes:    number;   // total nodes that appeared
-  tappedNodes:   number;   // nodes successfully tapped
-  currentChain:  number;   // running chain counter (resets on miss)
-  score:         number;   // cumulative score (chain pts + reaction bonuses)
-}
-
-// ─── PERSONALITY CLASSIFICATION ───────────────────────────────────────────────
+interface Signals { reactionTimes: number[]; longestChain: number; chainBreaks: number; totalNodes: number; tappedNodes: number; currentChain: number; score: number; }
+type Phase = 'start' | 'countdown' | 'playing' | 'done';
 
 function getPersonality(sig: Signals): string {
-  const avgRT =
-    sig.reactionTimes.length > 0
-      ? sig.reactionTimes.reduce((a, b) => a + b, 0) / sig.reactionTimes.length
-      : 9999;
+  const avgRT = sig.reactionTimes.length > 0 ? sig.reactionTimes.reduce((a, b) => a + b, 0) / sig.reactionTimes.length : 9999;
   const accuracy = sig.totalNodes > 0 ? sig.tappedNodes / sig.totalNodes : 0;
-
-  // Lightning Reflex: blazing speed + chain building — instinctive and electric
   if (avgRT < 350 && sig.longestChain >= 10) return 'Lightning Reflex ⚡';
-  // Chain Keeper: disciplined accuracy + sustained chains — methodical and controlled
   if (accuracy >= 0.70 && sig.chainBreaks <= 4 && sig.longestChain >= 8) return 'Chain Keeper 🔗';
-  // Sprinter: high-volume tapper, bursts of energy with frequent resets
   if (sig.tappedNodes > 20 && sig.chainBreaks > 4) return 'Sprinter 💨';
-  // Steady Reactor: measured, consistent pace — reliable under pressure
   return 'Steady Reactor 🎯';
 }
 
-// ─── GAME STATE ───────────────────────────────────────────────────────────────
-
-interface GameState {
-  running:              boolean;
-  timeLeft:             number;
-  sig:                  Signals;
-  nodeX:                number;
-  nodeY:                number;
-  nodeSpawnTime:        number;
-  nodeAlive:            boolean;
-  nodeWindowMs:         number;
-  chainBreakFlash:      number;   // 0..1 — fades out red overlay after a miss
-  accentColor:          string;
-  lastChainDisplayed:   number;   // change guard — avoids redundant setScoreDisplay calls
-  particles:            Particle[];
-  shake:                ShakeState;
-}
-
-type Phase = 'start' | 'countdown' | 'playing' | 'done';
-
-// ─── COMPONENT ────────────────────────────────────────────────────────────────
-
 export default function ReactionChain() {
-  const theme        = useBrandTheme();
-  // Use game's own accent when no brand override is active
-  const accentColor  = (theme.id !== 'ether') ? theme.colors.accent : ACCENT;
-  const canvasRef    = useRef<HTMLCanvasElement>(null);
-  const animRef      = useRef(0);
-  const timerRef     = useRef<ReturnType<typeof setInterval> | null>(null);
+  const theme = useBrandTheme();
+  const accentColor = (theme.id !== 'ether') ? theme.colors.accent : ACCENT;
+  const mountRef = useRef<HTMLDivElement>(null);
+  const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
+  const sceneRef = useRef<THREE.Scene | null>(null);
+  const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
+  const animRef = useRef(0);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const stopMusicRef = useRef<(() => void) | null>(null);
-  const respawnRef   = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const respawnRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const nodeMeshRef = useRef<THREE.Mesh | null>(null);
+  const timerArcRef = useRef<THREE.Mesh | null>(null);
+  const glowLightRef = useRef<THREE.PointLight | null>(null);
+  const particlesRef = useRef<{ mesh: THREE.Mesh; vx: number; vy: number; vz: number; life: number }[]>([]);
+  const playerSessionRef = useRef<PlayerSession | null>(null);
 
-  const stateRef = useRef<GameState>({
-    running:              false,
-    timeLeft:             DURATION,
-    sig: {
-      reactionTimes:  [],
-      longestChain:   0,
-      chainBreaks:    0,
-      totalNodes:     0,
-      tappedNodes:    0,
-      currentChain:   0,
-      score:          0,
-    },
-    nodeX:                0,
-    nodeY:                0,
-    nodeSpawnTime:        0,
-    nodeAlive:            false,
-    nodeWindowMs:         800,
-    chainBreakFlash:      0,
-    accentColor:          ACCENT,
-    lastChainDisplayed:   0,
-    particles:            [],
-    shake:                { intensity: 0, duration: 0 },
+  const stateRef = useRef({
+    running: false, timeLeft: DURATION,
+    sig: { reactionTimes: [], longestChain: 0, chainBreaks: 0, totalNodes: 0, tappedNodes: 0, currentChain: 0, score: 0 } as Signals,
+    nodeX: 0, nodeY: 0, nodeZ: 0,
+    nodeSpawnTime: 0, nodeAlive: false, nodeWindowMs: 800,
+    chainBreakFlash: 0, accentColor: ACCENT,
   });
 
-  const [phase, setPhase]               = useState<Phase>('start');
-  const [showInstructions, setShowInstructions] = useState(true);
-  const [timeLeft, setTimeLeft]         = useState(DURATION);
+  const [phase, setPhase] = useState<Phase>('start');
+  const [timeLeft, setTimeLeft] = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
   const [streakDisplay, setStreakDisplay] = useState(0);
   const { pops, triggerPop } = useScorePop();
   const triggerPopRef = useRef(triggerPop);
   triggerPopRef.current = triggerPop;
-  const [finalSig, setFinalSig]         = useState<Signals | null>(null);
-  const [playerName, setPlayerName]     = useState('');
-  const [playerAvatar, setPlayerAvatar] = useState('🎮');
-  const playerSessionRef                = useRef<PlayerSession | null>(null);
+  const [finalSig, setFinalSig] = useState<Signals | null>(null);
 
-
-
-  // Sync brand accent into game state so rAF loop gets fresh value without stale closure
-  useEffect(() => {
-    stateRef.current.accentColor = accentColor;
-  }, [theme]);
-
-  // ─── SPAWN NODE ─────────────────────────────────────────────────────────────
+  useEffect(() => { stateRef.current.accentColor = accentColor ?? ACCENT; }, [theme]);
 
   const spawnNode = useCallback(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const s       = stateRef.current;
+    const s = stateRef.current;
     const elapsed = DURATION - s.timeLeft;
-    s.nodeWindowMs  = getWindowMs(elapsed);
-    // Use CSS-pixel dimensions so positions stay consistent with setTransform(dpr,...) context
-    s.nodeX         = EDGE_MARGIN + Math.random() * (window.innerWidth  - EDGE_MARGIN * 2);
-    s.nodeY         = 140 + EDGE_MARGIN + Math.random() * (window.innerHeight - 140 - 30 - EDGE_MARGIN * 2);
+    s.nodeWindowMs = getWindowMs(elapsed);
+    s.nodeX = (Math.random() - 0.5) * 7;
+    s.nodeY = (Math.random() - 0.5) * 5;
+    s.nodeZ = (Math.random() - 0.5) * 2;
     s.nodeSpawnTime = Date.now();
-    s.nodeAlive     = true;
+    s.nodeAlive = true;
     s.sig.totalNodes++;
+    if (nodeMeshRef.current) {
+      nodeMeshRef.current.position.set(s.nodeX, s.nodeY, s.nodeZ);
+      nodeMeshRef.current.visible = true;
+      nodeMeshRef.current.scale.setScalar(1);
+    }
+    if (glowLightRef.current) glowLightRef.current.position.set(s.nodeX, s.nodeY, s.nodeZ + 1);
   }, []);
 
-  // ─── END GAME ───────────────────────────────────────────────────────────────
-
   const endGame = useCallback(() => {
-    const s = stateRef.current;
-    s.running = false;
+    const s = stateRef.current; s.running = false;
     cancelAnimationFrame(animRef.current);
-    if (timerRef.current)   { clearInterval(timerRef.current);  timerRef.current  = null; }
+    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
     if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
     stopMusicFile();
     if (respawnRef.current) { clearTimeout(respawnRef.current); respawnRef.current = null; }
-    // Finalize longest chain in case a chain was still live at time-up
     if (s.sig.currentChain > s.sig.longestChain) s.sig.longestChain = s.sig.currentChain;
-    setFinalSig({ ...s.sig });
-    setPhase('done');
+    setFinalSig({ ...s.sig }); setPhase('done');
   }, []);
 
-  // ─── GAME LOOP ──────────────────────────────────────────────────────────────
-
   const startLoop = useCallback(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+    const mount = mountRef.current; if (!mount) return;
     const s = stateRef.current;
-
-    // Reset mutable state
-    s.running        = true;
-    s.timeLeft       = DURATION;
-    s.sig            = {
-      reactionTimes: [],
-      longestChain:  0,
-      chainBreaks:   0,
-      totalNodes:    0,
-      tappedNodes:   0,
-      currentChain:  0,
-      score:         0,
-    };
-    s.nodeAlive           = false;
-    s.chainBreakFlash     = 0;
-    s.lastChainDisplayed  = 0;
-    s.particles           = [];
-    s.shake               = { intensity: 0, duration: 0 };
-
-    setScoreDisplay(0);
-    setTimeLeft(DURATION);
-    setPhase('playing');
+    s.running = true; s.timeLeft = DURATION;
+    s.sig = { reactionTimes: [], longestChain: 0, chainBreaks: 0, totalNodes: 0, tappedNodes: 0, currentChain: 0, score: 0 };
+    s.nodeAlive = false; s.chainBreakFlash = 0;
+    setScoreDisplay(0); setStreakDisplay(0); setTimeLeft(DURATION); setPhase('playing');
     stopMusicRef.current = startMusic('drive');
     playMusic(GAME_ID);
+    preloadGameAudio(GAME_ID);
 
-    // ⚠️ setInterval ONLY for 1-second countdown — never for animation
+    const W = window.innerWidth, H = window.innerHeight;
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0d0700);
+    scene.fog = new THREE.Fog(0x0d0700, 15, 30);
+    sceneRef.current = scene;
+
+    const camera = new THREE.PerspectiveCamera(70, W / H, 0.1, 60);
+    camera.position.set(0, 0, 12);
+    cameraRef.current = camera;
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(W, H);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    mount.appendChild(renderer.domElement);
+    rendererRef.current = renderer;
+
+    scene.add(new THREE.AmbientLight(0x1a0e00, 3));
+    const gLight = new THREE.PointLight(0xfacc15, 80, 15);
+    gLight.position.set(0, 0, 3);
+    scene.add(gLight);
+    glowLightRef.current = gLight;
+
+    // Stars
+    const sg = new THREE.BufferGeometry();
+    const sp = new Float32Array(500);
+    for (let i = 0; i < 500; i += 3) { sp[i] = (Math.random()-0.5)*50; sp[i+1] = (Math.random()-0.5)*40; sp[i+2] = -12 - Math.random()*8; }
+    sg.setAttribute('position', new THREE.BufferAttribute(sp, 3));
+    scene.add(new THREE.Points(sg, new THREE.PointsMaterial({ color: 0xfacc15, size: 0.05 })));
+
+    // Node mesh (single reusable)
+    const nodeGeo = new THREE.SphereGeometry(NODE_RADIUS_3D, 24, 24);
+    const nodeMat = new THREE.MeshStandardMaterial({ color: 0xfacc15, emissive: 0xfacc15, emissiveIntensity: 0.5, roughness: 0.2, metalness: 0.6, transparent: true, opacity: 0.9 });
+    const node = new THREE.Mesh(nodeGeo, nodeMat);
+    node.visible = false;
+    scene.add(node);
+    nodeMeshRef.current = node;
+
+    // Timer arc (torus that shrinks)
+    const arcGeo = new THREE.TorusGeometry(NODE_RADIUS_3D + 0.25, 0.06, 8, 64);
+    const arcMat = new THREE.MeshStandardMaterial({ color: 0xfacc15, emissive: 0xfacc15, emissiveIntensity: 0.8 });
+    const arc = new THREE.Mesh(arcGeo, arcMat);
+    arc.visible = false;
+    scene.add(arc);
+    timerArcRef.current = arc;
+
+    // Raycaster
+    const raycaster = new THREE.Raycaster();
+    const onTap = (e: PointerEvent) => {
+      if (!s.running || !s.nodeAlive) return;
+      const rect = renderer.domElement.getBoundingClientRect();
+      const mouse = new THREE.Vector2(((e.clientX - rect.left)/rect.width)*2-1, -((e.clientY - rect.top)/rect.height)*2+1);
+      raycaster.setFromCamera(mouse, camera);
+      const hits = raycaster.intersectObject(node);
+      if (!hits.length) return;
+      const reactionMs = Date.now() - s.nodeSpawnTime;
+      s.sig.tappedNodes++; s.sig.reactionTimes.push(reactionMs); s.sig.currentChain++;
+      if (s.sig.currentChain > s.sig.longestChain) s.sig.longestChain = s.sig.currentChain;
+      s.sig.score += 1 + (reactionMs < 300 ? 5 : 0);
+      // Particle burst
+      for (let i = 0; i < 12; i++) {
+        const geo = new THREE.SphereGeometry(0.08, 6, 6);
+        const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: 0xfacc15, emissive: 0xfacc15, emissiveIntensity: 0.5 }));
+        mesh.position.set(s.nodeX, s.nodeY, s.nodeZ);
+        scene.add(mesh);
+        particlesRef.current.push({ mesh, vx: (Math.random()-0.5)*0.15, vy: (Math.random()-0.5)*0.15, vz: (Math.random()-0.5)*0.1, life: 1 });
+      }
+      node.visible = false;
+      s.nodeAlive = false;
+      setScoreDisplay(s.sig.currentChain); setStreakDisplay(s.sig.currentChain);
+      triggerPopRef.current(reactionMs < 300 ? '+6' : '+1', e.clientX, e.clientY, { milestone: s.sig.currentChain >= 5, huge: s.sig.currentChain >= 10 });
+      if (s.sig.currentChain >= 3) playComboSfx(s.sig.currentChain); else sfx.collect();
+      haptic(s.sig.currentChain >= 5 ? [20, 10, 20] : [20]);
+      spawnNode();
+    };
+    renderer.domElement.addEventListener('pointerdown', onTap);
+
     timerRef.current = setInterval(() => {
-      s.timeLeft--;
-      setTimeLeft(s.timeLeft);
-      // Warning at 10s, urgency ticks at ≤5s
+      s.timeLeft--; setTimeLeft(s.timeLeft);
       if (s.timeLeft === 10) sfx.warning();
       if (s.timeLeft <= 5 && s.timeLeft > 0) sfx.tick();
-      if (s.timeLeft <= 0) {
-        // Spec endSound = "success" — the game always completes, never globally fails
-        sfx.success();
-        playSuccess(GAME_ID);
-        haptic([30, 50, 30, 50, 100]);
-        endGame();
-      }
+      if (s.timeLeft <= 0) { sfx.success(); playSuccess(GAME_ID); haptic([30, 50, 30, 50, 100]); endGame(); }
     }, 1000);
 
     spawnNode();
 
+    let t = 0;
     const loop = () => {
       if (!s.running) return;
-      const W = canvas.width;
-      const H = canvas.height;
-
-      // ── Background — dark amber/orange cognitive gradient ────────────────────
-      const rcBg = ctx.createRadialGradient(W * 0.5, H * 0.35, 0, W * 0.5, H * 0.6, Math.max(W, H) * 0.9);
-      rcBg.addColorStop(0,   '#1a0e00');
-      rcBg.addColorStop(0.55, '#0d0700');
-      rcBg.addColorStop(1,   '#060300');
-      ctx.fillStyle = rcBg;
-      ctx.fillRect(0, 0, W, H);
-
-      // Subtle vignette
-      const rcVig = ctx.createRadialGradient(W * 0.5, H * 0.5, H * 0.2, W * 0.5, H * 0.5, H * 0.8);
-      rcVig.addColorStop(0, 'rgba(0,0,0,0)');
-      rcVig.addColorStop(1, 'rgba(0,0,0,0.5)');
-      ctx.fillStyle = rcVig;
-      ctx.fillRect(0, 0, W, H);
-
-      // ── Chain-break red flash overlay ───────────────────────────────────────
-      if (s.chainBreakFlash > 0) {
-        ctx.fillStyle = `rgba(239, 68, 68, ${s.chainBreakFlash * 0.18})`;
-        ctx.fillRect(0, 0, W, H);
-        s.chainBreakFlash = Math.max(0, s.chainBreakFlash - 0.035);
-      }
-
-      // ── Screen shake offset for node + particles (background stays fixed) ───
-      ctx.save();
-      if (s.shake.duration > 0) applyShake(ctx, s.shake);
-
-      // ── Node ────────────────────────────────────────────────────────────────
-      if (s.nodeAlive) {
-        const age      = Date.now() - s.nodeSpawnTime;
-        const progress = Math.min(1, age / s.nodeWindowMs); // 0 = fresh, 1 = expired
-
-        if (progress >= 1) {
-          // Node expired — break the chain
-          s.nodeAlive = false;
-          if (s.sig.currentChain > s.sig.longestChain) s.sig.longestChain = s.sig.currentChain;
-          s.sig.currentChain  = 0;
-          s.sig.chainBreaks++;
-          s.chainBreakFlash   = 1;
-          s.lastChainDisplayed = 0;
-          triggerShake(s.shake, 5, 8);
-          sfx.collision();
-          haptic([80]);
-          // Post-miss pause before next node (≤ 500ms — within rules)
-          // All setState calls deferred here to avoid calling React setState inside rAF
-          respawnRef.current = setTimeout(() => {
-            if (s.running) { setScoreDisplay(0); setStreakDisplay(0); spawnNode(); }
-          }, 500);
-        } else {
-          const alpha         = 1 - progress * 0.55;
-          const currentRadius = NODE_RADIUS * (1 - progress * 0.28);
-          const accentCol     = s.accentColor;
-          const chainGlow     = Math.min(48, 18 + s.sig.currentChain * 2);
-
-          ctx.save();
-          ctx.globalAlpha = alpha;
-
-          // Timer arc — shrinks clockwise as window runs out
-          const arcRadius = currentRadius + 18;
-          ctx.shadowBlur  = 0;
-          ctx.strokeStyle = `${accentCol}55`;
-          ctx.lineWidth   = 3;
-          ctx.lineCap     = 'round';
-          ctx.beginPath();
-          ctx.arc(s.nodeX, s.nodeY, arcRadius, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * (1 - progress));
-          ctx.stroke();
-
-          // Glow
-          ctx.shadowBlur  = chainGlow;
-          ctx.shadowColor = accentCol;
-
-          // Node fill + stroke
-          ctx.fillStyle   = `${accentCol}28`;
-          ctx.strokeStyle = accentCol;
-          ctx.lineWidth   = 3;
-          ctx.beginPath();
-          ctx.arc(s.nodeX, s.nodeY, currentRadius, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.stroke();
-
-          // Inner bright dot
-          ctx.shadowBlur = 0;
-          ctx.fillStyle  = accentCol;
-          ctx.beginPath();
-          ctx.arc(s.nodeX, s.nodeY, Math.max(3, 8 - progress * 4), 0, Math.PI * 2);
-          ctx.fill();
-
-          ctx.restore();
-        }
-      }
-
-      // ── Tap particles ────────────────────────────────────────────────────────
-      updateAndDrawParticles(ctx, s.particles);
-
-      ctx.restore(); // end shake transform
-
-      // ── Watermark chain count (grows with chain, very subtle) ───────────────
-      if (s.sig.currentChain > 0) {
-        ctx.save();
-        ctx.globalAlpha  = Math.min(0.12, 0.04 + s.sig.currentChain * 0.006);
-        ctx.fillStyle    = s.accentColor;
-        ctx.font         = `bold ${Math.min(140, 48 + s.sig.currentChain * 4)}px system-ui`;
-        ctx.textAlign    = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(`×${s.sig.currentChain}`, W / 2, H * 0.7);
-        ctx.restore();
-      }
-
-      // ── Chain dot bar (bottom edge — visualizes consecutive hits) ───────────
-      // Each dot = one consecutive tap. Shatters red on chain break.
-      {
-        const chainLen  = s.sig.currentChain;
-        const maxDots   = 20;
-        const showDots  = Math.min(chainLen, maxDots);
-        const dotR      = 4;
-        const dotGap    = 11;
-        const barY      = H - 28;
-        const totalW    = (showDots - 1) * dotGap;
-        const startX    = W / 2 - totalW / 2;
-
-        if (showDots > 0) {
-          for (let i = 0; i < showDots; i++) {
-            const px = startX + i * dotGap;
-            // Newest dot is brightest; older dots fade slightly
-            const bright = 0.55 + (i / Math.max(1, showDots - 1)) * 0.45;
-            const isMilestone = (i + 1) % 5 === 0;
-            ctx.beginPath();
-            ctx.arc(px, barY, isMilestone ? dotR + 2 : dotR, 0, Math.PI * 2);
-            ctx.fillStyle = s.chainBreakFlash > 0.6
-              ? `rgba(239,68,68,${bright})`     // flash red on break
-              : `${s.accentColor}${Math.round(bright * 255).toString(16).padStart(2, '0')}`;
-            ctx.shadowBlur  = isMilestone ? 10 : 4;
-            ctx.shadowColor = s.chainBreakFlash > 0.6 ? '#ef4444' : s.accentColor;
-            ctx.fill();
-          }
-          ctx.shadowBlur = 0;
-          // "+N" overflow indicator if chain > maxDots
-          if (chainLen > maxDots) {
-            ctx.save();
-            ctx.fillStyle    = s.accentColor;
-            ctx.globalAlpha  = 0.9;
-            ctx.font         = `bold 11px system-ui`;
-            ctx.textAlign    = 'left';
-            ctx.textBaseline = 'middle';
-            ctx.fillText(`+${chainLen - maxDots}`, startX + totalW + 10, barY);
-            ctx.restore();
-          }
-        }
-      }
-
       animRef.current = requestAnimationFrame(loop);
-    };
+      t += 0.012;
 
+      if (s.nodeAlive && node.visible) {
+        const age = Date.now() - s.nodeSpawnTime;
+        const progress = Math.min(1, age / s.nodeWindowMs);
+        if (progress >= 1) {
+          s.nodeAlive = false; node.visible = false;
+          if (s.sig.currentChain > s.sig.longestChain) s.sig.longestChain = s.sig.currentChain;
+          s.sig.currentChain = 0; s.sig.chainBreaks++;
+          s.chainBreakFlash = 30;
+          sfx.collision(); haptic([80]);
+          setScoreDisplay(0); setStreakDisplay(0);
+          respawnRef.current = setTimeout(() => { if (s.running) spawnNode(); }, 500);
+        } else {
+          const mat = node.material as THREE.MeshStandardMaterial;
+          mat.opacity = 1 - progress * 0.5;
+          node.scale.setScalar(1 - progress * 0.3);
+          if (timerArcRef.current) {
+            timerArcRef.current.position.copy(node.position);
+            timerArcRef.current.visible = true;
+            timerArcRef.current.scale.setScalar(1 - progress * 0.3);
+            timerArcRef.current.rotation.z = -progress * Math.PI * 2;
+          }
+        }
+        // Gentle float
+        node.position.y = s.nodeY + Math.sin(t * 2) * 0.08;
+        node.rotation.y += 0.02;
+        if (glowLightRef.current) glowLightRef.current.position.set(s.nodeX, node.position.y, s.nodeZ + 1);
+      } else if (timerArcRef.current) {
+        timerArcRef.current.visible = false;
+      }
+
+      // Chain break flash (red tint via bg color shift)
+      if (s.chainBreakFlash > 0) { s.chainBreakFlash--; scene.background = new THREE.Color(s.chainBreakFlash > 15 ? 0x1a0500 : 0x0d0700); }
+
+      // Particles
+      for (let i = particlesRef.current.length - 1; i >= 0; i--) {
+        const p = particlesRef.current[i];
+        p.mesh.position.x += p.vx; p.mesh.position.y += p.vy; p.mesh.position.z += p.vz;
+        p.vy -= 0.002; p.life -= 0.025;
+        (p.mesh.material as THREE.MeshStandardMaterial).opacity = p.life;
+        (p.mesh.material as THREE.MeshStandardMaterial).transparent = true;
+        if (p.life <= 0.05) { scene.remove(p.mesh); particlesRef.current.splice(i, 1); }
+      }
+
+      gLight.intensity = 40 + Math.sin(t * 4) * 20;
+      renderer.render(scene, camera);
+    };
     animRef.current = requestAnimationFrame(loop);
+
+    return () => { renderer.domElement.removeEventListener('pointerdown', onTap); };
   }, [endGame, spawnNode]);
 
-  // ─── POINTER INPUT ──────────────────────────────────────────────────────────
-
-  const handleTap = useCallback(
-    (clientX: number, clientY: number) => {
-      const canvas = canvasRef.current;
-      if (!canvas) return;
-      const s = stateRef.current;
-      if (!s.running || !s.nodeAlive) return;
-
-      const rect = canvas.getBoundingClientRect();
-      // Nodes are positioned in CSS pixels; use CSS pixels for hit detection
-      const x    = clientX - rect.left;
-      const y    = clientY - rect.top;
-      const dx   = x - s.nodeX;
-      const dy   = y - s.nodeY;
-
-      if (Math.sqrt(dx * dx + dy * dy) > NODE_RADIUS + 14) return;
-
-      const reactionMs = Date.now() - s.nodeSpawnTime;
-      s.sig.tappedNodes++;
-      s.sig.reactionTimes.push(reactionMs);
-      s.sig.currentChain++;
-      if (s.sig.currentChain > s.sig.longestChain) s.sig.longestChain = s.sig.currentChain;
-
-      // +1 per tap, +5 bonus if reaction under 300ms
-      s.sig.score += 1 + (reactionMs < 300 ? 5 : 0);
-
-      // Particle burst at tap position
-      spawnBurst(s.particles, x, y, s.accentColor, 14, 5);
-
-      if (s.lastChainDisplayed !== s.sig.currentChain) {
-        s.lastChainDisplayed = s.sig.currentChain;
-        setScoreDisplay(s.sig.currentChain);
-        setStreakDisplay(s.sig.currentChain);
-      }
-
-      // Score pop overlay at tap position
-      const popCanvas = canvasRef.current;
-      if (popCanvas) {
-        const rect = popCanvas.getBoundingClientRect();
-        // nodeX/nodeY are in CSS pixels; popX/popY for ScorePopEffect are also CSS pixels
-        const popX = s.nodeX;
-        const popY = s.nodeY;
-        const isCombo = s.sig.currentChain >= 5;
-        triggerPopRef.current(
-          reactionMs < 300 ? '+6' : '+1',
-          popX, popY,
-          { milestone: isCombo, huge: s.sig.currentChain >= 10 },
-        );
-      }
-
-      // Audio: combo sound replaces collect at chain ≥ 3 (so combo layer isn't stomped)
-      if (s.sig.currentChain >= 3) {
-        playComboSfx(s.sig.currentChain);
-      } else {
-        sfx.collect();
-      }
-      haptic(s.sig.currentChain >= 5 ? [20, 10, 20] : [20]);
-
-      s.nodeAlive = false;
-      // Immediate spawn after hit
-      spawnNode();
-    },
-    [spawnNode],
-  );
-
-  // ─── CANVAS SETUP & RESIZE ──────────────────────────────────────────────────
-
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    const resize = () => {
-      const dpr = window.devicePixelRatio || 1;
-      const w = window.innerWidth;
-      const h = window.innerHeight;
-      canvas.style.width  = w + 'px';
-      canvas.style.height = h + 'px';
-      canvas.width  = w * dpr;
-      canvas.height = h * dpr;
-      const ctx2 = canvas.getContext('2d');
-      if (ctx2) ctx2.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const onResize = () => {
+      if (!cameraRef.current || !rendererRef.current) return;
+      const W = window.innerWidth, H = window.innerHeight;
+      cameraRef.current.aspect = W / H; cameraRef.current.updateProjectionMatrix();
+      rendererRef.current.setSize(W, H);
     };
-    resize();
-    window.addEventListener('resize', resize);
-
-    const onPointerDown = (e: PointerEvent) => {
-      if (phase !== 'playing') return;
-      handleTap(e.clientX, e.clientY);
-    };
-    canvas.addEventListener('pointerdown', onPointerDown);
-
+    window.addEventListener('resize', onResize);
     return () => {
-      window.removeEventListener('resize', resize);
-      canvas.removeEventListener('pointerdown', onPointerDown);
-    };
-  }, [phase, handleTap]);
-
-  // ─── CLEANUP ON UNMOUNT ─────────────────────────────────────────────────────
-
-  useEffect(() => {
-    return () => {
+      window.removeEventListener('resize', onResize);
       cancelAnimationFrame(animRef.current);
-      if (timerRef.current)   clearInterval(timerRef.current);
+      if (timerRef.current) clearInterval(timerRef.current);
       if (stopMusicRef.current) stopMusicRef.current();
       if (respawnRef.current) clearTimeout(respawnRef.current);
+      if (rendererRef.current && mountRef.current) {
+        try { mountRef.current.removeChild(rendererRef.current.domElement); } catch { /**/ }
+        rendererRef.current.dispose();
+      }
     };
   }, []);
 
-  // ─── PHASE TRANSITIONS ──────────────────────────────────────────────────────
-
   const handleStart = useCallback(async (name: string, avatar: string) => {
-    setPlayerName(name);
-    setPlayerAvatar(avatar);
     playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar);
-    await initAudio();
-    sfx.click();
-    preloadGameAudio(GAME_ID);
-    setPhase('countdown');
+    await initAudio(); sfx.click(); setPhase('countdown');
   }, []);
-
-  const handleCountdownDone = useCallback(() => {
-    startLoop();
-  }, [startLoop]);
-
+  const handleCountdownDone = useCallback(() => { startLoop(); }, [startLoop]);
   const handlePlayAgain = useCallback(() => {
+    stateRef.current.running = false;
+    cancelAnimationFrame(animRef.current);
+    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+    if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
+    if (respawnRef.current) { clearTimeout(respawnRef.current); respawnRef.current = null; }
+    if (rendererRef.current && mountRef.current) {
+      try { mountRef.current.removeChild(rendererRef.current.domElement); } catch { /**/ }
+      rendererRef.current.dispose(); rendererRef.current = null;
+    }
+    particlesRef.current = [];
+    setScoreDisplay(0); setStreakDisplay(0); setTimeLeft(DURATION); setFinalSig(null);
     setPhase('start');
-    setScoreDisplay(0);
-    setStreakDisplay(0);
-    setTimeLeft(DURATION);
-    setFinalSig(null);
   }, []);
 
-  // ─── END SCREEN INSIGHTS ────────────────────────────────────────────────────
+  const buildInsights = useCallback((sig: Signals) => {
+    const avgRT = sig.reactionTimes.length > 0 ? Math.round(sig.reactionTimes.reduce((a,b)=>a+b,0)/sig.reactionTimes.length) : 0;
+    const accuracy = sig.totalNodes > 0 ? Math.round((sig.tappedNodes/sig.totalNodes)*100) : 0;
+    const ac = accentColor ?? ACCENT;
+    return [
+      { label: 'Longest Chain', value: `${sig.longestChain}`, color: sig.longestChain >= 20 ? '#4ade80' : sig.longestChain >= 10 ? '#facc15' : '#ef4444' },
+      { label: 'Avg Reaction', value: avgRT > 0 ? `${avgRT}ms` : '—', color: avgRT > 0 && avgRT < 350 ? '#4ade80' : '#facc15' },
+      { label: 'Chain Breaks', value: `${sig.chainBreaks}`, color: sig.chainBreaks <= 2 ? '#4ade80' : '#ef4444' },
+      { label: 'Nodes Hit', value: `${accuracy}%`, color: ac },
+    ];
+  }, [accentColor]);
 
-  const buildInsights = useCallback(
-    (sig: Signals) => {
-      const avgRT =
-        sig.reactionTimes.length > 0
-          ? Math.round(sig.reactionTimes.reduce((a, b) => a + b, 0) / sig.reactionTimes.length)
-          : 0;
-      const accuracy =
-        sig.totalNodes > 0 ? Math.round((sig.tappedNodes / sig.totalNodes) * 100) : 0;
-      const accentCol = accentColor;
-
-      return [
-        {
-          label: 'Longest Chain',
-          value: `${sig.longestChain}`,
-          color:
-            sig.longestChain >= 20 ? '#4ade80' : sig.longestChain >= 10 ? '#facc15' : '#ef4444',
-        },
-        {
-          label: 'Avg Reaction',
-          value: avgRT > 0 ? `${avgRT}ms` : '—',
-          color:
-            avgRT > 0 && avgRT < 350 ? '#4ade80' : avgRT > 0 && avgRT <= 550 ? '#facc15' : '#ef4444',
-        },
-        {
-          label: 'Chain Breaks',
-          value: `${sig.chainBreaks}`,
-          color:
-            sig.chainBreaks <= 2 ? '#4ade80' : sig.chainBreaks <= 5 ? '#facc15' : '#ef4444',
-        },
-        {
-          label: 'Nodes Hit',
-          value: `${accuracy}%`,
-          color: accentCol,
-        },
-      ];
-    },
-    [theme],
-  );
-
-  // ─── RENDER ─────────────────────────────────────────────────────────────────
-
+  const ac = accentColor ?? ACCENT;
   return (
-    <>
-      {phase === 'start' && showInstructions && (
-        <SwipeInstructions
-          gameId="reaction-chain"
-          steps={[{ icon: "⚡", title: "Tap the nodes", body: "Chain nodes appear on screen — tap each one before it disappears." }, { icon: "🔗", title: "Keep the chain alive", body: "Missing a node resets your chain. Build the longest streak." }, { icon: "💨", title: "They get faster", body: "Nodes vanish quicker as time goes on. Stay sharp." }]}
-          onDone={() => setShowInstructions(false)}
-        />
-      )}
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accentColor} gameId={GAME_ID}
-      background="radial-gradient(ellipse at 50% 50%, rgba(250,204,21,0.07) 0%, transparent 60%), linear-gradient(180deg, #0d0700 0%, #0a0500 35%, #080400 60%, #0a0500 85%, #0d0700 100%)">
-      {/* ── Start Screen ──────────────────────────────────────────────────── */}
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={ac} gameId={GAME_ID}
+      background="radial-gradient(ellipse at 50% 50%, rgba(250,204,21,0.07) 0%, transparent 60%), linear-gradient(180deg, #0d0700 0%, #060300 100%)">
       {phase === 'start' && (
-        <GameStartScreen
-          emoji={GAME_EMOJI}
-          title={GAME_TITLE}
-          description={GAME_TAGLINE}
-          ctaLabel="Start"
-          accentColor={accentColor}
-          onStart={handleStart}
-          gradient="radial-gradient(ellipse 80% 70% at 50% 30%, #1a0e00 0%, #0d0700 55%, #060300 100%)"
-        />
+        <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description={GAME_TAGLINE}
+          ctaLabel="Start" accentColor={ac} onStart={handleStart} />
       )}
-
-      {/* ── Countdown ─────────────────────────────────────────────────────── */}
-      {phase === 'countdown' && (
-        <Countdown onComplete={handleCountdownDone} accentColor={accentColor} />
-      )}
-
-      {/* ── Playing (canvas + HUD) ────────────────────────────────────────── */}
+      {phase === 'countdown' && <Countdown onComplete={handleCountdownDone} accentColor={ac} />}
       {(phase === 'playing' || phase === 'countdown') && (
         <>
-          <canvas
-            ref={canvasRef}
-            style={{
-              position: 'absolute',
-              inset: 0,
-              width: '100%',
-              height: '100%',
-              touchAction: 'none',
-            }}
-          />
+          <div ref={mountRef} style={{ position: 'absolute', inset: 0, touchAction: 'none' }} />
           {phase === 'playing' && (
             <>
-              <GameHUD
-                accentColor={accentColor}
-                items={[
-                  { label: 'TIME', value: timeLeft, danger: timeLeft <= 10, testId: 'timer' },
-                  { label: 'CHAIN', value: scoreDisplay, testId: 'score' },
-                ]}
-              />
-              {/* Streak badge — fires at 3+ consecutive taps */}
-              <StreakBadge
-                streak={streakDisplay}
-                accentColor={accentColor}
-                position="bottom-center"
-              />
-              {/* Score pop overlay */}
-              <ScorePopEffect pops={pops} accentColor={accentColor} />
+              <GameHUD accentColor={ac} items={[
+                { label: 'TIME', value: timeLeft, danger: timeLeft <= 10, testId: 'timer' },
+                { label: 'CHAIN', value: scoreDisplay, testId: 'score' },
+              ]} />
+              <StreakBadge streak={streakDisplay} accentColor={ac} position="bottom-center" />
+              <ScorePopEffect pops={pops} accentColor={ac} />
             </>
           )}
         </>
       )}
-
-      {/* ── End Screen ────────────────────────────────────────────────────── */}
       {phase === 'done' && finalSig && (
-        <EndScreen
-          gameId={GAME_ID}
-          title={getPersonality(finalSig)}
-          emoji={GAME_EMOJI}
-          score={String(finalSig.longestChain)}
-          personality={getPersonality(finalSig)}
-          insights={buildInsights(finalSig)}
-          accentColor={accentColor}
-          onPlayAgain={handlePlayAgain}
-          didWin={finalSig.longestChain >= 10}
-        />
-      )}
-
-      {/* ── Webhook ───────────────────────────────────────────────────────── */}
-      {phase === 'done' && finalSig && (
-        <WebhookEmitter
-          theme={theme}
-          gameId={GAME_ID}
-          sig={finalSig}
-          personality={getPersonality(finalSig)}
-          player={playerSessionRef.current}
-        />
+        <>
+          <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI}
+            score={String(finalSig.longestChain)} personality={getPersonality(finalSig)}
+            insights={buildInsights(finalSig)} accentColor={ac}
+            onPlayAgain={handlePlayAgain} didWin={finalSig.longestChain >= 10} />
+          <WebhookEmitter theme={theme} gameId={GAME_ID} sig={finalSig} personality={getPersonality(finalSig)} player={playerSessionRef.current} />
+        </>
       )}
     </GameShell>
-    </>
   );
 }
 
-// ─── WEBHOOK EMITTER ─────────────────────────────────────────────────────────
-
-function WebhookEmitter({
-  theme,
-  gameId,
-  sig,
-  personality,
-  player,
-}: {
-  theme: ReturnType<typeof useBrandTheme>;
-  gameId: string;
-  sig: Signals;
-  personality: string;
-  player: PlayerSession | null;
-}) {
+function WebhookEmitter({ theme, gameId, sig, personality, player }: { theme: ReturnType<typeof useBrandTheme>; gameId: string; sig: Signals; personality: string; player: PlayerSession | null; }) {
   const fired = useRef(false);
   useEffect(() => {
-    if (fired.current) return;
-    fired.current = true;
-    const avgReaction =
-      sig.reactionTimes.length > 0
-        ? Math.round(sig.reactionTimes.reduce((a, b) => a + b, 0) / sig.reactionTimes.length)
-        : null;
-    postWebhook(theme, gameId, {
-      personality,
-      score:         sig.score,
-      longestChain:  sig.longestChain,
-      chainBreaks:   sig.chainBreaks,
-      totalNodes:    sig.totalNodes,
-      tappedNodes:   sig.tappedNodes,
-      reactionTimes: sig.reactionTimes,
-      avgReactionMs: avgReaction,
-    }, player);
+    if (fired.current) return; fired.current = true;
+    postWebhook(theme, gameId, { personality, score: sig.score, longestChain: sig.longestChain, chainBreaks: sig.chainBreaks }, player);
   }, [theme, gameId, sig, personality, player]);
   return null;
 }

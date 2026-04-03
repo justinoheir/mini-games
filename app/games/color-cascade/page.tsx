@@ -1,51 +1,22 @@
-﻿/**
- * ══════════════════════════════════════════════════════════════════
- *  COLOR CASCADE — Ether Mini-Game
- *  Match the falling color drops to the target color.
- *  Speed increases over time. Every 10s the target color changes.
- *
- *  Signals tracked: correctTaps, wrongTaps, reactionTimes, accuracy, maxStreak
- *  Archetypes: Chromatic Hawk 🦅 | Speed Demon 🔥 | Deliberate Eye 🔭 | Casual Tapper 🌊
- * ══════════════════════════════════════════════════════════════════
- */
-
 'use client';
+/**
+ * COLOR CASCADE — 3D: match falling colored spheres to the target color.
+ * Vibrant spheres rain from above in a glowing 3D arena.
+ */
 import { useEffect, useRef, useState, useCallback } from 'react';
+import * as THREE from 'three';
 import GameShell from '@/components/GameShell';
 import GameHUD from '@/components/GameHUD';
 import GameStartScreen from '@/components/GameStartScreen';
 import Countdown from '@/components/Countdown';
 import EndScreen from '@/components/EndScreen';
 import { initAudio, sfx, haptic, startMusic } from '@/lib/audio';
-import { playScoreHit } from '@/lib/audio';
 import { hapticScore, hapticFail, hapticVictory } from '@/lib/haptics';
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
-import { type Particle, spawnBurst, updateAndDrawParticles } from '@/lib/particles';
 import { motion, AnimatePresence } from 'framer-motion';
 import ScorePopEffect, { useScorePop } from '@/components/ScorePopEffect';
-import StreakBadge from '@/components/StreakBadge';
-import { Palette } from 'lucide-react';
-import { CATEGORY_THEMES } from '@/lib/theme';
-import SwipeInstructions from '@/components/SwipeInstructions';
-
-const CATEGORY_ACCENT = CATEGORY_THEMES.cognitive.primaryAccent;
-
-// ─── SPRITE CACHE ─────────────────────────────────────────────────────────────
-const _spriteCache = new Map<string, HTMLImageElement>();
-function _loadSprite(src: string): HTMLImageElement {
-  if (_spriteCache.has(src)) return _spriteCache.get(src)!;
-  const img = new Image();
-  img.src = src;
-  _spriteCache.set(src, img);
-  return img;
-}
-if (typeof window !== 'undefined') {
-  _loadSprite('/sprites/color-cascade/drop.svg');
-}
-
-// ─── SPEC CONSTANTS ──────────────────────────────────────────────────────────
 
 const GAME_ID      = 'color-cascade';
 const PB_KEY       = 'pb_color-cascade';
@@ -55,809 +26,337 @@ const GAME_EMOJI   = '🌈';
 const GAME_TITLE   = 'Color Cascade';
 const GAME_TAGLINE = 'Match the color. Match the speed.';
 
-// ─── COLOR PALETTE ────────────────────────────────────────────────────────────
-
 const COLORS = [
-  { name: 'red',    hex: '#ef4444', label: 'RED'    },
-  { name: 'blue',   hex: '#3b82f6', label: 'BLUE'   },
-  { name: 'green',  hex: '#22c55e', label: 'GREEN'  },
-  { name: 'yellow', hex: '#eab308', label: 'YELLOW' },
-  { name: 'purple', hex: '#a855f7', label: 'PURPLE' },
+  { name:'red',    hex:'#ef4444', threeHex:0xef4444, label:'RED'    },
+  { name:'blue',   hex:'#3b82f6', threeHex:0x3b82f6, label:'BLUE'   },
+  { name:'green',  hex:'#22c55e', threeHex:0x22c55e, label:'GREEN'  },
+  { name:'yellow', hex:'#eab308', threeHex:0xeab308, label:'YELLOW' },
+  { name:'purple', hex:'#a855f7', threeHex:0xa855f7, label:'PURPLE' },
 ];
 
-const DROP_RADIUS = 28;
-// TOP_AREA accounts for 56px GameShell top bar + ~65px GameHUD pill + 14px breathing room
-// Canvas target display is drawn from ~145-218px so it's fully visible below the HUD
-const TOP_AREA    = 235; // px reserved for target color display (shifted below top bar + HUD)
-
-// ─── TYPES ────────────────────────────────────────────────────────────────────
-
-interface Drop {
+interface Drop3D {
   id: number;
-  x: number;
   colorIndex: number;
-  startTime: number;    // Date.now() when spawned
-  fallDuration: number; // ms to traverse the play area
-  radius: number;
-  tapped: boolean;
-  missed: boolean;      // has already been counted as a miss
-  hitAlpha: number;     // 1 → 0 for hit-ring animation
-  hitY: number;         // y-position captured at moment of tap
+  mesh: THREE.Mesh;
+  speed: number;
+  caught: boolean;
+  flashT: number;
 }
 
 interface Signals {
-  correctTaps: number;
-  wrongTaps: number;
-  reactionTimes: number[]; // ms from drop spawn to tap
-  accuracy: number;        // computed on end
-  maxStreak: number;
-  score: number;
-  streakCurrent: number;
+  correctTaps: number; wrongTaps: number; reactionTimes: number[];
+  accuracy: number; maxStreak: number; streakCurrent: number; score: number;
 }
-
-// ─── PERSONALITY CLASSIFICATION ──────────────────────────────────────────────
 
 function getPersonality(sig: Signals): string {
-  const total  = sig.correctTaps + sig.wrongTaps;
-  const acc    = total > 0 ? sig.correctTaps / total : 0;
-  const avgRx  = sig.reactionTimes.length > 0
-    ? sig.reactionTimes.reduce((a, b) => a + b, 0) / sig.reactionTimes.length
-    : 9999;
-
-  if (acc > 0.80 && avgRx < 600)               return 'Chromatic Hawk 🦅';
-  if (sig.correctTaps > 25 && acc < 0.70)      return 'Speed Demon 🔥';
-  if (acc > 0.75 && avgRx >= 600)              return 'Deliberate Eye 🔭';
-  return 'Casual Tapper 🌊'; // fallback — always last
+  const acc = sig.correctTaps + sig.wrongTaps > 0 ? sig.correctTaps / (sig.correctTaps + sig.wrongTaps) : 0;
+  if (acc >= 0.85 && sig.maxStreak >= 8) return 'Chromatic Hawk 🦅';
+  if (sig.correctTaps >= 20)             return 'Speed Demon 🔥';
+  if (acc >= 0.75)                       return 'Deliberate Eye 🔭';
+  return 'Casual Tapper 🌊';
 }
 
-// ─── GAME STATE ───────────────────────────────────────────────────────────────
+type Phase = 'start'|'countdown'|'playing'|'done';
 
-interface GameState {
-  running: boolean;
-  timeLeft: number;
-  elapsedSeconds: number;
-  drops: Drop[];
-  nextDropId: number;
-  targetColorIndex: number;
-  lastColorSection: number; // tracks which 10-second block we're in
-  flashAlpha: number;       // 0–1 for color-change flash overlay
-  missFlashAlpha: number;   // 0–1 for red flash on wrong tap
-  nearMissFlashAlpha: number; // 0–1 for brief dim flash when correct drop missed
-  comboFlashAlpha: number;  // 0–1 for accent flash on combo milestone
-  lastSpawnTime: number;    // timestamp of last drop spawn
-  particles: Particle[];    // tap burst particles (correct hits)
-  sig: Signals;
+interface GS {
+  running: boolean; timeLeft: number; sig: Signals;
+  targetColorIndex: number; targetTimer: number;
+  drops: Drop3D[]; nextId: number; spawnTimer: number; spawnRate: number;
   accentColor: string;
 }
 
-type Phase = 'start' | 'countdown' | 'playing' | 'done';
-
-// ─── COMPONENT ────────────────────────────────────────────────────────────────
-
 export default function ColorCascadeGame() {
-  const theme         = useBrandTheme();
-  const canvasRef     = useRef<HTMLCanvasElement>(null);
-  const animRef       = useRef(0);
-  const timerRef      = useRef<ReturnType<typeof setInterval> | null>(null);
-  const stopMusicRef  = useRef<(() => void) | null>(null);
+  const theme = useBrandTheme();
+  const accent = theme.colors.accent ?? ACCENT;
 
-  const stateRef = useRef<GameState>({
-    running:          false,
-    timeLeft:         DURATION,
-    elapsedSeconds:   0,
-    drops:            [],
-    nextDropId:       0,
-    targetColorIndex: 0,
-    lastColorSection: 0,
-    flashAlpha:          0,
-    missFlashAlpha:      0,
-    nearMissFlashAlpha:  0,
-    comboFlashAlpha:     0,
-    lastSpawnTime:    0,
-    sig: {
-      correctTaps: 0, wrongTaps: 0, reactionTimes: [],
-      accuracy: 0, maxStreak: 0, score: 0, streakCurrent: 0,
-    },
-    accentColor: ACCENT,
-    particles: [],
+  const mountRef    = useRef<HTMLDivElement>(null);
+  const rendererRef = useRef<THREE.WebGLRenderer|null>(null);
+  const sceneRef    = useRef<THREE.Scene|null>(null);
+  const cameraRef   = useRef<THREE.PerspectiveCamera|null>(null);
+  const rafRef      = useRef(0);
+  const timerRef    = useRef<ReturnType<typeof setInterval>|null>(null);
+  const stopMusicRef = useRef<(()=>void)|null>(null);
+  const plRef       = useRef<THREE.PointLight|null>(null);
+  const playerSessionRef = useRef<PlayerSession|null>(null);
+
+  const stateRef = useRef<GS>({
+    running:false, timeLeft:DURATION,
+    sig:{ correctTaps:0, wrongTaps:0, reactionTimes:[], accuracy:0, maxStreak:0, streakCurrent:0, score:0 },
+    targetColorIndex:0, targetTimer:600, drops:[], nextId:0, spawnTimer:0, spawnRate:60,
+    accentColor:ACCENT,
   });
 
   const [phase, setPhase]               = useState<Phase>('start');
-  const [showInstructions, setShowInstructions] = useState(true);
   const [timeLeft, setTimeLeft]         = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
-  const [finalSig, setFinalSig]         = useState<Signals | null>(null);
-  const [playerName, setPlayerName]     = useState('');
-  const [playerAvatar, setPlayerAvatar] = useState('🎮');
-  const { pops, triggerPop } = useScorePop();
-  const [streak, setStreak] = useState(0);
-  const [isNewBest, setIsNewBest] = useState(false);
-  const prevScoreRef = useRef(0);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const [finalSig, setFinalSig]         = useState<Signals|null>(null);
+  const [targetColorIdx, setTargetColorIdx] = useState(0);
+  const [isNewBest, setIsNewBest]       = useState(false);
+  const { pops, triggerPop }            = useScorePop();
+
+  useEffect(() => { stateRef.current.accentColor = accent; }, [accent]);
+
+  // ── Three.js setup ──────────────────────────────────────────────────────
   useEffect(() => {
-    const numScore = typeof scoreDisplay === 'number' ? scoreDisplay : 0;
-    if (numScore > prevScoreRef.current) {
-      // Score pop and streak update are UI state — fire in useEffect (not timing-critical)
-      triggerPop(`+${numScore - prevScoreRef.current}`, window.innerWidth / 2, 200);
-      setStreak(stateRef.current.sig.streakCurrent);
-      // Note: hapticScore() and playScoreHit() moved to handleTap for synchronous firing
+    if (!mountRef.current) return;
+    const mount = mountRef.current;
+    const W = mount.clientWidth||window.innerWidth; const H = mount.clientHeight||window.innerHeight;
+
+    const renderer = new THREE.WebGLRenderer({ antialias:true });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio,2));
+    renderer.setSize(W,H); renderer.setClearColor(0x0a0010);
+    mount.appendChild(renderer.domElement);
+    rendererRef.current = renderer;
+
+    const scene = new THREE.Scene();
+    sceneRef.current = scene;
+
+    const camera = new THREE.PerspectiveCamera(70, W/H, 0.1, 50);
+    camera.position.set(0, 0, 8);
+    cameraRef.current = camera;
+
+    scene.add(new THREE.AmbientLight(0xffffff, 0.35));
+    const pl = new THREE.PointLight(0xf43f5e, 3, 20);
+    pl.position.set(0, 3, 5);
+    scene.add(pl);
+    plRef.current = pl;
+    scene.add(new THREE.DirectionalLight(0xfda4af, 0.5));
+
+    // Background rainbow streaks
+    for (let i = 0; i < 30; i++) {
+      const geo = new THREE.CylinderGeometry(0.02, 0.02, 8, 4);
+      const mat = new THREE.MeshStandardMaterial({
+        color: COLORS[i % COLORS.length].threeHex,
+        emissive: COLORS[i % COLORS.length].threeHex,
+        emissiveIntensity: 0.3, transparent: true, opacity: 0.15,
+      });
+      const m = new THREE.Mesh(geo, mat);
+      m.position.set((Math.random()-0.5)*12, 0, (Math.random()-0.5)*3-3);
+      scene.add(m);
     }
-    prevScoreRef.current = numScore;
-  }, [scoreDisplay]); // triggerPop is stable
-  const playerSessionRef                = useRef<PlayerSession | null>(null);
 
+    // Stars
+    const starGeo = new THREE.BufferGeometry();
+    const starPos = new Float32Array(300*3);
+    for (let i = 0; i < 300; i++) { starPos[i*3]=(Math.random()-0.5)*20; starPos[i*3+1]=(Math.random()-0.5)*20; starPos[i*3+2]=(Math.random()-0.5)*6-4; }
+    starGeo.setAttribute('position', new THREE.BufferAttribute(starPos,3));
+    scene.add(new THREE.Points(starGeo, new THREE.PointsMaterial({ color:0xfda4af, size:0.05, sizeAttenuation:true })));
 
-  // Sync brand theme accent into mutable state so rAF loop sees it
-  useEffect(() => {
-    stateRef.current.accentColor = theme.colors.accent ?? ACCENT;
-  }, [theme]);
+    // Floor
+    const floorGeo = new THREE.PlaneGeometry(12, 1);
+    const floorMat = new THREE.MeshStandardMaterial({ color:0x1a0020, metalness:0.5, roughness:0.5 });
+    const floor = new THREE.Mesh(floorGeo, floorMat);
+    floor.position.set(0, -4.5, 0);
+    scene.add(floor);
 
-  // ─── END GAME ──────────────────────────────────────────────────────────────
+    const onResize = () => {
+      const W2=mount.clientWidth||window.innerWidth; const H2=mount.clientHeight||window.innerHeight;
+      renderer.setSize(W2,H2); camera.aspect=W2/H2; camera.updateProjectionMatrix();
+    };
+    window.addEventListener('resize', onResize);
+
+    return () => {
+      window.removeEventListener('resize', onResize);
+      cancelAnimationFrame(rafRef.current);
+      renderer.dispose();
+      mount.removeChild(renderer.domElement);
+    };
+  }, []);
 
   const endGame = useCallback(() => {
-    const s = stateRef.current;
-    s.running = false;
-    cancelAnimationFrame(animRef.current);
+    const s = stateRef.current; s.running = false;
+    cancelAnimationFrame(rafRef.current);
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
     if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
     const total = s.sig.correctTaps + s.sig.wrongTaps;
-    s.sig.accuracy = total > 0 ? parseFloat((s.sig.correctTaps / total).toFixed(3)) : 0;
-    // Personal best tracking
-    try {
-      const _pbPrev = parseInt(localStorage.getItem(PB_KEY) || '0', 10);
-      const _pbVal = parseFloat(String(s.sig?.score ?? 0));
-      if (!isNaN(_pbVal) && _pbVal > _pbPrev) {
-        localStorage.setItem(PB_KEY, String(Math.round(_pbVal)));
-        setIsNewBest(true);
-      }
-    } catch { /* ignore */ }
-
-
-    setFinalSig({ ...s.sig });
-    setPhase('done');
+    s.sig.accuracy = total > 0 ? Math.round(s.sig.correctTaps / total * 100) : 0;
+    const sig = { ...s.sig };
+    const pb = parseInt(localStorage.getItem(PB_KEY)??'0');
+    if (sig.score > pb) { localStorage.setItem(PB_KEY,String(sig.score)); setIsNewBest(true); }
+    setFinalSig(sig); setPhase('done');
   }, []);
-
-  // ─── SPAWN DROP ────────────────────────────────────────────────────────────
-
-  const spawnDrop = useCallback((canvas: HTMLCanvasElement, s: GameState) => {
-    // Fall duration decreases across 3 speed stages
-    const fallDuration = s.elapsedSeconds < 15 ? 2500
-                       : s.elapsedSeconds < 30 ? 1800
-                       : 1200;
-    const margin     = DROP_RADIUS + 10;
-    const x          = margin + Math.random() * (window.innerWidth - margin * 2);
-    const colorIndex = Math.floor(Math.random() * COLORS.length);
-
-    s.drops.push({
-      id:           s.nextDropId++,
-      x,
-      colorIndex,
-      startTime:    Date.now(),
-      fallDuration,
-      radius:       DROP_RADIUS,
-      tapped:       false,
-      missed:       false,
-      hitAlpha:     0,
-      hitY:         0,
-    });
-    s.lastSpawnTime = Date.now();
-  }, []);
-
-  // ─── GAME LOOP ─────────────────────────────────────────────────────────────
 
   const startLoop = useCallback(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+    const scene = sceneRef.current; const renderer = rendererRef.current; const camera = cameraRef.current;
+    if (!scene||!renderer||!camera) return;
     const s = stateRef.current;
-
-    // ── Reset state ──
-    s.running          = true;
-    s.timeLeft         = DURATION;
-    s.elapsedSeconds   = 0;
-    s.drops            = [];
-    s.nextDropId       = 0;
-    s.targetColorIndex = Math.floor(Math.random() * COLORS.length);
-    s.lastColorSection = 0;
-    s.flashAlpha          = 0;
-    s.missFlashAlpha      = 0;
-    s.nearMissFlashAlpha  = 0;
-    s.comboFlashAlpha     = 0;
-    s.lastSpawnTime    = 0;
-    s.particles        = [];
-    s.sig = {
-      correctTaps: 0, wrongTaps: 0, reactionTimes: [],
-      accuracy: 0, maxStreak: 0, score: 0, streakCurrent: 0,
-    };
-    setScoreDisplay(0);
-    setTimeLeft(DURATION);
-    setPhase('playing');
+    s.running=true; s.timeLeft=DURATION;
+    s.sig={ correctTaps:0, wrongTaps:0, reactionTimes:[], accuracy:0, maxStreak:0, streakCurrent:0, score:0 };
+    s.targetColorIndex=0; s.targetTimer=600; s.drops=[]; s.nextId=0; s.spawnTimer=0; s.spawnRate=60;
+    // Clear old drop meshes
+    scene.children.filter(c=>c.userData.isDrop).forEach(c=>scene.remove(c));
+    setScoreDisplay(0); setTimeLeft(DURATION); setTargetColorIdx(0); setPhase('playing');
     stopMusicRef.current = startMusic('drive');
 
-    // ⚠️ setInterval ONLY for 1-second timer countdown
     timerRef.current = setInterval(() => {
-      s.timeLeft--;
-      s.elapsedSeconds++;
-      setTimeLeft(s.timeLeft);
+      const s2=stateRef.current; s2.timeLeft--; setTimeLeft(s2.timeLeft);
+      if (s2.timeLeft<=10&&s2.timeLeft>0) sfx.tick();
+      if (s2.timeLeft<=0) endGame();
+    },1000);
 
-      // Tick urgency cue — final 5 seconds only (not every second, to avoid metronome distraction)
-      if (s.timeLeft <= 5 && s.timeLeft > 0) sfx.tick();
-
-      // Timer warning at 10s remaining — fires once, distinct urgent sound
-      if (s.timeLeft === 10) sfx.warning();
-
-      // Change target color every 10 seconds
-      const colorSection = Math.floor(s.elapsedSeconds / 10);
-      if (colorSection !== s.lastColorSection) {
-        s.lastColorSection = colorSection;
-        // Pick a different color from current
-        let newIndex: number;
-        do { newIndex = Math.floor(Math.random() * COLORS.length); }
-        while (newIndex === s.targetColorIndex);
-        s.targetColorIndex = newIndex;
-        s.flashAlpha = 1.0;
-        sfx.shimmer(); // audio cue for target color change
-      }
-
-      if (s.timeLeft <= 0) {
-        sfx.success(); // game completion — not a failure, use success sound (spec: endSound: "success")
-        haptic([300]);
-        endGame();
-      }
-    }, 1000);
-
-    // Spawn first drop
-    spawnDrop(canvas, s);
-
-    // FPS tracking for test instrumentation
-    let fpsFrameCount = 0;
-    let fpsWindowStart = performance.now();
-    if (typeof window !== 'undefined') {
-      (window as unknown as Record<string, unknown>).__raf_fps = 0;
-    }
-
-    // ── rAF loop ──────────────────────────────────────────────────────────────
-    const loop = (rafTs: number) => {
+    let frame = 0;
+    const loop = () => {
       if (!s.running) return;
+      frame++;
+      const t = frame * 0.016;
 
-      // Track FPS in a 1-second rolling window (exposed for test 7.2)
-      fpsFrameCount++;
-      const fpsElapsed = rafTs - fpsWindowStart;
-      if (fpsElapsed >= 1000) {
-        if (typeof window !== 'undefined') {
-          (window as unknown as Record<string, unknown>).__raf_fps = Math.round(fpsFrameCount * 1000 / fpsElapsed);
-        }
-        fpsFrameCount = 0;
-        fpsWindowStart = rafTs;
+      // Target color cycle
+      s.targetTimer--;
+      if (s.targetTimer <= 0) {
+        s.targetColorIndex = (s.targetColorIndex + 1) % COLORS.length;
+        s.targetTimer = 600;
+        setTargetColorIdx(s.targetColorIndex);
+        const pl = plRef.current;
+        if (pl) pl.color.setHex(COLORS[s.targetColorIndex].threeHex);
       }
 
-      const W   = window.innerWidth;
-      const H   = window.innerHeight;
-      const now = Date.now();
-
-      // ── Background — deep rose/magenta radial gradient ─────────────────────
-      const ccBg = ctx.createRadialGradient(W * 0.5, H * 0.4, 0, W * 0.5, H * 0.6, Math.max(W, H) * 0.9);
-      ccBg.addColorStop(0,   '#1a0510');
-      ccBg.addColorStop(0.5, '#0e030a');
-      ccBg.addColorStop(1,   '#060106');
-      ctx.fillStyle = ccBg;
-      ctx.fillRect(0, 0, W, H);
-
-      // Vignette
-      const ccVig = ctx.createRadialGradient(W * 0.5, H * 0.5, H * 0.2, W * 0.5, H * 0.5, H * 0.85);
-      ccVig.addColorStop(0, 'rgba(0,0,0,0)');
-      ccVig.addColorStop(1, 'rgba(0,0,0,0.5)');
-      ctx.fillStyle = ccVig;
-      ctx.fillRect(0, 0, W, H);
-
-      // Ambient glow tinted toward target color
-      const targetHex = COLORS[s.targetColorIndex].hex;
-      const ambGrad   = ctx.createRadialGradient(W / 2, H, 0, W / 2, H, H * 0.55);
-      ambGrad.addColorStop(0, targetHex + '18');
-      ambGrad.addColorStop(1, 'transparent');
-      ctx.fillStyle = ambGrad;
-      ctx.fillRect(0, 0, W, H);
-
-      // ── Target color display (drawn BELOW GameShell top bar 0-56px and HUD 64-125px) ─────
-      // Positions: label y=150, swatch y=188, name y=222 — all below HUD bottom (~130px)
-      ctx.fillStyle    = 'rgba(255,255,255,0.45)';
-      ctx.font         = '600 18px monospace';
-      ctx.textAlign    = 'center';
-      ctx.letterSpacing = '0.06em';
-      ctx.fillText('MATCH', W / 2, 156);
-      ctx.letterSpacing = '0px';
-
-      // Pulsing color swatch
-      const pulse   = 1 + 0.08 * Math.sin(now / 280);
-      const swatchR = 22 * pulse;
-      ctx.save();
-      ctx.shadowBlur  = 22;
-      ctx.shadowColor = targetHex;
-      ctx.fillStyle   = targetHex;
-      ctx.beginPath();
-      ctx.arc(W / 2, 188, swatchR, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.restore();
-
-      ctx.fillStyle = targetHex;
-      ctx.font      = 'bold 22px monospace';
-      ctx.textAlign = 'center';
-      ctx.fillText(COLORS[s.targetColorIndex].label, W / 2, 228);
-
-      // Separator line
-      ctx.strokeStyle = 'rgba(255,255,255,0.08)';
-      ctx.lineWidth   = 1;
-      ctx.beginPath();
-      ctx.moveTo(0, TOP_AREA);
-      ctx.lineTo(W, TOP_AREA);
-      ctx.stroke();
-
-      // ── Color-change flash overlay ──────────────────────────────────────────
-      if (s.flashAlpha > 0) {
-        ctx.save();
-        ctx.globalAlpha = s.flashAlpha * 0.30;
-        ctx.fillStyle   = targetHex;
-        ctx.fillRect(0, 0, W, H);
-        ctx.restore();
-        s.flashAlpha = Math.max(0, s.flashAlpha - 0.04);
+      // Spawn drops
+      s.spawnTimer++;
+      s.spawnRate = Math.max(22, 60 - Math.floor(frame/300) * 5);
+      if (s.spawnTimer >= s.spawnRate) {
+        s.spawnTimer = 0;
+        const ci = Math.random() < 0.45 ? s.targetColorIndex : Math.floor(Math.random()*COLORS.length);
+        const geo = new THREE.SphereGeometry(0.35, 14, 14);
+        const mat = new THREE.MeshStandardMaterial({
+          color: COLORS[ci].threeHex, metalness:0.3, roughness:0.4,
+          emissive: COLORS[ci].threeHex, emissiveIntensity:0.5,
+        });
+        const mesh = new THREE.Mesh(geo, mat);
+        mesh.position.set((Math.random()-0.5)*7, 5.5, (Math.random()-0.5)*1.5);
+        mesh.userData.isDrop = true;
+        scene.add(mesh);
+        s.drops.push({ id:s.nextId++, colorIndex:ci, mesh, speed:0.04+Math.random()*0.025, caught:false, flashT:0 });
       }
 
-      // ── Tap burst particles (correct hit — from lib/particles.ts) ───────────
-      updateAndDrawParticles(ctx, s.particles);
-
-      // ── Miss flash overlay (red — wrong tap) ────────────────────────────────
-      if (s.missFlashAlpha > 0) {
-        ctx.save();
-        ctx.globalAlpha = s.missFlashAlpha * 0.35;
-        ctx.fillStyle   = '#ef4444';
-        ctx.fillRect(0, 0, W, H);
-        ctx.restore();
-        s.missFlashAlpha = Math.max(0, s.missFlashAlpha - 0.14);
-      }
-
-      // ── Near-miss flash overlay (dim white — correct drop slipped by) ───────
-      if (s.nearMissFlashAlpha > 0) {
-        ctx.save();
-        ctx.globalAlpha = s.nearMissFlashAlpha * 0.18;
-        ctx.fillStyle   = '#ffffff';
-        ctx.fillRect(0, 0, W, H);
-        ctx.restore();
-        s.nearMissFlashAlpha = Math.max(0, s.nearMissFlashAlpha - 0.06);
-      }
-
-      // ── Combo flash overlay (accent — streak milestone) ─────────────────────
-      if (s.comboFlashAlpha > 0) {
-        ctx.save();
-        ctx.globalAlpha = s.comboFlashAlpha * 0.25;
-        ctx.fillStyle   = s.accentColor;
-        ctx.fillRect(0, 0, W, H);
-        ctx.restore();
-        s.comboFlashAlpha = Math.max(0, s.comboFlashAlpha - 0.10);
-      }
-
-      // ── Spawn logic ─────────────────────────────────────────────────────────
-      // Stage 1: 1 drop, Stage 2: 2 drops, Stage 3: 3 drops (frantic)
-      const maxDrops   = s.elapsedSeconds < 15 ? 1 : s.elapsedSeconds < 30 ? 2 : 3;
-      const spawnDelay = s.elapsedSeconds < 15 ? 600 : s.elapsedSeconds < 30 ? 450 : 300;
-      const activeCount = s.drops.filter(d => !d.tapped && !d.missed).length;
-      if (activeCount < maxDrops && now - s.lastSpawnTime > spawnDelay) {
-        spawnDrop(canvas, s);
-      }
-
-      // ── Update & draw drops ──────────────────────────────────────────────────
-      const toRemove: number[] = [];
-
-      for (const drop of s.drops) {
-        const elapsed_ms = now - drop.startTime;
-        const progress   = elapsed_ms / drop.fallDuration;
-
-        if (drop.tapped) {
-          // Expanding ring hit animation
-          drop.hitAlpha = Math.max(0, drop.hitAlpha - 0.055);
-          if (drop.hitAlpha <= 0) { toRemove.push(drop.id); continue; }
-
-          const expandR = drop.radius * (1 + (1 - drop.hitAlpha) * 1.2);
-          ctx.save();
-          ctx.globalAlpha = drop.hitAlpha;
-          ctx.shadowBlur  = 12;
-          ctx.shadowColor = COLORS[drop.colorIndex].hex;
-          ctx.strokeStyle = COLORS[drop.colorIndex].hex;
-          ctx.lineWidth   = 2.5;
-          ctx.beginPath();
-          ctx.arc(drop.x, drop.hitY, expandR, 0, Math.PI * 2);
-          ctx.stroke();
-          ctx.restore();
+      // Update drops
+      for (let i=s.drops.length-1;i>=0;i--) {
+        const d=s.drops[i];
+        if (d.caught) {
+          d.flashT++;
+          d.mesh.scale.setScalar(1+d.flashT*0.04);
+          (d.mesh.material as THREE.MeshStandardMaterial).opacity = 1-d.flashT/18;
+          if (d.flashT>18) { scene.remove(d.mesh); s.drops.splice(i,1); }
           continue;
         }
-
-        if (progress >= 1) {
-          // Drop reached bottom — count as miss only once
-          if (!drop.missed) {
-            drop.missed = true;
-            if (drop.colorIndex === s.targetColorIndex) {
-              // Missed a correct drop: reset streak + near-miss flash (no point deduction per spec)
-              s.sig.streakCurrent = 0;
-              s.nearMissFlashAlpha = 0.5; // subtle pulse — "you should have tapped that"
-              sfx.collision();
-            }
-          }
-          toRemove.push(drop.id);
-          continue;
-        }
-
-        // ── Falling drop ──────────────────────────────────────────────────────
-        const y       = TOP_AREA + drop.radius + (H - TOP_AREA - drop.radius * 2) * progress;
-        const wobble  = Math.sin(now / 200 + drop.id) * 2; // slight side wobble
-        const dropHex = COLORS[drop.colorIndex].hex;
-
-        ctx.save();
-        ctx.shadowBlur  = 16;
-        ctx.shadowColor = dropHex;
-
-        // Outer soft halo
-        ctx.globalAlpha = 0.25;
-        ctx.fillStyle   = dropHex;
-        ctx.beginPath();
-        ctx.arc(drop.x + wobble, y, drop.radius, 0, Math.PI * 2);
-        ctx.fill();
-
-        // Inner solid core
-        ctx.globalAlpha = 1;
-        ctx.fillStyle   = dropHex;
-        ctx.beginPath();
-        ctx.arc(drop.x + wobble, y, drop.radius * 0.6, 0, Math.PI * 2);
-        ctx.fill();
-
-        // Specular highlight
-        ctx.shadowBlur  = 0;
-        ctx.globalAlpha = 0.30;
-        ctx.fillStyle   = '#ffffff';
-        ctx.beginPath();
-        ctx.arc(
-          drop.x + wobble - drop.radius * 0.2,
-          y - drop.radius * 0.22,
-          drop.radius * 0.18,
-          0, Math.PI * 2
-        );
-        ctx.fill();
-        ctx.restore();
+        d.mesh.position.y -= d.speed * (1+frame/1800);
+        d.mesh.rotation.y += 0.03;
+        d.mesh.rotation.x += 0.02;
+        if (d.mesh.position.y < -5.5) { scene.remove(d.mesh); s.drops.splice(i,1); }
       }
 
-      // Prune finished drops
-      if (toRemove.length > 0) {
-        s.drops = s.drops.filter(d => !toRemove.includes(d.id));
-      }
-
-      animRef.current = requestAnimationFrame(loop);
+      renderer.render(scene, camera);
+      rafRef.current = requestAnimationFrame(loop);
     };
+    rafRef.current = requestAnimationFrame(loop);
+  }, [endGame]);
 
-    animRef.current = requestAnimationFrame(loop);
-  }, [endGame, spawnDrop]);
-
-  // ─── TAP INPUT ─────────────────────────────────────────────────────────────
-
-  const handleTap = useCallback((clientX: number, clientY: number) => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const s = stateRef.current;
-    if (!s.running) return;
-
-    const rect = canvas.getBoundingClientRect();
-    const x    = (clientX - rect.left) * (canvas.offsetWidth  / rect.width);
-    const y    = (clientY - rect.top)  * (canvas.offsetHeight / rect.height);
-    const H    = window.innerHeight;
-    const now  = Date.now();
-
-    // Find closest untapped drop within tap radius
-    let bestDrop: Drop | null = null;
-    let bestDropY             = 0;
-    let bestDist              = Infinity;
-
-    for (const drop of s.drops) {
-      if (drop.tapped || drop.missed) continue;
-      const progress = Math.min(1, (now - drop.startTime) / drop.fallDuration);
-      const dropY    = TOP_AREA + drop.radius + (H - TOP_AREA - drop.radius * 2) * progress;
-      const wobble   = Math.sin(now / 200 + drop.id) * 2;
-      const dx       = x - (drop.x + wobble);
-      const dy       = y - dropY;
-      const dist     = Math.sqrt(dx * dx + dy * dy);
-      if (dist <= drop.radius + 12 && dist < bestDist) {
-        bestDist  = dist;
-        bestDrop  = drop;
-        bestDropY = dropY;
-      }
-    }
-
-    if (bestDrop !== null) {
-      bestDrop.tapped  = true;
-      bestDrop.hitAlpha = 1;
-      bestDrop.hitY    = bestDropY;
-
-      if (bestDrop.colorIndex === s.targetColorIndex) {
-        // ✅ CORRECT TAP
-        const reactionMs = now - bestDrop.startTime;
-        s.sig.correctTaps++;
-        s.sig.reactionTimes.push(reactionMs);
-        s.sig.streakCurrent++;
-        if (s.sig.streakCurrent > s.sig.maxStreak) s.sig.maxStreak = s.sig.streakCurrent;
-
-        // Combo multiplier: ×1.5 at streak 5, ×2 at streak 10
-        const multiplier = s.sig.streakCurrent >= 10 ? 2 : s.sig.streakCurrent >= 5 ? 1.5 : 1;
-        const pts        = Math.round(3 * multiplier);
-        s.sig.score     += pts;
-        setScoreDisplay(s.sig.score);
-        // Audio + haptic fire synchronously here (same handler as visual state change — spec requirement)
-        playScoreHit('default', pts);
-        hapticScore();
-        // Particle burst at tap point (correct hit) — spec requires lib/particles.ts
-        const tapHex = COLORS[bestDrop.colorIndex].hex;
-        spawnBurst(s.particles, x, bestDropY, tapHex, 12, 5);
-        // Escalating audio + visual on combo milestones (synchronous — fires same handler as hit)
-        if (s.sig.streakCurrent === 5)  { sfx.success(); s.comboFlashAlpha = 1.0; }  // ×1.5 milestone
-        if (s.sig.streakCurrent === 10) { sfx.powerOn(); s.comboFlashAlpha = 1.0; }  // ×2.0 milestone
-      } else {
-        // ❌ WRONG COLOR
-        s.sig.wrongTaps++;
-        s.sig.streakCurrent = 0;
-        s.sig.score         = Math.max(0, s.sig.score - 1);
-        setScoreDisplay(s.sig.score);
-        sfx.collision();
-        haptic([80]);
-        s.missFlashAlpha = 1.0; // Red flash feedback
-      }
-    }
-    // Tapping empty space: no penalty
-  }, []);
-
-  // ─── CANVAS SETUP & RESIZE ────────────────────────────────────────────────
-
+  // Touch/click input
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    const resize = () => {
-      const dpr = window.devicePixelRatio || 1;
-      const w = window.innerWidth;
-      const h = window.innerHeight;
-      canvas.style.width  = w + 'px';
-      canvas.style.height = h + 'px';
-      canvas.width  = w * dpr;
-      canvas.height = h * dpr;
-      const ctx2 = canvas.getContext('2d');
-      if (ctx2) ctx2.setTransform(dpr, 0, 0, dpr, 0, 0);
-    };
-    resize();
-    window.addEventListener('resize', resize);
-
+    const mount = mountRef.current; if (!mount) return;
     const onPointerDown = (e: PointerEvent) => {
-      if (phase !== 'playing') return;
-      handleTap(e.clientX, e.clientY);
+      if (phase!=='playing') return;
+      const s = stateRef.current; if (!s.running) return;
+      const renderer = rendererRef.current; const camera = cameraRef.current; const scene = sceneRef.current;
+      if (!renderer||!camera||!scene) return;
+      const rect = mount.getBoundingClientRect();
+      const x = ((e.clientX-rect.left)/rect.width)*2-1;
+      const y = -((e.clientY-rect.top)/rect.height)*2+1;
+      const raycaster = new THREE.Raycaster();
+      raycaster.setFromCamera(new THREE.Vector2(x,y), camera);
+      const meshes = s.drops.filter(d=>!d.caught).map(d=>d.mesh);
+      const hits = raycaster.intersectObjects(meshes);
+      if (hits.length>0) {
+        const hitMesh = hits[0].object as THREE.Mesh;
+        const drop = s.drops.find(d=>d.mesh===hitMesh);
+        if (drop&&!drop.caught) {
+          drop.caught = true;
+          const isMatch = drop.colorIndex === s.targetColorIndex;
+          if (isMatch) {
+            s.sig.correctTaps++; s.sig.streakCurrent++;
+            if (s.sig.streakCurrent>s.sig.maxStreak) s.sig.maxStreak=s.sig.streakCurrent;
+            const mult = s.sig.streakCurrent>=4?2:1;
+            s.sig.score += 2*mult; setScoreDisplay(s.sig.score);
+            sfx.collect(); hapticScore();
+            triggerPop(`+${2*mult}`, e.clientX, e.clientY);
+            const mat = hitMesh.material as THREE.MeshStandardMaterial;
+            mat.emissive.setHex(0xffffff); mat.emissiveIntensity=2;
+          } else {
+            s.sig.wrongTaps++; s.sig.streakCurrent=0;
+            sfx.collision(); hapticFail();
+            const mat = hitMesh.material as THREE.MeshStandardMaterial;
+            mat.emissive.setHex(0xff0000); mat.emissiveIntensity=2;
+          }
+        }
+      }
     };
-    canvas.addEventListener('pointerdown', onPointerDown);
+    mount.addEventListener('pointerdown', onPointerDown);
+    return () => mount.removeEventListener('pointerdown', onPointerDown);
+  }, [phase, triggerPop]);
 
-    return () => {
-      window.removeEventListener('resize', resize);
-      canvas.removeEventListener('pointerdown', onPointerDown);
-    };
-  }, [phase, handleTap]);
-
-  // ─── CLEANUP ON UNMOUNT ───────────────────────────────────────────────────
-
-  useEffect(() => {
-    return () => {
-      cancelAnimationFrame(animRef.current);
-      if (timerRef.current) clearInterval(timerRef.current);
-      if (stopMusicRef.current) stopMusicRef.current();
-    };
+  useEffect(() => () => {
+    cancelAnimationFrame(rafRef.current);
+    if (timerRef.current) clearInterval(timerRef.current);
+    if (stopMusicRef.current) stopMusicRef.current();
   }, []);
 
-  // ─── PHASE TRANSITIONS ────────────────────────────────────────────────────
+  const handleStart = useCallback(async (name:string, avatar:string) => {
+    playerSessionRef.current=savePlayerSession(GAME_ID,name,avatar); await initAudio(); setPhase('countdown');
+  },[]);
+  const handleCountdownDone = useCallback(() => { startLoop(); },[startLoop]);
+  const handlePlayAgain = useCallback(() => { setPhase('start');setScoreDisplay(0);setTimeLeft(DURATION);setFinalSig(null);setIsNewBest(false); },[]);
 
-  const handleStart = useCallback(async (name: string, avatar: string) => {
-    setPlayerName(name);
-    setPlayerAvatar(avatar);
-    playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar);
-    await initAudio();
-    setPhase('countdown');
-  }, []);
-
-  const handleCountdownDone = useCallback(() => {
-    startLoop();
-  }, [startLoop]);
-
-  const handlePlayAgain = useCallback(() => {
-    // Skip start screen on play-again — player already registered + consented.
-    // Go directly to countdown for a fast replay experience.
-    setScoreDisplay(0);
-    setTimeLeft(DURATION);
-    setFinalSig(null);
-    setIsNewBest(false);
-    setStreak(0);
-    prevScoreRef.current = 0;
-    setPhase('countdown');
-  }, []);
-
-  // ─── END SCREEN INSIGHTS ─────────────────────────────────────────────────
-
+  const tc = COLORS[targetColorIdx];
   const buildInsights = (sig: Signals) => {
-    const total  = sig.correctTaps + sig.wrongTaps;
-    const acc    = total > 0 ? Math.round((sig.correctTaps / total) * 100) : 0;
-    const avgRx  = sig.reactionTimes.length > 0
-      ? Math.round(sig.reactionTimes.reduce((a, b) => a + b, 0) / sig.reactionTimes.length)
-      : 0;
-    const accent = theme.colors.accent ?? ACCENT;
-
+    const total=sig.correctTaps+sig.wrongTaps;
+    const acc=total>0?Math.round(sig.correctTaps/total*100):0;
     return [
-      {
-        label: 'Accuracy',
-        value: `${acc}%`,
-        color: acc >= 80 ? '#4ade80' : acc >= 50 ? '#facc15' : '#ef4444',
-      },
-      {
-        label: 'Avg Reaction',
-        value: avgRx > 0 ? `${avgRx}ms` : '—',
-        color: accent,
-      },
-      {
-        label: 'Best Streak',
-        value: `×${sig.maxStreak}`,
-        color: accent,
-      },
-      {
-        label: 'Correct Hits',
-        value: `${sig.correctTaps}`,
-        color: sig.correctTaps > 20 ? '#4ade80' : sig.correctTaps >= 10 ? '#facc15' : '#ef4444',
-      },
+      {label:'Correct',value:String(sig.correctTaps),color:sig.correctTaps>=15?'#4ade80':'#facc15'},
+      {label:'Accuracy',value:`${acc}%`,color:acc>=80?'#4ade80':acc>=60?'#facc15':'#ef4444'},
+      {label:'Max Streak',value:`×${sig.maxStreak}`,color:'#fbbf24'},
+      {label:'Wrong',value:String(sig.wrongTaps),color:sig.wrongTaps===0?'#4ade80':'#ef4444'},
     ];
   };
 
-  // ─── RENDER ───────────────────────────────────────────────────────────────
-
   return (
-    <>
-      {phase === 'start' && showInstructions && (
-        <SwipeInstructions
-          gameId="color-cascade"
-          steps={[{ icon: "🎨", title: "Match the color", body: "Tap the falling block that matches the target color." }, { icon: "⚡", title: "Move fast", body: "Blocks speed up as your score grows." }, { icon: "🔥", title: "Build combos", body: "Consecutive correct taps multiply your score." }]}
-          onDone={() => setShowInstructions(false)}
-        />
-      )}
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}
-      background="radial-gradient(ellipse at 20% 80%, rgba(255,80,120,0.1) 0%, transparent 40%), radial-gradient(ellipse at 80% 20%, rgba(80,180,255,0.1) 0%, transparent 40%), radial-gradient(ellipse at 50% 50%, rgba(150,80,255,0.08) 0%, transparent 50%), linear-gradient(180deg, #080808 0%, #0f0f0f 50%, #080808 100%)">
-
-      {/* ── Start Screen ────────────────────────────────────────────────────── */}
-      {phase === 'start' && (
-        <GameStartScreen
-          emoji={GAME_EMOJI}
-          iconNode={<Palette size={72} color={theme.colors.accent ?? ACCENT} strokeWidth={1.5} />}
-          title={GAME_TITLE}
-          description={GAME_TAGLINE}
-          ctaLabel="Start"
-          accentColor={theme.colors.accent ?? ACCENT}
-          onStart={handleStart}
-          gradient="radial-gradient(ellipse 80% 70% at 50% 30%, #1a0510 0%, #0e030a 55%, #060106 100%)"
-        />
-      )}
-
-      {/* ── Countdown ───────────────────────────────────────────────────────── */}
-      {phase === 'countdown' && (
-        <Countdown onComplete={handleCountdownDone} accentColor={theme.colors.accent ?? ACCENT} />
-      )}
-
-      {/* ── Playing (canvas always mounted during countdown + playing) ─────── */}
-      {(phase === 'playing' || phase === 'countdown') && (
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accent}>
+      {phase==='start'&&<GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description={GAME_TAGLINE} ctaLabel="Start! 🌈" accentColor={accent} onStart={handleStart}/>}
+      {phase==='countdown'&&<Countdown onComplete={handleCountdownDone} accentColor={accent}/>}
+      {(phase==='playing'||phase==='countdown')&&(
         <>
-          {/* ⚠️ Full-bleed canvas, touchAction none for pointer events */}
-          <canvas
-            ref={canvasRef}
-            style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none' }}
-          />
-          {/* HUD sits above canvas */}
-          {phase === 'playing' && (
-            <GameHUD
-              accentColor={theme.colors.accent ?? ACCENT}
-              items={[
-                { label: 'TIME',  value: timeLeft,      danger: timeLeft <= 10, testId: 'timer' },
-                { label: 'SCORE', value: scoreDisplay,  testId: 'score' },
-              ]}
-            />
+          <div ref={mountRef} style={{position:'absolute',inset:0,width:'100%',height:'100%',touchAction:'none'}}/>
+          {phase==='playing'&&(
+            <>
+              <GameHUD accentColor={accent} items={[{label:'TIME',value:timeLeft,danger:timeLeft<=10},{label:'SCORE',value:scoreDisplay}]}/>
+              <div style={{position:'absolute',top:80,left:'50%',transform:'translateX(-50%)',display:'flex',flexDirection:'column',alignItems:'center',gap:6,pointerEvents:'none'}}>
+                <div style={{fontSize:12,color:'rgba(255,255,255,0.5)',fontWeight:600,letterSpacing:'0.1em'}}>TAP THE</div>
+                <div style={{width:64,height:64,borderRadius:12,background:tc.hex,boxShadow:`0 0 20px ${tc.hex}88`,border:'3px solid rgba(255,255,255,0.3)'}}/>
+                <div style={{fontSize:18,fontWeight:900,color:tc.hex,letterSpacing:'0.05em'}}>{tc.label}</div>
+              </div>
+              <ScorePopEffect pops={pops} accentColor={accent}/>
+            </>
           )}
         </>
       )}
-      {/* New best banner */}
       <AnimatePresence>
-        {isNewBest && (
-          <motion.div
-            key="new-best"
-            initial={{ opacity: 0, y: -20, scale: 0.8 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -20 }}
-            transition={{ duration: 0.4, delay: 0.5 }}
-            style={{
-              position: 'fixed', top: '10%', left: '50%', transform: 'translateX(-50%)',
-              zIndex: 90, pointerEvents: 'none',
-              background: 'linear-gradient(135deg, #fbbf24, #f59e0b)',
-              borderRadius: 20, padding: '8px 20px', fontSize: 20,
-              fontWeight: 900, color: '#000', whiteSpace: 'nowrap',
-              boxShadow: '0 4px 20px rgba(251,191,36,0.5)',
-            }}
-          >
+        {isNewBest&&(
+          <motion.div key="nb" initial={{opacity:0,y:-20,scale:0.8}} animate={{opacity:1,y:0,scale:1}} exit={{opacity:0,y:-20}} transition={{duration:0.4,delay:0.5}}
+            style={{position:'fixed',top:'10%',left:'50%',transform:'translateX(-50%)',zIndex:90,pointerEvents:'none',background:'linear-gradient(135deg,#fbbf24,#f59e0b)',borderRadius:20,padding:'8px 20px',fontSize:20,fontWeight:900,color:'#000',whiteSpace:'nowrap'}}>
             🏆 New Best!
           </motion.div>
         )}
       </AnimatePresence>
-
-
-
-      {/* ── End Screen ──────────────────────────────────────────────────────── */}
-      {phase === 'done' && finalSig && (
-        <EndScreen
-          gameId={GAME_ID}
-          title={getPersonality(finalSig)}
-          emoji={GAME_EMOJI}
-          score={String(finalSig.score)}
-          personality={getPersonality(finalSig)}
-          insights={buildInsights(finalSig)}
-          accentColor={theme.colors.accent ?? ACCENT}
-          onPlayAgain={handlePlayAgain}
-          didWin={finalSig.correctTaps >= 10}
-        />
+      {phase==='done'&&finalSig&&(
+        <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI}
+          score={String(finalSig.score)} personality={getPersonality(finalSig)}
+          insights={buildInsights(finalSig)} accentColor={accent} onPlayAgain={handlePlayAgain} didWin={finalSig.correctTaps>=15}/>
       )}
-
-      {/* ⚠️ Webhook — fire exactly once on done mount */}
-      {phase === 'done' && finalSig && (
-        <WebhookEmitter
-          theme={theme}
-          gameId={GAME_ID}
-          sig={finalSig}
-          personality={getPersonality(finalSig)}
-          player={playerSessionRef.current}
-        />
-      )}
-      {phase === 'playing' && (
-        <>
-          <ScorePopEffect pops={pops} accentColor={CATEGORY_ACCENT} />
-          <StreakBadge streak={streak} accentColor={CATEGORY_ACCENT} />
-        </>
-      )}
+      {phase==='done'&&finalSig&&<WebhookEmitter theme={theme} sig={finalSig} personality={getPersonality(finalSig)} player={playerSessionRef.current}/>}
     </GameShell>
-    </>
   );
 }
 
-// ─── WEBHOOK EMITTER ─────────────────────────────────────────────────────────
-
-function WebhookEmitter({
-  theme,
-  gameId,
-  sig,
-  personality,
-  player,
-}: {
-  theme: ReturnType<typeof useBrandTheme>;
-  gameId: string;
-  sig: Signals;
-  personality: string;
-  player: PlayerSession | null;
-}) {
-  const fired = useRef(false);
-  useEffect(() => {
-    if (fired.current) return;
-    fired.current = true;
-    const avgReaction = sig.reactionTimes.length > 0
-      ? Math.round(sig.reactionTimes.reduce((a, b) => a + b, 0) / sig.reactionTimes.length)
-      : null;
-    postWebhook(theme, gameId, {
-      personality,
-      score:         sig.score,
-      correctTaps:   sig.correctTaps,
-      wrongTaps:     sig.wrongTaps,
-      accuracy:      sig.accuracy,
-      avgReactionMs: avgReaction,
-      maxStreak:     sig.maxStreak,
-      reactionTimes: sig.reactionTimes,
-    }, player);
-  }, [theme, gameId, sig, personality, player]);
+function WebhookEmitter({theme,sig,personality,player}:{theme:ReturnType<typeof useBrandTheme>;sig:Signals;personality:string;player:PlayerSession|null;}) {
+  const fired=useRef(false);
+  useEffect(()=>{if(fired.current)return;fired.current=true;postWebhook(theme,GAME_ID,{personality,score:sig.score,correctTaps:sig.correctTaps,accuracy:sig.accuracy},player);},[theme,sig,personality,player]);
   return null;
 }

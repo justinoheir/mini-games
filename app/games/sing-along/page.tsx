@@ -1,9 +1,10 @@
 'use client';
 /**
- * SING ALONG — A moving pitch target line travels across the canvas. Hum/sing to track it.
- * Autocorrelation pitch detection via Web Audio API. Score = time on target.
+ * SING ALONG — 3D Version
+ * A 3D pitch ball follows a melody path. Hum to track it.
  */
 import { useEffect, useRef, useState, useCallback } from 'react';
+import * as THREE from 'three';
 import { Mic } from 'lucide-react';
 import GameShell from '@/components/GameShell';
 import GameHUD from '@/components/GameHUD';
@@ -15,431 +16,375 @@ import { hapticScore, hapticFail, hapticVictory } from '@/lib/haptics';
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
-import { spawnBurst, updateAndDrawParticles, Particle } from '@/lib/particles';
 import { motion, AnimatePresence } from 'framer-motion';
 import ScorePopEffect, { useScorePop } from '@/components/ScorePopEffect';
 import StreakBadge from '@/components/StreakBadge';
 
-const GAME_ID   = 'sing-along';
-const PB_KEY    = 'mg_pb_sing-along';
-const ACCENT    = '#34d399';
-const DURATION  = 45;
-const GAME_EMOJI  = '🎤';
-const GAME_TITLE  = 'Sing Along';
-const GAME_TAGLINE = 'Follow the melody line with your voice.';
-
+const GAME_ID = 'sing-along';
+const PB_KEY = 'mg_pb_sing-along';
+const ACCENT = '#34d399';
+const DURATION = 45;
+const GAME_EMOJI = '🎤';
+const GAME_TITLE = 'Sing Along';
 const FREQ_MIN = 100, FREQ_MAX = 580;
 const HIT_CENTS = 60, PRECISION_CENTS = 25;
-const SCORE_TICK_MS = 80;
-const HUD_H = 64;
 
-// The target melody: a series of {freq, duration} segments
-const MELODY: {freq:number;durationMs:number}[] = [
-  {freq:261.63,durationMs:2000},{freq:293.66,durationMs:1500},{freq:329.63,durationMs:1500},
-  {freq:349.23,durationMs:2000},{freq:392.00,durationMs:2500},{freq:349.23,durationMs:1500},
-  {freq:329.63,durationMs:1500},{freq:293.66,durationMs:2000},{freq:261.63,durationMs:3000},
-  {freq:329.63,durationMs:2000},{freq:392.00,durationMs:2000},{freq:440.00,durationMs:2500},
-  {freq:523.25,durationMs:3000},{freq:440.00,durationMs:2000},{freq:392.00,durationMs:2000},
-  {freq:329.63,durationMs:2500},{freq:261.63,durationMs:3000},
+const MELODY: { freq: number; durationMs: number }[] = [
+  { freq: 261.63, durationMs: 2000 }, { freq: 293.66, durationMs: 1500 }, { freq: 329.63, durationMs: 1500 },
+  { freq: 349.23, durationMs: 2000 }, { freq: 392.00, durationMs: 2500 }, { freq: 349.23, durationMs: 1500 },
+  { freq: 329.63, durationMs: 1500 }, { freq: 293.66, durationMs: 2000 }, { freq: 261.63, durationMs: 3000 },
+  { freq: 329.63, durationMs: 1500 }, { freq: 392.00, durationMs: 2000 }, { freq: 440.00, durationMs: 2000 },
+  { freq: 392.00, durationMs: 1500 }, { freq: 349.23, durationMs: 1500 }, { freq: 329.63, durationMs: 2500 },
 ];
-function freqToY(freq:number,H:number):number{
-  const logMin=Math.log2(FREQ_MIN), logMax=Math.log2(FREQ_MAX);
-  const logF=Math.log2(Math.max(FREQ_MIN,Math.min(FREQ_MAX,freq)));
-  return HUD_H+(H-HUD_H)*(1-(logF-logMin)/(logMax-logMin));
+
+interface Signals { score: number; onTargetMs: number; precisionMs: number; maxStreak: number; streak: number; }
+
+function getPersonality(sig: Signals): string {
+  const pct = sig.onTargetMs / (DURATION * 1000);
+  if (pct >= 0.75 && sig.precisionMs > sig.onTargetMs * 0.5) return 'Pitch Perfect 🎵';
+  if (pct >= 0.6) return 'Melody Maker 🎶';
+  if (sig.maxStreak >= 30) return 'Steady Singer 🎤';
+  if (pct >= 0.3) return 'Finding the Note 🎼';
+  return 'Still Warming Up 🌡️';
 }
 
-function autoCorrelate(buf:Float32Array,sampleRate:number):number{
-  const SIZE=buf.length, HALF=SIZE>>1;
-  let rms=0; for(let i=0;i<SIZE;i++) rms+=buf[i]*buf[i]; rms=Math.sqrt(rms/SIZE);
-  if(rms<0.012) return -1;
-  const minLag=Math.floor(sampleRate/700), maxLag=Math.min(Math.ceil(sampleRate/80),SIZE-2);
-  let bestLag=-1, bestCorr=-Infinity;
-  for(let lag=minLag;lag<=maxLag;lag++){
-    let c=0; for(let i=0;i<HALF;i++) c+=buf[i]*buf[i+lag];
-    if(c>bestCorr){bestCorr=c;bestLag=lag;}
+type Phase = 'start' | 'countdown' | 'playing' | 'done';
+
+function autoCorrelate(buf: Float32Array, sampleRate: number): number {
+  const SIZE = buf.length;
+  const MAX_SAMPLES = Math.floor(SIZE / 2);
+  let best_offset = -1, best_correlation = 0;
+  let rms = 0;
+  for (let i = 0; i < SIZE; i++) rms += buf[i] * buf[i];
+  rms = Math.sqrt(rms / SIZE);
+  if (rms < 0.01) return -1;
+  let last_correlation = 1;
+  for (let offset = 0; offset < MAX_SAMPLES; offset++) {
+    let correlation = 0;
+    for (let i = 0; i < MAX_SAMPLES; i++) correlation += Math.abs((buf[i]) - (buf[i + offset]));
+    correlation = 1 - (correlation / MAX_SAMPLES);
+    if (correlation > 0.9 && correlation > last_correlation) { best_correlation = correlation; best_offset = offset; }
+    last_correlation = correlation;
   }
-  if(bestLag<1) return -1;
-  let norm=0; for(let i=0;i<HALF;i++) norm+=buf[i]*buf[i];
-  if(norm<1e-8||bestCorr/norm<0.28) return -1;
-  if(bestLag>1&&bestLag<maxLag-1){
-    let c0=0,c1=0,c2=0;
-    for(let i=0;i<HALF;i++){c0+=buf[i]*buf[i+bestLag-1];c1+=buf[i]*buf[i+bestLag];c2+=buf[i]*buf[i+bestLag+1];}
-    const a=(c0+c2-2*c1)/2, b=(c2-c0)/2;
-    if(a<0){ const ref=bestLag-b/(2*a); return sampleRate/ref; }
-  }
-  return sampleRate/bestLag;
+  if (best_offset === -1) return -1;
+  return sampleRate / best_offset;
 }
 
-interface Signals {
-  score: number; onTargetSecs: number; maxHoldSecs: number;
-  avgDeviation: number; silenceGaps: number;
-}
-function getPersonality(s:Signals):string{
-  if(s.onTargetSecs>20&&s.avgDeviation<30) return 'Natural Singer 🎼';
-  if(s.maxHoldSecs>5&&s.onTargetSecs>10)  return 'Melodic Voice 🎵';
-  if(s.onTargetSecs>8)                    return 'Pitch Finder 🎯';
-  return 'Finding the Note 🌱';
+function freqToY(freq: number, H: number): number {
+  const logMin = Math.log2(FREQ_MIN), logMax = Math.log2(FREQ_MAX);
+  const logF = Math.log2(Math.max(FREQ_MIN, Math.min(FREQ_MAX, freq)));
+  return ((logF - logMin) / (logMax - logMin)) * 2 - 1; // -1 to 1 world Y
 }
 
-interface GS {
-  running:boolean; timeLeft:number;
-  detectedPitch:number; displayPitch:number; lastDetectTs:number;
-  gameStartTs:number; currentMelodyNote:number; noteElapsedMs:number;
-  onTarget:boolean; holdStartTs:number; maxHoldMs:number; onTargetMs:number;
-  lastScoreTick:number; hitFlashAlpha:number;
-  inSilence:boolean; silenceStartTs:number; silenceGaps:number; firstPitch:boolean;
-  particles:Particle[]; devTotal:number; devSamples:number;
-  pitchBuf:Float32Array<ArrayBuffer>|null; accentColor:string;
-}
-type Phase='start'|'permission'|'countdown'|'playing'|'done';
+export default function SingAlongGame() {
+  const theme = useBrandTheme();
+  const mountRef = useRef<HTMLDivElement>(null);
+  const animRef = useRef(0);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const stopMusicRef = useRef<(() => void) | null>(null);
 
-export default function SingAlongGame(){
-  const theme=useBrandTheme();
-  const accent=theme.colors.accent??ACCENT;
-  const canvasRef=useRef<HTMLCanvasElement>(null);
-  const animRef=useRef(0);
-  const timerRef=useRef<ReturnType<typeof setInterval>|null>(null);
-  const stopMusicRef=useRef<(()=>void)|null>(null);
-  const audioCtxRef=useRef<AudioContext|null>(null);
-  const analyserRef=useRef<AnalyserNode|null>(null);
-  const micStreamRef=useRef<MediaStream|null>(null);
-  const resizeRef=useRef<(()=>void)|null>(null);
-  const playerSessionRef=useRef<PlayerSession|null>(null);
-
-  const stateRef=useRef<GS>({
-    running:false,timeLeft:DURATION,
-    detectedPitch:-1,displayPitch:-1,lastDetectTs:0,
-    gameStartTs:0,currentMelodyNote:0,noteElapsedMs:0,
-    onTarget:false,holdStartTs:0,maxHoldMs:0,onTargetMs:0,
-    lastScoreTick:0,hitFlashAlpha:0,
-    inSilence:false,silenceStartTs:0,silenceGaps:0,firstPitch:false,
-    particles:[],devTotal:0,devSamples:0,
-    pitchBuf:null as Float32Array<ArrayBuffer>|null,accentColor:ACCENT,
+  const stateRef = useRef({
+    renderer: null as THREE.WebGLRenderer | null,
+    scene: null as THREE.Scene | null,
+    camera: null as THREE.PerspectiveCamera | null,
+    targetBall: null as THREE.Mesh | null,
+    pitchBall: null as THREE.Mesh | null,
+    targetLight: null as THREE.PointLight | null,
+    pitchLight: null as THREE.PointLight | null,
+    trailPoints: [] as THREE.Mesh[],
+    melodyPath: null as THREE.Line | null,
+    running: false, timeLeft: DURATION,
+    sig: { score: 0, onTargetMs: 0, precisionMs: 0, maxStreak: 0, streak: 0 } as Signals,
+    analyser: null as AnalyserNode | null,
+    audioCtx: null as AudioContext | null,
+    micStream: null as MediaStream | null,
+    pitchBuf: null as Float32Array | null,
+    currentPitch: -1,
+    targetFreq: MELODY[0].freq,
+    melodyStartMs: 0,
+    gameStartMs: 0,
+    isOnTarget: false,
+    isPrecision: false,
+    scoreTimer: 0,
+    scoreInterval: 80,
   });
 
-  const [phase,setPhase]=useState<Phase>('start');
-  const [timeLeft,setTimeLeft]=useState(DURATION);
-  const [scoreDisp,setScoreDisp]=useState(0);
-  const [finalSig,setFinalSig]=useState<Signals|null>(null);
-  const [permError,setPermError]=useState('');
-  const [isNewBest,setIsNewBest]=useState(false);
-  const {pops,triggerPop}=useScorePop();
-  const prevScore=useRef(0);
+  const [phase, setPhase] = useState<Phase>('start');
+  const [timeLeft, setTimeLeft] = useState(DURATION);
+  const [scoreDisplay, setScoreDisplay] = useState(0);
+  const [finalSig, setFinalSig] = useState<Signals | null>(null);
+  const [isNewBest, setIsNewBest] = useState(false);
+  const [streak, setStreak] = useState(0);
+  const { pops, triggerPop } = useScorePop();
+  const prevScoreRef = useRef(0);
+  const playerSessionRef = useRef<PlayerSession | null>(null);
 
-  useEffect(()=>{stateRef.current.accentColor=accent;},[accent]);
-  useEffect(()=>{
-    if(scoreDisp>prevScore.current) triggerPop(`+${scoreDisp-prevScore.current}`,window.innerWidth/2,200);
-    prevScore.current=scoreDisp;
-  },[scoreDisp,triggerPop]);
+  useEffect(() => {
+    if (scoreDisplay > prevScoreRef.current) triggerPop(`+${scoreDisplay - prevScoreRef.current}`, window.innerWidth / 2, 200);
+    prevScoreRef.current = scoreDisplay;
+  }, [scoreDisplay, triggerPop]);
 
-  const endGame=useCallback(()=>{
-    const s=stateRef.current; s.running=false;
+  const endGame = useCallback(() => {
+    const s = stateRef.current;
+    s.running = false;
     cancelAnimationFrame(animRef.current);
-    if(timerRef.current){clearInterval(timerRef.current);timerRef.current=null;}
-    if(stopMusicRef.current){stopMusicRef.current();stopMusicRef.current=null;}
-    if(audioCtxRef.current){audioCtxRef.current.close().catch(()=>{});audioCtxRef.current=null;}
-    if(micStreamRef.current){micStreamRef.current.getTracks().forEach(t=>t.stop());micStreamRef.current=null;}
-    const sig:Signals={
-      score:Math.round(s.onTargetMs/100)+Math.round(s.maxHoldMs/500)*10,
-      onTargetSecs:Math.round(s.onTargetMs/1000),
-      maxHoldSecs:parseFloat((s.maxHoldMs/1000).toFixed(1)),
-      avgDeviation:s.devSamples>0?Math.round(s.devTotal/s.devSamples):0,
-      silenceGaps:s.silenceGaps,
+    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+    stopMusicRef.current?.();
+    if (s.micStream) s.micStream.getTracks().forEach(t => t.stop());
+    if (s.audioCtx) s.audioCtx.close().catch(() => {});
+    if (s.renderer) { s.renderer.dispose(); s.renderer = null; }
+    hapticVictory(); playVictoryFanfare();
+    try {
+      const pb = parseInt(localStorage.getItem(PB_KEY) || '0', 10);
+      if (s.sig.score > pb) { localStorage.setItem(PB_KEY, String(s.sig.score)); setIsNewBest(true); }
+    } catch { /* ignore */ }
+    setFinalSig({ ...s.sig });
+    setPhase('done');
+  }, []);
+
+  const startLoop = useCallback(async () => {
+    const s = stateRef.current;
+    s.running = true; s.timeLeft = DURATION;
+    s.sig = { score: 0, onTargetMs: 0, precisionMs: 0, maxStreak: 0, streak: 0 };
+    s.currentPitch = -1; s.isOnTarget = false; s.isPrecision = false;
+    s.melodyStartMs = Date.now(); s.gameStartMs = Date.now();
+    setScoreDisplay(0); setTimeLeft(DURATION); setPhase('playing');
+
+    const W = window.innerWidth, H = window.innerHeight;
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(W, H);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setClearColor(0x010a08);
+    if (mountRef.current) { mountRef.current.innerHTML = ''; mountRef.current.appendChild(renderer.domElement); }
+    s.renderer = renderer;
+
+    const scene = new THREE.Scene();
+    s.scene = scene;
+    const camera = new THREE.PerspectiveCamera(65, W / H, 0.1, 100);
+    camera.position.set(0, 0, 7);
+    s.camera = camera;
+
+    scene.add(new THREE.AmbientLight(0x0a1f18, 3));
+    const ambLight = new THREE.PointLight(0x34d399, 1.5, 20);
+    ambLight.position.set(0, 3, 4);
+    scene.add(ambLight);
+    const targetLight = new THREE.PointLight(0x34d399, 2, 8);
+    scene.add(targetLight);
+    s.targetLight = targetLight;
+    const pitchLight = new THREE.PointLight(0xfbbf24, 0, 6);
+    scene.add(pitchLight);
+    s.pitchLight = pitchLight;
+
+    // Stars
+    const sp = new Float32Array(400 * 3);
+    for (let i = 0; i < 400; i++) { sp[i*3] = (Math.random()-0.5)*40; sp[i*3+1] = (Math.random()-0.5)*40; sp[i*3+2] = (Math.random()-0.5)*40; }
+    const sg = new THREE.BufferGeometry(); sg.setAttribute('position', new THREE.BufferAttribute(sp, 3));
+    scene.add(new THREE.Points(sg, new THREE.PointsMaterial({ color: 0xffffff, size: 0.04 })));
+
+    // Pre-compute melody path in world space
+    const pathPts: THREE.Vector3[] = [];
+    let t = 0;
+    MELODY.forEach(seg => {
+      const y = freqToY(seg.freq, H) * 2.5;
+      const x1 = -5 + (t / (DURATION * 1000)) * 10;
+      const x2 = -5 + ((t + seg.durationMs) / (DURATION * 1000)) * 10;
+      pathPts.push(new THREE.Vector3(x1, y, 0), new THREE.Vector3(x2, y, 0));
+      t += seg.durationMs;
+    });
+    const pathGeo = new THREE.BufferGeometry().setFromPoints(pathPts);
+    const pathLine = new THREE.Line(pathGeo, new THREE.LineBasicMaterial({ color: 0x34d399, opacity: 0.5, transparent: true }));
+    scene.add(pathLine);
+    s.melodyPath = pathLine;
+
+    // Target ball
+    const targetBallGeo = new THREE.SphereGeometry(0.18, 16, 16);
+    const targetBallMat = new THREE.MeshStandardMaterial({ color: 0x34d399, emissive: 0x34d399, emissiveIntensity: 0.8 });
+    const targetBall = new THREE.Mesh(targetBallGeo, targetBallMat);
+    scene.add(targetBall);
+    s.targetBall = targetBall;
+
+    // Pitch ball (player)
+    const pitchBallGeo = new THREE.SphereGeometry(0.14, 12, 12);
+    const pitchBallMat = new THREE.MeshStandardMaterial({ color: 0xfbbf24, emissive: 0x000000, emissiveIntensity: 0 });
+    const pitchBall = new THREE.Mesh(pitchBallGeo, pitchBallMat);
+    pitchBall.position.set(-5, 0, 0.3);
+    scene.add(pitchBall);
+    s.pitchBall = pitchBall;
+
+    // Setup mic for pitch detection
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      s.micStream = stream;
+      const audioCtx = new AudioContext();
+      s.audioCtx = audioCtx;
+      const source = audioCtx.createMediaStreamSource(stream);
+      const analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 2048;
+      source.connect(analyser);
+      s.analyser = analyser;
+      s.pitchBuf = new Float32Array(analyser.fftSize);
+    } catch { /* no mic */ }
+
+    const handleResize = () => {
+      const w = window.innerWidth, h = window.innerHeight;
+      renderer.setSize(w, h); camera.aspect = w / h; camera.updateProjectionMatrix();
     };
-    sfx.success(); hapticVictory(); playVictoryFanfare();
-    try{const p=parseInt(localStorage.getItem(PB_KEY)||'0',10);if(sig.score>p){localStorage.setItem(PB_KEY,String(sig.score));setIsNewBest(true);}}catch{/**/}
-    setFinalSig(sig); setPhase('done');
-  },[]);
+    window.addEventListener('resize', handleResize);
+    (s as any)._cleanup = () => window.removeEventListener('resize', handleResize);
 
-  const startLoop=useCallback(()=>{
-    const canvas=canvasRef.current; if(!canvas) return;
-    const ctx=canvas.getContext('2d'); if(!ctx) return;
-    const s=stateRef.current;
-    const resize=()=>{
-      const dpr=window.devicePixelRatio||1,w=window.innerWidth,h=window.innerHeight;
-      canvas.style.width=w+'px';canvas.style.height=h+'px';
-      canvas.width=w*dpr;canvas.height=h*dpr;ctx.setTransform(dpr,0,0,dpr,0,0);
-    };
-    resize(); window.addEventListener('resize',resize); resizeRef.current=()=>window.removeEventListener('resize',resize);
+    timerRef.current = setInterval(() => {
+      s.timeLeft--; setTimeLeft(s.timeLeft);
+      if (s.timeLeft <= 10 && s.timeLeft > 0) sfx.tick();
+      if (s.timeLeft <= 0) endGame();
+    }, 1000);
 
-    s.running=true;s.timeLeft=DURATION;s.detectedPitch=-1;s.displayPitch=-1;
-    s.gameStartTs=Date.now();s.currentMelodyNote=0;s.noteElapsedMs=0;
-    s.onTarget=false;s.holdStartTs=0;s.maxHoldMs=0;s.onTargetMs=0;
-    s.lastScoreTick=Date.now();s.hitFlashAlpha=0;
-    s.inSilence=false;s.silenceGaps=0;s.firstPitch=false;
-    s.particles=[];s.devTotal=0;s.devSamples=0;
+    const loop = () => {
+      if (!s.running) return;
+      const now = Date.now();
+      const elapsed = now - s.gameStartMs;
+      const t2 = elapsed * 0.001;
 
-    setScoreDisp(0);setTimeLeft(DURATION);setPhase('playing');
-    stopMusicRef.current=startMusic('calm');
-    timerRef.current=setInterval(()=>{
-      s.timeLeft--;setTimeLeft(s.timeLeft);sfx.tick();
-      if(s.timeLeft===10) sfx.warning();
-      if(s.timeLeft<=0) endGame();
-    },1000);
-
-    // History buffer for scrolling waveform
-    const HISTORY_LEN=200;
-    const pitchHistory:number[]=Array(HISTORY_LEN).fill(-1);
-    const targetHistory:number[]=Array(HISTORY_LEN).fill(0);
-    let histIdx=0, histTickMs=0;
-    const HIST_INTERVAL=DURATION*1000/HISTORY_LEN;
-
-    const loop=(ts:number)=>{
-      if(!s.running) return;
-      const now=Date.now();
-      const W=window.innerWidth,H=window.innerHeight;
-
-      // Pitch detection every 50ms
-      if(now-s.lastDetectTs>=50&&analyserRef.current&&s.pitchBuf&&audioCtxRef.current){
-        s.lastDetectTs=now;
-        analyserRef.current.getFloatTimeDomainData(s.pitchBuf);
-        s.detectedPitch=autoCorrelate(s.pitchBuf,audioCtxRef.current.sampleRate);
+      // Detect pitch
+      if (s.analyser && s.pitchBuf) {
+        s.analyser.getFloatTimeDomainData(s.pitchBuf);
+        s.currentPitch = autoCorrelate(s.pitchBuf, s.audioCtx?.sampleRate ?? 44100);
       }
 
-      // Current melody note
-      const elapsed=now-s.gameStartTs;
-      let noteAccMs=0,noteIdx=0;
-      for(let i=0;i<MELODY.length;i++){
-        noteAccMs+=MELODY[i].durationMs;
-        if(elapsed<noteAccMs){noteIdx=i;break;}
-        if(i===MELODY.length-1) noteIdx=i;
+      // Determine target frequency from melody
+      let melodyElapsed = elapsed, cumTime = 0, targetFreq = MELODY[0].freq;
+      for (const seg of MELODY) {
+        cumTime += seg.durationMs;
+        if (melodyElapsed < cumTime) { targetFreq = seg.freq; break; }
       }
-      s.currentMelodyNote=noteIdx;
-      const targetFreq=MELODY[noteIdx].freq;
+      s.targetFreq = targetFreq;
 
-      // Pitch smoothing
-      if(s.detectedPitch>0){
-        s.displayPitch=s.displayPitch>0?s.displayPitch*0.8+s.detectedPitch*0.2:s.detectedPitch;
-        s.firstPitch=true;
-        if(s.inSilence){s.inSilence=false;}
-      } else {
-        if(s.firstPitch&&!s.inSilence){s.inSilence=true;s.silenceStartTs=now;}
-        if(s.inSilence&&now-s.silenceStartTs>600){s.silenceGaps++;s.inSilence=false;}
-        if(s.displayPitch>0){s.displayPitch*=0.94;if(s.displayPitch<FREQ_MIN+5) s.displayPitch=-1;}
-      }
+      // Target ball position
+      const targetX = -5 + (elapsed / (DURATION * 1000)) * 10;
+      const targetY = freqToY(targetFreq, window.innerHeight) * 2.5;
+      targetBall.position.set(targetX, targetY, 0);
+      targetLight.position.copy(targetBall.position).add(new THREE.Vector3(0, 0, 1));
 
-      // Hit zone check
-      const dp=s.displayPitch;
-      let inHit=false,centsOff=999;
-      if(dp>0){centsOff=Math.abs(1200*Math.log2(dp/targetFreq));inHit=centsOff<=HIT_CENTS;}
-      const inPrec=inHit&&centsOff<=PRECISION_CENTS;
-
-      if(inHit){
-        if(!s.onTarget){s.onTarget=true;s.holdStartTs=now;sfx.collect();hapticScore();}
-        s.hitFlashAlpha=Math.min(1,s.hitFlashAlpha+0.06);
-        if(now-s.lastScoreTick>=SCORE_TICK_MS){
-          s.lastScoreTick=now;
-          const pts=inPrec?3:1;
-          const newScore=Math.round(s.onTargetMs/100)+Math.round(s.maxHoldMs/500)*10+pts;
-          s.onTargetMs+=SCORE_TICK_MS;
-          s.devTotal+=centsOff;s.devSamples++;
-          setScoreDisp(s.onTargetMs>0?Math.round(s.onTargetMs/100):0);
-          if(Math.random()<0.05) spawnBurst(s.particles,W*0.5,freqToY(dp,H),accent,4,2);
+      // Pitch ball position
+      if (s.currentPitch > 0 && s.currentPitch >= FREQ_MIN && s.currentPitch <= FREQ_MAX) {
+        const pitchY = freqToY(s.currentPitch, window.innerHeight) * 2.5;
+        pitchBall.position.lerp(new THREE.Vector3(targetX, pitchY, 0.3), 0.3);
+        pitchBall.visible = true;
+        // Check accuracy
+        const centsOff = 1200 * Math.abs(Math.log2(s.currentPitch / targetFreq));
+        s.isOnTarget = centsOff <= HIT_CENTS;
+        s.isPrecision = centsOff <= PRECISION_CENTS;
+        if (s.isOnTarget) {
+          s.sig.onTargetMs += 16;
+          s.sig.streak++; if (s.sig.streak > s.sig.maxStreak) s.sig.maxStreak = s.sig.streak;
+          s.scoreTimer += 16;
+          if (s.scoreTimer >= s.scoreInterval) {
+            s.scoreTimer = 0;
+            const pts = s.isPrecision ? 3 : 1;
+            s.sig.score += pts;
+            if (s.isPrecision) s.sig.precisionMs += 16;
+            setScoreDisplay(s.sig.score); setStreak(s.sig.streak);
+          }
+        } else {
+          s.sig.streak = 0; s.scoreTimer = 0;
         }
-        const holdMs=now-s.holdStartTs;
-        if(holdMs>s.maxHoldMs) s.maxHoldMs=holdMs;
       } else {
-        if(s.onTarget){s.onTarget=false;}
-        s.hitFlashAlpha=Math.max(0,s.hitFlashAlpha-0.04);
+        pitchBall.position.lerp(new THREE.Vector3(targetX - 0.3, targetY, 0.3), 0.05);
+        s.isOnTarget = false; s.sig.streak = 0;
       }
 
-      // History recording
-      if(now-histTickMs>=HIST_INTERVAL){
-        histTickMs=now; pitchHistory[histIdx]=dp; targetHistory[histIdx]=targetFreq;
-        histIdx=(histIdx+1)%HISTORY_LEN;
-      }
+      // Visual state
+      const targetMat = targetBall.material as THREE.MeshStandardMaterial;
+      targetMat.emissive.setHex(s.isOnTarget ? 0xfbbf24 : 0x34d399);
+      targetMat.emissiveIntensity = 0.8 + Math.sin(t2 * 6) * 0.2;
+      targetLight.color.setHex(s.isOnTarget ? 0xfbbf24 : 0x34d399);
+      targetLight.intensity = s.isOnTarget ? 3 : 1.5;
 
-      // --- RENDER ---
-      ctx.fillStyle='#060412'; ctx.fillRect(0,0,W,H);
+      const pitchMat = pitchBall.material as THREE.MeshStandardMaterial;
+      pitchMat.color.setHex(s.isPrecision ? 0x34d399 : s.isOnTarget ? 0xfbbf24 : 0xef4444);
+      pitchMat.emissive.setHex(s.isOnTarget ? pitchMat.color.getHex() : 0x000000);
+      pitchMat.emissiveIntensity = s.isOnTarget ? 0.6 : 0;
+      pitchLight.position.copy(pitchBall.position);
+      pitchLight.intensity = s.isOnTarget ? 2 : 0;
+      pitchLight.color.setHex(s.isPrecision ? 0x34d399 : 0xfbbf24);
 
-      // Background glow when on target
-      if(s.hitFlashAlpha>0){
-        const bgGrd=ctx.createRadialGradient(W/2,H/2,0,W/2,H/2,Math.max(W,H)*0.7);
-        bgGrd.addColorStop(0,`rgba(52,211,153,${s.hitFlashAlpha*0.1})`);
-        bgGrd.addColorStop(1,'transparent');
-        ctx.fillStyle=bgGrd; ctx.fillRect(0,0,W,H);
-      }
+      // Path scrolls left  
+      pathLine.position.x = 0;
 
-      // Frequency guide lines
-      const GUIDES=[130.81,196,261.63,329.63,392,440,523.25];
-      for(const gf of GUIDES){
-        const gy=freqToY(gf,H);
-        ctx.strokeStyle='rgba(255,255,255,0.03)';ctx.lineWidth=1;
-        ctx.beginPath();ctx.moveTo(0,gy);ctx.lineTo(W,gy);ctx.stroke();
-      }
-
-      // Hit zone band
-      const tY=freqToY(targetFreq,H);
-      const hitTopY=freqToY(targetFreq*Math.pow(2,HIT_CENTS/1200),H);
-      const hitBotY=freqToY(targetFreq*Math.pow(2,-HIT_CENTS/1200),H);
-      ctx.fillStyle=`rgba(52,211,153,${0.06+s.hitFlashAlpha*0.08})`;
-      ctx.fillRect(0,hitTopY,W,hitBotY-hitTopY);
-
-      // Precision zone
-      const pTopY=freqToY(targetFreq*Math.pow(2,PRECISION_CENTS/1200),H);
-      const pBotY=freqToY(targetFreq*Math.pow(2,-PRECISION_CENTS/1200),H);
-      ctx.fillStyle=`rgba(52,211,153,${0.04+s.hitFlashAlpha*0.06})`;
-      ctx.fillRect(0,pTopY,W,pBotY-pTopY);
-
-      // Dashed zone borders
-      ctx.save(); ctx.setLineDash([5,8]);
-      ctx.strokeStyle=`rgba(52,211,153,${0.15+s.hitFlashAlpha*0.15})`; ctx.lineWidth=1;
-      ctx.beginPath();ctx.moveTo(0,hitTopY);ctx.lineTo(W*0.88,hitTopY);
-      ctx.moveTo(0,hitBotY);ctx.lineTo(W*0.88,hitBotY);ctx.stroke(); ctx.restore();
-
-      // Scrolling target history line (shows where target has been)
-      ctx.save();
-      ctx.strokeStyle='rgba(52,211,153,0.35)'; ctx.lineWidth=2.5;
-      ctx.shadowBlur=inHit?10:4; ctx.shadowColor=accent;
-      ctx.beginPath();
-      let drawn=false;
-      for(let i=0;i<HISTORY_LEN;i++){
-        const hi=(histIdx+i)%HISTORY_LEN;
-        const tf=targetHistory[hi]; if(tf<=0) continue;
-        const px=W*(i/HISTORY_LEN); const py=freqToY(tf,H);
-        if(!drawn){ctx.moveTo(px,py);drawn=true;} else ctx.lineTo(px,py);
-      }
-      ctx.stroke(); ctx.restore();
-
-      // Target label
-      ctx.save();ctx.fillStyle=inHit?accent:'rgba(52,211,153,0.6)';
-      ctx.font='bold 12px "JetBrains Mono",monospace';ctx.textBaseline='middle';
-      if(inHit){ctx.shadowBlur=10;ctx.shadowColor=accent;}
-      const noteNames:Record<number,string>={261.63:'C4',293.66:'D4',329.63:'E4',349.23:'F4',392:'G4',440:'A4',523.25:'C5'};
-      ctx.fillText(noteNames[targetFreq]??`${Math.round(targetFreq)}Hz`,W*0.9,tY);ctx.restore();
-
-      // Player pitch line
-      if(dp>0){
-        const pY=freqToY(dp,H);
-        ctx.save();
-        ctx.strokeStyle=inHit?accent:'rgba(255,255,255,0.75)'; ctx.lineWidth=inHit?3:2;
-        ctx.shadowBlur=inHit?20:6; ctx.shadowColor=inHit?accent:'rgba(255,255,255,0.4)';
-        ctx.beginPath();ctx.moveTo(W*0.06,pY);ctx.lineTo(W*0.82,pY);ctx.stroke();
-        ctx.beginPath();ctx.arc(W*0.04,pY,5,0,Math.PI*2);
-        ctx.fillStyle=inHit?accent:'rgba(255,255,255,0.9)';ctx.fill();
-        ctx.restore();
-      }
-
-      // Scrolling pitch history (player)
-      if(s.firstPitch){
-        ctx.save(); ctx.strokeStyle='rgba(255,255,255,0.2)'; ctx.lineWidth=1.5;
-        ctx.beginPath(); let pDrawn=false;
-        for(let i=0;i<HISTORY_LEN;i++){
-          const hi=(histIdx+i)%HISTORY_LEN;
-          const pf=pitchHistory[hi]; if(pf<=0){pDrawn=false;continue;}
-          const px=W*(i/HISTORY_LEN); const py2=freqToY(pf,H);
-          if(!pDrawn){ctx.moveTo(px,py2);pDrawn=true;} else ctx.lineTo(px,py2);
-        }
-        ctx.stroke(); ctx.restore();
-      }
-
-      // Note progress dots (right side)
-      for(let i=0;i<MELODY.length;i++){
-        const dy=HUD_H+8+i*(H-HUD_H-16)/MELODY.length;
-        ctx.beginPath();ctx.arc(W-12,dy,i===noteIdx?5:3,0,Math.PI*2);
-        ctx.fillStyle=i<noteIdx?accent:i===noteIdx?`rgba(52,211,153,0.8)`:'rgba(255,255,255,0.1)';
-        ctx.fill();
-      }
-
-      // Combo indicator
-      if(inHit&&s.onTargetMs>2000){
-        ctx.fillStyle=accent;ctx.font='bold 12px "Space Grotesk",sans-serif';
-        ctx.textBaseline='bottom';ctx.shadowBlur=8;ctx.shadowColor=accent;
-        ctx.fillText('ON PITCH ✓',14,H-12);ctx.shadowBlur=0;
-      }
-
-      updateAndDrawParticles(ctx,s.particles);
-      animRef.current=requestAnimationFrame(loop);
+      renderer.render(scene, camera);
+      animRef.current = requestAnimationFrame(loop);
     };
-    animRef.current=requestAnimationFrame(loop);
-  },[endGame,accent,triggerPop]);
+    animRef.current = requestAnimationFrame(loop);
+  }, [endGame]);
 
-  useEffect(()=>()=>{
+  useEffect(() => () => {
     cancelAnimationFrame(animRef.current);
-    if(timerRef.current) clearInterval(timerRef.current);
-    if(stopMusicRef.current) stopMusicRef.current();
-    if(resizeRef.current) resizeRef.current();
-    if(audioCtxRef.current) audioCtxRef.current.close().catch(()=>{});
-    if(micStreamRef.current) micStreamRef.current.getTracks().forEach(t=>t.stop());
-  },[]);
+    if (timerRef.current) clearInterval(timerRef.current);
+    stopMusicRef.current?.();
+    const s = stateRef.current;
+    if (s.micStream) s.micStream.getTracks().forEach(t => t.stop());
+    if (s.audioCtx) s.audioCtx.close().catch(() => {});
+    if (s.renderer) s.renderer.dispose();
+    (s as any)._cleanup?.();
+  }, []);
 
-  const handleStart=useCallback(async(name:string,avatar:string)=>{
-    playerSessionRef.current=savePlayerSession(GAME_ID,name,avatar);
-    initAudio(); sfx.click(); setPermError('');
-    if((window as unknown as Record<string,unknown>).__DISABLE_AUDIO){setPhase('countdown');return;}
-    if(!navigator.mediaDevices?.getUserMedia){setPermError('Microphone not supported in this browser.');return;}
-    try{
-      const stream=await navigator.mediaDevices.getUserMedia({audio:true,video:false});
-      micStreamRef.current=stream;
-      const actx=new AudioContext(); await actx.resume(); audioCtxRef.current=actx;
-      const analyser=actx.createAnalyser(); analyser.fftSize=2048; analyser.smoothingTimeConstant=0;
-      analyserRef.current=analyser;
-      stateRef.current.pitchBuf=new Float32Array(new ArrayBuffer(analyser.fftSize*Float32Array.BYTES_PER_ELEMENT));
-      actx.createMediaStreamSource(stream).connect(analyser);
-      setPhase('countdown');
-    }catch{ setPermError('Microphone access denied. Please allow mic access and try again.'); }
-  },[]);
+  const handleStart = useCallback(async (name: string, avatar: string) => {
+    playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar);
+    await initAudio(); setPhase('countdown');
+  }, []);
+  const handlePlayAgain = useCallback(() => { setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null); setIsNewBest(false); setStreak(0); prevScoreRef.current = 0; }, []);
 
-  const handlePlayAgain=useCallback(()=>{
-    if(audioCtxRef.current){audioCtxRef.current.close().catch(()=>{});audioCtxRef.current=null;}
-    if(micStreamRef.current){micStreamRef.current.getTracks().forEach(t=>t.stop());micStreamRef.current=null;}
-    analyserRef.current=null; stateRef.current.pitchBuf=null;
-    setPhase('start');setScoreDisp(0);setTimeLeft(DURATION);setFinalSig(null);setIsNewBest(false);prevScore.current=0;
-  },[]);
+  const accent = theme.colors.accent ?? ACCENT;
 
   return (
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accent}
-      background="radial-gradient(ellipse at 50% 30%,rgba(52,211,153,0.08) 0%,transparent 50%),linear-gradient(180deg,#060412 0%,#080614 100%)">
-
-      {phase==='start' && (
-        <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description={GAME_TAGLINE}
-          ctaLabel="Enable Mic & Sing →" accentColor={accent} onStart={handleStart}
-          sensorNote="🎤 Microphone — hum or sing to follow the line"
-          gradient="radial-gradient(ellipse 80% 70% at 50% 30%,#0b1a12 0%,#060412 55%,#040210 100%)">
-          {permError && <div style={{marginTop:14,padding:'10px 14px',background:'rgba(239,68,68,0.1)',border:'1px solid rgba(239,68,68,0.3)',borderRadius:10,color:'#ef4444',fontSize:14,lineHeight:1.5}}>{permError}</div>}
-        </GameStartScreen>
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accent}>
+      {phase === 'start' && (
+        <GameStartScreen emoji={GAME_EMOJI} iconNode={<Mic size={80} color={accent} strokeWidth={1.5} />}
+          title={GAME_TITLE} description="Follow the melody line with your voice. Hum to stay on target!"
+          ctaLabel="Allow Mic & Sing 🎤" sensorNote="Uses microphone for pitch detection"
+          accentColor={accent} onStart={handleStart} />
       )}
-
-      {phase==='countdown' && <Countdown onComplete={startLoop} accentColor={accent} />}
-
-      {(phase==='playing'||phase==='countdown') && <>
-        <canvas ref={canvasRef} style={{position:'absolute',inset:0,width:'100%',height:'100%',touchAction:'none'}} />
-        {phase==='playing' && <GameHUD accentColor={accent} items={[
-          {label:'TIME',value:timeLeft,danger:timeLeft<=10,testId:'timer'},
-          {label:'SCORE',value:scoreDisp,testId:'score'},
-        ]}/>}
-      </>}
-
-      {phase==='done' && finalSig && (
-        <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI}
-          score={String(finalSig.score)} personality={getPersonality(finalSig)}
-          insights={[
-            {label:'On Pitch',    value:`${finalSig.onTargetSecs}s`,                  color:accent},
-            {label:'Best Hold',   value:`${finalSig.maxHoldSecs}s`,                  color:'#fbbf24'},
-            {label:'Avg Deviation',value:`±${finalSig.avgDeviation} cents`,          color:'#06b6d4'},
-            {label:'Silence Gaps',value:`${finalSig.silenceGaps}`,                   color:'#ef4444'},
-          ]}
-          accentColor={accent} onPlayAgain={handlePlayAgain} didWin={finalSig.onTargetSecs>=8} />
+      {phase === 'countdown' && <Countdown onComplete={startLoop} accentColor={accent} />}
+      {(phase === 'playing' || phase === 'countdown') && (
+        <div ref={mountRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none' }} />
       )}
-      {phase==='done' && finalSig && <WebhookEmitter theme={theme} sig={finalSig} personality={getPersonality(finalSig)} player={playerSessionRef.current} />}
-
-      {phase==='playing' && <>
-        <ScorePopEffect pops={pops} accentColor={accent} />
-        <StreakBadge streak={0} accentColor={accent} />
-      </>}
-
+      {phase === 'playing' && (
+        <>
+          <GameHUD accentColor={accent} items={[
+            { label: 'TIME', value: timeLeft, danger: timeLeft <= 10 },
+            { label: 'SCORE', value: scoreDisplay },
+          ]} />
+          <ScorePopEffect pops={pops} accentColor={accent} />
+          <StreakBadge streak={streak} accentColor={accent} />
+        </>
+      )}
       <AnimatePresence>
-        {isNewBest && <motion.div key="pb" initial={{opacity:0,y:-20,scale:0.8}} animate={{opacity:1,y:0,scale:1}} exit={{opacity:0,y:-20}} transition={{duration:0.4,delay:0.5}} style={{position:'fixed',top:'10%',left:'50%',transform:'translateX(-50%)',zIndex:90,pointerEvents:'none',background:'linear-gradient(135deg,#fbbf24,#f59e0b)',borderRadius:20,padding:'8px 20px',fontSize:20,fontWeight:900,color:'#000',whiteSpace:'nowrap',boxShadow:'0 4px 20px rgba(251,191,36,0.5)'}}>🏆 New Best!</motion.div>}
+        {isNewBest && phase === 'done' && (
+          <motion.div key="nb" initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
+            style={{ position: 'fixed', top: '10%', left: '50%', transform: 'translateX(-50%)', zIndex: 90, background: 'linear-gradient(135deg, #fbbf24, #f59e0b)', borderRadius: 20, padding: '8px 20px', fontSize: 20, fontWeight: 900, color: '#000', whiteSpace: 'nowrap' }}>
+            🏆 New Best!
+          </motion.div>
+        )}
       </AnimatePresence>
+      {phase === 'done' && finalSig && (
+        <>
+          <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI}
+            score={String(finalSig.score)} personality={getPersonality(finalSig)}
+            insights={[
+              { label: 'On Target', value: `${Math.round(finalSig.onTargetMs / (DURATION * 10))}%`, color: accent },
+              { label: 'Precision', value: `${Math.round(finalSig.precisionMs / (DURATION * 10))}%`, color: '#a855f7' },
+              { label: 'Best Streak', value: `${finalSig.maxStreak}`, color: '#fbbf24' },
+              { label: 'Score', value: String(finalSig.score), color: accent },
+            ]}
+            accentColor={accent} onPlayAgain={handlePlayAgain} didWin={finalSig.onTargetMs > DURATION * 400} />
+          <WebhookHelper theme={theme} sig={finalSig} personality={getPersonality(finalSig)} player={playerSessionRef.current} />
+        </>
+      )}
     </GameShell>
   );
 }
 
-function WebhookEmitter({theme,sig,personality,player}:{theme:ReturnType<typeof useBrandTheme>;sig:Signals;personality:string;player:PlayerSession|null;}){
-  const fired=useRef(false);
-  useEffect(()=>{
-    if(fired.current) return; fired.current=true;
-    postWebhook(theme,GAME_ID,{personality,score:sig.score,onTargetSecs:sig.onTargetSecs,maxHoldSecs:sig.maxHoldSecs,avgDeviation:sig.avgDeviation,silenceGaps:sig.silenceGaps},player);
-  },[theme,sig,personality,player]);
+function WebhookHelper({ theme, sig, personality, player }: { theme: ReturnType<typeof useBrandTheme>; sig: Signals; personality: string; player: PlayerSession | null; }) {
+  const fired = useRef(false);
+  useEffect(() => { if (fired.current) return; fired.current = true; postWebhook(theme, GAME_ID, { personality, score: sig.score, onTargetMs: sig.onTargetMs }, player); }, [theme, sig, personality, player]);
   return null;
 }

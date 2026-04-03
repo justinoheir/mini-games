@@ -1,1097 +1,316 @@
-/**
- * ══════════════════════════════════════════════════════════════════
- *  ETHER MINI-GAMES — HARVEST CATCH
- *  Holiday: Thanksgiving
- *  Mechanic: Canvas tilt-catch — tilt phone to move harvest basket
- *  Items fall from top; catch good food, dodge the bad.
- *  CORNUCOPIA BONUS: catch turkey→pie→corn in order for 5s all-good window.
- * ══════════════════════════════════════════════════════════════════
- */
-
 'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
+import * as THREE from 'three';
 import GameShell from '@/components/GameShell';
 import GameHUD from '@/components/GameHUD';
 import GameStartScreen from '@/components/GameStartScreen';
 import Countdown from '@/components/Countdown';
 import EndScreen from '@/components/EndScreen';
 import { initAudio, sfx, haptic, startMusic } from '@/lib/audio';
-import { playScoreHit, playVictoryFanfare, playNearMiss } from '@/lib/audio';
 import { hapticScore, hapticFail, hapticVictory } from '@/lib/haptics';
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
 import { createTiltController } from '@/lib/tilt';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
-import { motion, AnimatePresence } from 'framer-motion';
-import ScorePopEffect, { useScorePop } from '@/components/ScorePopEffect';
-import StreakBadge from '@/components/StreakBadge';
-import { CATEGORY_THEMES } from '@/lib/theme';
-import SwipeInstructions from '@/components/SwipeInstructions';
 
-const CATEGORY_ACCENT = CATEGORY_THEMES.holiday.primaryAccent;
+const GAME_ID     = 'harvest-catch';
+const ACCENT      = '#d97706';
+const DURATION    = 45;
+const GAME_EMOJI  = '🍁';
+const GAME_TITLE  = 'Harvest Catch';
+const GAME_TAGLINE = 'Catch the harvest! Dodge the bad stuff.';
 
-// ─── SPEC CONSTANTS ──────────────────────────────────────────────────────────
-const GAME_ID        = 'harvest-catch';
-const PB_KEY       = 'pb_harvest-catch';
-const ACCENT         = '#d97706';
-const DURATION       = 45;
-const GAME_EMOJI     = '🍁';
-const GAME_TITLE     = 'Harvest Catch';
-const GAME_TAGLINE   = 'Tilt to catch the harvest. Skip the Brussels sprouts.';
-const BASKET_WIDTH   = 90;
-const CATCH_Y_FROM_BOTTOM = 80;
-
-// ─── ITEM DEFINITIONS ────────────────────────────────────────────────────────
-interface ItemDef {
-  id: string;
-  emoji: string;
-  points: number;
-  baseSpeed: number;
-  label: string;
-  rare?: boolean;
-  good: boolean;
-}
-
-const ITEM_DEFS: ItemDef[] = [
-  { id: 'turkey',        emoji: '🦃',   points:  3, baseSpeed: 2.8, label: 'Turkey!',         good: true  },
-  { id: 'pie',           emoji: '🥧',   points:  2, baseSpeed: 1.8, label: 'Pie!',             good: true  },
-  { id: 'corn',          emoji: '🌽',   points:  1, baseSpeed: 2.5, label: 'Corn',             good: true  },
-  { id: 'cranberry',     emoji: '🫐',   points:  1, baseSpeed: 3.5, label: 'Cranberry',        good: true  },
-  { id: 'leaf',          emoji: '🍁',   points:  1, baseSpeed: 1.5, label: 'Leaf',             good: true  },
-  { id: 'brussels',      emoji: '🥦',   points: -1, baseSpeed: 2.5, label: 'Brussels 🤢',      good: false },
-  { id: 'fruitcake',     emoji: '🎂',   points: -2, baseSpeed: 3.8, label: 'Fruitcake!',       good: false },
-  { id: 'bone',          emoji: '🦴',   points: -2, baseSpeed: 3.8, label: 'Leftovers 🦴',     good: false },
-  { id: 'golden_turkey', emoji: '✨🦃', points:  5, baseSpeed: 4.5, label: 'GOLDEN TURKEY!',   good: true,  rare: true },
-];
-
-const GOOD_ITEMS     = ITEM_DEFS.filter(i =>  i.good && !i.rare);
-const ALL_GOOD_ITEMS = ITEM_DEFS.filter(i =>  i.good);
-const BAD_ITEMS      = ITEM_DEFS.filter(i => !i.good);
-
-function pickItemDef(cornucopiaActive: boolean): ItemDef {
-  if (cornucopiaActive) {
-    return ALL_GOOD_ITEMS[Math.floor(Math.random() * ALL_GOOD_ITEMS.length)];
-  }
-  const r = Math.random();
-  if (r < 0.03) return ITEM_DEFS.find(i => i.id === 'golden_turkey')!;
-  if (r < 0.63) return GOOD_ITEMS[Math.floor(Math.random() * GOOD_ITEMS.length)];
-  return BAD_ITEMS[Math.floor(Math.random() * BAD_ITEMS.length)];
-}
-
-// ─── BEHAVIORAL SIGNALS ──────────────────────────────────────────────────────
-interface Signals {
-  score: number;
-  turkeyCaught: number;
-  negativeItemsCaught: number;
-  goldenTurkeyCaught: number;
-  maxStreak: number;
-  streakCurrent: number;
-  cornucopiaTriggers: number;
-}
-
-// ─── PERSONALITY CLASSIFICATION ──────────────────────────────────────────────
+interface Signals { score: number; turkeyCaught: number; negativeItemsCaught: number; maxStreak: number; streakCurrent: number; }
 function getPersonality(sig: Signals): string {
   if (sig.score >= 40 && sig.negativeItemsCaught === 0) return 'Harvest Champion 🏆';
-  if (sig.turkeyCaught >= 8)                            return 'Head of the Table 🦃';
-  if (sig.goldenTurkeyCaught >= 2)                      return 'Golden Gatherer ✨';
-  if (sig.negativeItemsCaught >= 5)                     return 'Picky Eater 🤢';
-  if (sig.score >= 20)                                  return 'Grateful Guest 🙏';
+  if (sig.turkeyCaught >= 8) return 'Head of the Table 🦃';
+  if (sig.negativeItemsCaught >= 5) return 'Picky Eater 🤢';
+  if (sig.score >= 20) return 'Grateful Guest 🙏';
   return 'Still Loading Plate 🍽️';
 }
-
-// ─── TYPES ────────────────────────────────────────────────────────────────────
-interface FallingItem {
-  uid: number;
-  defId: string;
-  emoji: string;
-  points: number;
-  label: string;
-  good: boolean;
-  x: number;
-  y: number;
-  speed: number;
-  rotation: number;
-  rotSpeed: number;
-  driftAmp: number;   // horizontal drift amplitude (leaf)
-  driftPhase: number; // phase offset for sin-drift
-  size: number;
-}
-
-interface Particle {
-  x: number; y: number;
-  vx: number; vy: number;
-  life: number;
-  color: string;
-  size: number;
-}
-
-interface ScoreFloat {
-  x: number; y: number;
-  text: string;
-  life: number;
-  color: string;
-}
-
-interface BgLeaf {
-  x: number; y: number;
-  rotation: number;
-  rotSpeed: number;
-  speed: number;
-  driftAmp: number;
-  driftPhase: number;
-  size: number;
-  alpha: number;
-  emoji: string;
-}
-
 type Phase = 'start' | 'countdown' | 'playing' | 'done';
 
-// ─── SPRITE CACHE ─────────────────────────────────────────────────────────────
-const _hcSpriteCache = new Map<string, HTMLImageElement>();
-function hcLoadSprite(src: string): HTMLImageElement {
-  if (_hcSpriteCache.has(src)) return _hcSpriteCache.get(src)!;
-  const img = new Image();
-  img.src = src;
-  _hcSpriteCache.set(src, img);
-  return img;
+const ITEM_DEFS = [
+  { id: 'turkey', pts: 3, color: 0xb45309, good: true, r: 0.35 },
+  { id: 'corn', pts: 1, color: 0xfbbf24, good: true, r: 0.28 },
+  { id: 'pie', pts: 2, color: 0xef4444, good: true, r: 0.3 },
+  { id: 'leaf', pts: 1, color: 0xf97316, good: true, r: 0.22 },
+  { id: 'brussels', pts: -1, color: 0x16a34a, good: false, r: 0.24 },
+  { id: 'fruitcake', pts: -2, color: 0x78350f, good: false, r: 0.3 },
+];
+
+interface FallingItem3D {
+  mesh: THREE.Mesh; light: THREE.PointLight;
+  x: number; y: number; z: number;
+  vx: number; vy: number;
+  points: number; good: boolean; id: number;
 }
 
-// Map item defId → sprite path
-const HC_SPRITES: Record<string, string> = {
-  turkey:        '/sprites/harvest-catch/turkey.png',
-  golden_turkey: '/sprites/harvest-catch/turkey.png',
-  corn:          '/sprites/harvest-catch/corn.png',
-  cranberry:     '/sprites/harvest-catch/cranberry.png',
-  leaf:          '/sprites/harvest-catch/leaf.svg',
-  brussels:      '/sprites/harvest-catch/brussels.png',
-  fruitcake:     '/sprites/harvest-catch/fruitcake.png',
-  bone:          '/sprites/harvest-catch/bone.svg',
-  pumpkin:       '/sprites/harvest-catch/pumpkin.png',
-};
-
-// Pre-warm sprites
-if (typeof window !== 'undefined') {
-  Object.values(HC_SPRITES).forEach(hcLoadSprite);
+interface GS {
+  running: boolean; timeLeft: number; sig: Signals;
+  basketX: number; tiltX: number; frame: number; spawnTimer: number;
+  items: FallingItem3D[]; nextId: number;
 }
-
-interface GameState {
-  running: boolean;
-  timeLeft: number;
-  sig: Signals;
-  basketX: number;
-  tiltX: number;
-  items: FallingItem[];
-  particles: Particle[];
-  scoreFloats: ScoreFloat[];
-  bgLeaves: BgLeaf[];
-  spawnTimer: number;
-  spawnInterval: number;
-  redFlashUntil: number;
-  scoreShakeUntil: number;
-  cornSeq: number;          // 0=none, 1=turkey caught, 2=+pie, triggers on corn
-  cornucopiaUntil: number;  // ms timestamp when bonus ends
-  cornucopiaOverlayUntil: number;
-  accentColor: string;
-  nextUid: number;
-  // Change-guards for rAF → React setState syncing
-  lastScoreDisplayed: number;
-  lastStreakDisplayed: number;
-}
-
-// ─── PURE HELPERS (outside component to avoid stale closures) ────────────────
-
-function roundRect(
-  ctx: CanvasRenderingContext2D,
-  x: number, y: number,
-  w: number, h: number,
-  r: number,
-) {
-  ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.lineTo(x + w - r, y);
-  ctx.arcTo(x + w, y, x + w, y + r, r);
-  ctx.lineTo(x + w, y + h - r);
-  ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
-  ctx.lineTo(x + r, y + h);
-  ctx.arcTo(x, y + h, x, y + h - r, r);
-  ctx.lineTo(x, y + r);
-  ctx.arcTo(x, y, x + r, y, r);
-  ctx.closePath();
-}
-
-function drawBasket(
-  ctx: CanvasRenderingContext2D,
-  cx: number,
-  y: number,
-  w: number,
-  accent: string,
-) {
-  const hw = w / 2;
-
-  // ── Main basket body (trapezoid shape) ────────────────────────────────────
-  ctx.shadowBlur = 12;
-  ctx.shadowColor = accent + '66';
-
-  ctx.fillStyle = '#7c3a1a';
-  ctx.beginPath();
-  ctx.moveTo(cx - hw, y);
-  ctx.lineTo(cx + hw, y);
-  ctx.lineTo(cx + hw * 0.75, y + 28);
-  ctx.lineTo(cx - hw * 0.75, y + 28);
-  ctx.closePath();
-  ctx.fill();
-
-  // ── Weave stripes ─────────────────────────────────────────────────────────
-  ctx.shadowBlur = 0;
-  ctx.strokeStyle = '#5a2910';
-  ctx.lineWidth = 1.5;
-  for (let i = 0; i < 3; i++) {
-    const ly = y + 7 + i * 8;
-    const lhw = hw - i * 3;
-    ctx.beginPath();
-    ctx.moveTo(cx - lhw, ly);
-    ctx.lineTo(cx + lhw, ly);
-    ctx.stroke();
-  }
-
-  // ── Cornucopia horn on right ──────────────────────────────────────────────
-  ctx.fillStyle = '#9a4520';
-  ctx.beginPath();
-  ctx.moveTo(cx + hw, y + 6);
-  ctx.quadraticCurveTo(cx + hw + 22, y + 16, cx + hw + 16, y + 26);
-  ctx.quadraticCurveTo(cx + hw + 8, y + 30, cx + hw, y + 28);
-  ctx.closePath();
-  ctx.fill();
-
-  // ── Top rim (accent color) ────────────────────────────────────────────────
-  ctx.shadowBlur = 10;
-  ctx.shadowColor = accent;
-  ctx.fillStyle = accent;
-  roundRect(ctx, cx - hw - 2, y - 5, w + 4, 9, 4);
-  ctx.fill();
-  ctx.shadowBlur = 0;
-}
-
-function spawnParticles(
-  particles: Particle[],
-  x: number,
-  y: number,
-  positive: boolean,
-) {
-  const harvestPalette = ['#d97706', '#b45309', '#f59e0b', '#92400e', '#fbbf24'];
-  const count = positive ? 14 : 8;
-  for (let i = 0; i < count; i++) {
-    const angle = (Math.PI * 2 * i) / count + Math.random() * 0.4;
-    const speed = positive ? 2 + Math.random() * 3.5 : 1 + Math.random() * 2;
-    particles.push({
-      x, y,
-      vx: Math.cos(angle) * speed,
-      vy: Math.sin(angle) * speed - (positive ? 2.5 : 0.5),
-      life: 1,
-      color: positive
-        ? harvestPalette[Math.floor(Math.random() * harvestPalette.length)]
-        : '#ef4444',
-      size: positive ? 4 + Math.random() * 4 : 3 + Math.random() * 3,
-    });
-  }
-}
-
-function makeBgLeaves(count: number, canvasH: number): BgLeaf[] {
-  const emojis = ['🍂', '🍁', '🌿'];
-  return Array.from({ length: count }, (_, i) => ({
-    x: Math.random() * 400,
-    y: (Math.random() * canvasH * 1.5) - canvasH * 0.3,
-    rotation: Math.random() * Math.PI * 2,
-    rotSpeed: (Math.random() - 0.5) * 0.035,
-    speed: 0.35 + Math.random() * 0.55,
-    driftAmp: 0.4 + Math.random() * 0.5,
-    driftPhase: Math.random() * Math.PI * 2,
-    size: 14 + Math.random() * 10,
-    alpha: 0.1 + Math.random() * 0.15,
-    emoji: emojis[i % emojis.length],
-  }));
-}
-
-// ─── COMPONENT ────────────────────────────────────────────────────────────────
 
 export default function HarvestCatch() {
   const theme        = useBrandTheme();
-  const canvasRef    = useRef<HTMLCanvasElement>(null);
-  const animRef      = useRef(0);
+  const mountRef     = useRef<HTMLDivElement>(null);
   const timerRef     = useRef<ReturnType<typeof setInterval> | null>(null);
   const stopMusicRef = useRef<(() => void) | null>(null);
   const tiltRef      = useRef<ReturnType<typeof createTiltController> | null>(null);
-  const touchActiveRef = useRef(false);
-  const touchBasketXRef = useRef<number | null>(null);
-
-  const stateRef = useRef<GameState>({
-    running: false,
-    timeLeft: DURATION,
-    sig: {
-      score: 0, turkeyCaught: 0, negativeItemsCaught: 0,
-      goldenTurkeyCaught: 0, maxStreak: 0, streakCurrent: 0, cornucopiaTriggers: 0,
-    },
-    basketX: 200,
-    tiltX: 0,
-    items: [],
-    particles: [],
-    scoreFloats: [],
-    bgLeaves: [],
-    spawnTimer: 0,
-    spawnInterval: 70,
-    redFlashUntil: 0,
-    scoreShakeUntil: 0,
-    cornSeq: 0,
-    cornucopiaUntil: 0,
-    cornucopiaOverlayUntil: 0,
-    accentColor: ACCENT,
-    nextUid: 0,
-    lastScoreDisplayed: 0,
-    lastStreakDisplayed: 0,
+  const touchRef     = useRef<number | null>(null);
+  const stateRef = useRef<GS>({
+    running: false, timeLeft: DURATION,
+    sig: { score: 0, turkeyCaught: 0, negativeItemsCaught: 0, maxStreak: 0, streakCurrent: 0 },
+    basketX: 0, tiltX: 0, frame: 0, spawnTimer: 0, items: [], nextId: 0,
   });
+  const threeRef = useRef<{
+    renderer: THREE.WebGLRenderer; scene: THREE.Scene; camera: THREE.PerspectiveCamera;
+    basket: THREE.Group; basketLight: THREE.PointLight;
+    particles: Array<{ mesh: THREE.Mesh; vx: number; vy: number; vz: number; life: number; color: number }>;
+    animId: number;
+  } | null>(null);
 
-  const phaseRef                        = useRef<Phase>('start');
   const [phase, setPhase]               = useState<Phase>('start');
-  const [showInstructions, setShowInstructions] = useState(true);
   const [timeLeft, setTimeLeft]         = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
-  const [streakDisplay, setStreakDisplay] = useState(0);
   const [finalSig, setFinalSig]         = useState<Signals | null>(null);
-  const [playerName, setPlayerName]     = useState('');
-  const [playerAvatar, setPlayerAvatar] = useState('🎮');
-  const { pops, triggerPop } = useScorePop();
-  const [streak, setStreak] = useState(0);
-  const [isNewBest, setIsNewBest] = useState(false);
-  const prevScoreRef = useRef(0);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => {
-    const numScore = typeof scoreDisplay === 'number' ? scoreDisplay : 0;
-    if (numScore > prevScoreRef.current) {
-      triggerPop(`+${numScore - prevScoreRef.current}`, window.innerWidth / 2, 200);
-      hapticScore();
-      playScoreHit('default', numScore - prevScoreRef.current);
-      setStreak(Math.floor(numScore / 5));
-    }
-    prevScoreRef.current = numScore;
-  }, [scoreDisplay]); // triggerPop is stable
-  const [touchFallback, setTouchFallback] = useState(false);
-  const playerSessionRef = useRef<PlayerSession | null>(null);
-
-  useEffect(() => {
-    stateRef.current.accentColor = theme.colors.accent ?? ACCENT;
-  }, [theme]);
-
-  // ─── SPAWN ITEM ──────────────────────────────────────────────────────────────
-
-  const spawnItem = useCallback((canvas: HTMLCanvasElement) => {
-    const s = stateRef.current;
-    const cornActive = Date.now() < s.cornucopiaUntil;
-    const def = pickItemDef(cornActive);
-    const margin = 30;
-    const item: FallingItem = {
-      uid: s.nextUid++,
-      defId: def.id,
-      emoji: def.emoji,
-      points: def.points,
-      label: def.label,
-      good: def.good,
-      x: margin + Math.random() * (window.innerWidth - margin * 2),
-      y: -35,
-      speed: def.baseSpeed * (0.8 + Math.random() * 0.4),
-      rotation: Math.random() * Math.PI * 2,
-      rotSpeed: (Math.random() - 0.5) * (def.id === 'leaf' ? 0.04 : 0.07),
-      driftAmp: def.id === 'leaf' ? 0.7 + Math.random() * 0.5 : 0,
-      driftPhase: Math.random() * Math.PI * 2,
-      size: def.id === 'golden_turkey' ? 36 : 30,
-    };
-    s.items.push(item);
-  }, []);
-
-  // ─── END GAME ────────────────────────────────────────────────────────────────
+  const playerSessionRef                = useRef<PlayerSession | null>(null);
 
   const endGame = useCallback(() => {
-    const s = stateRef.current;
-    s.running = false;
-    cancelAnimationFrame(animRef.current);
+    const s = stateRef.current; s.running = false;
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
     if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
     if (tiltRef.current) { tiltRef.current.stop(); tiltRef.current = null; }
-    // Personal best tracking
-    try {
-      const _pbPrev = parseInt(localStorage.getItem(PB_KEY) || '0', 10);
-      const _pbVal = parseFloat(String(s.sig?.score ?? 0));
-      if (!isNaN(_pbVal) && _pbVal > _pbPrev) {
-        localStorage.setItem(PB_KEY, String(Math.round(_pbVal)));
-        setIsNewBest(true);
-      }
-    } catch { /* ignore */ }
-
-
-    setFinalSig({ ...s.sig });
-    phaseRef.current = 'done';
-    setPhase('done');
+    const t = threeRef.current;
+    if (t) { cancelAnimationFrame(t.animId); t.renderer.dispose(); }
+    setFinalSig({ ...s.sig }); setPhase('done'); hapticVictory();
   }, []);
 
-  // ─── GAME LOOP ────────────────────────────────────────────────────────────────
+  const spawnItem = useCallback((scene: THREE.Scene): FallingItem3D => {
+    const s = stateRef.current;
+    const def = ITEM_DEFS[Math.floor(Math.random() * ITEM_DEFS.length)];
+    const geo = def.id === 'turkey' ? new THREE.BoxGeometry(def.r*2, def.r*1.5, def.r*2) : new THREE.SphereGeometry(def.r, 12, 10);
+    const mat = new THREE.MeshStandardMaterial({ color: def.color, emissive: def.color, emissiveIntensity: def.good ? 0.2 : 0.1, roughness: 0.5, metalness: 0.2 });
+    const mesh = new THREE.Mesh(geo, mat);
+    const x = (Math.random() - 0.5) * 7;
+    mesh.position.set(x, 7, 0);
+    scene.add(mesh);
+    const light = new THREE.PointLight(def.color, def.good ? 0.8 : 0.4, 2);
+    light.position.set(x, 7, 0);
+    scene.add(light);
+    const spd = 0.04 + Math.random() * 0.02;
+    return { mesh, light, x, y: 7, z: 0, vx: (Math.random()-0.5)*0.02, vy: -spd, points: def.pts, good: def.good, id: s.nextId++ };
+  }, []);
 
   const startLoop = useCallback(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    // ⚠️ Critical: size canvas to actual DOM dimensions.
-    // The canvas resize useEffect may have run before the canvas was in the DOM (phase='start'),
-    // so we must size it here when the canvas is guaranteed to be present.
-    const dpr = window.devicePixelRatio || 1;
-    const w = window.innerWidth;
-    const h = window.innerHeight;
-    canvas.style.width  = w + 'px';
-    canvas.style.height = h + 'px';
-    canvas.width  = w * dpr;
-    canvas.height = h * dpr;
-    const ctx2 = canvas.getContext('2d');
-    if (ctx2) ctx2.setTransform(dpr, 0, 0, dpr, 0, 0);
-
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+    const mount = mountRef.current; if (!mount) return;
     const s = stateRef.current;
-
-    // Reset state
-    s.running = true;
-    s.timeLeft = DURATION;
-    s.sig = {
-      score: 0, turkeyCaught: 0, negativeItemsCaught: 0,
-      goldenTurkeyCaught: 0, maxStreak: 0, streakCurrent: 0, cornucopiaTriggers: 0,
-    };
-    s.basketX = window.innerWidth / 2;
-    s.tiltX = 0;
-    s.items = [];
-    s.particles = [];
-    s.scoreFloats = [];
-    s.bgLeaves = makeBgLeaves(18, window.innerHeight);
-    s.spawnTimer = 0;
-    s.spawnInterval = 70;
-    s.redFlashUntil = 0;
-    s.scoreShakeUntil = 0;
-    s.cornSeq = 0;
-    s.cornucopiaUntil = 0;
-    s.cornucopiaOverlayUntil = 0;
-    s.nextUid = 0;
-    s.lastScoreDisplayed = 0;
-    s.lastStreakDisplayed = 0;
-    touchBasketXRef.current = null;
-
-    setScoreDisplay(0);
-    setStreakDisplay(0);
-    setTimeLeft(DURATION);
-    phaseRef.current = 'playing';
-    setPhase('playing');
-
+    s.running = true; s.timeLeft = DURATION;
+    s.sig = { score: 0, turkeyCaught: 0, negativeItemsCaught: 0, maxStreak: 0, streakCurrent: 0 };
+    s.basketX = 0; s.tiltX = 0; s.frame = 0; s.spawnTimer = 0; s.items = []; s.nextId = 0;
+    setScoreDisplay(0); setTimeLeft(DURATION); setPhase('playing');
     stopMusicRef.current = startMusic('calm');
 
+    const W = mount.clientWidth, H = mount.clientHeight;
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(W, H); renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setClearColor(0x1a0d00);
+    mount.innerHTML = ''; mount.appendChild(renderer.domElement);
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x1a0d00);
+    scene.fog = new THREE.Fog(0x1a0d00, 15, 30);
+    const camera = new THREE.PerspectiveCamera(65, W / H, 0.1, 100);
+    camera.position.set(0, 0, 12);
+
+    scene.add(new THREE.AmbientLight(0xfff0cc, 0.5));
+    const sunLight = new THREE.DirectionalLight(0xffd580, 1.0);
+    sunLight.position.set(5, 10, 5);
+    scene.add(sunLight);
+    const basketLight = new THREE.PointLight(ACCENT, 2, 5);
+    scene.add(basketLight);
+
+    // Stars/embers in background
+    const starPos = new Float32Array(300 * 3);
+    for (let i = 0; i < 300; i++) { starPos[i*3] = (Math.random()-0.5)*20; starPos[i*3+1] = (Math.random()-0.5)*15; starPos[i*3+2] = -5 - Math.random()*10; }
+    const starGeo = new THREE.BufferGeometry(); starGeo.setAttribute('position', new THREE.BufferAttribute(starPos, 3));
+    scene.add(new THREE.Points(starGeo, new THREE.PointsMaterial({ color: 0xf97316, size: 0.04, transparent: true, opacity: 0.25 })));
+
+    // Basket
+    const basketGroup = new THREE.Group();
+    const basketGeo = new THREE.CylinderGeometry(0.9, 0.7, 0.8, 12);
+    const basketMat = new THREE.MeshStandardMaterial({ color: 0x7c3a1a, roughness: 0.8, metalness: 0.1 });
+    const basketBody = new THREE.Mesh(basketGeo, basketMat);
+    basketGroup.add(basketBody);
+    // Basket rim
+    const rimGeo = new THREE.TorusGeometry(0.92, 0.07, 8, 24);
+    const rim = new THREE.Mesh(rimGeo, new THREE.MeshStandardMaterial({ color: ACCENT, emissive: ACCENT, emissiveIntensity: 0.4, metalness: 0.5 }));
+    rim.rotation.x = Math.PI / 2; rim.position.y = 0.4;
+    basketGroup.add(rim);
+    basketGroup.position.set(0, -4.5, 0);
+    scene.add(basketGroup);
+
+    const particles: Array<{ mesh: THREE.Mesh; vx: number; vy: number; vz: number; life: number; color: number }> = [];
+    const obj = { renderer, scene, camera, basket: basketGroup, basketLight, particles, animId: 0 };
+    threeRef.current = obj;
+
     timerRef.current = setInterval(() => {
-      s.timeLeft--;
-      setTimeLeft(s.timeLeft);
-      if (s.timeLeft <= 5 && s.timeLeft > 0) sfx.tick();
-      if (s.timeLeft <= 0) {
-        sfx.success(); // Thanksgiving harvest game ends in celebration, not failure
-        haptic([300]);
-        endGame();
-      }
+      s.timeLeft--; setTimeLeft(s.timeLeft);
+      if (s.timeLeft <= 0) { sfx.success?.(); endGame(); }
     }, 1000);
 
-    const loop = () => {
+    // Tilt controller
+    const tiltCtrl = createTiltController((x) => { s.tiltX = x; }, { sensitivity: 0.8, clamp: 25, smoothing: 0.45 });
+    tiltCtrl.start(); tiltRef.current = tiltCtrl;
+
+    const BASKET_HALF = 0.9, BOUNDS = 4.5, CATCH_Y = -4.0, ITEM_GONE_Y = -6;
+    const animate = () => {
+      obj.animId = requestAnimationFrame(animate);
       if (!s.running) return;
-      const W = window.innerWidth;
-      const H = window.innerHeight;
-      const now = Date.now();
+      s.frame++;
 
-      // ── Move basket ─────────────────────────────────────────────────────────
-      if (touchActiveRef.current && touchBasketXRef.current !== null) {
-        // Touch override — direct position
-        s.basketX = touchBasketXRef.current;
+      // Move basket
+      if (touchRef.current !== null) {
+        s.basketX = touchRef.current;
       } else {
-        // Tilt control
-        const tilt = tiltRef.current ? tiltRef.current.getValues() : { x: 0, y: 0 };
-        s.tiltX = tilt.x;
-        s.basketX += s.tiltX * 6 * (W / 400);
+        s.basketX += s.tiltX * 0.06;
       }
-      const hw = BASKET_WIDTH / 2;
-      s.basketX = Math.max(hw + 12, Math.min(W - hw - 12, s.basketX));
+      s.basketX = Math.max(-BOUNDS, Math.min(BOUNDS, s.basketX));
+      basketGroup.position.x = s.basketX;
+      basketLight.position.set(s.basketX, -3.5, 1);
 
-      // ── Spawn items ─────────────────────────────────────────────────────────
+      // Spawn items
       s.spawnTimer++;
-      if (s.spawnTimer >= s.spawnInterval) {
+      const spawnInterval = Math.max(40, 80 - s.sig.turkeyCaught * 2);
+      if (s.spawnTimer >= spawnInterval) {
         s.spawnTimer = 0;
-        spawnItem(canvas);
-        const elapsed = DURATION - s.timeLeft;
-        s.spawnInterval = Math.max(32, 70 - elapsed * 0.6);
+        s.items.push(spawnItem(scene));
       }
 
-      // ── Update background leaves ────────────────────────────────────────────
-      for (const leaf of s.bgLeaves) {
-        leaf.y += leaf.speed;
-        leaf.rotation += leaf.rotSpeed;
-        leaf.x += Math.sin(leaf.y * 0.015 + leaf.driftPhase) * leaf.driftAmp;
-        if (leaf.y > H + 50) {
-          leaf.y = -50;
-          leaf.x = Math.random() * W;
-        }
-      }
+      // Update items
+      for (let i = s.items.length - 1; i >= 0; i--) {
+        const item = s.items[i];
+        item.y += item.vy;
+        item.x += item.vx;
+        item.mesh.position.set(item.x, item.y, item.z);
+        item.light.position.set(item.x, item.y, 1);
+        item.mesh.rotation.x += 0.02; item.mesh.rotation.z += 0.015;
 
-      // ── Background — rich autumn harvest gradient ────────────────────────────
-      const hcBg = ctx.createRadialGradient(W * 0.5, H * 0.3, 0, W * 0.5, H * 0.65, Math.max(W, H) * 0.9);
-      hcBg.addColorStop(0,   '#1a0d00');
-      hcBg.addColorStop(0.55, '#0e0800');
-      hcBg.addColorStop(1,   '#060400');
-      ctx.fillStyle = hcBg;
-      ctx.fillRect(0, 0, W, H);
-
-      // Warm amber vignette edges
-      const vg = ctx.createRadialGradient(W / 2, H * 0.45, H * 0.08, W / 2, H * 0.45, H * 0.85);
-      vg.addColorStop(0, 'rgba(0,0,0,0)');
-      vg.addColorStop(1, 'rgba(130, 50, 0, 0.38)');
-      ctx.fillStyle = vg;
-      ctx.fillRect(0, 0, W, H);
-
-      // ── Draw background leaves ───────────────────────────────────────────────
-      ctx.save();
-      for (const leaf of s.bgLeaves) {
-        ctx.save();
-        ctx.globalAlpha = leaf.alpha;
-        ctx.translate(leaf.x, leaf.y);
-        ctx.rotate(leaf.rotation);
-        ctx.font = `${leaf.size}px serif`;
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(leaf.emoji, 0, 0);
-        ctx.restore();
-      }
-      ctx.restore();
-
-      // ── Catch zone & falling items ────────────────────────────────────────
-      const catchY = H - CATCH_Y_FROM_BOTTOM;
-      const removeUids = new Set<number>();
-
-      for (const item of s.items) {
-        item.y += item.speed;
-        item.rotation += item.rotSpeed;
-
-        // Leaf drift
-        if (item.driftAmp > 0) {
-          item.x += Math.sin(now * 0.002 + item.driftPhase) * item.driftAmp;
-        }
-
-        // ── Catch detection ─────────────────────────────────────────────────
-        if (item.y >= catchY && !removeUids.has(item.uid)) {
-          if (item.x >= s.basketX - hw && item.x <= s.basketX + hw) {
-            // CAUGHT
-            removeUids.add(item.uid);
-
-            if (item.good) {
-              s.sig.score += item.points;
-              s.sig.streakCurrent++;
-              if (s.sig.streakCurrent > s.sig.maxStreak) s.sig.maxStreak = s.sig.streakCurrent;
-
-              if (item.defId === 'turkey')        s.sig.turkeyCaught++;
-              if (item.defId === 'golden_turkey') s.sig.goldenTurkeyCaught++;
-
-              // ── Cornucopia sequence ─────────────────────────────────────
-              if (item.defId === 'turkey'  && s.cornSeq === 0) s.cornSeq = 1;
-              else if (item.defId === 'pie'   && s.cornSeq === 1) s.cornSeq = 2;
-              else if (item.defId === 'corn'  && s.cornSeq === 2) {
-                s.cornSeq = 0;
-                s.sig.cornucopiaTriggers++;
-                s.sig.score += 5;
-                s.cornucopiaUntil = now + 5000;
-                s.cornucopiaOverlayUntil = now + 2200;
-                sfx.defuse();
-                haptic([30, 50, 30, 50, 100]);
-              }
-
-              spawnParticles(s.particles, item.x, catchY, true);
-
-              if (item.defId === 'turkey' || item.defId === 'golden_turkey') {
-                sfx.success();
-              } else {
-                sfx.collect();
-              }
-              haptic([30]);
-            } else {
-              // Negative catch
-              s.sig.score += item.points;
-              s.sig.negativeItemsCaught++;
-              s.sig.streakCurrent = 0;
-              s.redFlashUntil = now + 450;
-              s.scoreShakeUntil = now + 550;
-              spawnParticles(s.particles, item.x, catchY, false);
-              sfx.collision();
-              haptic([200]);
+        // Catch check
+        if (item.y <= CATCH_Y && item.y >= CATCH_Y - 0.5 && Math.abs(item.x - s.basketX) <= BASKET_HALF + 0.2) {
+          // Caught!
+          if (item.good) {
+            s.sig.score += item.points;
+            s.sig.streakCurrent++;
+            if (s.sig.streakCurrent > s.sig.maxStreak) s.sig.maxStreak = s.sig.streakCurrent;
+            if (item.mesh.geometry instanceof THREE.BoxGeometry) s.sig.turkeyCaught++;
+            setScoreDisplay(s.sig.score);
+            sfx.collect?.(); hapticScore();
+            // Particles
+            for (let p = 0; p < 6; p++) {
+              const pGeo = new THREE.SphereGeometry(0.06, 6, 6);
+              const pMesh = new THREE.Mesh(pGeo, new THREE.MeshBasicMaterial({ color: ACCENT, transparent: true, opacity: 0.9 }));
+              pMesh.position.set(item.x, CATCH_Y, 0);
+              scene.add(pMesh);
+              const angle = (p / 6) * Math.PI * 2;
+              particles.push({ mesh: pMesh, vx: Math.cos(angle)*0.06, vy: Math.abs(Math.sin(angle))*0.08+0.04, vz: 0, life: 1, color: ACCENT });
             }
-
-            // Change-guarded: only re-render when values actually change
-            if (s.sig.score !== s.lastScoreDisplayed) {
-              s.lastScoreDisplayed = s.sig.score;
-              setScoreDisplay(s.sig.score);
-            }
-            if (s.sig.streakCurrent !== s.lastStreakDisplayed) {
-              s.lastStreakDisplayed = s.sig.streakCurrent;
-              setStreakDisplay(s.sig.streakCurrent);
-            }
-
-            // Score float
-            s.scoreFloats.push({
-              x: item.x,
-              y: catchY - 10,
-              text: `${item.good ? '+' : ''}${item.points} ${item.defId === 'golden_turkey' ? '✨🦃' : item.emoji}`,
-              life: 1,
-              color: item.good ? '#fbbf24' : '#ef4444',
-            });
+          } else {
+            s.sig.score += item.points;
+            s.sig.negativeItemsCaught++;
+            s.sig.streakCurrent = 0;
+            setScoreDisplay(s.sig.score);
+            sfx.fail?.(); hapticFail();
           }
+          scene.remove(item.mesh); scene.remove(item.light);
+          s.items.splice(i, 1); continue;
         }
-
-        // Remove off-screen
-        if (item.y > H + 50) removeUids.add(item.uid);
+        if (item.y <= ITEM_GONE_Y) { scene.remove(item.mesh); scene.remove(item.light); s.items.splice(i, 1); }
       }
 
-      if (removeUids.size > 0) {
-        s.items = s.items.filter(i => !removeUids.has(i.uid));
+      // Particles
+      for (let i = particles.length - 1; i >= 0; i--) {
+        const p = particles[i];
+        p.mesh.position.x += p.vx; p.mesh.position.y += p.vy; p.mesh.position.z += p.vz;
+        p.vy -= 0.004; p.life -= 0.04;
+        (p.mesh.material as THREE.MeshBasicMaterial).opacity = Math.max(0, p.life);
+        if (p.life <= 0) { scene.remove(p.mesh); particles.splice(i, 1); }
       }
 
-      // ── Draw falling items ───────────────────────────────────────────────
-      ctx.save();
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      for (const item of s.items) {
-        ctx.save();
-        ctx.translate(item.x, item.y);
-        ctx.rotate(item.rotation);
-        if (item.defId === 'golden_turkey') {
-          ctx.shadowBlur = 22;
-          ctx.shadowColor = '#fbbf24';
-        }
-        const spriteSrc = HC_SPRITES[item.defId];
-        const spriteImg = spriteSrc ? hcLoadSprite(spriteSrc) : null;
-        if (spriteImg && spriteImg.complete && spriteImg.naturalWidth > 0) {
-          const half = item.size / 2;
-          ctx.drawImage(spriteImg, -half, -half, item.size, item.size);
-        } else {
-          ctx.font = `${item.size}px serif`;
-          ctx.fillText(item.emoji, 0, 0);
-        }
-        ctx.shadowBlur = 0;
-        ctx.restore();
-      }
-      ctx.restore();
-
-      // ── Draw basket ──────────────────────────────────────────────────────
-      drawBasket(ctx, s.basketX, catchY, BASKET_WIDTH, s.accentColor);
-
-      // ── Particles ────────────────────────────────────────────────────────
-      ctx.save();
-      for (let i = s.particles.length - 1; i >= 0; i--) {
-        const p = s.particles[i];
-        p.x += p.vx;
-        p.y += p.vy;
-        p.vy += 0.18;
-        p.life -= 0.038;
-        if (p.life <= 0) { s.particles.splice(i, 1); continue; }
-        ctx.globalAlpha = p.life;
-        ctx.fillStyle = p.color;
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, p.size * p.life, 0, Math.PI * 2);
-        ctx.fill();
-      }
-      ctx.globalAlpha = 1;
-      ctx.restore();
-
-      // ── Score floats ─────────────────────────────────────────────────────
-      ctx.save();
-      for (let i = s.scoreFloats.length - 1; i >= 0; i--) {
-        const f = s.scoreFloats[i];
-        f.y -= 1.6;
-        f.life -= 0.022;
-        if (f.life <= 0) { s.scoreFloats.splice(i, 1); continue; }
-        ctx.globalAlpha = f.life;
-        ctx.font = 'bold 20px serif';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.shadowBlur = 8;
-        ctx.shadowColor = f.color;
-        ctx.fillStyle = f.color;
-        ctx.fillText(f.text, f.x, f.y);
-        ctx.shadowBlur = 0;
-      }
-      ctx.globalAlpha = 1;
-      ctx.restore();
-
-      // ── Score shake: red tint at top of canvas (near HUD) on bad catch ──────
-      if (now < s.scoreShakeUntil) {
-        const t = (s.scoreShakeUntil - now) / 550;
-        ctx.fillStyle = `rgba(239,68,68,${t * 0.18})`;
-        ctx.fillRect(0, 0, W, 88); // top strip only — aligns with HUD
-      }
-
-      // ── Red flash overlay ─────────────────────────────────────────────────
-      if (now < s.redFlashUntil) {
-        const t = (s.redFlashUntil - now) / 450;
-        ctx.fillStyle = `rgba(239,68,68,${t * 0.28})`;
-        ctx.fillRect(0, 0, W, H);
-      }
-
-      // ── Cornucopia overlay (big reveal) ───────────────────────────────────
-      if (now < s.cornucopiaOverlayUntil) {
-        const t = (s.cornucopiaOverlayUntil - now) / 2200;
-        const pulse = Math.sin(now * 0.012) * 0.5 + 0.5;
-
-        // Golden shimmer
-        ctx.fillStyle = `rgba(251,191,36,${t * 0.14 * (0.6 + pulse * 0.4)})`;
-        ctx.fillRect(0, 0, W, H);
-
-        // Text banner
-        const alpha = Math.min(1, t * 2.5);
-        const scale = 1 + (1 - t) * 0.25;
-        ctx.save();
-        ctx.translate(W / 2, H / 2 - 50);
-        ctx.scale(scale, scale);
-        ctx.font = 'bold 34px serif';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.shadowBlur = 30;
-        ctx.shadowColor = '#fbbf24';
-        ctx.fillStyle = `rgba(255,220,50,${alpha})`;
-        ctx.fillText('CORNUCOPIA! 🌽', 0, 0);
-        ctx.font = 'bold 20px serif';
-        ctx.fillStyle = `rgba(255,240,180,${alpha * 0.85})`;
-        ctx.fillText('+5 bonus • Good vibes only!', 0, 44);
-        ctx.shadowBlur = 0;
-        ctx.restore();
-      }
-
-      // ── Cornucopia active banner (subtle, after main overlay) ─────────────
-      if (now >= s.cornucopiaOverlayUntil && now < s.cornucopiaUntil) {
-        const remaining = (s.cornucopiaUntil - now) / 5000;
-        ctx.fillStyle = `rgba(251,191,36,${remaining * 0.07})`;
-        ctx.fillRect(0, 0, W, H);
-        ctx.save();
-        ctx.font = '13px serif';
-        ctx.textAlign = 'center';
-        ctx.fillStyle = `rgba(255,200,50,0.75)`;
-        ctx.fillText('🌽 CORNUCOPIA BONUS ACTIVE!', W / 2, 72);
-        ctx.restore();
-      }
-
-      animRef.current = requestAnimationFrame(loop);
+      // Basket sway
+      basketGroup.rotation.z = Math.sin(s.frame * 0.04) * 0.04;
+      renderer.render(scene, camera);
     };
+    animate();
 
-    animRef.current = requestAnimationFrame(loop);
-  }, [endGame, spawnItem]);
-
-  // ─── CANVAS RESIZE LISTENER ───────────────────────────────────────────────
-  // ⚠️ Do NOT capture canvasRef.current here — canvas may not be in DOM when
-  // this effect runs (phase='start'). Canvas is sized explicitly in startLoop.
-  // This effect only registers the resize listener for mid-game window resizes.
-
-  useEffect(() => {
     const handleResize = () => {
-      const canvas = canvasRef.current;
-      if (!canvas) return;
-      const dpr = window.devicePixelRatio || 1;
-      const w = window.innerWidth;
-      const h = window.innerHeight;
-      canvas.style.width  = w + 'px';
-      canvas.style.height = h + 'px';
-      canvas.width  = w * dpr;
-      canvas.height = h * dpr;
-      const ctx2 = canvas.getContext('2d');
-      if (ctx2) ctx2.setTransform(dpr, 0, 0, dpr, 0, 0);
-      if (stateRef.current.running) {
-        stateRef.current.bgLeaves = makeBgLeaves(18, window.innerHeight);
-      }
+      const w = mount.clientWidth, h = mount.clientHeight;
+      camera.aspect = w / h; camera.updateProjectionMatrix(); renderer.setSize(w, h);
     };
     window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
-  }, []);
-
-  // ─── TOUCH FALLBACK ───────────────────────────────────────────────────────
-  // ⚠️ Keep [phase] dependency: canvas enters DOM on phase='countdown', so the
-  // effect must re-run then to find the canvas. Use phaseRef inside handlers
-  // (not the closure-captured `phase`) to avoid stale closure issues.
+  }, [endGame, spawnItem]);
 
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    const onTouchStart = (e: TouchEvent) => {
-      if (phaseRef.current !== 'playing') return;
-      touchActiveRef.current = true;
-      const rect = canvas.getBoundingClientRect();
-      touchBasketXRef.current = e.touches[0].clientX - rect.left;
-    };
+    const mount = mountRef.current; if (!mount || phase !== 'playing') return;
     const onTouchMove = (e: TouchEvent) => {
-      if (!touchActiveRef.current || phaseRef.current !== 'playing') return;
       e.preventDefault();
-      const rect = canvas.getBoundingClientRect();
-      touchBasketXRef.current = e.touches[0].clientX - rect.left;
+      const rect = mount.getBoundingClientRect();
+      const tx = (e.touches[0].clientX - rect.left) / rect.width * 9 - 4.5;
+      touchRef.current = tx;
     };
-    const onTouchEnd = () => {
-      touchActiveRef.current = false;
-      touchBasketXRef.current = null;
-    };
+    const onTouchEnd = () => { touchRef.current = null; };
+    mount.addEventListener('touchmove', onTouchMove, { passive: false });
+    mount.addEventListener('touchend', onTouchEnd);
+    return () => { mount.removeEventListener('touchmove', onTouchMove); mount.removeEventListener('touchend', onTouchEnd); };
+  }, [phase]);
 
-    canvas.addEventListener('touchstart',  onTouchStart, { passive: true });
-    canvas.addEventListener('touchmove',   onTouchMove,  { passive: false });
-    canvas.addEventListener('touchend',    onTouchEnd);
-    canvas.addEventListener('touchcancel', onTouchEnd);
-
-    return () => {
-      canvas.removeEventListener('touchstart',  onTouchStart);
-      canvas.removeEventListener('touchmove',   onTouchMove);
-      canvas.removeEventListener('touchend',    onTouchEnd);
-      canvas.removeEventListener('touchcancel', onTouchEnd);
-    };
-  }, [phase]); // ← intentional: re-run when canvas enters DOM on phase change
-
-  // ─── CLEANUP ON UNMOUNT ───────────────────────────────────────────────────
-
-  useEffect(() => {
-    return () => {
-      cancelAnimationFrame(animRef.current);
-      if (timerRef.current) clearInterval(timerRef.current);
-      if (stopMusicRef.current) stopMusicRef.current();
-      if (tiltRef.current) tiltRef.current.stop();
-    };
+  useEffect(() => () => {
+    if (timerRef.current) clearInterval(timerRef.current);
+    if (stopMusicRef.current) stopMusicRef.current();
+    if (tiltRef.current) tiltRef.current.stop();
+    const t = threeRef.current;
+    if (t) { cancelAnimationFrame(t.animId); t.renderer.dispose(); }
   }, []);
-
-  // ─── PHASE TRANSITIONS ────────────────────────────────────────────────────
 
   const handleStart = useCallback(async (name: string, avatar: string) => {
-    setPlayerName(name);
-    setPlayerAvatar(avatar);
-    await initAudio();
     playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar);
-
-    const controller = createTiltController(
-      (x: number) => { stateRef.current.tiltX = x; },
-      { sensitivity: 0.9, smoothing: 0.45 },
-    );
-    const granted = await controller.start();
-    if (!granted) setTouchFallback(true);
-    tiltRef.current = controller;
-
-    phaseRef.current = 'countdown';
-    setPhase('countdown');
+    await initAudio(); setPhase('countdown');
   }, []);
-
-  const handleCountdownDone = useCallback(() => {
-    startLoop();
-  }, [startLoop]);
-
-  const handlePlayAgain = useCallback(() => {
-    phaseRef.current = 'start';
-    setPhase('start');
-    setScoreDisplay(0);
-    setStreakDisplay(0);
-    setTimeLeft(DURATION);
-    setFinalSig(null);
-  
-    setIsNewBest(false);
-    setStreak(0);
-    prevScoreRef.current = 0;
-  }, []);
-
-  // ─── END SCREEN INSIGHTS ─────────────────────────────────────────────────
-
-  function buildInsights(sig: Signals) {
-    return [
-      {
-        label: 'Harvest Score',
-        value: String(sig.score),
-        color: ACCENT,
-      },
-      {
-        label: 'Turkeys Caught',
-        value: String(sig.turkeyCaught),
-        color: sig.turkeyCaught >= 5 ? '#4ade80' : 'var(--color-text)',
-      },
-      {
-        label: 'Bad Food Caught',
-        value: String(sig.negativeItemsCaught),
-        color: sig.negativeItemsCaught === 0
-          ? '#4ade80'
-          : sig.negativeItemsCaught >= 5
-            ? '#ef4444'
-            : '#facc15',
-      },
-      {
-        label: 'Best Streak',
-        value: `×${sig.maxStreak}`,
-        color: ACCENT,
-      },
-    ];
-  }
-
-  // ─── RENDER ───────────────────────────────────────────────────────────────
+  const handleCountdownDone = useCallback(() => { startLoop(); }, [startLoop]);
+  const handlePlayAgain = useCallback(() => { setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null); }, []);
+  const buildInsights = (sig: Signals) => [
+    { label: 'Score', value: String(sig.score), color: ACCENT },
+    { label: 'Turkeys', value: String(sig.turkeyCaught), color: '#b45309' },
+    { label: 'Bad Caught', value: String(sig.negativeItemsCaught), color: sig.negativeItemsCaught === 0 ? '#4ade80' : '#ef4444' },
+    { label: 'Best Streak', value: `×${sig.maxStreak}`, color: '#fbbf24' },
+  ];
 
   return (
-    <>
-      {phase === 'start' && showInstructions && (
-        <SwipeInstructions
-          gameId="harvest-catch"
-          steps={[{ icon: "🍎", title: "Catch the harvest", body: "Tilt your device to move the basket." }, { icon: "⭐", title: "Rare items = more", body: "Golden items are worth extra — don't miss them." }, { icon: "🚫", title: "Avoid bad food", body: "Catching brussels sprouts, fruitcake, or bones costs you a life." }]}
-          onDone={() => setShowInstructions(false)}
-        />
-      )}
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT} background="radial-gradient(ellipse at 50% 100%, rgba(120,60,5,0.55) 0%, rgba(60,25,3,0.3) 40%, transparent 70%), radial-gradient(ellipse at 20% 50%, rgba(80,35,2,0.2) 0%, transparent 40%), linear-gradient(180deg, #1a0c02 0%, #150a02 40%, #100801 70%, #0e0701 100%)">
-
-      {/* ── Start Screen ─────────────────────────────────────────────────── */}
-      {phase === 'start' && (
-        <GameStartScreen
-          emoji={GAME_EMOJI}
-          title={GAME_TITLE}
-          description={GAME_TAGLINE}
-          ctaLabel="Allow Motion & Play"
-          ctaTextColor="#000"
-          sensorNote="Tilt your phone left/right to steer the basket"
-          accentColor={theme.colors.accent ?? ACCENT}
-          onStart={handleStart}
-          gradient="radial-gradient(ellipse 80% 70% at 50% 30%, #1a0d00 0%, #0e0700 55%, #060400 100%)"
-        />
-      )}
-
-      {/* ── Countdown ───────────────────────────────────────────────────── */}
-      {phase === 'countdown' && (
-        <Countdown
-          onComplete={handleCountdownDone}
-          accentColor={theme.colors.accent ?? ACCENT}
-        />
-      )}
-
-      {/* ── Playing ─────────────────────────────────────────────────────── */}
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
+      {phase === 'start' && <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description={GAME_TAGLINE} ctaLabel="Allow Motion & Play" accentColor={theme.colors.accent ?? ACCENT} onStart={handleStart} sensorNote="Tilt your phone to steer the basket" />}
+      {phase === 'countdown' && <Countdown onComplete={handleCountdownDone} accentColor={theme.colors.accent ?? ACCENT} />}
       {(phase === 'playing' || phase === 'countdown') && (
         <>
-          <canvas
-            ref={canvasRef}
-            style={{
-              position: 'absolute',
-              inset: 0,
-              width: '100%',
-              height: '100%',
-              touchAction: 'none',
-            }}
-          />
-          {phase === 'playing' && (
-            <GameHUD
-              accentColor={theme.colors.accent ?? ACCENT}
-              items={[
-                { label: 'TIME',       value: timeLeft,      danger: timeLeft <= 10, testId: 'timer' },
-                { label: 'HARVEST 🍁', value: scoreDisplay,  testId: 'score' },
-                { label: 'STREAK 🦃',  value: streakDisplay },
-              ]}
-            />
-          )}
-          {touchFallback && phase === 'playing' && (
-            <div
-              style={{
-                position: 'absolute',
-                bottom: 130,
-                left: 0,
-                right: 0,
-                textAlign: 'center',
-                color: 'rgba(255,200,100,0.55)',
-                fontSize: 12,
-                pointerEvents: 'none',
-              }}
-            >
-              Touch &amp; drag to move the basket
-            </div>
-          )}
+          <div ref={mountRef} style={{ position: 'absolute', inset: 0, touchAction: 'none' }} />
+          {phase === 'playing' && <GameHUD accentColor={theme.colors.accent ?? ACCENT} items={[{ label: 'TIME', value: timeLeft, danger: timeLeft <= 10 }, { label: 'HARVEST 🍁', value: scoreDisplay }]} />}
         </>
       )}
-      {/* New best banner */}
-      <AnimatePresence>
-        {isNewBest && (
-          <motion.div
-            key="new-best"
-            initial={{ opacity: 0, y: -20, scale: 0.8 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -20 }}
-            transition={{ duration: 0.4, delay: 0.5 }}
-            style={{
-              position: 'fixed', top: '10%', left: '50%', transform: 'translateX(-50%)',
-              zIndex: 90, pointerEvents: 'none',
-              background: 'linear-gradient(135deg, #fbbf24, #f59e0b)',
-              borderRadius: 20, padding: '8px 20px', fontSize: 20,
-              fontWeight: 900, color: '#000', whiteSpace: 'nowrap',
-              boxShadow: '0 4px 20px rgba(251,191,36,0.5)',
-            }}
-          >
-            🏆 New Best!
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-
-
-      {/* ── End Screen ──────────────────────────────────────────────────── */}
       {phase === 'done' && finalSig && (
-        <>
-          <EndScreen
-            gameId={GAME_ID}
-            title={getPersonality(finalSig)}
-            emoji={GAME_EMOJI}
-            score={String(finalSig.score)}
-            personality={getPersonality(finalSig)}
-            insights={buildInsights(finalSig)}
-            accentColor={theme.colors.accent ?? ACCENT}
-            onPlayAgain={handlePlayAgain}
-            didWin={finalSig.score >= 20}
-          />
-          <WebhookEmitter
-            theme={theme}
-            sig={finalSig}
-            personality={getPersonality(finalSig)}
-            player={playerSessionRef.current}
-          />
-        </>
+        <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI} score={String(finalSig.score)} personality={getPersonality(finalSig)} insights={buildInsights(finalSig)} accentColor={theme.colors.accent ?? ACCENT} onPlayAgain={handlePlayAgain} didWin={finalSig.score >= 20} />
       )}
-      {phase === 'playing' && (
-        <>
-          <ScorePopEffect pops={pops} accentColor={CATEGORY_ACCENT} />
-          <StreakBadge streak={streakDisplay} accentColor={CATEGORY_ACCENT} />
-        </>
+      {phase === 'done' && finalSig && (
+        <WebhookEmitter theme={theme} sig={finalSig} personality={getPersonality(finalSig)} player={playerSessionRef.current} />
       )}
     </GameShell>
-    </>
   );
 }
 
-// ─── WEBHOOK EMITTER ─────────────────────────────────────────────────────────
-
-function WebhookEmitter({
-  theme,
-  sig,
-  personality,
-  player,
-}: {
-  theme: ReturnType<typeof useBrandTheme>;
-  sig: Signals;
-  personality: string;
-  player: PlayerSession | null;
-}) {
+function WebhookEmitter({ theme, sig, personality, player }: { theme: ReturnType<typeof useBrandTheme>; sig: Signals; personality: string; player: PlayerSession | null; }) {
   const fired = useRef(false);
   useEffect(() => {
-    if (fired.current) return;
-    fired.current = true;
-    postWebhook(theme, GAME_ID, {
-      personality,
-      score:               sig.score,
-      turkeyCaught:        sig.turkeyCaught,
-      negativeItemsCaught: sig.negativeItemsCaught,
-      goldenTurkeyCaught:  sig.goldenTurkeyCaught,
-      maxStreak:           sig.maxStreak,
-      cornucopiaTriggers:  sig.cornucopiaTriggers,
-    }, player);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    if (fired.current) return; fired.current = true;
+    postWebhook(theme, GAME_ID, { personality, score: sig.score, turkeyCaught: sig.turkeyCaught, negativeItemsCaught: sig.negativeItemsCaught, maxStreak: sig.maxStreak }, player);
+  }, [theme, sig, personality, player]);
   return null;
 }

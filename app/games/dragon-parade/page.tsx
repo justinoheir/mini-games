@@ -1,5 +1,10 @@
 'use client';
+/**
+ * DRAGON PARADE — 3D: guide a 3D segmented dragon through gates.
+ * Red and gold festival atmosphere. Follow pointer to steer the dragon.
+ */
 import { useEffect, useRef, useState, useCallback } from 'react';
+import * as THREE from 'three';
 import GameShell from '@/components/GameShell';
 import GameHUD from '@/components/GameHUD';
 import GameStartScreen from '@/components/GameStartScreen';
@@ -18,251 +23,305 @@ const GAME_TITLE = 'Dragon Parade';
 const GAME_TAGLINE = 'Guide the dragon. Make it dance!';
 
 const SEGMENT_COUNT = 14;
-const SEGMENT_DIST  = 22;
-const DRAGON_R      = 18;
+const SEGMENT_DIST  = 0.6;
+const DRAGON_R      = 0.35;
 
-interface Gate { x: number; y: number; w: number; h: number; passed: boolean; frame: number; }
-interface Segment { x: number; y: number; }
+interface Gate3D { mesh:THREE.Group; passed:boolean; z:number; }
+interface Segment3D { mesh:THREE.Mesh; x:number; y:number; z:number; }
 
 interface Signals {
-  gatesPassed: number;
-  bodyCollisions: number;
-  maxStreak: number;
-  streakCurrent: number;
-  score: number;
+  gatesPassed:number; bodyCollisions:number; maxStreak:number; streakCurrent:number; score:number;
 }
 
-function getPersonality(s: Signals): string {
-  if (s.gatesPassed >= 20 && s.bodyCollisions === 0) return 'Dragon Master 🐉';
-  if (s.gatesPassed >= 15)                           return 'Parade Champion 🎊';
-  if (s.bodyCollisions >= 8)                         return 'Wiggly Dragon 🌀';
-  if (s.maxStreak >= 8)                              return 'Rhythm Dancer 🎵';
+function getPersonality(s:Signals):string {
+  if(s.gatesPassed>=20&&s.bodyCollisions===0) return 'Dragon Master 🐉';
+  if(s.gatesPassed>=15)                        return 'Parade Champion 🎊';
+  if(s.bodyCollisions>=8)                      return 'Wiggly Dragon 🌀';
+  if(s.maxStreak>=8)                           return 'Rhythm Dancer 🎵';
   return 'Festival Starter 🏮';
 }
 
-type Phase = 'start'|'countdown'|'playing'|'done';
+type Phase='start'|'countdown'|'playing'|'done';
+
 interface GS {
-  running:boolean; timeLeft:number; sig:Signals; frame:number; accentColor:string;
-  segments:Segment[]; headX:number; headY:number; targetX:number; targetY:number;
-  gates:Gate[]; gateTimer:number; gateSpeed:number;
-  particles:Array<{x:number;y:number;vx:number;vy:number;alpha:number;color:string}>;
+  running:boolean; timeLeft:number; sig:Signals; frame:number;
+  segments:Segment3D[]; headX:number; headY:number; targetX:number; targetY:number;
+  gates:Gate3D[]; gateTimer:number; gateSpeed:number;
+  accentColor:string;
 }
+
+const BODY_COLORS=[0xef4444,0xfbbf24,0xf97316,0xdc2626,0xfde68a];
 
 export default function DragonParadeGame() {
   const theme = useBrandTheme();
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const animRef   = useRef(0);
-  const timerRef  = useRef<ReturnType<typeof setInterval>|null>(null);
+  const accent = theme.colors.accent ?? ACCENT;
+
+  const mountRef    = useRef<HTMLDivElement>(null);
+  const rendererRef = useRef<THREE.WebGLRenderer|null>(null);
+  const sceneRef    = useRef<THREE.Scene|null>(null);
+  const cameraRef   = useRef<THREE.PerspectiveCamera|null>(null);
+  const rafRef      = useRef(0);
+  const timerRef    = useRef<ReturnType<typeof setInterval>|null>(null);
+  const playerSessionRef = useRef<PlayerSession|null>(null);
 
   const stateRef = useRef<GS>({
     running:false,timeLeft:DURATION,
     sig:{gatesPassed:0,bodyCollisions:0,maxStreak:0,streakCurrent:0,score:0},
     frame:0,accentColor:ACCENT,
-    segments:[],headX:200,headY:300,targetX:200,targetY:300,
-    gates:[],gateTimer:0,gateSpeed:2,
-    particles:[],
+    segments:[],headX:0,headY:0,targetX:0,targetY:0,
+    gates:[],gateTimer:0,gateSpeed:0.08,
   });
 
   const [phase,setPhase]        = useState<Phase>('start');
   const [timeLeft,setTimeLeft]  = useState(DURATION);
   const [scoreDisplay,setScore] = useState(0);
   const [finalSig,setFinalSig]  = useState<Signals|null>(null);
-  const playerSessionRef = useRef<PlayerSession|null>(null);
-  useEffect(()=>{ stateRef.current.accentColor=theme.colors.accent??ACCENT; },[theme]);
 
-  const endGame = useCallback(()=>{
-    const s=stateRef.current; s.running=false;
-    cancelAnimationFrame(animRef.current);
-    if(timerRef.current){ clearInterval(timerRef.current); timerRef.current=null; }
-    const pb=parseInt(localStorage.getItem('pb_'+GAME_ID)??"0");
-    if(s.sig.score>pb) localStorage.setItem('pb_'+GAME_ID,String(s.sig.score));
-    setFinalSig({...s.sig}); setPhase('done'); hapticVictory();
-  },[]);
+  useEffect(()=>{stateRef.current.accentColor=accent;},[accent]);
 
-  const startLoop = useCallback(()=>{
-    const canvas=canvasRef.current; if(!canvas) return;
-    const ctx=canvas.getContext('2d'); if(!ctx) return;
-    const s=stateRef.current; const W=canvas.width,H=canvas.height;
-    s.running=true; s.timeLeft=DURATION; s.frame=0; s.gateSpeed=2;
-    s.sig={gatesPassed:0,bodyCollisions:0,maxStreak:0,streakCurrent:0,score:0};
-    s.headX=W/2; s.headY=H/2; s.targetX=W/2; s.targetY=H/2;
-    s.segments=Array.from({length:SEGMENT_COUNT},(_,i)=>({x:W/2-i*SEGMENT_DIST,y:H/2}));
-    s.gates=[]; s.gateTimer=60; s.particles=[];
-    setScore(0); setTimeLeft(DURATION); setPhase('playing');
+  // ── Three.js setup ──────────────────────────────────────────────────────
+  useEffect(()=>{
+    if(!mountRef.current)return;
+    const mount=mountRef.current;
+    const W=mount.clientWidth||window.innerWidth;const H=mount.clientHeight||window.innerHeight;
 
-    timerRef.current=setInterval(()=>{
-      s.timeLeft--; setTimeLeft(s.timeLeft);
-      if(s.timeLeft<=0){ sfx.fail(); endGame(); }
-      if(s.timeLeft===40||s.timeLeft===20) s.gateSpeed+=0.5;
-    },1000);
+    const renderer=new THREE.WebGLRenderer({antialias:true});
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio,2));
+    renderer.setSize(W,H);renderer.setClearColor(0x0d0200);
+    mount.appendChild(renderer.domElement);
+    rendererRef.current=renderer;
 
-    const COLORS=['#ef4444','#fbbf24','#f97316','#dc2626','#fde68a'];
+    const scene=new THREE.Scene();
+    sceneRef.current=scene;
 
-    const loop=()=>{
-      if(!s.running) return; s.frame++;
-      const W=canvas.width,H=canvas.height;
+    const camera=new THREE.PerspectiveCamera(65,W/H,0.1,50);
+    camera.position.set(0,0,10);camera.lookAt(0,0,0);
+    cameraRef.current=camera;
 
-      // Festive red background
-      ctx.fillStyle='#1a0005'; ctx.fillRect(0,0,W,H);
-      // Lantern lights
-      for(let i=0;i<8;i++){
-        const lx=((i*137+s.frame*0.3)%W), ly=20+((i*97)%60);
-        ctx.save(); ctx.shadowBlur=20; ctx.shadowColor='#fbbf24';
-        ctx.fillStyle='#fde68a22'; ctx.beginPath();
-        ctx.arc(lx,ly,12,0,Math.PI*2); ctx.fill();
-        ctx.fillStyle='#fbbf24'; ctx.font='16px sans-serif'; ctx.textAlign='center';
-        ctx.fillText('🏮',lx,ly+6); ctx.restore();
+    scene.add(new THREE.AmbientLight(0xff4400,0.4));
+    const pl=new THREE.PointLight(0xff6600,4,20);pl.position.set(0,3,6);scene.add(pl);
+    scene.add(new THREE.DirectionalLight(0xffd6a0,0.3));
+
+    // Background lanterns
+    for(let i=0;i<8;i++){
+      const geo=new THREE.SphereGeometry(0.25,8,8);
+      const mat=new THREE.MeshStandardMaterial({color:0xef4444,emissive:0xef4444,emissiveIntensity:0.9,transparent:true,opacity:0.8});
+      const m=new THREE.Mesh(geo,mat);
+      m.position.set(-4+i,-2.5+Math.sin(i)*0.5,-5);
+      scene.add(m);
+    }
+
+    // Ground
+    const floorGeo=new THREE.PlaneGeometry(12,20);
+    const floorMat=new THREE.MeshStandardMaterial({color:0x1a0500,roughness:0.9});
+    const floor=new THREE.Mesh(floorGeo,floorMat);floor.rotation.x=-Math.PI/2;floor.position.y=-2;
+    scene.add(floor);
+
+    // Build dragon segments
+    const buildDragon=(s:GS)=>{
+      s.segments.forEach(seg=>scene.remove(seg.mesh));
+      s.segments=[];
+      for(let i=0;i<SEGMENT_COUNT;i++){
+        const isHead=i===0;
+        const geo=isHead?new THREE.SphereGeometry(DRAGON_R*1.3,12,12):new THREE.SphereGeometry(DRAGON_R*(1-i/SEGMENT_COUNT*0.4),10,10);
+        const col=BODY_COLORS[i%BODY_COLORS.length];
+        const mat=new THREE.MeshStandardMaterial({color:col,metalness:0.2,roughness:0.5,emissive:col,emissiveIntensity:0.3});
+        const mesh=new THREE.Mesh(geo,mat);
+        const x=-i*SEGMENT_DIST;
+        mesh.position.set(x,0,0);
+        scene.add(mesh);
+        s.segments.push({mesh,x,y:0,z:0});
       }
+      // Horns on head
+      const hornGeo=new THREE.ConeGeometry(0.06,0.3,6);
+      const hornMat=new THREE.MeshStandardMaterial({color:0xfbbf24,emissive:0xf59e0b,emissiveIntensity:0.8});
+      [-0.2,0.2].forEach(ox=>{const h=new THREE.Mesh(hornGeo,hornMat.clone());h.position.set(ox,0.4,0);if(s.segments[0])s.segments[0].mesh.add(h);});
+      // Eyes
+      const eyeGeo=new THREE.SphereGeometry(0.07,6,6);
+      const eyeMat=new THREE.MeshStandardMaterial({color:0xfbbf24,emissive:0xfbbf24,emissiveIntensity:3});
+      [-0.18,0.18].forEach(ox=>{const e=new THREE.Mesh(eyeGeo,eyeMat.clone());e.position.set(ox,0.1,0.3);if(s.segments[0])s.segments[0].mesh.add(e);});
+    };
 
-      // Move head toward target (smooth)
-      const dx=s.targetX-s.headX, dy=s.targetY-s.headY;
-      const spd=5;
-      if(Math.abs(dx)>1||Math.abs(dy)>1){
-        s.headX+=dx*0.18; s.headY+=dy*0.18;
-      }
-      s.headX=Math.max(DRAGON_R,Math.min(W-DRAGON_R,s.headX));
-      s.headY=Math.max(DRAGON_R+70,Math.min(H-DRAGON_R,s.headY));// Update body segments (follow head with distance constraint)
-      s.segments[0].x=s.headX; s.segments[0].y=s.headY;
-      for(let i=1;i<s.segments.length;i++){
-        const prev=s.segments[i-1], curr=s.segments[i];
-        const dx2=prev.x-curr.x, dy2=prev.y-curr.y;
-        const dist=Math.hypot(dx2,dy2);
-        if(dist>SEGMENT_DIST){
-          curr.x=prev.x-dx2/dist*SEGMENT_DIST;
-          curr.y=prev.y-dy2/dist*SEGMENT_DIST;
+    const s=stateRef.current;
+    buildDragon(s);
+
+    const onResize=()=>{
+      const W2=mount.clientWidth||window.innerWidth;const H2=mount.clientHeight||window.innerHeight;
+      renderer.setSize(W2,H2);camera.aspect=W2/H2;camera.updateProjectionMatrix();
+    };
+    window.addEventListener('resize',onResize);
+
+    let frame=0;
+    const render=()=>{
+      rafRef.current=requestAnimationFrame(render);
+      frame++;
+      const t=frame*0.016;
+      const s2=stateRef.current;
+      const scene2=sceneRef.current;if(!scene2)return;
+
+      // Move head toward target
+      const dx=s2.targetX-s2.headX;const dy=s2.targetY-s2.headY;
+      const spd=0.08;
+      s2.headX+=dx*spd;s2.headY+=dy*spd;
+
+      // Snake body
+      if(s2.segments.length>0){
+        s2.segments[0].x=s2.headX;s2.segments[0].y=s2.headY;s2.segments[0].z=0;
+        s2.segments[0].mesh.position.set(s2.headX,s2.headY,0);
+        s2.segments[0].mesh.rotation.z=Math.atan2(dy,dx)-Math.PI/2;
+        for(let i=1;i<s2.segments.length;i++){
+          const prev=s2.segments[i-1];const curr=s2.segments[i];
+          const sdx=curr.x-prev.x;const sdy=curr.y-prev.y;
+          const dist=Math.sqrt(sdx*sdx+sdy*sdy);
+          if(dist>SEGMENT_DIST){
+            curr.x=prev.x+sdx/dist*SEGMENT_DIST;curr.y=prev.y+sdy/dist*SEGMENT_DIST;
+          }
+          curr.mesh.position.set(curr.x,curr.y,0);
         }
       }
 
-      // Spawn gates
-      s.gateTimer--;
-      if(s.gateTimer<=0){
-        s.gateTimer=90;
-        const gap=90+Math.random()*60; const gateY=80+Math.random()*(H-160);
-        s.gates.push({ x:W+10, y:gateY-gap/2, w:40, h:gap, passed:false, frame:0 });
+      // Spawn gates (moving toward camera)
+      s2.gateTimer--;
+      if(s2.gateTimer<=0&&s2.running){
+        s2.gateTimer=Math.max(50,100-frame/120);
+        const gateGroup=new THREE.Group();
+        const gateWidth=1.8+Math.random()*0.5;
+        const gateX=(Math.random()-0.5)*4;
+        // Gate posts
+        [-(gateWidth/2),gateWidth/2].forEach(ox=>{
+          const geo=new THREE.CylinderGeometry(0.1,0.1,4,6);
+          const mat=new THREE.MeshStandardMaterial({color:0xdc2626,emissive:0xef4444,emissiveIntensity:0.5});
+          const m=new THREE.Mesh(geo,mat);m.position.set(ox,0,0);gateGroup.add(m);
+        });
+        // Top bar
+        const topGeo=new THREE.CylinderGeometry(0.08,0.08,gateWidth,6);
+        const topMat=new THREE.MeshStandardMaterial({color:0xfbbf24,emissive:0xf59e0b,emissiveIntensity:0.5});
+        const topB=new THREE.Mesh(topGeo,topMat);topB.rotation.z=Math.PI/2;topB.position.y=2;gateGroup.add(topB);
+        gateGroup.position.set(gateX,0,-15);
+        scene2.add(gateGroup);
+        s2.gates.push({mesh:gateGroup,passed:false,z:gateX});
       }
 
-      // Update and draw gates
-      for(let i=s.gates.length-1;i>=0;i--){
-        const g=s.gates[i]; g.x-=s.gateSpeed; g.frame++;
-        if(g.x<-50){ s.gates.splice(i,1); continue; }
-
-        // Collision: check if head passes through gate
-        if(!g.passed && s.headX>g.x && s.headX<g.x+g.w){
-          const inGap=s.headY<g.y && s.headY<g.y+g.h;
-          if(!inGap){
-            s.sig.bodyCollisions++; s.sig.streakCurrent=0;
-            hapticFail(); sfx.collision();
+      // Move gates
+      for(let i=s2.gates.length-1;i>=0;i--){
+        const g=s2.gates[i];
+        g.mesh.position.z+=s2.gateSpeed;
+        // Check pass
+        if(!g.passed&&g.mesh.position.z>-0.5){
+          g.passed=true;
+          // Check if dragon head inside gate
+          const gx=g.mesh.position.x;const hw=1.8/2;
+          const headInGate=Math.abs(s2.headX-gx)<hw;
+          if(headInGate){
+            s2.sig.gatesPassed++;s2.sig.streakCurrent++;
+            if(s2.sig.streakCurrent>s2.sig.maxStreak)s2.sig.maxStreak=s2.sig.streakCurrent;
+            s2.sig.score+=s2.sig.streakCurrent>=3?3:1;setScore(s2.sig.score);
+            sfx.collect();if(s2.sig.streakCurrent>=3)hapticCombo();else hapticScore();
+          } else {
+            s2.sig.bodyCollisions++;s2.sig.streakCurrent=0;
+            sfx.collision();hapticFail();
           }
         }
-        if(!g.passed && s.headX>g.x+g.w){
-          g.passed=true;
-          s.sig.gatesPassed++; s.sig.streakCurrent++;
-          if(s.sig.streakCurrent>s.sig.maxStreak) s.sig.maxStreak=s.sig.streakCurrent;
-          const pts=s.sig.streakCurrent>=3?2:1; s.sig.score+=pts;
-          sfx.collect(); hapticScore();
-          if(s.sig.streakCurrent>=3) hapticCombo(s.sig.streakCurrent);
-          setScore(s.sig.score);
-          for(let p=0;p<10;p++) s.particles.push({
-            x:g.x,y:g.y+g.h/2, vx:(Math.random()-0.5)*8, vy:(Math.random()-0.5)*8,
-            alpha:1, color:COLORS[Math.floor(Math.random()*COLORS.length)]
-          });
-        }
-
-        // Draw gate as red drums/pillars
-        ctx.save(); ctx.shadowBlur=8; ctx.shadowColor='#ef4444';
-        ctx.fillStyle='#dc2626';
-        ctx.fillRect(g.x-8,0,8,g.y); // top pillar
-        ctx.fillRect(g.x-8,g.y+g.h,8,H); // bottom pillar
-        ctx.strokeStyle='#fbbf24'; ctx.lineWidth=2;
-        ctx.strokeRect(g.x-8,0,8,g.y); ctx.strokeRect(g.x-8,g.y+g.h,8,H-g.y-g.h);
-        ctx.restore();
+        if(g.mesh.position.z>6){scene2.remove(g.mesh);s2.gates.splice(i,1);}
       }
 
-      // Particles
-      for(let i=s.particles.length-1;i>=0;i--){
-        const p=s.particles[i]; p.x+=p.vx; p.y+=p.vy; p.alpha*=0.9;
-        if(p.alpha<0.02){ s.particles.splice(i,1); continue; }
-        ctx.save(); ctx.globalAlpha=p.alpha; ctx.fillStyle=p.color;
-        ctx.beginPath(); ctx.arc(p.x,p.y,3,0,Math.PI*2); ctx.fill(); ctx.restore();
-      }
+      // Animate body colors
+      s2.segments.forEach((seg,i)=>{
+        const mat=seg.mesh.material as THREE.MeshStandardMaterial;
+        mat.emissiveIntensity=0.3+Math.sin(t*4+i*0.5)*0.2;
+      });
 
-      // Draw body segments
-      for(let i=s.segments.length-1;i>=0;i--){
-        const seg=s.segments[i];
-        const scale=1-i/(s.segments.length+5);
-        const r=DRAGON_R*scale;
-        const wave=Math.sin(s.frame*0.15+i*0.7)*3;
-        ctx.save(); ctx.shadowBlur=8; ctx.shadowColor='#ef4444';
-        ctx.fillStyle=COLORS[i%COLORS.length]+'dd';
-        ctx.beginPath(); ctx.arc(seg.x+wave,seg.y,r,0,Math.PI*2); ctx.fill();
-        ctx.restore();
-      }
+      // Increase gate speed
+      s2.gateSpeed=0.08+frame/6000;
 
-      // Draw head
-      ctx.save(); ctx.shadowBlur=16; ctx.shadowColor='#ef4444';
-      ctx.fillStyle='#ef4444';
-      ctx.beginPath(); ctx.arc(s.headX,s.headY,DRAGON_R+4,0,Math.PI*2); ctx.fill();
-      ctx.font=`${Math.round(DRAGON_R*2.2)}px sans-serif`; ctx.textAlign='center';
-      ctx.fillText('🐉',s.headX,s.headY,DRAGON_R*0.8); ctx.restore();
-
-      animRef.current=requestAnimationFrame(loop);
+      renderer.render(scene,camera);
     };
-    animRef.current=requestAnimationFrame(loop);
+    render();
+
+    return()=>{
+      window.removeEventListener('resize',onResize);
+      cancelAnimationFrame(rafRef.current);
+      renderer.dispose();mount.removeChild(renderer.domElement);
+    };
+  },[]);
+
+  const endGame=useCallback(()=>{
+    const s=stateRef.current;s.running=false;
+    if(timerRef.current){clearInterval(timerRef.current);timerRef.current=null;}
+    const pb=parseInt(localStorage.getItem(`pb_${GAME_ID}`)??'0');
+    if(s.sig.score>pb)localStorage.setItem(`pb_${GAME_ID}`,String(s.sig.score));
+    setFinalSig({...s.sig});setPhase('done');hapticVictory();
+  },[]);
+
+  const startLoop=useCallback(()=>{
+    const s=stateRef.current;
+    s.running=true;s.timeLeft=DURATION;s.frame=0;s.gateSpeed=0.08;
+    s.sig={gatesPassed:0,bodyCollisions:0,maxStreak:0,streakCurrent:0,score:0};
+    s.headX=0;s.headY=0;s.targetX=0;s.targetY=0;s.gates=[];s.gateTimer=60;
+    setScore(0);setTimeLeft(DURATION);setPhase('playing');
+
+    timerRef.current=setInterval(()=>{
+      const s2=stateRef.current;s2.timeLeft--;setTimeLeft(s2.timeLeft);
+      if(s2.timeLeft<=0){sfx.fail();endGame();}
+      if(s2.timeLeft===40||s2.timeLeft===20)s2.gateSpeed+=0.015;
+    },1000);
   },[endGame]);
 
+  // Pointer controls
   useEffect(()=>{
-    const canvas=canvasRef.current; if(!canvas) return;
-    const resize=()=>{ canvas.width=canvas.offsetWidth; canvas.height=canvas.offsetHeight; };
-    resize(); window.addEventListener('resize',resize);
-
-    const onPM=(e:PointerEvent)=>{
-      if(phase!=='playing') return;
-      const s=stateRef.current; if(!s.running) return;
-      const rect=canvas.getBoundingClientRect();
-      s.targetX=(e.clientX-rect.left)*(canvas.width/rect.width);
-      s.targetY=(e.clientY-rect.top)*(canvas.height/rect.height);
+    const mount=mountRef.current;if(!mount)return;
+    const onMove=(e:PointerEvent)=>{
+      if(phase!=='playing')return;
+      const rect=mount.getBoundingClientRect();
+      const nx=(e.clientX-rect.left)/rect.width;
+      const ny=(e.clientY-rect.top)/rect.height;
+      stateRef.current.targetX=(nx-0.5)*8;
+      stateRef.current.targetY=-(ny-0.5)*6;
     };
-    const onPD=(e:PointerEvent)=>{
-      if(phase!=='playing') return;
-      const s=stateRef.current;
-      const rect=canvas.getBoundingClientRect();
-      s.targetX=(e.clientX-rect.left)*(canvas.width/rect.width);
-      s.targetY=(e.clientY-rect.top)*(canvas.height/rect.height);
+    const onTouch=(e:TouchEvent)=>{
+      if(phase!=='playing')return;
+      const rect=mount.getBoundingClientRect();
+      const nx=(e.touches[0].clientX-rect.left)/rect.width;
+      const ny=(e.touches[0].clientY-rect.top)/rect.height;
+      stateRef.current.targetX=(nx-0.5)*8;
+      stateRef.current.targetY=-(ny-0.5)*6;
     };
-    canvas.addEventListener('pointermove',onPM);
-    canvas.addEventListener('pointerdown',onPD);
-    return()=>{ window.removeEventListener('resize',resize);
-      canvas.removeEventListener('pointermove',onPM); canvas.removeEventListener('pointerdown',onPD); };
+    mount.addEventListener('pointermove',onMove);
+    mount.addEventListener('touchmove',onTouch,{passive:true});
+    return()=>{mount.removeEventListener('pointermove',onMove);mount.removeEventListener('touchmove',onTouch);};
   },[phase]);
 
-  useEffect(()=>()=>{ cancelAnimationFrame(animRef.current); if(timerRef.current) clearInterval(timerRef.current); },[]);
+  useEffect(()=>()=>{cancelAnimationFrame(rafRef.current);if(timerRef.current)clearInterval(timerRef.current);},[]);
+  const handleStart=useCallback((name:string,avatar:string)=>{playerSessionRef.current=savePlayerSession(GAME_ID,name,avatar);initAudio();setPhase('countdown');},[]);
+  const handleCountdownDone=useCallback(()=>{startLoop();},[startLoop]);
+  const handlePlayAgain=useCallback(()=>{setPhase('start');setScore(0);setTimeLeft(DURATION);setFinalSig(null);},[]);
 
-  const handleStart=useCallback(async(n:string,a:string)=>{
-    playerSessionRef.current=savePlayerSession(GAME_ID,n,a); await initAudio(); setPhase('countdown');
-  },[]);
-  const handlePlayAgain=useCallback(()=>{ setPhase('start'); setScore(0); setTimeLeft(DURATION); setFinalSig(null); },[]);
-
-  return (
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent??ACCENT}>
-      {phase==='start'&&<GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description={GAME_TAGLINE}
-        ctaLabel="Start the Parade 🐉" accentColor={theme.colors.accent??ACCENT} onStart={handleStart}/>}
-      {phase==='countdown'&&<Countdown onComplete={startLoop} accentColor={theme.colors.accent??ACCENT}/>}
+  return(
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accent}>
+      {phase==='start'&&<GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description={GAME_TAGLINE} ctaLabel="Let's Parade! 🐉" accentColor={accent} onStart={handleStart}/>}
+      {phase==='countdown'&&<Countdown onComplete={handleCountdownDone} accentColor={accent}/>}
       {(phase==='playing'||phase==='countdown')&&(
-        <><canvas ref={canvasRef} style={{position:'absolute',inset:0,width:'100%',height:'100%',touchAction:'none'}}
-            role="img" aria-label="Dragon parade game canvas"/>
-          {phase==='playing'&&<GameHUD accentColor={theme.colors.accent??ACCENT}
-            items={[{label:'TIME',value:timeLeft,danger:timeLeft<=10},{label:'SCORE',value:scoreDisplay}]}/>}
+        <>
+          <div ref={mountRef} style={{position:'absolute',inset:0,width:'100%',height:'100%',touchAction:'none'}}/>
+          {phase==='playing'&&(
+            <>
+              <GameHUD accentColor={accent} items={[{label:'TIME',value:timeLeft,danger:timeLeft<=10},{label:'SCORE',value:scoreDisplay}]}/>
+              <div style={{position:'absolute',bottom:40,left:'50%',transform:'translateX(-50%)',fontSize:12,color:'rgba(255,255,255,0.4)',fontWeight:600,letterSpacing:'0.1em'}}>DRAG TO GUIDE THE DRAGON</div>
+            </>
+          )}
         </>
       )}
-      {phase==='done'&&finalSig&&<EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI}
-        score={String(finalSig.score)} personality={getPersonality(finalSig)}
-        insights={[
-          {label:'Gates Passed',value:`${finalSig.gatesPassed}`,color:'#4ade80'},
-          {label:'Collisions',value:`${finalSig.bodyCollisions}`,color:finalSig.bodyCollisions===0?'#4ade80':'#ef4444'},
-          {label:'Best Streak',value:`×${finalSig.maxStreak}`,color:ACCENT},
-          {label:'Final Score',value:`${finalSig.score}`,color:'#fbbf24'},
-        ]}
-        accentColor={theme.colors.accent??ACCENT} onPlayAgain={handlePlayAgain} didWin={finalSig.gatesPassed>=12}/>}
+      {phase==='done'&&finalSig&&(
+        <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI}
+          score={String(finalSig.score)} personality={getPersonality(finalSig)}
+          insights={[
+            {label:'Gates Passed',value:String(finalSig.gatesPassed),color:finalSig.gatesPassed>=15?'#4ade80':'#facc15'},
+            {label:'Body Hits',value:String(finalSig.bodyCollisions),color:finalSig.bodyCollisions===0?'#4ade80':'#ef4444'},
+            {label:'Best Streak',value:`×${finalSig.maxStreak}`,color:'#fbbf24'},
+            {label:'Score',value:String(finalSig.score),color:accent},
+          ]}
+          accentColor={accent} onPlayAgain={handlePlayAgain} didWin={finalSig.gatesPassed>=12}/>
+      )}
     </GameShell>
   );
 }

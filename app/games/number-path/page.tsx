@@ -1,12 +1,13 @@
 'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
+import * as THREE from 'three';
 import GameShell from '@/components/GameShell';
 import GameHUD from '@/components/GameHUD';
 import GameStartScreen from '@/components/GameStartScreen';
 import Countdown from '@/components/Countdown';
 import EndScreen from '@/components/EndScreen';
 import { initAudio, sfx } from '@/lib/audio';
-import { hapticScore, hapticFail, hapticVictory, hapticCombo, hapticImpact } from '@/lib/haptics';
+import { hapticScore, hapticFail, hapticVictory, hapticCombo } from '@/lib/haptics';
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
 
@@ -18,16 +19,11 @@ const GAME_TITLE = 'Number Path';
 const GAME_TAGLINE = '1 to N. Fastest finger wins.';
 
 interface Signals {
-  sequencesCompleted: number;
-  highestN: number;          // highest N reached in a sequence
-  totalNumbers: number;      // total numbers tapped correctly
-  wrongTaps: number;
-  avgSequenceMs: number;
-  totalSequenceMs: number;
-  score: number;
-  maxStreak: number;
-  streakCurrent: number;
+  sequencesCompleted: number; highestN: number; totalNumbers: number;
+  wrongTaps: number; avgSequenceMs: number; totalSequenceMs: number;
+  score: number; maxStreak: number; streakCurrent: number;
 }
+type Phase = 'start' | 'countdown' | 'playing' | 'done';
 
 function getPersonality(sig: Signals): string {
   if (sig.highestN >= 10 && sig.sequencesCompleted >= 4) return 'Number Ninja 🥷';
@@ -37,291 +33,280 @@ function getPersonality(sig: Signals): string {
   return 'Counting Up 💡';
 }
 
-type Phase = 'start' | 'countdown' | 'playing' | 'done';
-
-interface NumberNode {
-  x: number; y: number;
-  value: number;
-  tapped: boolean;
-  isCurrent: boolean; // the next one to tap
-}
-
-interface PathSegment {
-  x1: number; y1: number; x2: number; y2: number;
-  alpha: number;
-}
-
-interface GameState {
-  running: boolean; timeLeft: number;
-  sig: Signals; frame: number; accentColor: string;
-  floats: Array<{ x: number; y: number; text: string; alpha: number; vy: number; color: string }>;
-  nodes: NumberNode[];
-  currentIndex: number; // which number to tap next (0-based)
-  pathSegments: PathSegment[];
-  sequenceStartMs: number;
-  n: number; // current max number
-  pulseFrame: number;
-}
-
-function generateNodes(W: number, H: number, n: number): NumberNode[] {
-  const margin = 50;
-  const nodes: NumberNode[] = [];
-  const positions: Array<{ x: number; y: number }> = [];
-  let attempts = 0;
-  for (let i = 1; i <= n; i++) {
-    let x = 0, y = 0, ok = false;
-    while (!ok && attempts < 100) {
-      attempts++;
-      x = margin + Math.random() * (W - margin * 2);
-      y = margin * 2 + Math.random() * (H - margin * 3);
-      ok = positions.every(p => Math.hypot(p.x - x, p.y - y) > 55);
-    }
-    positions.push({ x, y });
-    nodes.push({ x, y, value: i, tapped: false, isCurrent: i === 1 });
-  }
-  return nodes;
-}
+interface NumberSphere { mesh: THREE.Mesh; value: number; tapped: boolean; isCurrent: boolean; }
 
 export default function NumberPathGame() {
   const theme = useBrandTheme();
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const mountRef = useRef<HTMLDivElement>(null);
+  const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
+  const sceneRef = useRef<THREE.Scene | null>(null);
+  const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const animRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const spheresRef = useRef<NumberSphere[]>([]);
+  const connLinesRef = useRef<THREE.Line[]>([]);
+  const playerSessionRef = useRef<PlayerSession | null>(null);
 
-  const stateRef = useRef<GameState>({
+  const stateRef = useRef({
     running: false, timeLeft: DURATION,
-    sig: { sequencesCompleted: 0, highestN: 0, totalNumbers: 0, wrongTaps: 0, avgSequenceMs: 0, totalSequenceMs: 0, score: 0, maxStreak: 0, streakCurrent: 0 },
-    frame: 0, accentColor: ACCENT, floats: [],
-    nodes: [], currentIndex: 0, pathSegments: [],
-    sequenceStartMs: 0, n: 6, pulseFrame: 0,
+    sig: { sequencesCompleted: 0, highestN: 0, totalNumbers: 0, wrongTaps: 0, avgSequenceMs: 0, totalSequenceMs: 0, score: 0, maxStreak: 0, streakCurrent: 0 } as Signals,
+    currentIndex: 0, n: 5, seqStart: 0,
+    accentColor: ACCENT,
   });
 
   const [phase, setPhase] = useState<Phase>('start');
   const [timeLeft, setTimeLeft] = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
   const [finalSig, setFinalSig] = useState<Signals | null>(null);
-  const playerSessionRef = useRef<PlayerSession | null>(null);
-
-  useEffect(() => { stateRef.current.accentColor = theme.colors.accent ?? ACCENT; }, [theme]);
-
-  const spawnSequence = useCallback((W: number, H: number) => {
-    const s = stateRef.current;
-    s.nodes = generateNodes(W, H, s.n);
-    s.currentIndex = 0;
-    s.pathSegments = [];
-    s.sequenceStartMs = Date.now();
-  }, []);
 
   const endGame = useCallback(() => {
-    const s = stateRef.current;
-    s.running = false;
+    const s = stateRef.current; s.running = false;
     cancelAnimationFrame(animRef.current);
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
-    const pb = parseInt(localStorage.getItem('pb_' + GAME_ID) ?? '0');
-    if (s.sig.score > pb) localStorage.setItem('pb_' + GAME_ID, String(s.sig.score));
-    setFinalSig({ ...s.sig });
-    setPhase('done');
     hapticVictory();
+    if (s.sig.sequencesCompleted > 0) s.sig.avgSequenceMs = s.sig.totalSequenceMs / s.sig.sequencesCompleted;
+    try { const pb = parseInt(localStorage.getItem(`pb_${GAME_ID}`) ?? '0'); if (s.sig.score > pb) localStorage.setItem(`pb_${GAME_ID}`, String(s.sig.score)); } catch { /**/ }
+    setFinalSig({ ...s.sig }); setPhase('done');
+  }, []);
+
+  const buildSequence = useCallback(() => {
+    const s = stateRef.current;
+    const scene = sceneRef.current; if (!scene) return;
+    // Remove old spheres
+    spheresRef.current.forEach(ns => scene.remove(ns.mesh));
+    spheresRef.current = [];
+    connLinesRef.current.forEach(l => scene.remove(l));
+    connLinesRef.current = [];
+    // Generate n random positions
+    const positions: THREE.Vector3[] = [];
+    const used: THREE.Vector3[] = [];
+    for (let i = 0; i < s.n; i++) {
+      let pos: THREE.Vector3;
+      let tries = 0;
+      do {
+        pos = new THREE.Vector3((Math.random()-0.5)*8, (Math.random()-0.5)*6, (Math.random()-0.5)*2);
+        tries++;
+      } while (used.some(u => u.distanceTo(pos) < 2.0) && tries < 20);
+      used.push(pos);
+      positions.push(pos);
+    }
+    // Create sphere meshes
+    positions.forEach((pos, i) => {
+      const value = i + 1;
+      const geo = new THREE.SphereGeometry(0.45, 24, 24);
+      const mat = new THREE.MeshStandardMaterial({ color: 0x1a3a2a, emissive: 0x0a1a10, roughness: 0.4, metalness: 0.5 });
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.position.copy(pos);
+      mesh.userData = { value, idx: i };
+      scene.add(mesh);
+      spheresRef.current.push({ mesh, value, tapped: false, isCurrent: i === 0 });
+    });
+    // Highlight first
+    if (spheresRef.current[0]) {
+      const mat = spheresRef.current[0].mesh.material as THREE.MeshStandardMaterial;
+      mat.color.set(0x22c55e); mat.emissive.set(0x114420); mat.emissiveIntensity = 1;
+    }
+    s.currentIndex = 0; s.seqStart = Date.now();
   }, []);
 
   const startLoop = useCallback(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+    const mount = mountRef.current; if (!mount) return;
     const s = stateRef.current;
-    const W = canvas.width, H = canvas.height;
-
-    s.running = true; s.timeLeft = DURATION;
+    s.running = true; s.timeLeft = DURATION; s.n = 5;
     s.sig = { sequencesCompleted: 0, highestN: 0, totalNumbers: 0, wrongTaps: 0, avgSequenceMs: 0, totalSequenceMs: 0, score: 0, maxStreak: 0, streakCurrent: 0 };
-    s.frame = 0; s.floats = []; s.n = 6;
-    spawnSequence(W, H);
     setScoreDisplay(0); setTimeLeft(DURATION); setPhase('playing');
 
-    timerRef.current = setInterval(() => {
-      s.timeLeft--; setTimeLeft(s.timeLeft);
-      if (s.timeLeft <= 0) { sfx.fail(); endGame(); }
-    }, 1000);
+    const W = window.innerWidth, H = window.innerHeight;
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x050f08);
+    sceneRef.current = scene;
 
-    const loop = () => {
+    const camera = new THREE.PerspectiveCamera(70, W / H, 0.1, 60);
+    camera.position.set(0, 0, 11);
+    cameraRef.current = camera;
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(W, H);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    mount.appendChild(renderer.domElement);
+    rendererRef.current = renderer;
+
+    scene.add(new THREE.AmbientLight(0x0a1f10, 3));
+    scene.add(Object.assign(new THREE.PointLight(0x22c55e, 60, 20), { position: new THREE.Vector3(2, 3, 8) }));
+    scene.add(Object.assign(new THREE.PointLight(0x14b8a6, 40, 15), { position: new THREE.Vector3(-3, -2, 6) }));
+
+    // Stars
+    const sg = new THREE.BufferGeometry();
+    const sp = new Float32Array(400);
+    for (let i = 0; i < 400; i += 3) { sp[i] = (Math.random()-0.5)*40; sp[i+1] = (Math.random()-0.5)*40; sp[i+2] = (Math.random()-0.5)*10-10; }
+    sg.setAttribute('position', new THREE.BufferAttribute(sp, 3));
+    scene.add(new THREE.Points(sg, new THREE.PointsMaterial({ color: 0x22c55e, size: 0.05 })));
+
+    buildSequence();
+
+    const raycaster = new THREE.Raycaster();
+    const onTap = (e: PointerEvent) => {
       if (!s.running) return;
-      ctx.clearRect(0, 0, W, H);
-      s.frame++; s.pulseFrame++;
-
-      // Background - dark tech grid
-      ctx.fillStyle = '#030d06'; ctx.fillRect(0, 0, W, H);
-      ctx.strokeStyle = 'rgba(34,197,94,0.06)'; ctx.lineWidth = 1;
-      for (let gx = 0; gx < W; gx += 40) {
-        ctx.beginPath(); ctx.moveTo(gx, 0); ctx.lineTo(gx, H); ctx.stroke();
-      }
-      for (let gy = 0; gy < H; gy += 40) {
-        ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(W, gy); ctx.stroke();
-      }
-
-      // Draw path segments (already tapped connections)
-      s.pathSegments.forEach(seg => {
-        ctx.save(); ctx.globalAlpha = seg.alpha;
-        ctx.strokeStyle = ACCENT; ctx.lineWidth = 3;
-        ctx.shadowBlur = 8; ctx.shadowColor = ACCENT;
-        ctx.beginPath(); ctx.moveTo(seg.x1, seg.y1); ctx.lineTo(seg.x2, seg.y2); ctx.stroke();
-        ctx.restore();
-        seg.alpha = Math.max(0.2, seg.alpha - 0.005);
-      });
-
-      // Draw nodes
-      s.nodes.forEach(node => {
-        const pulse = Math.sin(s.pulseFrame * 0.12) * 3;
-        const r = 24 + (node.isCurrent ? pulse : 0);
-
-        ctx.save();
-        ctx.shadowBlur = node.isCurrent ? 20 : node.tapped ? 4 : 8;
-        ctx.shadowColor = node.tapped ? '#4ade8044' : node.isCurrent ? '#fbbf24' : ACCENT;
-
-        // Circle
-        ctx.fillStyle = node.tapped ? '#0a3a1a' : node.isCurrent ? '#fbbf2422' : '#0a2a16';
-        ctx.strokeStyle = node.tapped ? '#22c55e55' : node.isCurrent ? '#fbbf24' : ACCENT;
-        ctx.lineWidth = node.isCurrent ? 3 : 2;
-        ctx.beginPath(); ctx.arc(node.x, node.y, r, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
-
-        // Number text
-        ctx.fillStyle = node.tapped ? '#22c55e66' : node.isCurrent ? '#fbbf24' : '#ffffff';
-        ctx.font = `bold ${r * 0.9}px sans-serif`; ctx.textAlign = 'center';
-        ctx.fillText(String(node.value), node.x, node.y + r * 0.3);
-
-        // Checkmark for tapped
-        if (node.tapped) {
-          ctx.fillStyle = '#4ade80'; ctx.font = `${r * 0.7}px sans-serif`;
-          ctx.fillText('✓', node.x, node.y + r * 0.3);
-        }
-
-        // Pulsing ring for current
-        if (node.isCurrent) {
-          ctx.globalAlpha = 0.3 + 0.2 * Math.sin(s.pulseFrame * 0.2);
-          ctx.strokeStyle = '#fbbf24'; ctx.lineWidth = 2;
-          ctx.beginPath(); ctx.arc(node.x, node.y, r + 12, 0, Math.PI * 2); ctx.stroke();
-        }
-
-        ctx.restore();
-      });
-
-      // Progress label
-      const tapped = s.nodes.filter(n => n.tapped).length;
-      ctx.fillStyle = 'rgba(34,197,94,0.7)'; ctx.font = '13px sans-serif'; ctx.textAlign = 'center';
-      ctx.fillText(`${tapped} / ${s.n}`, W / 2, 30);
-
-      // Floats
-      s.floats = s.floats.filter(f => f.alpha > 0.02);
-      s.floats.forEach(f => {
-        ctx.save(); ctx.globalAlpha = f.alpha;
-        ctx.fillStyle = f.color; ctx.font = 'bold 20px sans-serif'; ctx.textAlign = 'center';
-        ctx.fillText(f.text, f.x, f.y); ctx.restore();
-        f.y += f.vy; f.alpha *= 0.95;
-      });
-
-      animRef.current = requestAnimationFrame(loop);
-    };
-    animRef.current = requestAnimationFrame(loop);
-  }, [endGame, spawnSequence]);
-
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const resize = () => { canvas.width = canvas.offsetWidth; canvas.height = canvas.offsetHeight; };
-    resize();
-    window.addEventListener('resize', resize);
-
-    const onPointerDown = (e: PointerEvent) => {
-      if (phase !== 'playing') return;
-      const s = stateRef.current;
-      const rect = canvas.getBoundingClientRect();
-      const px = (e.clientX - rect.left) * (canvas.width / rect.width);
-      const py = (e.clientY - rect.top) * (canvas.height / rect.height);
-
-      // Find tapped node
-      let hit = -1;
-      s.nodes.forEach((node, i) => {
-        if (!node.tapped && Math.hypot(px - node.x, py - node.y) < 35) hit = i;
-      });
-
-      if (hit < 0) return;
-      const node = s.nodes[hit];
-
-      if (node.isCurrent) {
-        // Correct!
-        const prevNode = s.currentIndex > 0 ? s.nodes[s.currentIndex - 1] : null;
-        if (prevNode) {
-          s.pathSegments.push({ x1: prevNode.x, y1: prevNode.y, x2: node.x, y2: node.y, alpha: 1 });
-        }
-        node.tapped = true; node.isCurrent = false;
+      const rect = renderer.domElement.getBoundingClientRect();
+      const mouse = new THREE.Vector2(((e.clientX - rect.left)/rect.width)*2-1, -((e.clientY - rect.top)/rect.height)*2+1);
+      raycaster.setFromCamera(mouse, camera);
+      const meshes = spheresRef.current.filter(ns => !ns.tapped).map(ns => ns.mesh);
+      const hits = raycaster.intersectObjects(meshes);
+      if (!hits.length) return;
+      const hit = hits[0].object as THREE.Mesh;
+      const { value, idx } = hit.userData as { value: number; idx: number };
+      const expected = s.currentIndex + 1;
+      if (value === expected) {
+        // Correct tap
+        const ns = spheresRef.current[idx];
+        ns.tapped = true;
+        const mat = hit.material as THREE.MeshStandardMaterial;
+        mat.color.set(0x4ade80); mat.emissive.set(0x1a5f2a); mat.emissiveIntensity = 1.5;
         s.currentIndex++;
         s.sig.totalNumbers++;
         s.sig.streakCurrent++;
         if (s.sig.streakCurrent > s.sig.maxStreak) s.sig.maxStreak = s.sig.streakCurrent;
-        sfx.collect(); hapticImpact();
-
-        // Next node becomes current
-        if (s.currentIndex < s.nodes.length) {
-          s.nodes[s.currentIndex].isCurrent = true;
-        } else {
-          // Sequence complete!
-          const seqMs = Date.now() - s.sequenceStartMs;
-          s.sig.sequencesCompleted++;
-          s.sig.totalSequenceMs += seqMs;
-          if (s.n > s.sig.highestN) s.sig.highestN = s.n;
-          const timePts = seqMs < 3000 ? 5 : seqMs < 5000 ? 3 : 2;
-          s.sig.score += s.n + timePts;
-          setScoreDisplay(s.sig.score);
-          sfx.collect(); hapticCombo(s.sig.sequencesCompleted);
-          s.floats.push({ x: canvas.width / 2, y: canvas.height / 2, text: `+${s.n + timePts} ✨ DONE!`, alpha: 1, vy: -3, color: '#fbbf24' });
-          s.n = Math.min(s.n + 1, 12); // increase sequence length
-          setTimeout(() => { if (s.running) spawnSequence(canvas.width, canvas.height); }, 800);
+        sfx.collect();
+        if (s.sig.streakCurrent >= 3) hapticCombo(s.sig.streakCurrent); else hapticScore();
+        // Draw connection line to next
+        if (s.currentIndex < spheresRef.current.length) {
+          const nextNs = spheresRef.current[s.currentIndex];
+          nextNs.isCurrent = true;
+          const nextMat = nextNs.mesh.material as THREE.MeshStandardMaterial;
+          nextMat.color.set(0x22c55e); nextMat.emissive.set(0x114420); nextMat.emissiveIntensity = 1;
+          const lineGeo = new THREE.BufferGeometry().setFromPoints([hit.position.clone(), nextNs.mesh.position.clone()]);
+          const line = new THREE.Line(lineGeo, new THREE.LineBasicMaterial({ color: 0x22c55e, transparent: true, opacity: 0.5 }));
+          scene.add(line); connLinesRef.current.push(line);
         }
-      } else if (!node.tapped) {
-        // Wrong number
-        s.sig.wrongTaps++;
-        s.sig.streakCurrent = 0;
+        // Sequence complete
+        if (s.currentIndex >= s.n) {
+          const elapsed = Date.now() - s.seqStart;
+          s.sig.sequencesCompleted++;
+          s.sig.totalSequenceMs += elapsed;
+          if (s.n > s.sig.highestN) s.sig.highestN = s.n;
+          const pts = Math.max(5, 20 - Math.floor(elapsed / 500));
+          s.sig.score += pts; setScoreDisplay(s.sig.score);
+          sfx.success(); hapticVictory();
+          s.n = Math.min(12, s.n + 1);
+          setTimeout(() => { if (s.running) buildSequence(); }, 600);
+        }
+      } else {
+        s.sig.wrongTaps++; s.sig.streakCurrent = 0;
+        const mat = hit.material as THREE.MeshStandardMaterial;
+        const prev = mat.color.getHex();
+        mat.color.set(0xef4444); mat.emissive.set(0x5f1a1a); mat.emissiveIntensity = 1;
         sfx.collision(); hapticFail();
-        s.floats.push({ x: node.x, y: node.y - 25, text: `Need ${s.currentIndex + 1}!`, alpha: 1, vy: -2, color: '#ef4444' });
+        setTimeout(() => { mat.color.setHex(prev); mat.emissive.set(0x0a1a10); mat.emissiveIntensity = 0; }, 400);
       }
     };
+    renderer.domElement.addEventListener('pointerdown', onTap);
 
-    canvas.addEventListener('pointerdown', onPointerDown);
-    return () => {
-      window.removeEventListener('resize', resize);
-      canvas.removeEventListener('pointerdown', onPointerDown);
+    timerRef.current = setInterval(() => {
+      s.timeLeft--; setTimeLeft(s.timeLeft);
+      if (s.timeLeft === 10) sfx.warning();
+      if (s.timeLeft <= 0) endGame();
+    }, 1000);
+
+    let t = 0;
+    const loop = () => {
+      if (!s.running) return;
+      animRef.current = requestAnimationFrame(loop);
+      t += 0.012;
+      spheresRef.current.forEach((ns, i) => {
+        if (!ns.tapped) {
+          ns.mesh.position.z = Math.sin(t + i * 0.8) * 0.2;
+          ns.mesh.rotation.y += 0.012;
+        }
+      });
+      renderer.render(scene, camera);
     };
-  }, [phase, spawnSequence]);
+    animRef.current = requestAnimationFrame(loop);
 
-  useEffect(() => () => {
+    return () => { renderer.domElement.removeEventListener('pointerdown', onTap); };
+  }, [endGame, buildSequence]);
+
+  useEffect(() => {
+    const onResize = () => {
+      if (!cameraRef.current || !rendererRef.current) return;
+      const W = window.innerWidth, H = window.innerHeight;
+      cameraRef.current.aspect = W / H; cameraRef.current.updateProjectionMatrix();
+      rendererRef.current.setSize(W, H);
+    };
+    window.addEventListener('resize', onResize);
+    return () => {
+      window.removeEventListener('resize', onResize);
+      cancelAnimationFrame(animRef.current);
+      if (timerRef.current) clearInterval(timerRef.current);
+      if (rendererRef.current && mountRef.current) {
+        try { mountRef.current.removeChild(rendererRef.current.domElement); } catch { /**/ }
+        rendererRef.current.dispose();
+      }
+    };
+  }, []);
+
+  const handleStart = useCallback((name: string, avatar: string) => {
+    playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar);
+    initAudio(); setPhase('countdown');
+  }, []);
+  const handleCountdownDone = useCallback(() => { startLoop(); }, [startLoop]);
+  const handlePlayAgain = useCallback(() => {
+    stateRef.current.running = false;
     cancelAnimationFrame(animRef.current);
-    if (timerRef.current) clearInterval(timerRef.current);
+    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+    if (rendererRef.current && mountRef.current) {
+      try { mountRef.current.removeChild(rendererRef.current.domElement); } catch { /**/ }
+      rendererRef.current.dispose(); rendererRef.current = null;
+    }
+    setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null);
+    setPhase('countdown');
   }, []);
 
-  const handleStart = useCallback(async (n: string, a: string) => {
-    playerSessionRef.current = savePlayerSession(GAME_ID, n, a);
-    await initAudio(); setPhase('countdown');
-  }, []);
-  const handlePlayAgain = useCallback(() => { setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null); }, []);
-
+  const accent = theme.colors.accent ?? ACCENT;
   return (
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
-      {phase === 'start' && <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description="Tap numbers 1, 2, 3... in order as fast as you can!" ctaLabel="Count! 🔢" accentColor={theme.colors.accent ?? ACCENT} onStart={handleStart} />}
-      {phase === 'countdown' && <Countdown onComplete={startLoop} accentColor={theme.colors.accent ?? ACCENT} />}
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accent}
+      background="radial-gradient(ellipse at 50% 30%, rgba(34,197,94,0.1) 0%, transparent 60%), linear-gradient(180deg, #050f08 0%, #020605 100%)">
+      {phase === 'start' && (
+        <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description={GAME_TAGLINE}
+          ctaLabel="Count! 🔢" accentColor={accent} onStart={handleStart} />
+      )}
+      {phase === 'countdown' && <Countdown onComplete={handleCountdownDone} accentColor={accent} />}
       {(phase === 'playing' || phase === 'countdown') && (
         <>
-          <canvas ref={canvasRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none' }} role="img" aria-label="Number Path game canvas" />
-          {phase === 'playing' && <GameHUD accentColor={theme.colors.accent ?? ACCENT} items={[{ label: 'TIME', value: timeLeft, danger: timeLeft <= 10 }, { label: 'SCORE', value: scoreDisplay }]} />}
+          <div ref={mountRef} style={{ position: 'absolute', inset: 0, touchAction: 'none' }} />
+          {phase === 'playing' && (
+            <>
+              <GameHUD accentColor={accent} items={[
+                { label: 'TIME', value: timeLeft, danger: timeLeft <= 10, testId: 'timer' },
+                { label: 'SCORE', value: scoreDisplay, testId: 'score' },
+              ]} />
+              {/* Number labels overlay */}
+              {phase === 'playing' && sceneRef.current && cameraRef.current && spheresRef.current.map((ns, i) => {
+                if (ns.tapped) return null;
+                return (
+                  <div key={i} style={{ position: 'absolute', pointerEvents: 'none', zIndex: 10,
+                    transform: 'translate(-50%,-50%)',
+                    color: ns.isCurrent ? accent : 'rgba(255,255,255,0.7)',
+                    fontSize: '18px', fontWeight: 900,
+                    textShadow: ns.isCurrent ? `0 0 15px ${accent}` : 'none',
+                    // Cannot easily project 3D to 2D without extra work; show as hint only
+                  }}>
+                  </div>
+                );
+              })}
+            </>
+          )}
         </>
       )}
       {phase === 'done' && finalSig && (
-        <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI} score={String(finalSig.score)} personality={getPersonality(finalSig)}
+        <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI}
+          score={String(finalSig.score)} personality={getPersonality(finalSig)}
           insights={[
-            { label: 'Sequences', value: String(finalSig.sequencesCompleted), color: ACCENT },
+            { label: 'Sequences', value: String(finalSig.sequencesCompleted), color: '#4ade80' },
             { label: 'Highest N', value: String(finalSig.highestN), color: '#fbbf24' },
             { label: 'Wrong Taps', value: String(finalSig.wrongTaps), color: finalSig.wrongTaps === 0 ? '#4ade80' : '#ef4444' },
-            { label: 'Best Streak', value: `×${finalSig.maxStreak}`, color: '#06b6d4' },
+            { label: 'Best Streak', value: `×${finalSig.maxStreak}`, color: accent },
           ]}
-          accentColor={theme.colors.accent ?? ACCENT} onPlayAgain={handlePlayAgain} didWin={finalSig.sequencesCompleted >= 4} />
+          accentColor={accent} onPlayAgain={handlePlayAgain} didWin={finalSig.sequencesCompleted >= 3} />
       )}
     </GameShell>
   );

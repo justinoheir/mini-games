@@ -1,441 +1,370 @@
 'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
+import * as THREE from 'three';
 import GameShell from '@/components/GameShell';
 import GameHUD from '@/components/GameHUD';
 import GameStartScreen from '@/components/GameStartScreen';
 import Countdown from '@/components/Countdown';
 import EndScreen from '@/components/EndScreen';
 import { initAudio, sfx, haptic, startMusic } from '@/lib/audio';
+import { hapticScore, hapticFail, hapticVictory } from '@/lib/haptics';
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
 
-const GAME_ID      = 'gear-grind';
-const ACCENT       = '#a855f7';
-const DURATION     = 45;
-const GAME_EMOJI   = '⚙️';
-const GAME_TITLE   = 'Gear Grind';
-const GAME_TAGLINE = 'Drag gears onto the chain to connect source to target!';
-const PB_KEY       = 'mg_pb_gear-grind';
+const GAME_ID = 'gear-grind';
+const ACCENT = '#f59e0b';
+const DURATION = 45;
+const GAME_EMOJI = '⚙️';
+const GAME_TITLE = 'Gear Grind';
+const GAME_TAGLINE = 'Tap gears in the right order to complete the chain!';
 
-// Gear drawing helper
-function drawGear(ctx: CanvasRenderingContext2D, cx: number, cy: number, radius: number,
-                  teeth: number, toothH: number, rotation: number, fillColor: string, glowing: boolean) {
-  ctx.save();
-  ctx.translate(cx, cy); ctx.rotate(rotation);
-  if (glowing) { ctx.shadowBlur = 18; ctx.shadowColor = fillColor; }
-
-  // Teeth
-  ctx.fillStyle = fillColor;
-  ctx.beginPath();
-  for (let i = 0; i < teeth; i++) {
-    const a1 = (i / teeth) * Math.PI * 2;
-    const a2 = ((i + 0.35) / teeth) * Math.PI * 2;
-    const a3 = ((i + 0.65) / teeth) * Math.PI * 2;
-    const a4 = ((i + 1) / teeth) * Math.PI * 2;
-    ctx.moveTo(Math.cos(a1) * radius, Math.sin(a1) * radius);
-    ctx.lineTo(Math.cos(a2) * radius, Math.sin(a2) * radius);
-    ctx.lineTo(Math.cos(a2) * (radius + toothH), Math.sin(a2) * (radius + toothH));
-    ctx.lineTo(Math.cos(a3) * (radius + toothH), Math.sin(a3) * (radius + toothH));
-    ctx.lineTo(Math.cos(a3) * radius, Math.sin(a3) * radius);
-  }
-  ctx.closePath(); ctx.fill();
-
-  // Body disc
-  ctx.beginPath(); ctx.arc(0, 0, radius, 0, Math.PI * 2); ctx.fill();
-
-  // Inner cutout
-  ctx.fillStyle = '#1a0a2e';
-  ctx.beginPath(); ctx.arc(0, 0, radius * 0.45, 0, Math.PI * 2); ctx.fill();
-
-  // Hub hole
-  ctx.fillStyle = fillColor;
-  ctx.beginPath(); ctx.arc(0, 0, radius * 0.18, 0, Math.PI * 2); ctx.fill();
-
-  ctx.shadowBlur = 0;
-  ctx.restore();
-}
-
-interface PaletteGear {
-  id: number; radius: number; teeth: number; color: string;
-  homeX: number; homeY: number;
-  x: number; y: number;
-  dragging: boolean; dragOX: number; dragOY: number;
-  placed: boolean; slotIndex: number;
-}
-
-interface ChainSlot {
-  x: number; y: number; radius: number; filled: boolean; gearId: number | null;
-}
-
-interface Signals {
-  score: number; puzzlesSolved: number; gearsPlaced: number;
-  chainFlashes: number;
-}
-
+interface Signals { gearsPlaced: number; chainsBroken: number; perfectChains: number; maxStreak: number; score: number; }
 function getPersonality(sig: Signals): string {
-  if (sig.puzzlesSolved >= 4) return 'Clockwork Genius ⚙️';
-  if (sig.puzzlesSolved >= 2 && sig.gearsPlaced >= 8) return 'Precision Engineer 🔩';
-  if (sig.puzzlesSolved >= 2) return 'Gear Head 🛠️';
-  if (sig.gearsPlaced >= 6) return 'Slot Filler 🔧';
-  return 'Apprentice Mechanic 🪛';
+  if (sig.perfectChains >= 5 && sig.chainsBroken === 0) return 'Master Engineer ⚙️';
+  if (sig.perfectChains >= 3) return 'Gear Wizard 🔧';
+  if (sig.gearsPlaced >= 15) return 'Grind Master 💪';
+  if (sig.chainsBroken >= 5) return 'Chain Breaker 🔗';
+  return 'Cog Apprentice 🪛';
 }
 type Phase = 'start' | 'countdown' | 'playing' | 'done';
 
-function WebhookEmitter({ theme, sig, personality, player }: { theme: ReturnType<typeof useBrandTheme>; sig: Signals; personality: string; player: PlayerSession | null; }) {
-  const fired = useRef(false);
-  useEffect(() => { if (fired.current) return; fired.current = true; postWebhook(theme, GAME_ID, { personality, score: sig.score }, player); }, [theme, sig, personality, player]);
-  return null;
+interface Gear3D {
+  mesh: THREE.Mesh; teeth: THREE.Mesh[]; light: THREE.PointLight;
+  x: number; y: number; r: number; speed: number; color: number;
+  id: number; slotId: number; placed: boolean; order: number;
+}
+
+interface Slot3D {
+  mesh: THREE.Mesh; ring: THREE.Mesh;
+  x: number; y: number; order: number; filled: boolean; id: number;
 }
 
 interface GS {
   running: boolean; timeLeft: number; sig: Signals;
-  slots: ChainSlot[];
-  palette: PaletteGear[];
-  dragId: number | null;
-  chainActive: boolean; chainTimer: number;
-  chainFlash: number;
-  rotations: number[];   // rotation per slot (animates when chain active)
-  difficulty: number;    // 2, 3, 4 slots
-  nextGearId: number;
-  accentColor: string;
+  activeGears: Gear3D[]; slots: Slot3D[];
+  chainComplete: boolean; nextOrder: number; frame: number;
+  roundNum: number; nextId: number;
 }
 
-const GEAR_COLORS = ['#a855f7','#22d3ee','#f59e0b','#4ade80','#f43f5e','#3b82f6'];
+function createGearMesh(r: number, color: number, teeth: number): THREE.Group {
+  const group = new THREE.Group();
+  // Main disk
+  const diskGeo = new THREE.CylinderGeometry(r, r, 0.22, 32);
+  const mat = new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.25, metalness: 0.5, roughness: 0.35 });
+  const disk = new THREE.Mesh(diskGeo, mat);
+  disk.rotation.x = Math.PI / 2;
+  group.add(disk);
+  // Center hole
+  const holeGeo = new THREE.CylinderGeometry(r * 0.25, r * 0.25, 0.3, 12);
+  const hole = new THREE.Mesh(holeGeo, new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.9 }));
+  hole.rotation.x = Math.PI / 2;
+  group.add(hole);
+  // Teeth
+  for (let i = 0; i < teeth; i++) {
+    const angle = (i / teeth) * Math.PI * 2;
+    const toothGeo = new THREE.BoxGeometry(r * 0.22, 0.22, r * 0.3);
+    const tooth = new THREE.Mesh(toothGeo, mat.clone());
+    tooth.position.set(Math.cos(angle) * (r + r * 0.15), Math.sin(angle) * (r + r * 0.15), 0);
+    tooth.rotation.z = angle;
+    group.add(tooth);
+  }
+  return group;
+}
 
 export default function GearGrindGame() {
   const theme = useBrandTheme();
-  const accentColor = theme.id !== 'ether' ? theme.colors.accent : ACCENT;
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const animRef = useRef(0);
-  const timerRef = useRef<ReturnType<typeof setInterval>|null>(null);
-  const stopMusicRef = useRef<(()=>void)|null>(null);
-  const lastFrameRef = useRef(0);
-  const buildPuzzleRef = useRef<() => void>(() => {});
-
+  const mountRef = useRef<HTMLDivElement>(null);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const stopMusicRef = useRef<(() => void) | null>(null);
   const stateRef = useRef<GS>({
-    running:false, timeLeft:DURATION,
-    sig:{score:0,puzzlesSolved:0,gearsPlaced:0,chainFlashes:0},
-    slots:[], palette:[], dragId:null,
-    chainActive:false, chainTimer:0, chainFlash:0,
-    rotations:[], difficulty:2, nextGearId:0, accentColor:ACCENT,
+    running: false, timeLeft: DURATION,
+    sig: { gearsPlaced: 0, chainsBroken: 0, perfectChains: 0, maxStreak: 0, score: 0 },
+    activeGears: [], slots: [], chainComplete: false, nextOrder: 0, frame: 0, roundNum: 1, nextId: 0,
   });
+  const threeRef = useRef<{
+    renderer: THREE.WebGLRenderer; scene: THREE.Scene; camera: THREE.PerspectiveCamera;
+    gearGroups: THREE.Group[]; slotMeshes: Slot3D[];
+    chainLight: THREE.PointLight; animId: number;
+  } | null>(null);
 
   const [phase, setPhase] = useState<Phase>('start');
   const [timeLeft, setTimeLeft] = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
-  const [finalSig, setFinalSig] = useState<Signals|null>(null);
-  const playerSessionRef = useRef<PlayerSession|null>(null);
-  useEffect(()=>{stateRef.current.accentColor=accentColor;},[accentColor]);
+  const [finalSig, setFinalSig] = useState<Signals | null>(null);
+  const playerSessionRef = useRef<PlayerSession | null>(null);
 
   const endGame = useCallback(() => {
     const s = stateRef.current; s.running = false;
-    cancelAnimationFrame(animRef.current);
-    if (timerRef.current){clearInterval(timerRef.current);timerRef.current=null;}
-    if (stopMusicRef.current){stopMusicRef.current();stopMusicRef.current=null;}
-    sfx.gameOver(); haptic([100]);
-    const pb = parseInt(localStorage.getItem(PB_KEY) ?? '0');
-    if (s.sig.score > pb) localStorage.setItem(PB_KEY, String(s.sig.score));
-    setFinalSig({...s.sig}); setPhase('done');
+    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+    if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
+    const t = threeRef.current;
+    if (t) { cancelAnimationFrame(t.animId); t.renderer.dispose(); }
+    setFinalSig({ ...s.sig }); setPhase('done'); hapticVictory();
   }, []);
+
+  const GEAR_COLORS = [0xf59e0b, 0x06b6d4, 0xa855f7, 0x22c55e, 0xef4444, 0xfbbf24];
+  const SLOT_POSITIONS = [[-3.5, 0], [-1.2, 0.8], [1.2, -0.2], [3.5, 0.6]] as const;
+
+  const setupRound = useCallback((scene: THREE.Scene, s: GS) => {
+    // Clear old
+    s.slots = []; s.activeGears = []; s.chainComplete = false; s.nextOrder = 0;
+
+    // Create slots (target positions)
+    const slotMeshes: Slot3D[] = [];
+    for (let i = 0; i < 4; i++) {
+      const [sx, sy] = SLOT_POSITIONS[i];
+      const slotGeo = new THREE.TorusGeometry(0.8, 0.08, 8, 24);
+      const slotMat = new THREE.MeshStandardMaterial({ color: 0x334155, emissive: 0x334155, emissiveIntensity: 0.2, roughness: 0.7, transparent: true, opacity: 0.7 });
+      const slotMesh = new THREE.Mesh(slotGeo, slotMat);
+      slotMesh.position.set(sx, sy, -0.3);
+      scene.add(slotMesh);
+
+      const ringGeo = new THREE.TorusGeometry(0.85, 0.04, 6, 24);
+      const ring = new THREE.Mesh(ringGeo, new THREE.MeshBasicMaterial({ color: 0xf59e0b, transparent: true, opacity: 0.3 }));
+      ring.position.set(sx, sy, -0.2);
+      scene.add(ring);
+
+      const sd: Slot3D = { mesh: slotMesh, ring, x: sx, y: sy, order: i, filled: false, id: s.nextId++ };
+      s.slots.push(sd);
+      slotMeshes.push(sd);
+    }
+
+    // Create floating gears (in random positions, to be tapped in order)
+    const shuffledOrder = [0, 1, 2, 3].sort(() => Math.random() - 0.5);
+    for (let i = 0; i < 4; i++) {
+      const color = GEAR_COLORS[i % GEAR_COLORS.length];
+      const r = 0.55 + Math.random() * 0.25;
+      const gearGroup = createGearMesh(r, color, 8);
+      const gx = (Math.random() - 0.5) * 6;
+      const gy = 3 + Math.random() * 2;
+      gearGroup.position.set(gx, gy, 0);
+      scene.add(gearGroup);
+
+      const gLight = new THREE.PointLight(color, 1.5, 4);
+      gLight.position.set(gx, gy, 1);
+      scene.add(gLight);
+
+      const gear: Gear3D = {
+        mesh: gearGroup.children[0] as THREE.Mesh, teeth: [],
+        x: gx, y: gy, r, speed: 0.02, color,
+        id: s.nextId++, slotId: shuffledOrder[i], placed: false,
+        order: shuffledOrder[i],
+      };
+      s.activeGears.push(gear);
+    }
+
+    return slotMeshes;
+  }, [GEAR_COLORS, SLOT_POSITIONS]);
 
   const startLoop = useCallback(() => {
-    const canvas = canvasRef.current; if (!canvas) return;
-    const ctx = canvas.getContext('2d'); if (!ctx) return;
+    const mount = mountRef.current; if (!mount) return;
     const s = stateRef.current;
-    canvas.width = canvas.offsetWidth; canvas.height = canvas.offsetHeight;
-
-    s.running=true; s.timeLeft=DURATION;
-    s.sig={score:0,puzzlesSolved:0,gearsPlaced:0,chainFlashes:0};
-    s.chainActive=false; s.chainTimer=0; s.chainFlash=0;
-    s.difficulty=2; s.nextGearId=0;
+    s.running = true; s.timeLeft = DURATION;
+    s.sig = { gearsPlaced: 0, chainsBroken: 0, perfectChains: 0, maxStreak: 0, score: 0 };
+    s.frame = 0; s.roundNum = 1; s.nextId = 0;
     setScoreDisplay(0); setTimeLeft(DURATION); setPhase('playing');
-    stopMusicRef.current = startMusic('chill');
-    lastFrameRef.current = performance.now();
+    stopMusicRef.current = startMusic('pulse');
 
-    const buildPuzzle = () => {
-      const s2 = stateRef.current; const c = canvasRef.current; if (!c) return;
-      const W = c.width, H = c.height;
-      const numSlots = s2.difficulty;
-      const totalGears = numSlots + 2; // slots + source + target
-      const chainY = H * 0.44;
-      const spacing = Math.min(80, (W * 0.85) / (totalGears + 1));
-      const startX = W / 2 - spacing * (totalGears - 1) / 2;
+    const W = mount.clientWidth, H = mount.clientHeight;
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(W, H); renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setClearColor(0x0a0a0a);
+    mount.innerHTML = ''; mount.appendChild(renderer.domElement);
 
-      s2.slots = [];
-      s2.rotations = new Array(totalGears).fill(0);
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0a0a0a);
+    const camera = new THREE.PerspectiveCamera(65, W / H, 0.1, 100);
+    camera.position.set(0, 0, 9);
 
-      for (let i = 0; i < numSlots; i++) {
-        const gx = startX + spacing * (i + 1);
-        s2.slots.push({x: gx, y: chainY, radius: 28, filled: false, gearId: null});
-      }
+    scene.add(new THREE.AmbientLight(0xffffff, 0.3));
+    const amber = new THREE.AmbientLight(0xf59e0b, 0.2);
+    scene.add(amber);
+    const chainLight = new THREE.PointLight(0xf59e0b, 0, 12);
+    scene.add(chainLight);
 
-      // Palette gears at bottom
-      const paletteY = H * 0.78;
-      const gearCount = numSlots + 2;
-      s2.palette = [];
-      for (let i = 0; i < gearCount; i++) {
-        const gx = W / 2 - (gearCount - 1) * 38 / 2 + i * 38;
-        s2.palette.push({
-          id: s2.nextGearId++,
-          radius: 22 + (i % 2) * 8,
-          teeth: 8 + (i % 2) * 4,
-          color: GEAR_COLORS[i % GEAR_COLORS.length],
-          homeX: gx, homeY: paletteY,
-          x: gx, y: paletteY,
-          dragging: false, dragOX: 0, dragOY: 0,
-          placed: false, slotIndex: -1,
-        });
-      }
-    };
-    buildPuzzleRef.current = buildPuzzle;
-    buildPuzzle();
+    // Background grid
+    const gridHelper = new THREE.GridHelper(20, 20, 0x1a1a1a, 0x141414);
+    gridHelper.rotation.x = Math.PI / 2;
+    gridHelper.position.z = -1;
+    scene.add(gridHelper);
 
-    timerRef.current = setInterval(()=>{
+    // Stars
+    const starPos = new Float32Array(200 * 3);
+    for (let i = 0; i < 200; i++) { starPos[i*3] = (Math.random()-0.5)*20; starPos[i*3+1] = (Math.random()-0.5)*15; starPos[i*3+2] = -3 - Math.random()*10; }
+    const starGeo = new THREE.BufferGeometry(); starGeo.setAttribute('position', new THREE.BufferAttribute(starPos, 3));
+    scene.add(new THREE.Points(starGeo, new THREE.PointsMaterial({ color: 0xf59e0b, size: 0.06, transparent: true, opacity: 0.3 })));
+
+    const slotMeshes = setupRound(scene, s);
+    const obj = { renderer, scene, camera, gearGroups: [], slotMeshes, chainLight, animId: 0 };
+    threeRef.current = obj;
+
+    timerRef.current = setInterval(() => {
       s.timeLeft--; setTimeLeft(s.timeLeft);
-      if (s.timeLeft<=5&&s.timeLeft>0) sfx.collect();
-      if (s.timeLeft<=0) endGame();
-    },1000);
+      if (s.timeLeft <= 0) endGame();
+    }, 1000);
 
-    const loop = (ts: number) => {
+    const animate = () => {
+      obj.animId = requestAnimationFrame(animate);
       if (!s.running) return;
-      const dt = Math.min(50, ts - lastFrameRef.current) / 1000;
-      lastFrameRef.current = ts;
-      const W = canvas.width, H = canvas.height;
-      const numSlots = s.difficulty;
-      const totalGears = numSlots + 2;
-      const spacing = Math.min(80, (W * 0.85) / (totalGears + 1));
-      const startX = W / 2 - spacing * (totalGears - 1) / 2;
-      const chainY = H * 0.44;
+      s.frame++;
+      const t0 = s.frame;
 
-      // BG
-      const bg = ctx.createLinearGradient(0,0,0,H);
-      bg.addColorStop(0,'#0d0020'); bg.addColorStop(1,'#1a0030');
-      ctx.fillStyle=bg; ctx.fillRect(0,0,W,H);
-
-      // Chain flash
-      s.chainFlash = Math.max(0, s.chainFlash - dt * 2.5);
-      if (s.chainFlash > 0) {
-        ctx.fillStyle = `rgba(168,85,247,${s.chainFlash * 0.2})`;
-        ctx.fillRect(0,0,W,H);
-      }
-
-      // Chain animation
-      if (s.chainActive) {
-        s.chainTimer -= dt;
-        // Spin gears in alternating directions
-        for (let i = 0; i < s.rotations.length; i++) {
-          s.rotations[i] += dt * 3 * (i % 2 === 0 ? 1 : -1);
-        }
-        if (s.chainTimer <= 0) {
-          // Puzzle solved! Next difficulty
-          s.chainActive = false;
-          s.sig.puzzlesSolved++;
-          s.sig.score += (s.difficulty + 1) * 5;
-          s.difficulty = Math.min(4, s.difficulty + 1);
-          setScoreDisplay(s.sig.score);
-          buildPuzzleRef.current();
-        }
-      }
-
-      // Draw shaft lines between gear positions
-      ctx.strokeStyle = 'rgba(255,255,255,0.06)'; ctx.lineWidth = 3;
-      ctx.beginPath();
-      ctx.moveTo(startX, chainY);
-      ctx.lineTo(startX + spacing * (totalGears - 1), chainY);
-      ctx.stroke();
-
-      // Source gear (always spinning, green)
-      const srcX = startX, tgtX = startX + spacing * (totalGears - 1);
-      const srcRot = s.chainActive ? s.rotations[0] : (ts * 0.002);
-      drawGear(ctx, srcX, chainY, 32, 10, 7, srcRot, '#4ade80', true);
-      ctx.fillStyle = '#4ade80'; ctx.font = 'bold 10px system-ui'; ctx.textAlign = 'center';
-      ctx.fillText('SRC', srcX, chainY + 48);
-
-      // Target gear (static, purple when incomplete, green when chain active)
-      const tgtRot = s.chainActive ? s.rotations[totalGears - 1] : 0;
-      const tgtCol = s.chainActive ? '#4ade80' : '#a855f7';
-      drawGear(ctx, tgtX, chainY, 32, 10, 7, tgtRot, tgtCol, s.chainActive);
-      ctx.fillStyle = tgtCol; ctx.font = 'bold 10px system-ui';
-      ctx.fillText('TGT', tgtX, chainY + 48);
-
-      // Slot gears
-      for (let i = 0; i < s.slots.length; i++) {
-        const slot = s.slots[i];
-        const slotX = startX + spacing * (i + 1);
-        if (slot.filled && slot.gearId !== null) {
-          const gear = s.palette.find(g => g.id === slot.gearId);
-          if (gear) {
-            const rot = s.chainActive ? s.rotations[i+1] : 0;
-            drawGear(ctx, slotX, chainY, gear.radius, gear.teeth, 5, rot, gear.color, s.chainActive);
+      // Animate gears spinning
+      for (const gear of s.activeGears) {
+        if (!gear.placed) {
+          // Float animation
+          gear.y = gear.y - 0.005 + Math.sin(t0 * 0.03 + gear.id) * 0.01;
+          const gMesh = scene.getObjectByProperty('uuid', gear.mesh.parent?.uuid ?? '') ?? scene.children.find(c => c instanceof THREE.Group && (c as THREE.Group).position.x === gear.x);
+          if (gear.mesh.parent) {
+            gear.mesh.parent.position.y = gear.y;
+            gear.mesh.parent.rotation.z = t0 * 0.03 * (gear.order % 2 === 0 ? 1 : -1);
           }
         } else {
-          // Empty slot ghost
-          ctx.save();
-          ctx.strokeStyle = 'rgba(168,85,247,0.4)'; ctx.lineWidth = 2;
-          ctx.setLineDash([5, 5]);
-          ctx.beginPath(); ctx.arc(slotX, chainY, 30, 0, Math.PI*2); ctx.stroke();
-          ctx.setLineDash([]);
-          ctx.fillStyle = 'rgba(168,85,247,0.15)';
-          ctx.beginPath(); ctx.arc(slotX, chainY, 30, 0, Math.PI*2); ctx.fill();
-          ctx.fillStyle = 'rgba(168,85,247,0.5)'; ctx.font = '20px system-ui';
-          ctx.textAlign = 'center'; ctx.fillText('+', slotX, chainY + 7);
-          ctx.restore();
+          // Placed: spin in slot
+          if (gear.mesh.parent) gear.mesh.parent.rotation.z += gear.speed * (gear.order % 2 === 0 ? 1 : -1);
         }
       }
 
-      // Arrow indicators between slots
-      for (let i = 0; i < totalGears - 1; i++) {
-        const ax = startX + spacing * i + spacing * 0.5, ay = chainY;
-        ctx.fillStyle = 'rgba(255,255,255,0.2)'; ctx.font = '12px system-ui'; ctx.textAlign = 'center';
-        ctx.fillText('→', ax, ay + 3);
+      // Slot ring pulse
+      for (const slot of s.slots) {
+        slot.ring.rotation.z += 0.01;
+        (slot.ring.material as THREE.MeshBasicMaterial).opacity = slot.filled ? 0.8 : 0.2 + Math.sin(t0 * 0.07 + slot.id) * 0.1;
+        if (slot.filled) {
+          (slot.mesh.material as THREE.MeshStandardMaterial).emissive.set(ACCENT);
+          (slot.mesh.material as THREE.MeshStandardMaterial).emissiveIntensity = 0.6;
+        }
       }
 
-      // Palette area
-      const paletteY = H * 0.78;
-      ctx.fillStyle = 'rgba(255,255,255,0.05)';
-      ctx.beginPath(); ctx.roundRect(20, paletteY - 45, W - 40, 90, 12); ctx.fill();
-      ctx.strokeStyle = 'rgba(255,255,255,0.1)'; ctx.lineWidth = 1;
-      ctx.beginPath(); ctx.roundRect(20, paletteY - 45, W - 40, 90, 12); ctx.stroke();
-      ctx.fillStyle = 'rgba(255,255,255,0.25)'; ctx.font = '11px system-ui'; ctx.textAlign = 'center';
-      ctx.fillText('DRAG GEARS TO SLOTS', W/2, paletteY + 48);
-
-      // Palette gears
-      for (const g of s.palette) {
-        if (g.placed) continue;
-        drawGear(ctx, g.x, g.y, g.radius, g.teeth, 5, g.dragging ? ts * 0.003 : 0, g.color, g.dragging);
+      // Chain complete flash
+      if (s.chainComplete) {
+        chainLight.intensity = 3 + Math.sin(t0 * 0.2) * 2;
+      } else {
+        chainLight.intensity = 0;
       }
 
-      // Completion status
-      const allFilled = s.slots.length > 0 && s.slots.every(sl => sl.filled);
-      if (allFilled && !s.chainActive) {
-        s.chainActive = true; s.chainTimer = 1.2; s.chainFlash = 1;
-        s.sig.chainFlashes++;
-        sfx.collect(); haptic([30,20,30,20,60]);
-      }
-
-      // Instructions when no slots
-      if (s.slots.length === 0) {
-        ctx.fillStyle = 'rgba(255,255,255,0.3)'; ctx.font = '14px system-ui'; ctx.textAlign = 'center';
-        ctx.fillText('Drag gears from below to fill the chain!', W/2, H*0.7);
-      }
-
-      // Solved count
-      ctx.fillStyle = 'rgba(255,255,255,0.3)'; ctx.font = '12px system-ui'; ctx.textAlign = 'center';
-      ctx.fillText(`Puzzles solved: ${s.sig.puzzlesSolved}`, W/2, H*0.92);
-
-      animRef.current = requestAnimationFrame(loop);
+      renderer.render(scene, camera);
     };
-    animRef.current = requestAnimationFrame(loop);
-  }, [endGame]);
+    animate();
+
+    const handleResize = () => {
+      const w = mount.clientWidth, h = mount.clientHeight;
+      camera.aspect = w / h; camera.updateProjectionMatrix(); renderer.setSize(w, h);
+    };
+    window.addEventListener('resize', handleResize);
+  }, [endGame, setupRound]);
 
   useEffect(() => {
-    const canvas = canvasRef.current; if (!canvas) return;
-    const resize = () => { canvas.width = canvas.offsetWidth; canvas.height = canvas.offsetHeight; };
-    resize(); window.addEventListener('resize', resize);
+    const mount = mountRef.current; if (!mount || phase !== 'playing') return;
+    const onTap = (e: PointerEvent) => {
+      const t = threeRef.current; if (!t) return;
+      const s = stateRef.current; if (!s.running) return;
+      const rect = mount.getBoundingClientRect();
+      const ndcX = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+      const ndcY = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+      const raycaster = new THREE.Raycaster();
+      raycaster.setFromCamera(new THREE.Vector2(ndcX, ndcY), t.camera);
 
-    const getPos = (e: PointerEvent) => {
-      const rect = canvas.getBoundingClientRect();
-      return {x: e.clientX - rect.left, y: e.clientY - rect.top};
-    };
+      // Find unplaced gear meshes
+      const unplacedParents = s.activeGears.filter(g => !g.placed).map(g => g.mesh.parent!).filter(Boolean);
+      const hits = raycaster.intersectObjects(unplacedParents, true);
+      if (hits.length === 0) return;
+      let hitGroup = hits[0].object;
+      while (hitGroup.parent && !(hitGroup.parent instanceof THREE.Scene)) hitGroup = hitGroup.parent;
 
-    const onDown = (e: PointerEvent) => {
-      const s = stateRef.current; if (!s.running || s.chainActive) return;
-      const {x, y} = getPos(e);
-      // Find palette gear hit
-      let best: PaletteGear | null = null; let bestDist = 50;
-      for (const g of s.palette) {
-        if (g.placed) continue;
-        const d = Math.hypot(x - g.x, y - g.y);
-        if (d < g.radius + 15 && d < bestDist) { bestDist = d; best = g; }
-      }
-      if (best) {
-        best.dragging = true; best.dragOX = x - best.x; best.dragOY = y - best.y;
-        s.dragId = best.id;
-      }
-    };
+      const gear = s.activeGears.find(g => g.mesh.parent === hitGroup);
+      if (!gear || gear.placed) return;
 
-    const onMove = (e: PointerEvent) => {
-      const s = stateRef.current; if (!s.running || s.dragId === null) return;
-      const {x, y} = getPos(e);
-      const g = s.palette.find(p => p.id === s.dragId);
-      if (g && g.dragging) { g.x = x - g.dragOX; g.y = y - g.dragOY; }
-    };
+      // Check if it's the next in order
+      if (gear.order === s.nextOrder) {
+        gear.placed = true;
+        s.nextOrder++;
+        s.sig.gearsPlaced++;
+        const slot = s.slots[gear.slotId];
+        slot.filled = true;
+        // Snap to slot
+        if (hitGroup) hitGroup.position.set(slot.x, slot.y, 0);
+        sfx.collect?.(); hapticScore();
+        s.sig.score++;
+        setScoreDisplay(s.sig.score);
 
-    const onUp = (e: PointerEvent) => {
-      const s = stateRef.current; if (!s.running || s.dragId === null) return;
-      const {x, y} = getPos(e);
-      const g = s.palette.find(p => p.id === s.dragId);
-      if (g && g.dragging) {
-        g.dragging = false;
-        // Find nearest empty slot
-        let bestSlot: ChainSlot | null = null; let bestDist = 50;
-        for (const sl of s.slots) {
-          if (sl.filled) continue;
-          const d = Math.hypot(x - sl.x, y - sl.y);
-          if (d < bestDist) { bestDist = d; bestSlot = sl; }
+        // Check chain complete
+        if (s.nextOrder === 4) {
+          s.chainComplete = true;
+          s.sig.perfectChains++;
+          s.sig.score += 5;
+          setScoreDisplay(s.sig.score);
+          sfx.success?.(); hapticVictory();
+          setTimeout(() => {
+            if (!s.running) return;
+            // Reset for next round
+            const { scene } = t;
+            s.activeGears.forEach(g => { if (g.mesh.parent) scene.remove(g.mesh.parent); });
+            s.slots.forEach(sl => { scene.remove(sl.mesh); scene.remove(sl.ring); });
+            s.roundNum++;
+            s.chainComplete = false;
+            s.nextOrder = 0;
+            setupRound(scene, s);
+          }, 1500);
         }
-        if (bestSlot) {
-          bestSlot.filled = true; bestSlot.gearId = g.id;
-          g.placed = true; g.slotIndex = s.slots.indexOf(bestSlot);
-          g.x = bestSlot.x; g.y = bestSlot.y;
-          s.sig.gearsPlaced++;
-          sfx.collect(); haptic([30]);
-        } else {
-          // Return to home
-          g.x = g.homeX; g.y = g.homeY;
-        }
-        s.dragId = null;
+      } else {
+        // Wrong order — break chain
+        s.sig.chainsBroken++;
+        sfx.fail?.(); hapticFail();
+        // Flash red
+        const mat = (hitGroup as THREE.Group)?.children[0] ? ((hitGroup as THREE.Group).children[0] as THREE.Mesh).material as THREE.MeshStandardMaterial : null;
+        if (mat) { mat.emissive.set(0xef4444); mat.emissiveIntensity = 1.5; setTimeout(() => { mat.emissive.set(gear.color); mat.emissiveIntensity = 0.25; }, 400); }
       }
     };
-
-    canvas.addEventListener('pointerdown', onDown);
-    canvas.addEventListener('pointermove', onMove);
-    canvas.addEventListener('pointerup', onUp);
-    canvas.addEventListener('pointercancel', onUp);
-    return () => {
-      window.removeEventListener('resize', resize);
-      canvas.removeEventListener('pointerdown', onDown);
-      canvas.removeEventListener('pointermove', onMove);
-      canvas.removeEventListener('pointerup', onUp);
-      canvas.removeEventListener('pointercancel', onUp);
-    };
-  }, []);
+    mount.addEventListener('pointerdown', onTap);
+    return () => mount.removeEventListener('pointerdown', onTap);
+  }, [phase, setupRound]);
 
   useEffect(() => () => {
-    cancelAnimationFrame(animRef.current);
     if (timerRef.current) clearInterval(timerRef.current);
     if (stopMusicRef.current) stopMusicRef.current();
+    const t = threeRef.current;
+    if (t) { cancelAnimationFrame(t.animId); t.renderer.dispose(); }
   }, []);
 
   const handleStart = useCallback(async (name: string, avatar: string) => {
     playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar);
-    await initAudio(); sfx.click(); setPhase('countdown');
+    await initAudio(); setPhase('countdown');
   }, []);
   const handleCountdownDone = useCallback(() => { startLoop(); }, [startLoop]);
   const handlePlayAgain = useCallback(() => { setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null); }, []);
-  const buildInsights = useCallback((sig: Signals) => {
-    const pb = parseInt(localStorage.getItem(PB_KEY) ?? '0');
-    return [
-      {label:'Puzzles Solved',value:String(sig.puzzlesSolved),color:sig.puzzlesSolved>=3?'#4ade80':sig.puzzlesSolved>=1?'#facc15':'#ef4444'},
-      {label:'Gears Placed',value:String(sig.gearsPlaced),color:ACCENT},
-      {label:'Score',value:String(sig.score),color:ACCENT},
-      {label:'Personal Best',value:String(pb),color:'var(--color-text)'},
-    ];
-  }, []);
+  const buildInsights = (sig: Signals) => [
+    { label: 'Gears Placed', value: String(sig.gearsPlaced), color: ACCENT },
+    { label: 'Perfect Chains', value: String(sig.perfectChains), color: '#4ade80' },
+    { label: 'Chains Broken', value: String(sig.chainsBroken), color: sig.chainsBroken === 0 ? '#4ade80' : '#ef4444' },
+    { label: 'Score', value: String(sig.score), color: 'var(--color-text)' },
+  ];
 
   return (
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accentColor} gameId={GAME_ID}>
-      {phase==='start'&&<GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description={GAME_TAGLINE} ctaLabel="Start the Machine!" accentColor={accentColor} onStart={handleStart}/>}
-      {phase==='countdown'&&<Countdown onComplete={handleCountdownDone} accentColor={accentColor}/>}
-      {(phase==='playing'||phase==='countdown')&&<>
-        <canvas ref={canvasRef} role="img" aria-label="Gear Grind canvas" style={{position:'absolute',inset:0,width:'100%',height:'100%',touchAction:'none'}}/>
-        {phase==='playing'&&<GameHUD accentColor={accentColor} items={[{label:'TIME',value:timeLeft,danger:timeLeft<=5,testId:'timer'},{label:'SCORE',value:scoreDisplay,testId:'score'}]}/>}
-      </>}
-      {phase==='done'&&finalSig&&<>
-        <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI} score={String(finalSig.score)} personality={getPersonality(finalSig)} insights={buildInsights(finalSig)} accentColor={accentColor} onPlayAgain={handlePlayAgain} didWin={finalSig.puzzlesSolved>=2}/>
-        <WebhookEmitter theme={theme} sig={finalSig} personality={getPersonality(finalSig)} player={playerSessionRef.current}/>
-      </>}
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
+      {phase === 'start' && <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description={GAME_TAGLINE} ctaLabel="Start the Machine ⚙️" accentColor={theme.colors.accent ?? ACCENT} onStart={handleStart} />}
+      {phase === 'countdown' && <Countdown onComplete={handleCountdownDone} accentColor={theme.colors.accent ?? ACCENT} />}
+      {(phase === 'playing' || phase === 'countdown') && (
+        <>
+          <div ref={mountRef} style={{ position: 'absolute', inset: 0, touchAction: 'none' }} />
+          {phase === 'playing' && <GameHUD accentColor={theme.colors.accent ?? ACCENT} items={[{ label: 'TIME', value: timeLeft, danger: timeLeft <= 10 }, { label: 'SCORE', value: scoreDisplay }]} />}
+        </>
+      )}
+      {phase === 'done' && finalSig && (
+        <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI} score={String(finalSig.score)} personality={getPersonality(finalSig)} insights={buildInsights(finalSig)} accentColor={theme.colors.accent ?? ACCENT} onPlayAgain={handlePlayAgain} didWin={finalSig.perfectChains >= 3} />
+      )}
+      {phase === 'done' && finalSig && (
+        <WebhookEmitter theme={theme} sig={finalSig} personality={getPersonality(finalSig)} player={playerSessionRef.current} />
+      )}
     </GameShell>
   );
+}
+
+function WebhookEmitter({ theme, sig, personality, player }: { theme: ReturnType<typeof useBrandTheme>; sig: Signals; personality: string; player: PlayerSession | null; }) {
+  const fired = useRef(false);
+  useEffect(() => {
+    if (fired.current) return; fired.current = true;
+    postWebhook(theme, GAME_ID, { personality, score: sig.score, gearsPlaced: sig.gearsPlaced, perfectChains: sig.perfectChains, chainsBroken: sig.chainsBroken }, player);
+  }, [theme, sig, personality, player]);
+  return null;
 }

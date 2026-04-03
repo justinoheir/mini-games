@@ -1,12 +1,13 @@
 'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
+import * as THREE from 'three';
 import GameShell from '@/components/GameShell';
 import GameHUD from '@/components/GameHUD';
 import GameStartScreen from '@/components/GameStartScreen';
 import Countdown from '@/components/Countdown';
 import EndScreen from '@/components/EndScreen';
 import { initAudio, sfx } from '@/lib/audio';
-import { hapticScore, hapticFail, hapticVictory, hapticCombo } from '@/lib/haptics';
+import { hapticScore, hapticFail, hapticVictory } from '@/lib/haptics';
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
 
@@ -17,17 +18,8 @@ const GAME_EMOJI = '📈';
 const GAME_TITLE = 'Pattern Predict';
 const GAME_TAGLINE = "What comes next? You tell me.";
 
-interface Signals {
-  total: number;
-  correct: number;
-  wrong: number;
-  avgReactionMs: number;
-  totalMs: number;
-  level: number;
-  score: number;
-  maxStreak: number;
-  streakCurrent: number;
-}
+interface Signals { total: number; correct: number; wrong: number; avgReactionMs: number; totalMs: number; level: number; score: number; maxStreak: number; streakCurrent: number; }
+type Phase = 'start' | 'countdown' | 'playing' | 'done';
 
 function getPersonality(sig: Signals): string {
   const acc = sig.total > 0 ? sig.correct / sig.total : 0;
@@ -38,380 +30,265 @@ function getPersonality(sig: Signals): string {
   return 'Pattern Learner 🌱';
 }
 
-type Phase = 'start' | 'countdown' | 'playing' | 'done';
+const SHAPE_TYPES = ['sphere', 'box', 'cone', 'octahedron', 'torus'];
+const PALETTE = [0x14b8a6, 0xa855f7, 0xf97316, 0xef4444, 0x3b82f6, 0xfacc15];
 
-type PatternType = 'arithmetic' | 'geometric' | 'alternating' | 'color' | 'shape';
+interface Pattern { sequenceTypes: string[]; answerType: string; options: string[]; }
 
-interface Pattern {
-  type: PatternType;
-  sequence: string[];   // display labels
-  answer: string;
-  options: string[];    // 3 options including answer
-  hint: string;         // e.g., "+3 each time"
+function genPattern(level: number): Pattern {
+  const n = Math.min(4, 2 + Math.floor(level / 2));
+  const base = SHAPE_TYPES[Math.floor(Math.random() * SHAPE_TYPES.length)];
+  const alt = SHAPE_TYPES[(SHAPE_TYPES.indexOf(base) + 1 + Math.floor(Math.random()*(SHAPE_TYPES.length-1))) % SHAPE_TYPES.length];
+  let seq: string[];
+  if (level < 2) { seq = [base, base, base, alt].slice(0, n + 1); }
+  else if (level < 4) { seq = [base, alt, base, alt, base].slice(0, n + 1); }
+  else { seq = [base, alt, base, base, alt].slice(0, n + 1); }
+  const answer = seq[seq.length - 1];
+  const others = SHAPE_TYPES.filter(s => s !== answer);
+  const opts = [answer, others[0], others[1]].sort(() => Math.random() - 0.5);
+  return { sequenceTypes: seq.slice(0, -1), answerType: answer, options: opts };
 }
 
-const SHAPE_SEQS = [
-  ['●', '■', '▲', '●', '■', '▲', '●', '■'],
-  ['▲', '▲', '●', '▲', '▲', '●', '▲', '▲'],
-  ['■', '●', '■', '■', '●', '■', '■', '●'],
-];
-
-const COLOR_NAMES = ['🔴', '🟠', '🟡', '🟢', '🔵', '🟣'];
-
-function makePattern(level: number): Pattern {
-  const types: PatternType[] = level >= 4
-    ? ['arithmetic', 'geometric', 'alternating', 'color', 'shape']
-    : level >= 2
-      ? ['arithmetic', 'alternating', 'color']
-      : ['arithmetic', 'alternating'];
-
-  const type = types[Math.floor(Math.random() * types.length)];
-
-  if (type === 'arithmetic') {
-    const start = Math.floor(Math.random() * 5) + 1;
-    const step = Math.floor(Math.random() * (level >= 3 ? 5 : 3)) + 2;
-    const isAdd = Math.random() < 0.6;
-    const vals = Array.from({ length: 5 }, (_, i) => isAdd ? start + i * step : start * Math.pow(2, i));
-    const answer = String(isAdd ? vals[4] + step : vals[4] * 2);
-    const wrong1 = String(parseInt(answer) + (Math.random() < 0.5 ? 1 : -1) * step);
-    const wrong2 = String(parseInt(answer) + (Math.random() < 0.5 ? 2 : -2) * step);
-    return {
-      type, sequence: vals.slice(0, 4).map(String), answer,
-      options: [answer, wrong1, wrong2].sort(() => Math.random() - 0.5),
-      hint: isAdd ? `+${step} each` : '×2 each',
-    };
+function makeGeometry(type: string): THREE.BufferGeometry {
+  switch (type) {
+    case 'box': return new THREE.BoxGeometry(0.5, 0.5, 0.5);
+    case 'cone': return new THREE.ConeGeometry(0.3, 0.65, 8);
+    case 'octahedron': return new THREE.OctahedronGeometry(0.35);
+    case 'torus': return new THREE.TorusGeometry(0.25, 0.1, 8, 16);
+    default: return new THREE.SphereGeometry(0.32, 16, 16);
   }
-
-  if (type === 'alternating') {
-    const a = Math.floor(Math.random() * 5) + 2;
-    const b = Math.floor(Math.random() * 5) + 8;
-    const seq = [a, b, a, b, a].map(String);
-    const answer = String(b);
-    const wrong1 = String(a + 1);
-    const wrong2 = String(b + 2);
-    return {
-      type, sequence: seq.slice(0, 4), answer,
-      options: [answer, wrong1, wrong2].sort(() => Math.random() - 0.5),
-      hint: 'alternates A B A B...',
-    };
-  }
-
-  if (type === 'color') {
-    const colors = COLOR_NAMES.slice(0, 4);
-    const period = Math.floor(Math.random() * 2) + 2;
-    const seq = Array.from({ length: 5 }, (_, i) => colors[i % period]);
-    const answer = seq[4];
-    const options = [answer, ...colors.filter(c => c !== answer).slice(0, 2)].sort(() => Math.random() - 0.5);
-    return { type, sequence: seq.slice(0, 4), answer, options, hint: `repeats every ${period}` };
-  }
-
-  if (type === 'shape') {
-    const shapeSeq = SHAPE_SEQS[Math.floor(Math.random() * SHAPE_SEQS.length)];
-    const period = shapeSeq.indexOf(shapeSeq[1]) === -1 ? 3 : shapeSeq.indexOf(shapeSeq[0], 1);
-    const answer = shapeSeq[4];
-    const wrongShapes = ['●', '■', '▲', '◆', '★'].filter(s => s !== answer).slice(0, 2);
-    return {
-      type, sequence: shapeSeq.slice(0, 4), answer,
-      options: [answer, ...wrongShapes].sort(() => Math.random() - 0.5),
-      hint: 'find the pattern',
-    };
-  }
-
-  // geometric fallback
-  const start = 2, ratio = 2;
-  const vals = Array.from({ length: 5 }, (_, i) => start * Math.pow(ratio, i));
-  const answer = String(vals[4] * ratio);
-  return {
-    type: 'geometric',
-    sequence: vals.slice(0, 4).map(String),
-    answer,
-    options: [answer, String(parseInt(answer) + 2), String(parseInt(answer) - 4)].sort(() => Math.random() - 0.5),
-    hint: `×${ratio} each`,
-  };
 }
 
-interface GameState {
-  running: boolean; timeLeft: number;
-  sig: Signals; frame: number; accentColor: string;
-  floats: Array<{ x: number; y: number; text: string; alpha: number; vy: number; color: string }>;
-  pattern: Pattern | null;
-  shownAt: number;
-  feedback: number | null;
-  feedbackTimer: number;
-  level: number;
-}
-
-export default function PatternPredictGame() {
+export default function PatternPredict() {
   const theme = useBrandTheme();
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const mountRef = useRef<HTMLDivElement>(null);
+  const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
+  const sceneRef = useRef<THREE.Scene | null>(null);
+  const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const animRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const seqMeshesRef = useRef<THREE.Mesh[]>([]);
+  const optMeshesRef = useRef<THREE.Mesh[]>([]);
+  const playerSessionRef = useRef<PlayerSession | null>(null);
 
-  const stateRef = useRef<GameState>({
+  const stateRef = useRef({
     running: false, timeLeft: DURATION,
-    sig: { total: 0, correct: 0, wrong: 0, avgReactionMs: 0, totalMs: 0, level: 1, score: 0, maxStreak: 0, streakCurrent: 0 },
-    frame: 0, accentColor: ACCENT, floats: [],
-    pattern: null, shownAt: 0, feedback: null, feedbackTimer: 0, level: 1,
+    sig: { total: 0, correct: 0, wrong: 0, avgReactionMs: 0, totalMs: 0, level: 1, score: 0, maxStreak: 0, streakCurrent: 0 } as Signals,
+    pattern: null as Pattern | null, probStart: 0, answered: false,
   });
 
   const [phase, setPhase] = useState<Phase>('start');
   const [timeLeft, setTimeLeft] = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
   const [finalSig, setFinalSig] = useState<Signals | null>(null);
-  const playerSessionRef = useRef<PlayerSession | null>(null);
-
-  useEffect(() => { stateRef.current.accentColor = theme.colors.accent ?? ACCENT; }, [theme]);
-
-  const nextPattern = useCallback(() => {
-    const s = stateRef.current;
-    s.pattern = makePattern(s.level);
-    s.shownAt = Date.now();
-    s.feedback = null; s.feedbackTimer = 0;
-  }, []);
 
   const endGame = useCallback(() => {
-    const s = stateRef.current;
-    s.running = false;
+    const s = stateRef.current; s.running = false;
     cancelAnimationFrame(animRef.current);
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
-    const pb = parseInt(localStorage.getItem('pb_' + GAME_ID) ?? '0');
-    if (s.sig.score > pb) localStorage.setItem('pb_' + GAME_ID, String(s.sig.score));
-    setFinalSig({ ...s.sig });
-    setPhase('done');
+    if (s.sig.total > 0) s.sig.avgReactionMs = s.sig.totalMs / s.sig.total;
     hapticVictory();
+    setFinalSig({ ...s.sig }); setPhase('done');
+  }, []);
+
+  const buildQuestion = useCallback(() => {
+    const s = stateRef.current;
+    const scene = sceneRef.current; if (!scene) return;
+    seqMeshesRef.current.forEach(m => scene.remove(m)); seqMeshesRef.current = [];
+    optMeshesRef.current.forEach(m => scene.remove(m)); optMeshesRef.current = [];
+    const p = genPattern(s.sig.level);
+    s.pattern = p; s.probStart = Date.now(); s.answered = false;
+    // Sequence items (top row)
+    const seqN = p.sequenceTypes.length;
+    p.sequenceTypes.forEach((type, i) => {
+      const x = -3 + i * (6 / Math.max(seqN-1, 1));
+      const col = PALETTE[i % PALETTE.length];
+      const geo = makeGeometry(type);
+      const mat = new THREE.MeshStandardMaterial({ color: col, emissive: new THREE.Color(col).multiplyScalar(0.2), roughness: 0.3, metalness: 0.5 });
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.position.set(x, 2, 0);
+      scene.add(mesh); seqMeshesRef.current.push(mesh);
+    });
+    // Question mark placeholder
+    const qGeo = new THREE.TorusGeometry(0.3, 0.05, 8, 32);
+    const qMat = new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0x888888, roughness: 0.5 });
+    const qMesh = new THREE.Mesh(qGeo, qMat);
+    qMesh.position.set(3.5, 2, 0);
+    scene.add(qMesh); seqMeshesRef.current.push(qMesh);
+    // Options (bottom row)
+    p.options.forEach((type, i) => {
+      const x = -2.5 + i * 2.5;
+      const col = PALETTE[(i + 2) % PALETTE.length];
+      const geo = makeGeometry(type);
+      const mat = new THREE.MeshStandardMaterial({ color: col, emissive: new THREE.Color(col).multiplyScalar(0.2), roughness: 0.3, metalness: 0.5 });
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.position.set(x, -1.5, 0);
+      mesh.userData = { type, idx: i };
+      scene.add(mesh); optMeshesRef.current.push(mesh);
+    });
   }, []);
 
   const startLoop = useCallback(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+    const mount = mountRef.current; if (!mount) return;
     const s = stateRef.current;
-
     s.running = true; s.timeLeft = DURATION;
     s.sig = { total: 0, correct: 0, wrong: 0, avgReactionMs: 0, totalMs: 0, level: 1, score: 0, maxStreak: 0, streakCurrent: 0 };
-    s.frame = 0; s.floats = []; s.level = 1;
-    nextPattern();
     setScoreDisplay(0); setTimeLeft(DURATION); setPhase('playing');
+
+    const W = window.innerWidth, H = window.innerHeight;
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x060c10);
+    sceneRef.current = scene;
+
+    const camera = new THREE.PerspectiveCamera(65, W / H, 0.1, 60);
+    camera.position.set(0, 0, 9);
+    cameraRef.current = camera;
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(W, H);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    mount.appendChild(renderer.domElement);
+    rendererRef.current = renderer;
+
+    scene.add(new THREE.AmbientLight(0x082020, 3));
+    scene.add(Object.assign(new THREE.PointLight(0x14b8a6, 60, 20), { position: new THREE.Vector3(2, 4, 7) }));
+    scene.add(Object.assign(new THREE.PointLight(0xa855f7, 40, 15), { position: new THREE.Vector3(-3, -3, 5) }));
+
+    // Stars
+    const sg = new THREE.BufferGeometry();
+    const sp = new Float32Array(400);
+    for (let i = 0; i < 400; i += 3) { sp[i] = (Math.random()-0.5)*40; sp[i+1] = (Math.random()-0.5)*40; sp[i+2] = (Math.random()-0.5)*10-8; }
+    sg.setAttribute('position', new THREE.BufferAttribute(sp, 3));
+    scene.add(new THREE.Points(sg, new THREE.PointsMaterial({ color: 0x14b8a6, size: 0.05 })));
+
+    // Divider line
+    const divGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(-5, 0, 0), new THREE.Vector3(5, 0, 0)]);
+    scene.add(new THREE.Line(divGeo, new THREE.LineBasicMaterial({ color: 0x14b8a6, transparent: true, opacity: 0.3 })));
+
+    buildQuestion();
+
+    const raycaster = new THREE.Raycaster();
+    const onTap = (e: PointerEvent) => {
+      if (!s.running || s.answered || !s.pattern) return;
+      const rect = renderer.domElement.getBoundingClientRect();
+      const mouse = new THREE.Vector2(((e.clientX - rect.left)/rect.width)*2-1, -((e.clientY - rect.top)/rect.height)*2+1);
+      raycaster.setFromCamera(mouse, camera);
+      const hits = raycaster.intersectObjects(optMeshesRef.current);
+      if (!hits.length) return;
+      const { type, idx } = hits[0].object.userData as { type: string; idx: number };
+      s.answered = true;
+      const correct = type === s.pattern.answerType;
+      const rt = Date.now() - s.probStart;
+      s.sig.total++; s.sig.totalMs += rt;
+      if (correct) {
+        s.sig.correct++; s.sig.streakCurrent++;
+        if (s.sig.streakCurrent > s.sig.maxStreak) s.sig.maxStreak = s.sig.streakCurrent;
+        const pts = Math.max(1, 5 - Math.floor(rt / 1500)) * (s.sig.streakCurrent >= 3 ? 2 : 1);
+        s.sig.score += pts; setScoreDisplay(s.sig.score);
+        s.sig.level = Math.min(7, s.sig.level + 1);
+        (hits[0].object.material as THREE.MeshStandardMaterial).emissive.set(0x4ade80);
+        (hits[0].object.material as THREE.MeshStandardMaterial).emissiveIntensity = 3;
+        sfx.collect(); hapticScore();
+      } else {
+        s.sig.wrong++; s.sig.streakCurrent = 0;
+        s.sig.level = Math.max(1, s.sig.level - 1);
+        (hits[0].object.material as THREE.MeshStandardMaterial).emissive.set(0xef4444);
+        (hits[0].object.material as THREE.MeshStandardMaterial).emissiveIntensity = 3;
+        sfx.collision(); hapticFail();
+      }
+      setTimeout(() => { if (s.running) buildQuestion(); }, 600);
+    };
+    renderer.domElement.addEventListener('pointerdown', onTap);
 
     timerRef.current = setInterval(() => {
       s.timeLeft--; setTimeLeft(s.timeLeft);
-      if (s.timeLeft <= 0) { sfx.fail(); endGame(); }
+      if (s.timeLeft === 10) sfx.warning();
+      if (s.timeLeft <= 0) endGame();
     }, 1000);
 
+    let t = 0;
     const loop = () => {
       if (!s.running) return;
-      const W = canvas.width, H = canvas.height;
-      ctx.clearRect(0, 0, W, H);
-      s.frame++;
-
-      if (s.feedbackTimer > 0) s.feedbackTimer--;
-
-      // Background - teal data
-      ctx.fillStyle = '#030f0e'; ctx.fillRect(0, 0, W, H);
-      // Data stream lines
-      for (let i = 0; i < 6; i++) {
-        const x = (i * 60 + s.frame * 0.3) % (W + 60) - 30;
-        const alpha = 0.04 + Math.sin(i + s.frame * 0.02) * 0.02;
-        ctx.strokeStyle = `rgba(20,184,166,${alpha})`; ctx.lineWidth = 1;
-        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
-      }
-
-      // Feedback flash
-      if (s.feedback !== null && s.feedbackTimer > 0 && s.pattern) {
-        const correct = s.pattern.options[s.feedback] === s.pattern.answer;
-        ctx.fillStyle = correct ? 'rgba(74,222,128,0.1)' : 'rgba(239,68,68,0.1)';
-        ctx.fillRect(0, 0, W, H);
-      }
-
-      const p = s.pattern;
-      if (!p) return;
-
-      // Sequence display
-      ctx.fillStyle = 'rgba(255,255,255,0.5)'; ctx.font = '13px sans-serif'; ctx.textAlign = 'center';
-      ctx.fillText('What comes next?', W / 2, H * 0.12);
-
-      // Draw sequence items
-      const seqY = H * 0.28;
-      const seqItems = [...p.sequence, '?'];
-      const itemW = Math.min((W - 40) / seqItems.length, 60);
-      const seqX = (W - itemW * seqItems.length) / 2;
-
-      seqItems.forEach((item, i) => {
-        const ix = seqX + i * itemW + itemW / 2;
-        const isQuestion = i === seqItems.length - 1;
-
-        ctx.save();
-        ctx.fillStyle = isQuestion ? ACCENT + '22' : 'rgba(255,255,255,0.08)';
-        ctx.strokeStyle = isQuestion ? ACCENT : 'rgba(255,255,255,0.2)';
-        ctx.lineWidth = isQuestion ? 2 : 1;
-        ctx.beginPath();
-        (ctx as any).roundRect?.(ix - itemW * 0.42, seqY - 25, itemW * 0.85, 50, 6) ?? ctx.rect(ix - itemW * 0.42, seqY - 25, itemW * 0.85, 50);
-        ctx.fill(); ctx.stroke();
-
-        ctx.fillStyle = isQuestion ? ACCENT : '#ffffff';
-        ctx.font = `bold ${Math.min(22, itemW * 0.45)}px sans-serif`;
-        ctx.textAlign = 'center';
-        ctx.fillText(item, ix, seqY + 8);
-        ctx.restore();
-
-        // Arrow between items
-        if (i < seqItems.length - 1) {
-          ctx.fillStyle = 'rgba(255,255,255,0.2)'; ctx.font = '14px sans-serif'; ctx.textAlign = 'center';
-          ctx.fillText('›', ix + itemW * 0.5, seqY + 6);
-        }
-      });
-
-      // Hint (subtle)
-      ctx.fillStyle = 'rgba(20,184,166,0.5)'; ctx.font = '12px sans-serif'; ctx.textAlign = 'center';
-      ctx.fillText(`Hint: ${p.hint}`, W / 2, H * 0.42);
-
-      // 3 options
-      const optW = Math.min((W - 50) / 3 - 5, 100);
-      const optH = 56;
-      const optY = H * 0.55;
-      const optTotalW = optW * 3 + 10 * 2;
-      const optX = (W - optTotalW) / 2;
-
-      p.options.forEach((opt, i) => {
-        const bx = optX + i * (optW + 10);
-        const isSelected = s.feedback === i;
-        const isCorrect = opt === p.answer;
-
-        let bg = 'rgba(20,184,166,0.1)';
-        let border = ACCENT;
-        if (isSelected) {
-          bg = isCorrect ? 'rgba(74,222,128,0.25)' : 'rgba(239,68,68,0.25)';
-          border = isCorrect ? '#4ade80' : '#ef4444';
-        } else if (s.feedback !== null && isCorrect) {
-          bg = 'rgba(74,222,128,0.15)'; border = '#4ade80';
-        }
-
-        ctx.save();
-        ctx.fillStyle = bg; ctx.strokeStyle = border; ctx.lineWidth = 2;
-        ctx.shadowBlur = 6; ctx.shadowColor = border;
-        ctx.beginPath();
-        (ctx as any).roundRect?.(bx, optY, optW, optH, 8) ?? ctx.rect(bx, optY, optW, optH);
-        ctx.fill(); ctx.stroke();
-        ctx.fillStyle = '#ffffff';
-        ctx.font = `bold ${Math.min(24, optW * 0.35)}px sans-serif`; ctx.textAlign = 'center';
-        ctx.fillText(opt, bx + optW / 2, optY + optH / 2 + 9);
-        ctx.restore();
-      });
-
-      // Reaction bar
-      const elapsed = (Date.now() - s.shownAt) / 1000;
-      const limit = Math.max(2.5, 6 - s.level * 0.4);
-      ctx.fillStyle = 'rgba(255,255,255,0.1)'; ctx.fillRect(20, H * 0.48, W - 40, 4);
-      const pct = Math.max(0, 1 - elapsed / limit);
-      ctx.fillStyle = pct > 0.5 ? ACCENT : pct > 0.25 ? '#fbbf24' : '#ef4444';
-      ctx.fillRect(20, H * 0.48, (W - 40) * pct, 4);
-
-      if (elapsed > limit && s.feedback === null) {
-        s.sig.total++; s.sig.wrong++; s.sig.streakCurrent = 0;
-        sfx.collision(); hapticFail();
-        s.feedback = -1; s.feedbackTimer = 15;
-        setTimeout(() => { if (s.running) nextPattern(); }, 600);
-      }
-
-      // Floats
-      s.floats = s.floats.filter(f => f.alpha > 0.02);
-      s.floats.forEach(f => {
-        ctx.save(); ctx.globalAlpha = f.alpha;
-        ctx.fillStyle = f.color; ctx.font = 'bold 20px sans-serif'; ctx.textAlign = 'center';
-        ctx.fillText(f.text, f.x, f.y); ctx.restore();
-        f.y += f.vy; f.alpha *= 0.95;
-      });
-
       animRef.current = requestAnimationFrame(loop);
+      t += 0.012;
+      seqMeshesRef.current.forEach((m, i) => { m.rotation.y += 0.015; m.position.y = 2 + Math.sin(t + i * 0.8) * 0.08; });
+      optMeshesRef.current.forEach((m, i) => { m.rotation.y += 0.02; m.position.y = -1.5 + Math.sin(t * 1.2 + i) * 0.1; });
+      renderer.render(scene, camera);
     };
     animRef.current = requestAnimationFrame(loop);
-  }, [endGame, nextPattern]);
+
+    return () => { renderer.domElement.removeEventListener('pointerdown', onTap); };
+  }, [endGame, buildQuestion]);
 
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const resize = () => { canvas.width = canvas.offsetWidth; canvas.height = canvas.offsetHeight; };
-    resize();
-    window.addEventListener('resize', resize);
-
-    const onPointerDown = (e: PointerEvent) => {
-      if (phase !== 'playing') return;
-      const s = stateRef.current;
-      if (s.feedback !== null || !s.pattern) return;
-      const rect = canvas.getBoundingClientRect();
-      const px = (e.clientX - rect.left) * (canvas.width / rect.width);
-      const py = (e.clientY - rect.top) * (canvas.height / rect.height);
-      const W = canvas.width, H = canvas.height;
-      const optW = Math.min((W - 50) / 3 - 5, 100);
-      const optH = 56, optY = H * 0.55;
-      const optX = (W - (optW * 3 + 20)) / 2;
-
-      for (let i = 0; i < 3; i++) {
-        const bx = optX + i * (optW + 10);
-        if (px >= bx && px <= bx + optW && py >= optY && py <= optY + optH) {
-          const ms = Date.now() - s.shownAt;
-          s.sig.total++; s.sig.totalMs += ms;
-          s.feedback = i; s.feedbackTimer = 16;
-
-          if (s.pattern.options[i] === s.pattern.answer) {
-            s.sig.correct++;
-            s.sig.streakCurrent++;
-            if (s.sig.streakCurrent > s.sig.maxStreak) s.sig.maxStreak = s.sig.streakCurrent;
-            const speedPts = ms < 1500 ? 3 : ms < 3000 ? 2 : 1;
-            s.sig.score += speedPts; setScoreDisplay(s.sig.score);
-            s.level = Math.min(8, 1 + Math.floor(s.sig.correct / 3));
-            s.sig.level = s.level;
-            sfx.collect(); hapticScore();
-            if (s.sig.streakCurrent >= 3) hapticCombo(s.sig.streakCurrent);
-            s.floats.push({ x: W / 2, y: H * 0.5, text: `+${speedPts} ✓`, alpha: 1, vy: -2.5, color: '#fbbf24' });
-          } else {
-            s.sig.wrong++; s.sig.streakCurrent = 0;
-            sfx.collision(); hapticFail();
-          }
-          setTimeout(() => { if (s.running) nextPattern(); }, 600);
-          break;
-        }
+    const onResize = () => {
+      if (!cameraRef.current || !rendererRef.current) return;
+      const W = window.innerWidth, H = window.innerHeight;
+      cameraRef.current.aspect = W / H; cameraRef.current.updateProjectionMatrix();
+      rendererRef.current.setSize(W, H);
+    };
+    window.addEventListener('resize', onResize);
+    return () => {
+      window.removeEventListener('resize', onResize);
+      cancelAnimationFrame(animRef.current);
+      if (timerRef.current) clearInterval(timerRef.current);
+      if (rendererRef.current && mountRef.current) {
+        try { mountRef.current.removeChild(rendererRef.current.domElement); } catch { /**/ }
+        rendererRef.current.dispose();
       }
     };
+  }, []);
 
-    canvas.addEventListener('pointerdown', onPointerDown);
-    return () => {
-      window.removeEventListener('resize', resize);
-      canvas.removeEventListener('pointerdown', onPointerDown);
-    };
-  }, [phase, nextPattern]);
-
-  useEffect(() => () => {
+  const handleStart = useCallback((name: string, avatar: string) => {
+    playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar);
+    initAudio(); setPhase('countdown');
+  }, []);
+  const handleCountdownDone = useCallback(() => { startLoop(); }, [startLoop]);
+  const handlePlayAgain = useCallback(() => {
+    stateRef.current.running = false;
     cancelAnimationFrame(animRef.current);
-    if (timerRef.current) clearInterval(timerRef.current);
+    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+    if (rendererRef.current && mountRef.current) {
+      try { mountRef.current.removeChild(rendererRef.current.domElement); } catch { /**/ }
+      rendererRef.current.dispose(); rendererRef.current = null;
+    }
+    setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null);
+    setPhase('countdown');
   }, []);
 
-  const handleStart = useCallback(async (n: string, a: string) => {
-    playerSessionRef.current = savePlayerSession(GAME_ID, n, a);
-    await initAudio(); setPhase('countdown');
-  }, []);
-  const handlePlayAgain = useCallback(() => { setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null); }, []);
-
+  const accent = theme.colors.accent ?? ACCENT;
   return (
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
-      {phase === 'start' && <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description="Find the pattern and predict what comes next!" ctaLabel="Predict! 📈" accentColor={theme.colors.accent ?? ACCENT} onStart={handleStart} />}
-      {phase === 'countdown' && <Countdown onComplete={startLoop} accentColor={theme.colors.accent ?? ACCENT} />}
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accent}
+      background="radial-gradient(ellipse at 50% 30%, rgba(20,184,166,0.1) 0%, transparent 60%), linear-gradient(180deg, #060c10 0%, #030608 100%)">
+      {phase === 'start' && (
+        <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description={GAME_TAGLINE}
+          ctaLabel="Predict! 📈" accentColor={accent} onStart={handleStart} />
+      )}
+      {phase === 'countdown' && <Countdown onComplete={handleCountdownDone} accentColor={accent} />}
       {(phase === 'playing' || phase === 'countdown') && (
         <>
-          <canvas ref={canvasRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none' }} role="img" aria-label="Pattern Predict game canvas" />
-          {phase === 'playing' && <GameHUD accentColor={theme.colors.accent ?? ACCENT} items={[{ label: 'TIME', value: timeLeft, danger: timeLeft <= 10 }, { label: 'SCORE', value: scoreDisplay }]} />}
+          <div ref={mountRef} style={{ position: 'absolute', inset: 0, touchAction: 'none' }} />
+          {phase === 'playing' && (
+            <>
+              <GameHUD accentColor={accent} items={[
+                { label: 'TIME', value: timeLeft, danger: timeLeft <= 10, testId: 'timer' },
+                { label: 'SCORE', value: scoreDisplay, testId: 'score' },
+              ]} />
+              <div style={{ position: 'absolute', top: '13%', left: '50%', transform: 'translateX(-50%)', color: 'rgba(255,255,255,0.4)', fontSize: 12, pointerEvents: 'none' }}>SEQUENCE ↑ · TAP WHAT COMES NEXT ↓</div>
+            </>
+          )}
         </>
       )}
       {phase === 'done' && finalSig && (
-        <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI} score={String(finalSig.score)} personality={getPersonality(finalSig)}
+        <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI}
+          score={String(finalSig.score)} personality={getPersonality(finalSig)}
           insights={[
-            { label: 'Accuracy', value: `${finalSig.total > 0 ? Math.round(finalSig.correct / finalSig.total * 100) : 0}%`, color: ACCENT },
-            { label: 'Avg Speed', value: `${finalSig.total > 0 ? Math.round(finalSig.totalMs / finalSig.total) : 0}ms`, color: '#fbbf24' },
-            { label: 'Level Reached', value: String(finalSig.level), color: '#4ade80' },
-            { label: 'Best Streak', value: `×${finalSig.maxStreak}`, color: '#06b6d4' },
+            { label: 'Correct', value: `${finalSig.correct}/${finalSig.total}`, color: '#4ade80' },
+            { label: 'Avg Speed', value: finalSig.total > 0 ? `${Math.round(finalSig.totalMs/finalSig.total)}ms` : '—', color: accent },
+            { label: 'Best Streak', value: `×${finalSig.maxStreak}`, color: '#fbbf24' },
+            { label: 'Level', value: `${finalSig.level}`, color: accent },
           ]}
-          accentColor={theme.colors.accent ?? ACCENT} onPlayAgain={handlePlayAgain} didWin={finalSig.correct >= 10} />
+          accentColor={accent} onPlayAgain={handlePlayAgain} didWin={finalSig.correct >= 6} />
       )}
     </GameShell>
   );

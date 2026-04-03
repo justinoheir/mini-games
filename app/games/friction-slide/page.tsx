@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
+import * as THREE from 'three';
 import GameShell from '@/components/GameShell';
 import GameHUD from '@/components/GameHUD';
 import GameStartScreen from '@/components/GameStartScreen';
@@ -15,254 +16,293 @@ const ACCENT = '#0ea5e9';
 const DURATION = 45;
 const GAME_EMOJI = '🛷';
 const GAME_TITLE = 'Friction Slide';
-const GAME_TAGLINE = 'Flick with precision. Stop on target.';
+const GAME_TAGLINE = 'Flick the puck. Land on target.';
 
-interface Puck { x: number; y: number; vx: number; vy: number; moving: boolean; r: number; color: string; }
-interface Zone { x: number; y: number; w: number; h: number; pts: number; color: string; }
-interface Signals { totalFlicks: number; bullseyes: number; goodLandings: number; misses: number; maxStreak: number; streakCurrent: number; score: number; avgError: number; errorSum: number; }
+interface Signals { totalFlicks: number; bullseyes: number; goodLandings: number; misses: number; maxStreak: number; streakCurrent: number; score: number; }
 function getPersonality(sig: Signals): string {
   const acc = sig.totalFlicks > 0 ? (sig.bullseyes + sig.goodLandings) / sig.totalFlicks : 0;
   if (sig.bullseyes >= 5 && acc >= 0.8) return 'Curling Champion 🥌';
   if (sig.maxStreak >= 5) return 'Smooth Operator 🌊';
   if (acc >= 0.7) return 'Precision Slider 🎯';
-  if (sig.totalFlicks >= 12) return 'Getting the Feel 📊';
   return 'Finding Friction 🤔';
 }
 type Phase = 'start' | 'countdown' | 'playing' | 'done';
-const PUCK_COLORS = ['#0ea5e9','#38bdf8','#7dd3fc','#06b6d4'];
 
-interface GameState {
+const ZONE_DEFS = [
+  { x: 0, pts: 5, color: 0xfbbf24, r: 0.5, label: 'BULL' },
+  { x: 0, pts: 3, color: 0x22c55e, r: 1.0, label: 'GOOD' },
+  { x: 0, pts: 1, color: 0x3b82f6, r: 1.7, label: 'OK' },
+];
+
+interface GS {
   running: boolean; timeLeft: number; sig: Signals;
-  puck: Puck; zones: Zone[]; dragging: boolean; dragStartX: number; dragStartY: number;
-  accentColor: string; floats: Array<{ x: number; y: number; text: string; alpha: number; vy: number; color: string }>;
-  scorePop: number; frame: number;
+  puckX: number; puckZ: number; puckVX: number; puckVZ: number; puckMoving: boolean;
+  swipeStartX: number; swipeStartZ: number; swiping: boolean;
+  targetZ: number;
 }
 
 export default function FrictionSlide() {
   const theme = useBrandTheme();
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const animRef = useRef(0);
+  const mountRef = useRef<HTMLDivElement>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const stateRef = useRef<GameState>({
+  const stateRef = useRef<GS>({
     running: false, timeLeft: DURATION,
-    sig: { totalFlicks: 0, bullseyes: 0, goodLandings: 0, misses: 0, maxStreak: 0, streakCurrent: 0, score: 0, avgError: 0, errorSum: 0 },
-    puck: { x: 0, y: 0, vx: 0, vy: 0, moving: false, r: 20, color: PUCK_COLORS[0] },
-    zones: [], dragging: false, dragStartX: 0, dragStartY: 0,
-    accentColor: ACCENT, floats: [], scorePop: 0, frame: 0,
+    sig: { totalFlicks: 0, bullseyes: 0, goodLandings: 0, misses: 0, maxStreak: 0, streakCurrent: 0, score: 0 },
+    puckX: 0, puckZ: 4, puckVX: 0, puckVZ: 0, puckMoving: false,
+    swipeStartX: 0, swipeStartZ: 0, swiping: false, targetZ: -4,
   });
+  const threeRef = useRef<{
+    renderer: THREE.WebGLRenderer; scene: THREE.Scene; camera: THREE.PerspectiveCamera;
+    puck: THREE.Mesh; puckLight: THREE.PointLight;
+    zones: Array<{ mesh: THREE.Mesh; pts: number; r: number }>;
+    trail: Array<{ mesh: THREE.Mesh; life: number }>;
+    animId: number;
+  } | null>(null);
+
   const [phase, setPhase] = useState<Phase>('start');
   const [timeLeft, setTimeLeft] = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
   const [finalSig, setFinalSig] = useState<Signals | null>(null);
   const playerSessionRef = useRef<PlayerSession | null>(null);
-  useEffect(() => { stateRef.current.accentColor = theme.colors.accent ?? ACCENT; }, [theme]);
 
   const endGame = useCallback(() => {
-    const s = stateRef.current;
-    s.running = false; cancelAnimationFrame(animRef.current);
+    const s = stateRef.current; s.running = false;
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+    const t = threeRef.current;
+    if (t) { cancelAnimationFrame(t.animId); t.renderer.dispose(); }
     const pb = parseInt(localStorage.getItem(`pb_${GAME_ID}`) ?? '0');
     if (s.sig.score > pb) localStorage.setItem(`pb_${GAME_ID}`, String(s.sig.score));
     setFinalSig({ ...s.sig }); setPhase('done'); hapticVictory();
   }, []);
 
-  const resetPuck = useCallback((W: number, H: number) => {
+  const resetPuck = useCallback(() => {
     const s = stateRef.current;
-    s.puck = { x: W / 2, y: H - 100, vx: 0, vy: 0, moving: false, r: 20, color: PUCK_COLORS[Math.floor(Math.random() * PUCK_COLORS.length)] };
+    s.puckX = (Math.random() - 0.5) * 2;
+    s.puckZ = 4;
+    s.puckVX = 0; s.puckVZ = 0; s.puckMoving = false;
   }, []);
 
   const startLoop = useCallback(() => {
-    const canvas = canvasRef.current; if (!canvas) return;
-    const ctx = canvas.getContext('2d'); if (!ctx) return;
+    const mount = mountRef.current; if (!mount) return;
     const s = stateRef.current;
-    const W = canvas.width, H = canvas.height;
     s.running = true; s.timeLeft = DURATION;
-    s.sig = { totalFlicks: 0, bullseyes: 0, goodLandings: 0, misses: 0, maxStreak: 0, streakCurrent: 0, score: 0, avgError: 0, errorSum: 0 };
-    const zW = W / 3, zH = 50;
-    s.zones = [
-      { x: 0, y: H * 0.25, w: zW, h: zH, pts: 1, color: '#3b82f6' },
-      { x: zW, y: H * 0.25, w: zW, h: zH, pts: 3, color: '#10b981' },
-      { x: zW*2, y: H * 0.25, w: zW, h: zH, pts: 1, color: '#3b82f6' },
-      { x: W*0.25, y: H * 0.4, w: W * 0.5, h: zH, pts: 5, color: '#fbbf24' },
-    ];
-    resetPuck(W, H);
-    s.dragging = false; s.frame = 0; s.floats = []; s.scorePop = 0;
+    s.sig = { totalFlicks: 0, bullseyes: 0, goodLandings: 0, misses: 0, maxStreak: 0, streakCurrent: 0, score: 0 };
+    resetPuck();
     setScoreDisplay(0); setTimeLeft(DURATION); setPhase('playing');
-    timerRef.current = setInterval(() => { s.timeLeft--; setTimeLeft(s.timeLeft); if (s.timeLeft <= 0) { sfx.fail(); endGame(); } }, 1000);
 
-    const FRICTION = 0.97;
+    const W = mount.clientWidth, H = mount.clientHeight;
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(W, H); renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setClearColor(0x040d1a);
+    renderer.shadowMap.enabled = true;
+    mount.innerHTML = ''; mount.appendChild(renderer.domElement);
 
-    const loop = () => {
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x040d1a);
+    scene.fog = new THREE.Fog(0x040d1a, 15, 25);
+    const camera = new THREE.PerspectiveCamera(60, W / H, 0.1, 100);
+    camera.position.set(0, 6, 9);
+    camera.lookAt(0, 0, -1);
+
+    scene.add(new THREE.AmbientLight(0x88ccff, 0.6));
+    const iceLight = new THREE.DirectionalLight(0xffffff, 0.8);
+    iceLight.position.set(5, 10, 5);
+    scene.add(iceLight);
+    const puckLight = new THREE.PointLight(ACCENT, 2, 6);
+    scene.add(puckLight);
+
+    // Ice surface
+    const iceGeo = new THREE.PlaneGeometry(10, 16);
+    const iceMat = new THREE.MeshStandardMaterial({ color: 0xd0eeff, roughness: 0.08, metalness: 0.6, envMapIntensity: 0.8 });
+    const ice = new THREE.Mesh(iceGeo, iceMat);
+    ice.rotation.x = -Math.PI / 2;
+    scene.add(ice);
+
+    // Target zones (circles on ice)
+    const zones: Array<{ mesh: THREE.Mesh; pts: number; r: number }> = [];
+    for (let i = ZONE_DEFS.length - 1; i >= 0; i--) {
+      const z = ZONE_DEFS[i];
+      const zGeo = new THREE.CylinderGeometry(z.r, z.r, 0.02, 32);
+      const zMat = new THREE.MeshStandardMaterial({ color: z.color, emissive: z.color, emissiveIntensity: 0.3, transparent: true, opacity: 0.7 });
+      const zMesh = new THREE.Mesh(zGeo, zMat);
+      zMesh.position.set(0, 0.01, -4);
+      scene.add(zMesh);
+      zones.push({ mesh: zMesh, pts: z.pts, r: z.r });
+    }
+
+    // Puck
+    const puckGeo = new THREE.CylinderGeometry(0.25, 0.25, 0.12, 16);
+    const puckMat = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.7, metalness: 0.3 });
+    const puck = new THREE.Mesh(puckGeo, puckMat);
+    puck.position.set(s.puckX, 0.06, s.puckZ);
+    scene.add(puck);
+
+    // Launch line
+    const launchLineMat = new THREE.MeshBasicMaterial({ color: 0x0ea5e9, transparent: true, opacity: 0.3 });
+    const launchLine = new THREE.Mesh(new THREE.PlaneGeometry(8, 0.05), launchLineMat);
+    launchLine.rotation.x = -Math.PI / 2; launchLine.position.set(0, 0.02, 4);
+    scene.add(launchLine);
+
+    // Rink borders
+    const borderMat = new THREE.MeshStandardMaterial({ color: 0x0e2040, roughness: 0.6 });
+    [[-5, 0, 0, 0.5, 0.4, 16], [5, 0, 0, 0.5, 0.4, 16], [0, 0, -8, 10, 0.4, 0.5], [0, 0, 8, 10, 0.4, 0.5]].forEach(([bx, by, bz, bw, bh, bd]) => {
+      const b = new THREE.Mesh(new THREE.BoxGeometry(bw, bh, bd), borderMat);
+      b.position.set(bx, by + 0.2, bz);
+      scene.add(b);
+    });
+
+    // Stars background
+    const starPos = new Float32Array(200 * 3);
+    for (let i = 0; i < 200; i++) { starPos[i*3] = (Math.random()-0.5)*25; starPos[i*3+1] = Math.random()*10+2; starPos[i*3+2] = -10 - Math.random()*10; }
+    const starGeo = new THREE.BufferGeometry(); starGeo.setAttribute('position', new THREE.BufferAttribute(starPos, 3));
+    scene.add(new THREE.Points(starGeo, new THREE.PointsMaterial({ color: 0x88ccff, size: 0.08, transparent: true, opacity: 0.6 })));
+
+    const trail: Array<{ mesh: THREE.Mesh; life: number }> = [];
+    const obj = { renderer, scene, camera, puck, puckLight, zones, trail, animId: 0 };
+    threeRef.current = obj;
+
+    timerRef.current = setInterval(() => {
+      s.timeLeft--; setTimeLeft(s.timeLeft);
+      if (s.timeLeft <= 0) { sfx.fail?.(); endGame(); }
+    }, 1000);
+
+    const FRICTION = 0.985;
+    const TARGET_Z = -4;
+
+    const animate = () => {
+      obj.animId = requestAnimationFrame(animate);
       if (!s.running) return;
-      ctx.clearRect(0, 0, W, H);
-      s.frame++;
-      // Background: ice rink
-      ctx.fillStyle = '#e8f4fd'; ctx.fillRect(0, 0, W, H);
-      // Ice texture
-      ctx.strokeStyle = 'rgba(14,165,233,0.08)'; ctx.lineWidth = 1;
-      for (let gx = 0; gx < W; gx += 25) { ctx.beginPath(); ctx.moveTo(gx, 0); ctx.lineTo(gx, H); ctx.stroke(); }
-      for (let gy = 0; gy < H; gy += 25) { ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(W, gy); ctx.stroke(); }
-      // Rink border
-      ctx.strokeStyle = '#0ea5e9'; ctx.lineWidth = 3;
-      ctx.strokeRect(5, 5, W-10, H-10);
 
-      // Draw zones
-      s.zones.forEach(z => {
-        ctx.save();
-        ctx.fillStyle = z.color + '44';
-        ctx.fillRect(z.x, z.y, z.w, z.h);
-        ctx.strokeStyle = z.color; ctx.lineWidth = 2;
-        ctx.strokeRect(z.x, z.y, z.w, z.h);
-        ctx.fillStyle = z.color;
-        ctx.font = 'bold 16px sans-serif'; ctx.textAlign = 'center';
-        ctx.fillText(`+${z.pts}`, z.x + z.w/2, z.y + z.h/2 + 6);
-        ctx.restore();
-      });
+      if (s.puckMoving) {
+        s.puckX += s.puckVX;
+        s.puckZ += s.puckVZ;
+        s.puckVX *= FRICTION;
+        s.puckVZ *= FRICTION;
 
-      // Puck physics
-      if (s.puck.moving) {
-        s.puck.vx *= FRICTION; s.puck.vy *= FRICTION;
-        s.puck.x += s.puck.vx; s.puck.y += s.puck.vy;
-        // Wall bounce
-        if (s.puck.x - s.puck.r < 5 || s.puck.x + s.puck.r > W - 5) s.puck.vx *= -0.7;
-        if (s.puck.y - s.puck.r < 5) s.puck.vy *= -0.7;
-        // Stopped
-        const speed = Math.sqrt(s.puck.vx**2 + s.puck.vy**2);
-        if (speed < 0.2) {
-          s.puck.moving = false;
-          s.puck.vx = 0; s.puck.vy = 0;
+        // Clamp to rink
+        if (Math.abs(s.puckX) > 4.7) { s.puckVX *= -0.5; s.puckX = Math.sign(s.puckX) * 4.7; }
+
+        puck.position.set(s.puckX, 0.06, s.puckZ);
+        puckLight.position.set(s.puckX, 0.5, s.puckZ);
+        puck.rotation.y += 0.05;
+
+        // Trail
+        const tMesh = new THREE.Mesh(new THREE.SphereGeometry(0.1, 6, 6), new THREE.MeshBasicMaterial({ color: ACCENT, transparent: true, opacity: 0.5 }));
+        tMesh.position.set(s.puckX, 0.06, s.puckZ);
+        scene.add(tMesh);
+        trail.push({ mesh: tMesh, life: 1.0 });
+        if (trail.length > 20) { const old = trail.shift()!; scene.remove(old.mesh); }
+        trail.forEach((tr, i) => {
+          tr.life = i / trail.length;
+          (tr.mesh.material as THREE.MeshBasicMaterial).opacity = tr.life * 0.4;
+        });
+
+        const speed = Math.sqrt(s.puckVX**2 + s.puckVZ**2);
+        // Stop condition or passed target zone
+        if (speed < 0.002 || s.puckZ < TARGET_Z - 2) {
           // Score
-          const zone = s.zones.find(z => s.puck.x >= z.x && s.puck.x <= z.x+z.w && s.puck.y >= z.y && s.puck.y <= z.y+z.h);
-          s.sig.totalFlicks++;
-          if (zone) {
-            s.sig.streakCurrent++;
-            if (s.sig.streakCurrent > s.sig.maxStreak) s.sig.maxStreak = s.sig.streakCurrent;
-            const mult = s.sig.streakCurrent >= 3 ? 2 : 1;
-            const pts = zone.pts * mult;
-            s.sig.score += pts;
-            s.scorePop = Date.now() + 300;
-            setScoreDisplay(s.sig.score);
-            if (zone.pts >= 5) { s.sig.bullseyes++; sfx.success(); hapticScore(); }
-            else { s.sig.goodLandings++; sfx.collect(); hapticScore(); }
-            s.floats.push({ x: s.puck.x, y: s.puck.y - 30, text: `+${pts}`, alpha: 1, vy: -2.5, color: zone.color });
-          } else {
-            s.sig.misses++; s.sig.streakCurrent = 0; hapticFail();
-            s.floats.push({ x: s.puck.x, y: s.puck.y - 30, text: 'Miss!', alpha: 1, vy: -1.5, color: '#ef4444' });
+          const dist = Math.sqrt(s.puckX**2 + (s.puckZ - TARGET_Z)**2);
+          let scored = false;
+          for (const zone of zones) {
+            if (dist <= zone.r) {
+              s.sig.totalFlicks++;
+              if (zone.pts === 5) s.sig.bullseyes++;
+              else if (zone.pts === 3) s.sig.goodLandings++;
+              s.sig.streakCurrent++;
+              if (s.sig.streakCurrent > s.sig.maxStreak) s.sig.maxStreak = s.sig.streakCurrent;
+              const mult = s.sig.streakCurrent >= 3 ? 2 : 1;
+              s.sig.score += zone.pts * mult;
+              setScoreDisplay(s.sig.score);
+              sfx.success?.(); hapticScore();
+              (zone.mesh.material as THREE.MeshStandardMaterial).emissiveIntensity = 1.5;
+              setTimeout(() => { (zone.mesh.material as THREE.MeshStandardMaterial).emissiveIntensity = 0.3; }, 500);
+              scored = true; break;
+            }
           }
-          hapticImpact();
-          setTimeout(() => { if (s.running) resetPuck(W, H); }, 600);
+          if (!scored) { s.sig.totalFlicks++; s.sig.misses++; s.sig.streakCurrent = 0; sfx.collision?.(); hapticFail(); }
+          s.puckMoving = false;
+          setTimeout(() => { if (s.running) resetPuck(); puck.position.set(s.puckX, 0.06, s.puckZ); }, 600);
         }
-        // Off bottom
-        if (s.puck.y > H + 50) {
-          s.puck.moving = false;
-          s.sig.misses++; s.sig.streakCurrent = 0; hapticFail();
-          setTimeout(() => { if (s.running) resetPuck(W, H); }, 300);
-        }
+      } else {
+        puck.position.set(s.puckX, 0.06, s.puckZ);
+        puckLight.position.set(s.puckX, 0.5, s.puckZ);
       }
 
-      // Drag arrow
-      if (s.dragging) {
-        const dx = s.puck.x - s.dragStartX, dy = s.puck.y - s.dragStartY;
-        const len = Math.sqrt(dx*dx + dy*dy);
-        if (len > 5) {
-          ctx.save();
-          ctx.strokeStyle = '#0ea5e9'; ctx.lineWidth = 3;
-          ctx.setLineDash([6, 4]);
-          ctx.beginPath();
-          ctx.moveTo(s.puck.x, s.puck.y);
-          ctx.lineTo(s.puck.x + dx * 1.5, s.puck.y + dy * 1.5);
-          ctx.stroke(); ctx.setLineDash([]);
-          ctx.restore();
-        }
-      }
-
-      // Draw puck
-      ctx.save();
-      ctx.shadowBlur = s.puck.moving ? 20 : 10;
-      ctx.shadowColor = s.puck.color;
-      const grad = ctx.createRadialGradient(s.puck.x-4, s.puck.y-4, 2, s.puck.x, s.puck.y, s.puck.r);
-      grad.addColorStop(0, '#7dd3fc'); grad.addColorStop(1, '#0369a1');
-      ctx.fillStyle = grad;
-      ctx.beginPath(); ctx.arc(s.puck.x, s.puck.y, s.puck.r, 0, Math.PI*2); ctx.fill();
-      ctx.strokeStyle = '#ffffff88'; ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.arc(s.puck.x, s.puck.y, s.puck.r, 0, Math.PI*2); ctx.stroke();
-      ctx.restore();
-
-      if (s.scorePop > Date.now()) {
-        const t = (s.scorePop - Date.now()) / 300;
-        ctx.save(); ctx.globalAlpha = t; ctx.font = `bold ${Math.round(38*(1+(1-t)*0.3))}px sans-serif`;
-        ctx.fillStyle = ACCENT; ctx.textAlign = 'center'; ctx.fillText(`${s.sig.score}`, W/2, 80); ctx.restore();
-      }
-      s.floats = s.floats.filter(f => f.alpha > 0.02);
-      s.floats.forEach(f => {
-        ctx.save(); ctx.globalAlpha = f.alpha; ctx.fillStyle = f.color; ctx.font = 'bold 22px sans-serif'; ctx.textAlign = 'center';
-        ctx.fillText(f.text, f.x, f.y); ctx.restore();
-        f.y += f.vy; f.alpha *= 0.95;
+      // Zones pulse
+      const t0 = Date.now() * 0.001;
+      zones.forEach((z, i) => {
+        const mat = z.mesh.material as THREE.MeshStandardMaterial;
+        mat.emissiveIntensity = 0.2 + Math.sin(t0 * 1.5 + i * 0.8) * 0.08;
       });
-      animRef.current = requestAnimationFrame(loop);
+
+      // Ice shimmer
+      (ice.material as THREE.MeshStandardMaterial).envMapIntensity = 0.7 + Math.sin(t0 * 0.5) * 0.15;
+
+      renderer.render(scene, camera);
     };
-    animRef.current = requestAnimationFrame(loop);
+    animate();
+
+    const handleResize = () => {
+      const w = mount.clientWidth, h = mount.clientHeight;
+      camera.aspect = w / h; camera.updateProjectionMatrix(); renderer.setSize(w, h);
+    };
+    window.addEventListener('resize', handleResize);
   }, [endGame, resetPuck]);
 
   useEffect(() => {
-    const canvas = canvasRef.current; if (!canvas) return;
-    const resize = () => { canvas.width = canvas.offsetWidth; canvas.height = canvas.offsetHeight; };
-    resize(); window.addEventListener('resize', resize);
-    const onPointerDown = (e: PointerEvent) => {
-      if (phase !== 'playing') return;
-      const s = stateRef.current;
-      if (s.puck.moving) return;
-      const rect = canvas.getBoundingClientRect();
-      const px = (e.clientX - rect.left) * (canvas.width / rect.width);
-      const py = (e.clientY - rect.top) * (canvas.height / rect.height);
-      if (Math.hypot(px - s.puck.x, py - s.puck.y) < s.puck.r + 30) {
-        s.dragging = true; s.dragStartX = px; s.dragStartY = py;
+    const mount = mountRef.current; if (!mount || phase !== 'playing') return;
+    let swipeStartX = 0, swipeStartY = 0, swiping = false;
+    const onDown = (e: PointerEvent) => { swipeStartX = e.clientX; swipeStartY = e.clientY; swiping = true; };
+    const onUp = (e: PointerEvent) => {
+      if (!swiping) return; swiping = false;
+      const s = stateRef.current; if (!s.running || s.puckMoving) return;
+      const dx = e.clientX - swipeStartX; const dy = e.clientY - swipeStartY;
+      const dist = Math.sqrt(dx*dx+dy*dy);
+      if (dist > 20) {
+        const speed = Math.min(dist / 120, 0.18);
+        s.puckVX = (dx / dist) * speed * 0.5;
+        s.puckVZ = -(dy / dist) * speed;
+        s.puckMoving = true;
+        sfx.click?.(); hapticImpact();
       }
     };
-    const onPointerUp = (e: PointerEvent) => {
-      if (phase !== 'playing') return;
-      const s = stateRef.current;
-      if (!s.dragging) return;
-      s.dragging = false;
-      const rect = canvas.getBoundingClientRect();
-      const px = (e.clientX - rect.left) * (canvas.width / rect.width);
-      const py = (e.clientY - rect.top) * (canvas.height / rect.height);
-      const dx = s.dragStartX - px, dy = s.dragStartY - py;
-      const len = Math.sqrt(dx*dx + dy*dy);
-      if (len > 15) {
-        s.puck.vx = (dx / len) * Math.min(len * 0.15, 12);
-        s.puck.vy = (dy / len) * Math.min(len * 0.15, 12);
-        s.puck.moving = true;
-        sfx.click(); hapticScore();
-      }
-    };
-    canvas.addEventListener('pointerdown', onPointerDown);
-    canvas.addEventListener('pointerup', onPointerUp);
-    return () => {
-      window.removeEventListener('resize', resize);
-      canvas.removeEventListener('pointerdown', onPointerDown);
-      canvas.removeEventListener('pointerup', onPointerUp);
-    };
+    mount.addEventListener('pointerdown', onDown);
+    mount.addEventListener('pointerup', onUp);
+    return () => { mount.removeEventListener('pointerdown', onDown); mount.removeEventListener('pointerup', onUp); };
   }, [phase]);
 
-  useEffect(() => () => { cancelAnimationFrame(animRef.current); if (timerRef.current) clearInterval(timerRef.current); }, []);
-  const handleStart = useCallback(async (name: string, avatar: string) => { playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar); await initAudio(); setPhase('countdown'); }, []);
+  useEffect(() => () => {
+    if (timerRef.current) clearInterval(timerRef.current);
+    const t = threeRef.current;
+    if (t) { cancelAnimationFrame(t.animId); t.renderer.dispose(); }
+  }, []);
+
+  const handleStart = useCallback(async (name: string, avatar: string) => {
+    playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar);
+    await initAudio(); setPhase('countdown');
+  }, []);
+  const handleCountdownDone = useCallback(() => { startLoop(); }, [startLoop]);
   const handlePlayAgain = useCallback(() => { setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null); }, []);
+  const buildInsights = (sig: Signals) => [
+    { label: 'Bullseyes', value: String(sig.bullseyes), color: '#fbbf24' },
+    { label: 'Best Streak', value: `×${sig.maxStreak}`, color: ACCENT },
+    { label: 'Good Lands', value: String(sig.goodLandings), color: '#22c55e' },
+    { label: 'Misses', value: String(sig.misses), color: '#ef4444' },
+  ];
 
   return (
     <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
-      {phase === 'start' && <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description="Flick the puck — judge the momentum to stop it on target!" ctaLabel="Slide! 🛷" accentColor={theme.colors.accent ?? ACCENT} onStart={handleStart} />}
-      {phase === 'countdown' && <Countdown onComplete={startLoop} accentColor={theme.colors.accent ?? ACCENT} />}
+      {phase === 'start' && <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description={GAME_TAGLINE} ctaLabel="Take the Ice 🛷" accentColor={theme.colors.accent ?? ACCENT} onStart={handleStart} />}
+      {phase === 'countdown' && <Countdown onComplete={handleCountdownDone} accentColor={theme.colors.accent ?? ACCENT} />}
       {(phase === 'playing' || phase === 'countdown') && (
-        <><canvas ref={canvasRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none' }} role="img" aria-label="Friction slide precision game canvas" />
-        {phase === 'playing' && <GameHUD accentColor={theme.colors.accent ?? ACCENT} items={[{ label: 'TIME', value: timeLeft, danger: timeLeft <= 10 }, { label: 'SCORE', value: scoreDisplay }]} />}</>
+        <>
+          <div ref={mountRef} style={{ position: 'absolute', inset: 0, touchAction: 'none' }} />
+          {phase === 'playing' && <GameHUD accentColor={theme.colors.accent ?? ACCENT} items={[{ label: 'TIME', value: timeLeft, danger: timeLeft <= 10 }, { label: 'SCORE', value: scoreDisplay }]} />}
+        </>
       )}
       {phase === 'done' && finalSig && (
-        <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI} score={String(finalSig.score)} personality={getPersonality(finalSig)}
-          insights={[{ label: 'Bullseyes', value: String(finalSig.bullseyes), color: '#fbbf24' }, { label: 'Good', value: String(finalSig.goodLandings), color: ACCENT }, { label: 'Best Streak', value: `×${finalSig.maxStreak}`, color: '#4ade80' }, { label: 'Missed', value: String(finalSig.misses), color: '#ef4444' }]}
-          accentColor={theme.colors.accent ?? ACCENT} onPlayAgain={handlePlayAgain} didWin={finalSig.bullseyes >= 3} />
+        <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI} score={String(finalSig.score)} personality={getPersonality(finalSig)} insights={buildInsights(finalSig)} accentColor={theme.colors.accent ?? ACCENT} onPlayAgain={handlePlayAgain} didWin={finalSig.bullseyes >= 3} />
       )}
     </GameShell>
   );
 }
-

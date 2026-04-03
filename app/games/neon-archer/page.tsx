@@ -1,471 +1,405 @@
 'use client';
+/**
+ * NEON ARCHER — 3D archery range with glowing moving targets.
+ * Swipe to aim and release to fire arrows.
+ */
 import { useEffect, useRef, useState, useCallback } from 'react';
+import * as THREE from 'three';
 import GameShell from '@/components/GameShell';
 import GameHUD from '@/components/GameHUD';
 import GameStartScreen from '@/components/GameStartScreen';
 import Countdown from '@/components/Countdown';
 import EndScreen from '@/components/EndScreen';
 import { initAudio, sfx, haptic, startMusic } from '@/lib/audio';
+import { hapticScore, hapticFail, hapticVictory } from '@/lib/haptics';
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
 
-const GAME_ID      = 'neon-archer';
-const ACCENT       = '#00ffcc';
-const DURATION     = 60;
-const GAME_EMOJI   = '🏹';
-const GAME_TITLE   = 'Neon Archer';
+const GAME_ID = 'neon-archer';
+const ACCENT = '#00ffcc';
+const DURATION = 60;
+const GAME_EMOJI = '🏹';
+const GAME_TITLE = 'Neon Archer';
 const GAME_TAGLINE = 'Swipe to aim, release at the perfect moment to hit moving targets.';
 
-interface Signals {
-  totalShots: number;
-  hits: number;
-  perfectShots: number;   // hit within 100px of center
-  maxStreak: number;
-  streakCurrent: number;
-  score: number;
-}
+interface Signals { totalShots: number; hits: number; perfectShots: number; maxStreak: number; streakCurrent: number; score: number; }
 
 function getPersonality(sig: Signals): string {
   const acc = sig.totalShots > 0 ? sig.hits / sig.totalShots : 0;
-  if (sig.perfectShots >= 5 && acc >= 0.7)    return 'Sniper 🎯';
-  if (sig.maxStreak >= 5)                       return 'Hot Streak 🔥';
-  if (acc >= 0.6 && sig.totalShots >= 10)       return 'Steady Aim 🏹';
-  if (sig.totalShots >= 15 && acc < 0.4)        return 'Wild Shot 💨';
+  if (sig.perfectShots >= 5 && acc >= 0.7) return 'Sniper 🎯';
+  if (sig.maxStreak >= 5) return 'Hot Streak 🔥';
+  if (acc >= 0.6 && sig.totalShots >= 10) return 'Steady Aim 🏹';
+  if (sig.totalShots >= 15 && acc < 0.4) return 'Wild Shot 💨';
   return 'Beginner Archer 🌱';
 }
 
-interface Target {
-  x: number;
-  y: number;
-  vx: number;
-  vy: number;
-  radius: number;
-  ring: number; // 1 (outer) to 3 (bull)
-}
-
-interface Arrow {
-  x: number;
-  y: number;
-  vx: number;
-  vy: number;
-  active: boolean;
-  alpha: number;
-}
-
-interface AimState {
-  active: boolean;
-  startX: number;
-  startY: number;
-  currentX: number;
-  currentY: number;
-}
-
-interface GameState {
-  running: boolean;
-  timeLeft: number;
-  sig: Signals;
-  targets: Target[];
-  arrows: Arrow[];
-  aim: AimState;
-  accentColor: string;
-  spawnTimer: number;
-  difficultyLevel: number;
-}
+interface TargetObj { group: THREE.Group; x: number; y: number; vx: number; vy: number; radius: number; }
+interface ArrowObj { mesh: THREE.Group; vx: number; vy: number; vz: number; active: boolean; }
 
 type Phase = 'start' | 'countdown' | 'playing' | 'done';
 
 export default function NeonArcherGame() {
-  const theme        = useBrandTheme();
-  const canvasRef    = useRef<HTMLCanvasElement>(null);
-  const animRef      = useRef(0);
-  const timerRef     = useRef<ReturnType<typeof setInterval> | null>(null);
+  const theme = useBrandTheme();
+  const mountRef = useRef<HTMLDivElement>(null);
+  const animRef = useRef(0);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const stopMusicRef = useRef<(() => void) | null>(null);
+  const playerSessionRef = useRef<PlayerSession | null>(null);
 
-  const stateRef = useRef<GameState>({
-    running: false,
-    timeLeft: DURATION,
-    sig: { totalShots: 0, hits: 0, perfectShots: 0, maxStreak: 0, streakCurrent: 0, score: 0 },
-    targets: [],
-    arrows: [],
-    aim: { active: false, startX: 0, startY: 0, currentX: 0, currentY: 0 },
-    accentColor: ACCENT,
-    spawnTimer: 0,
-    difficultyLevel: 1,
+  const stateRef = useRef({
+    running: false, timeLeft: DURATION,
+    sig: { totalShots: 0, hits: 0, perfectShots: 0, maxStreak: 0, streakCurrent: 0, score: 0 } as Signals,
+    targets: [] as TargetObj[],
+    arrows: [] as ArrowObj[],
+    particles: [] as { mesh: THREE.Mesh; vx: number; vy: number; vz: number; life: number }[],
+    pointerStart: null as { x: number; y: number; time: number } | null,
+    aimLine: null as THREE.Line | null,
+    scene: null as THREE.Scene | null,
+    camera: null as THREE.PerspectiveCamera | null,
+    renderer: null as THREE.WebGLRenderer | null,
+    hitFlash: 0,
   });
 
-  const [phase, setPhase]               = useState<Phase>('start');
-  const [timeLeft, setTimeLeft]         = useState(DURATION);
+  const [phase, setPhase] = useState<Phase>('start');
+  const [timeLeft, setTimeLeft] = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
-  const [finalSig, setFinalSig]         = useState<Signals | null>(null);
-  const [playerName, setPlayerName]     = useState('');
-  const [playerAvatar, setPlayerAvatar] = useState('🏹');
-  const playerSessionRef                = useRef<PlayerSession | null>(null);
-
-  useEffect(() => { stateRef.current.accentColor = theme.colors.accent ?? ACCENT; }, [theme]);
-
-  const spawnTarget = useCallback(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const s = stateRef.current;
-    const side = Math.floor(Math.random() * 4);
-    let x = 0, y = 0, vx = 0, vy = 0;
-    const speed = 1.5 + s.difficultyLevel * 0.4;
-    if (side === 0) { x = -40; y = 80 + Math.random() * (canvas.height - 160); vx = speed; vy = (Math.random() - 0.5) * speed; }
-    else if (side === 1) { x = canvas.width + 40; y = 80 + Math.random() * (canvas.height - 160); vx = -speed; vy = (Math.random() - 0.5) * speed; }
-    else if (side === 2) { x = 40 + Math.random() * (canvas.width - 80); y = -40; vx = (Math.random() - 0.5) * speed; vy = speed; }
-    else { x = 40 + Math.random() * (canvas.width - 80); y = canvas.height + 40; vx = (Math.random() - 0.5) * speed; vy = -speed; }
-    s.targets.push({ x, y, vx, vy, radius: 28, ring: 3 });
-  }, []);
+  const [finalSig, setFinalSig] = useState<Signals | null>(null);
 
   const endGame = useCallback(() => {
-    const s = stateRef.current;
-    s.running = false;
+    const s = stateRef.current; s.running = false;
     cancelAnimationFrame(animRef.current);
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
-    if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
-    setFinalSig({ ...s.sig });
-    setPhase('done');
+    stopMusicRef.current?.(); stopMusicRef.current = null;
+    const pb = parseInt(localStorage.getItem(`pb_${GAME_ID}`) ?? '0');
+    if (s.sig.score > pb) localStorage.setItem(`pb_${GAME_ID}`, String(s.sig.score));
+    setFinalSig({ ...s.sig }); setPhase('done'); hapticVictory();
+  }, []);
+
+  const spawnTarget = useCallback((scene: THREE.Scene): TargetObj => {
+    const group = new THREE.Group();
+    // Outer ring
+    const outerTorus = new THREE.Mesh(
+      new THREE.TorusGeometry(1.2, 0.12, 8, 32),
+      new THREE.MeshPhongMaterial({ color: 0x00ffcc, emissive: 0x00aa88, shininess: 100 }),
+    );
+    group.add(outerTorus);
+    // Middle ring
+    const midTorus = new THREE.Mesh(
+      new THREE.TorusGeometry(0.8, 0.1, 8, 24),
+      new THREE.MeshPhongMaterial({ color: 0x00ff88, emissive: 0x00bb44 }),
+    );
+    group.add(midTorus);
+    // Bull's-eye
+    const bullGeo = new THREE.CircleGeometry(0.3, 12);
+    const bull = new THREE.Mesh(bullGeo, new THREE.MeshPhongMaterial({ color: 0xfbbf24, emissive: 0x92400e, side: THREE.DoubleSide }));
+    group.add(bull);
+    // Stand pole
+    const poleGeo = new THREE.CylinderGeometry(0.05, 0.05, 4);
+    const pole = new THREE.Mesh(poleGeo, new THREE.MeshPhongMaterial({ color: 0x334155 }));
+    pole.position.y = -2.5;
+    group.add(pole);
+
+    const x = (Math.random() - 0.5) * 14;
+    const y = 0.5 + Math.random() * 3;
+    group.position.set(x, y, -10 + Math.random() * -8);
+
+    scene.add(group);
+    return { group, x, y, vx: (Math.random() - 0.5) * 0.03, vy: (Math.random() - 0.5) * 0.015, radius: 1.2 };
   }, []);
 
   const startLoop = useCallback(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+    if (!mountRef.current) return;
     const s = stateRef.current;
-
-    s.running = true;
-    s.timeLeft = DURATION;
+    s.running = true; s.timeLeft = DURATION;
     s.sig = { totalShots: 0, hits: 0, perfectShots: 0, maxStreak: 0, streakCurrent: 0, score: 0 };
-    s.targets = [];
-    s.arrows = [];
-    s.aim = { active: false, startX: 0, startY: 0, currentX: 0, currentY: 0 };
-    s.spawnTimer = 0;
-    s.difficultyLevel = 1;
-    setScoreDisplay(0);
-    setTimeLeft(DURATION);
-    setPhase('playing');
-    stopMusicRef.current = startMusic('drive');
+    s.targets = []; s.arrows = []; s.particles = []; s.hitFlash = 0;
+    setScoreDisplay(0); setTimeLeft(DURATION); setPhase('playing');
+    stopMusicRef.current = startMusic('sports');
+
+    const W = window.innerWidth, H = window.innerHeight;
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(W, H);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setClearColor(0x020b14);
+    mountRef.current.innerHTML = '';
+    mountRef.current.appendChild(renderer.domElement);
+    s.renderer = renderer;
+
+    const scene = new THREE.Scene();
+    scene.fog = new THREE.FogExp2(0x020b14, 0.03);
+    s.scene = scene;
+    const camera = new THREE.PerspectiveCamera(70, W / H, 0.1, 200);
+    camera.position.set(0, 1.5, 8);
+    s.camera = camera;
+
+    // Lights
+    scene.add(new THREE.AmbientLight(0x001a2e, 5));
+    const neonLight = new THREE.PointLight(0x00ffcc, 3, 20);
+    neonLight.position.set(0, 5, 0);
+    scene.add(neonLight);
+    const groundLight = new THREE.PointLight(0x0066ff, 2, 30);
+    groundLight.position.set(0, -2, 0);
+    scene.add(groundLight);
+
+    // Ground
+    const groundMat = new THREE.MeshPhongMaterial({ color: 0x0a1628 });
+    const ground = new THREE.Mesh(new THREE.PlaneGeometry(60, 40), groundMat);
+    ground.rotation.x = -Math.PI / 2;
+    ground.position.y = -2;
+    scene.add(ground);
+
+    // Grid lines on ground
+    scene.add(new THREE.GridHelper(60, 20, 0x003344, 0x001122));
+
+    // Background neon tubes (atmosphere)
+    for (let i = 0; i < 8; i++) {
+      const tubeGeo = new THREE.CylinderGeometry(0.03, 0.03, 6 + Math.random() * 4);
+      const tubeMat = new THREE.MeshBasicMaterial({ color: Math.random() > 0.5 ? 0x00ffcc : 0x0066ff, transparent: true, opacity: 0.4 });
+      const tube = new THREE.Mesh(tubeGeo, tubeMat);
+      tube.position.set((Math.random() - 0.5) * 20, Math.random() * 3 - 1, -15 - Math.random() * 10);
+      tube.rotation.z = (Math.random() - 0.5) * 0.3;
+      scene.add(tube);
+    }
+
+    // Spawn initial targets
+    for (let i = 0; i < 3; i++) {
+      s.targets.push(spawnTarget(scene));
+    }
+
+    // Aim line
+    const aimGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3(0, 0, -8)]);
+    const aimMat = new THREE.LineDashedMaterial({ color: 0x00ffcc, dashSize: 0.3, gapSize: 0.2, transparent: true, opacity: 0 });
+    const aimLine = new THREE.Line(aimGeo, aimMat);
+    scene.add(aimLine);
+    s.aimLine = aimLine;
 
     timerRef.current = setInterval(() => {
-      s.timeLeft--;
-      setTimeLeft(s.timeLeft);
-      s.difficultyLevel = 1 + Math.floor((DURATION - s.timeLeft) / 15);
-      if (s.timeLeft <= 0) { sfx.fail(); haptic([300]); endGame(); }
+      s.timeLeft--; setTimeLeft(s.timeLeft);
+      if (s.timeLeft === 10) sfx.warning();
+      if (s.timeLeft <= 0) endGame();
     }, 1000);
 
-    spawnTarget();
+    const handleResize = () => {
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+    };
+    window.addEventListener('resize', handleResize);
 
+    let t = 0;
     const loop = () => {
-      if (!s.running) return;
-      const W = canvas.width;
-      const H = canvas.height;
+      if (!s.running) { renderer.dispose(); return; }
+      t += 0.016;
 
-      ctx.fillStyle = '#030818';
-      ctx.fillRect(0, 0, W, H);
-
-      // Neon grid
-      ctx.strokeStyle = 'rgba(0,255,204,0.04)';
-      ctx.lineWidth = 1;
-      for (let gx = 0; gx < W; gx += 50) { ctx.beginPath(); ctx.moveTo(gx, 0); ctx.lineTo(gx, H); ctx.stroke(); }
-      for (let gy = 0; gy < H; gy += 50) { ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(W, gy); ctx.stroke(); }
-
-      s.spawnTimer++;
-      const spawnInterval = Math.max(60, 120 - s.difficultyLevel * 15);
-      if (s.spawnTimer >= spawnInterval) { s.spawnTimer = 0; spawnTarget(); }
-
-      // Update & draw targets
-      s.targets = s.targets.filter(t => {
-        t.x += t.vx;
-        t.y += t.vy;
-        if (t.x < -80 || t.x > W + 80 || t.y < -80 || t.y > H + 80) return false;
-
-        // Draw concentric rings
-        const colors = ['rgba(0,255,204,0.2)', 'rgba(0,255,204,0.5)', '#00ffcc'];
-        for (let r = 3; r >= 1; r--) {
-          ctx.beginPath();
-          ctx.arc(t.x, t.y, t.radius * r / 1.5, 0, Math.PI * 2);
-          ctx.strokeStyle = colors[r - 1];
-          ctx.lineWidth = 2;
-          ctx.shadowBlur = 10;
-          ctx.shadowColor = ACCENT;
-          ctx.stroke();
-        }
-        ctx.shadowBlur = 0;
-        return true;
-      });
-
-      // Update & draw arrows
-      s.arrows = s.arrows.filter(a => {
-        if (!a.active) return false;
-        a.x += a.vx;
-        a.y += a.vy;
-        a.alpha = Math.max(0, a.alpha - 0.01);
-        if (a.alpha <= 0 || a.x < -50 || a.x > W + 50 || a.y < -50 || a.y > H + 50) return false;
-
-        ctx.save();
-        ctx.globalAlpha = a.alpha;
-        ctx.strokeStyle = '#fffaaa';
-        ctx.lineWidth = 3;
-        ctx.shadowBlur = 8;
-        ctx.shadowColor = '#fffaaa';
-        ctx.beginPath();
-        ctx.moveTo(a.x - a.vx * 6, a.y - a.vy * 6);
-        ctx.lineTo(a.x, a.y);
-        ctx.stroke();
-        ctx.restore();
-        return true;
-      });
-
-      // Draw aim indicator
-      if (s.aim.active) {
-        const dx = s.aim.startX - s.aim.currentX;
-        const dy = s.aim.startY - s.aim.currentY;
-        const len = Math.min(Math.sqrt(dx * dx + dy * dy), 120);
-        const angle = Math.atan2(dy, dx);
-
-        // Trajectory dots
-        ctx.save();
-        const speed = len * 0.12;
-        const vx = Math.cos(angle) * speed;
-        const vy = Math.sin(angle) * speed;
-        for (let i = 1; i <= 8; i++) {
-          const tx = s.aim.startX + vx * i * 0.5;
-          const ty = s.aim.startY + vy * i * 0.5;
-          ctx.globalAlpha = (1 - i / 10) * 0.8;
-          ctx.fillStyle = ACCENT;
-          ctx.beginPath();
-          ctx.arc(tx, ty, 3, 0, Math.PI * 2);
-          ctx.fill();
-        }
-        ctx.restore();
-
-        // Bow icon at start
-        ctx.save();
-        ctx.translate(s.aim.startX, s.aim.startY);
-        ctx.rotate(angle + Math.PI / 2);
-        ctx.strokeStyle = ACCENT;
-        ctx.lineWidth = 3;
-        ctx.shadowBlur = 12;
-        ctx.shadowColor = ACCENT;
-        ctx.beginPath();
-        ctx.arc(0, 0, 20, -Math.PI * 0.6, Math.PI * 0.6);
-        ctx.stroke();
-        ctx.beginPath();
-        ctx.moveTo(0, -20);
-        ctx.lineTo(0, 20);
-        ctx.stroke();
-        ctx.restore();
+      // Move targets
+      for (const tgt of s.targets) {
+        tgt.x += tgt.vx;
+        tgt.y += tgt.vy;
+        if (Math.abs(tgt.x) > 9) tgt.vx *= -1;
+        if (tgt.y > 5 || tgt.y < 0.5) tgt.vy *= -1;
+        tgt.group.position.x = tgt.x;
+        tgt.group.position.y = tgt.y;
+        tgt.group.rotation.y = Math.sin(t * 0.5) * 0.1;
       }
 
+      // Move arrows
+      for (let i = s.arrows.length - 1; i >= 0; i--) {
+        const ar = s.arrows[i];
+        if (!ar.active) continue;
+        ar.mesh.position.x += ar.vx;
+        ar.mesh.position.y += ar.vy;
+        ar.mesh.position.z += ar.vz;
+        ar.vy -= 0.01;
+
+        // Check target hits
+        for (const tgt of s.targets) {
+          const dx = ar.mesh.position.x - tgt.group.position.x;
+          const dy = ar.mesh.position.y - tgt.group.position.y;
+          const dz = ar.mesh.position.z - tgt.group.position.z;
+          const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+
+          if (dist < tgt.radius + 0.3) {
+            // Hit!
+            ar.active = false;
+            s.sig.hits++;
+            const perfect = dist < 0.4;
+            if (perfect) s.sig.perfectShots++;
+            s.sig.streakCurrent++;
+            if (s.sig.streakCurrent > s.sig.maxStreak) s.sig.maxStreak = s.sig.streakCurrent;
+            const pts = perfect ? 5 : 2;
+            s.sig.score += pts;
+            setScoreDisplay(s.sig.score);
+            sfx.collect(); hapticScore();
+            s.hitFlash = 20;
+            neonLight.color.setHex(0xfbbf24);
+
+            // Burst particles
+            for (let p = 0; p < 12; p++) {
+              const pGeo = new THREE.SphereGeometry(0.06, 6, 6);
+              const pMat = new THREE.MeshBasicMaterial({ color: 0x00ffcc, transparent: true, opacity: 1 });
+              const pm = new THREE.Mesh(pGeo, pMat);
+              pm.position.copy(ar.mesh.position);
+              scene.add(pm);
+              s.particles.push({ mesh: pm, vx: (Math.random() - 0.5) * 0.2, vy: (Math.random() - 0.5) * 0.2, vz: (Math.random() - 0.5) * 0.1, life: 1 });
+            }
+            break;
+          }
+        }
+
+        // Arrow out of bounds
+        if (ar.mesh.position.z < -30 || ar.mesh.position.y < -5) {
+          ar.active = false;
+        }
+
+        if (!ar.active) {
+          scene.remove(ar.mesh);
+          s.arrows.splice(i, 1);
+        }
+      }
+
+      // Particles
+      for (let i = s.particles.length - 1; i >= 0; i--) {
+        const p = s.particles[i];
+        p.mesh.position.x += p.vx; p.mesh.position.y += p.vy; p.mesh.position.z += p.vz;
+        p.life -= 0.03;
+        (p.mesh.material as THREE.MeshBasicMaterial).opacity = p.life;
+        if (p.life <= 0) { scene.remove(p.mesh); s.particles.splice(i, 1); }
+      }
+
+      // Hit flash
+      if (s.hitFlash > 0) {
+        neonLight.intensity = 3 + (s.hitFlash / 20) * 4;
+        s.hitFlash--;
+        if (s.hitFlash === 0) neonLight.color.setHex(0x00ffcc);
+      } else {
+        neonLight.intensity = 3 + Math.sin(t * 2) * 0.5;
+      }
+
+      renderer.render(scene, camera);
       animRef.current = requestAnimationFrame(loop);
     };
-
     animRef.current = requestAnimationFrame(loop);
+
+    return () => {
+      s.running = false;
+      window.removeEventListener('resize', handleResize);
+      renderer.dispose();
+    };
   }, [endGame, spawnTarget]);
 
-  const fireArrow = useCallback((fromX: number, fromY: number, toX: number, toY: number) => {
-    const s = stateRef.current;
-    if (!s.running) return;
+  useEffect(() => {
+    const el = mountRef.current; if (!el) return;
+    const onDown = (e: PointerEvent) => {
+      if (phase !== 'playing') return;
+      const s = stateRef.current;
+      s.pointerStart = { x: e.clientX, y: e.clientY, time: Date.now() };
+      if (s.aimLine) (s.aimLine.material as THREE.LineDashedMaterial).opacity = 0.6;
+    };
+    const onMove = (e: PointerEvent) => {
+      if (phase !== 'playing') return;
+      const s = stateRef.current;
+      if (!s.pointerStart || !s.aimLine || !s.camera || !s.renderer) return;
+      // Update aim line based on pointer position
+      const rect = s.renderer.domElement.getBoundingClientRect();
+      const nx = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+      const ny = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+      const dir = new THREE.Vector3(nx * 8, ny * 6, -15).normalize();
+      s.aimLine.geometry.setFromPoints([new THREE.Vector3(0, 1.5, 8), dir.multiplyScalar(20).add(new THREE.Vector3(0, 1.5, 8))]);
+      s.aimLine.computeLineDistances();
+    };
+    const onUp = (e: PointerEvent) => {
+      if (phase !== 'playing') return;
+      const s = stateRef.current;
+      if (!s.pointerStart || !s.scene || !s.renderer) { s.pointerStart = null; return; }
+      const dx = e.clientX - s.pointerStart.x;
+      const dy = e.clientY - s.pointerStart.y;
+      const dt = Math.max(1, Date.now() - s.pointerStart.time);
+      s.pointerStart = null;
+      if (s.aimLine) (s.aimLine.material as THREE.LineDashedMaterial).opacity = 0;
 
-    const dx = fromX - toX;
-    const dy = fromY - toY;
-    const len = Math.sqrt(dx * dx + dy * dy);
-    if (len < 10) return;
+      const dist2d = Math.sqrt(dx * dx + dy * dy);
+      if (dist2d < 15) return;
 
-    const speed = Math.min(len * 0.12, 18);
-    const nx = dx / len;
-    const ny = dy / len;
-    const arrow: Arrow = { x: fromX, y: fromY, vx: nx * speed, vy: ny * speed, active: true, alpha: 1 };
-    s.arrows.push(arrow);
-    s.sig.totalShots++;
+      // Create arrow
+      const arrowGroup = new THREE.Group();
+      const shaftGeo = new THREE.CylinderGeometry(0.03, 0.03, 1.2);
+      const shaftMat = new THREE.MeshPhongMaterial({ color: 0xd4a017, emissive: 0x78350f });
+      const shaft = new THREE.Mesh(shaftGeo, shaftMat);
+      shaft.rotation.x = Math.PI / 2;
+      arrowGroup.add(shaft);
+      const tipGeo = new THREE.ConeGeometry(0.06, 0.3, 6);
+      const tipMesh = new THREE.Mesh(tipGeo, new THREE.MeshPhongMaterial({ color: 0x00ffcc, emissive: 0x00aa88 }));
+      tipMesh.position.z = -0.7;
+      tipMesh.rotation.x = Math.PI / 2;
+      arrowGroup.add(tipMesh);
+      arrowGroup.position.set(0, 1.5, 8);
+      s.scene.add(arrowGroup);
 
-    // Check hits
-    let hit = false;
-    s.targets = s.targets.filter(t => {
-      if (hit) return true;
-      const ddx = arrow.x - t.x;
-      const ddy = arrow.y - t.y;
-      const dist = Math.sqrt(ddx * ddx + ddy * ddy);
-      if (dist <= t.radius * 2) {
-        hit = true;
-        s.sig.hits++;
-        s.sig.streakCurrent++;
-        if (dist <= t.radius * 0.8) s.sig.perfectShots++;
-        if (s.sig.streakCurrent > s.sig.maxStreak) s.sig.maxStreak = s.sig.streakCurrent;
-        const pts = s.sig.streakCurrent >= 3 ? 3 : dist <= t.radius * 0.8 ? 2 : 1;
-        s.sig.score += pts;
-        setScoreDisplay(s.sig.score);
-        sfx.collect();
-        haptic([30]);
-        arrow.active = false;
-        return false;
+      // Velocity from swipe
+      const rect = s.renderer.domElement.getBoundingClientRect();
+      const nx = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+      const ny = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+      const power = Math.min((dist2d / rect.width) * 3 + 0.3, 1.0);
+      s.arrows.push({
+        mesh: arrowGroup,
+        vx: nx * 0.3 * power,
+        vy: ny * 0.15 * power,
+        vz: -0.5 * power,
+        active: true,
+      });
+      s.sig.totalShots++;
+      if (s.sig.streakCurrent > 0 && s.arrows.every(a => !a.active)) {
+        // miss check will happen on next frame
       }
-      return true;
-    });
+      sfx.click(); haptic([15]);
+    };
+    el.addEventListener('pointerdown', onDown);
+    el.addEventListener('pointermove', onMove);
+    el.addEventListener('pointerup', onUp);
+    return () => { el.removeEventListener('pointerdown', onDown); el.removeEventListener('pointermove', onMove); el.removeEventListener('pointerup', onUp); };
+  }, [phase]);
 
-    if (!hit) {
-      s.sig.streakCurrent = 0;
-      sfx.collision();
-      haptic([20, 30, 20]);
-    }
+  useEffect(() => () => {
+    cancelAnimationFrame(animRef.current);
+    if (timerRef.current) clearInterval(timerRef.current);
+    stopMusicRef.current?.();
+    stateRef.current.renderer?.dispose();
   }, []);
 
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    const resize = () => { canvas.width = canvas.offsetWidth; canvas.height = canvas.offsetHeight; };
-    resize();
-    window.addEventListener('resize', resize);
-
-    const onPointerDown = (e: PointerEvent) => {
-      if (phase !== 'playing') return;
-      const rect = canvas.getBoundingClientRect();
-      const x = (e.clientX - rect.left) * (canvas.width / rect.width);
-      const y = (e.clientY - rect.top) * (canvas.height / rect.height);
-      const s = stateRef.current;
-      s.aim = { active: true, startX: x, startY: y, currentX: x, currentY: y };
-    };
-
-    const onPointerMove = (e: PointerEvent) => {
-      if (phase !== 'playing') return;
-      const s = stateRef.current;
-      if (!s.aim.active) return;
-      const rect = canvas.getBoundingClientRect();
-      s.aim.currentX = (e.clientX - rect.left) * (canvas.width / rect.width);
-      s.aim.currentY = (e.clientY - rect.top) * (canvas.height / rect.height);
-    };
-
-    const onPointerUp = (e: PointerEvent) => {
-      if (phase !== 'playing') return;
-      const s = stateRef.current;
-      if (!s.aim.active) return;
-      const rect = canvas.getBoundingClientRect();
-      const upX = (e.clientX - rect.left) * (canvas.width / rect.width);
-      const upY = (e.clientY - rect.top) * (canvas.height / rect.height);
-      fireArrow(s.aim.startX, s.aim.startY, upX, upY);
-      s.aim.active = false;
-    };
-
-    canvas.addEventListener('pointerdown', onPointerDown);
-    canvas.addEventListener('pointermove', onPointerMove);
-    canvas.addEventListener('pointerup', onPointerUp);
-
-    return () => {
-      window.removeEventListener('resize', resize);
-      canvas.removeEventListener('pointerdown', onPointerDown);
-      canvas.removeEventListener('pointermove', onPointerMove);
-      canvas.removeEventListener('pointerup', onPointerUp);
-    };
-  }, [phase, fireArrow]);
-
-  useEffect(() => {
-    return () => {
-      cancelAnimationFrame(animRef.current);
-      if (timerRef.current) clearInterval(timerRef.current);
-      if (stopMusicRef.current) stopMusicRef.current();
-    };
-  }, []);
-
-  const handleStart = useCallback((name: string, avatar: string) => {
-    setPlayerName(name);
-    setPlayerAvatar(avatar);
-    initAudio();
+  const handleStart = useCallback(async (name: string, avatar: string) => {
     playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar);
-    setPhase('countdown');
+    await initAudio(); setPhase('countdown');
   }, []);
-
-  const handleCountdownDone = useCallback(() => { startLoop(); }, [startLoop]);
-
-  const handlePlayAgain = useCallback(() => {
-    setPhase('start');
-    setScoreDisplay(0);
-    setTimeLeft(DURATION);
-    setFinalSig(null);
-  }, []);
-
-  const buildInsights = (sig: Signals) => {
-    const acc = sig.totalShots > 0 ? Math.round((sig.hits / sig.totalShots) * 100) : 0;
-    return [
-      { label: 'Accuracy',      value: `${acc}%`,             color: acc >= 70 ? '#4ade80' : acc >= 40 ? '#facc15' : '#ef4444' },
-      { label: 'Perfect Shots', value: `${sig.perfectShots}`, color: ACCENT },
-      { label: 'Best Streak',   value: `×${sig.maxStreak}`,   color: ACCENT },
-      { label: 'Total Shots',   value: `${sig.totalShots}`,   color: 'var(--color-text)' },
-    ];
-  };
+  const handlePlayAgain = useCallback(() => { setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null); }, []);
 
   return (
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
-      {phase === 'start' && (
-        <GameStartScreen
-          emoji={GAME_EMOJI}
-          title={GAME_TITLE}
-          description={GAME_TAGLINE}
-          ctaLabel="Nock Arrow"
-          accentColor={theme.colors.accent ?? ACCENT}
-          onStart={handleStart}
-        />
-      )}
-      {phase === 'countdown' && (
-        <Countdown onComplete={handleCountdownDone} accentColor={theme.colors.accent ?? ACCENT} />
-      )}
-      {(phase === 'playing' || phase === 'countdown') && (
-        <>
-          <canvas ref={canvasRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none' }} role="img" aria-label="Neon Archer game canvas" />
-          {phase === 'playing' && (
-            <GameHUD
-              accentColor={theme.colors.accent ?? ACCENT}
-              items={[
-                { label: 'TIME',  value: timeLeft,      danger: timeLeft <= 10 },
-                { label: 'SCORE', value: scoreDisplay },
-              ]}
-            />
-          )}
-        </>
-      )}
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}
+      background="linear-gradient(180deg,#020b14 0%,#051020 100%)">
+      {phase === 'start' && <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description={GAME_TAGLINE} ctaLabel="Nock an Arrow 🏹" accentColor={theme.colors.accent ?? ACCENT} onStart={handleStart} />}
+      {phase === 'countdown' && <Countdown onComplete={startLoop} accentColor={theme.colors.accent ?? ACCENT} />}
+      <div ref={mountRef} style={{ position: 'absolute', inset: 0, display: phase === 'playing' ? 'block' : 'none', touchAction: 'none' }} />
+      {phase === 'playing' && <GameHUD accentColor={theme.colors.accent ?? ACCENT} items={[{ label: 'TIME', value: timeLeft, danger: timeLeft <= 10 }, { label: 'SCORE', value: scoreDisplay }]} />}
       {phase === 'done' && finalSig && (
-        <EndScreen
-          gameId={GAME_ID}
-          title={getPersonality(finalSig)}
-          emoji={GAME_EMOJI}
-          score={String(finalSig.score)}
-          personality={getPersonality(finalSig)}
-          insights={buildInsights(finalSig)}
-          accentColor={theme.colors.accent ?? ACCENT}
-          onPlayAgain={handlePlayAgain}
-          didWin={finalSig.hits >= 8}
-        />
+        <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI} score={String(finalSig.score)} personality={getPersonality(finalSig)}
+          insights={[
+            { label: 'Accuracy', value: `${finalSig.totalShots > 0 ? Math.round(finalSig.hits / finalSig.totalShots * 100) : 0}%`, color: '#4ade80' },
+            { label: 'Perfect Shots', value: `${finalSig.perfectShots}`, color: '#fbbf24' },
+            { label: 'Best Streak', value: `×${finalSig.maxStreak}`, color: ACCENT },
+            { label: 'Total Shots', value: `${finalSig.totalShots}`, color: '#94a3b8' },
+          ]}
+          accentColor={theme.colors.accent ?? ACCENT} onPlayAgain={handlePlayAgain} didWin={finalSig.hits >= 8} />
       )}
-      {phase === 'done' && finalSig && (
-        <WebhookEmitter theme={theme} gameId={GAME_ID} sig={finalSig} personality={getPersonality(finalSig)} player={playerSessionRef.current} />
-      )}
+      {phase === 'done' && finalSig && <WebhookEmitter theme={theme} sig={finalSig} personality={getPersonality(finalSig)} player={playerSessionRef.current} />}
     </GameShell>
   );
 }
 
-function WebhookEmitter({ theme, gameId, sig, personality, player }: {
-  theme: ReturnType<typeof useBrandTheme>;
-  gameId: string;
-  sig: Signals;
-  personality: string;
-  player: PlayerSession | null;
-}) {
+function WebhookEmitter({ theme, sig, personality, player }: { theme: ReturnType<typeof useBrandTheme>; sig: Signals; personality: string; player: PlayerSession | null; }) {
   const fired = useRef(false);
   useEffect(() => {
-    if (fired.current) return;
-    fired.current = true;
-    const acc = sig.totalShots > 0 ? sig.hits / sig.totalShots : 0;
-    postWebhook(theme, gameId, {
-      personality,
-      score: sig.score,
-      accuracy: parseFloat(acc.toFixed(3)),
-      totalShots: sig.totalShots,
-      hits: sig.hits,
-      perfectShots: sig.perfectShots,
-      maxStreak: sig.maxStreak,
-    }, player);
-  }, [theme, gameId, sig, personality, player]);
+    if (fired.current) return; fired.current = true;
+    postWebhook(theme, GAME_ID, { personality, score: sig.score, hits: sig.hits, totalShots: sig.totalShots }, player);
+  }, [theme, sig, personality, player]);
   return null;
 }

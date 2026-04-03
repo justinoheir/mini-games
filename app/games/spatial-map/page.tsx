@@ -1,15 +1,10 @@
-/**
- * ══════════════════════════════════════════════════════════════════
- *  ETHER MINI-GAMES — SPATIAL MAP
- *  A path is shown briefly on a grid. Memorize it, then recreate
- *  it by tapping cells in order.
- *
- *  Signals: roundsCompleted, maxPathLength, wrongTaps, avgRecallMs
- * ══════════════════════════════════════════════════════════════════
- */
-
 'use client';
+/**
+ * SPATIAL MAP — 3D Version
+ * 4x4 grid of glowing 3D cubes. Memorize path, then trace it.
+ */
 import { useEffect, useRef, useState, useCallback } from 'react';
+import * as THREE from 'three';
 import GameShell from '@/components/GameShell';
 import GameHUD from '@/components/GameHUD';
 import GameStartScreen from '@/components/GameStartScreen';
@@ -20,482 +15,350 @@ import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
 
-// ── Constants ────────────────────────────────────────────────────────────────
-const GAME_ID   = 'spatial-map';
-const PB_KEY    = 'mg_pb_spatial-map';
-const ACCENT    = '#06b6d4';
-const DURATION  = 60;
-const GAME_EMOJI   = '🗺️';
-const GAME_TITLE   = 'Spatial Map';
-const GAME_TAGLINE = 'Memorize the path, then trace it from memory.';
+const GAME_ID = 'spatial-map';
+const PB_KEY = 'mg_pb_spatial-map';
+const ACCENT = '#06b6d4';
+const DURATION = 60;
+const GAME_EMOJI = '🗺️';
+const GAME_TITLE = 'Spatial Map';
+const GRID = 4, CELLS = GRID * GRID;
+const WATCH_MS = 2200, FLASH_MS = 300, PAUSE_MS = 600;
 
-const GRID   = 4;
-const CELLS  = GRID * GRID;  // 16
-const WATCH_MS   = 2200;   // how long full path is shown
-const FLASH_MS   = 300;
-const PAUSE_MS   = 600;
-
-// ── Signals ───────────────────────────────────────────────────────────────────
-interface Signals {
-  score: number;
-  roundsCompleted: number;
-  maxPathLength: number;
-  wrongTaps: number;
-  recallTimes: number[];
-}
-
+interface Signals { score: number; roundsCompleted: number; maxPathLength: number; wrongTaps: number; avgRecallMs: number; totalRecallMs: number; totalRounds: number; }
 function getPersonality(sig: Signals): string {
-  const avg = sig.recallTimes.length > 0
-    ? sig.recallTimes.reduce((a, b) => a + b, 0) / sig.recallTimes.length : 9999;
-  if (sig.roundsCompleted >= 6 && sig.maxPathLength >= 7) return 'Pathfinder Elite 🗺️';
-  if (sig.roundsCompleted >= 4 && sig.wrongTaps <= 5)     return 'Spatial Navigator 🧭';
-  if (avg < 4000 && sig.roundsCompleted >= 3)             return 'Quick Mapper ⚡';
-  return 'Exploring the Grid 🌊';
+  if (sig.maxPathLength >= 7 && sig.wrongTaps === 0) return 'Spatial Genius 🧭';
+  if (sig.maxPathLength >= 6) return 'Path Master 🗺️';
+  if (sig.wrongTaps === 0 && sig.roundsCompleted >= 4) return 'Clean Tracer ✅';
+  if (sig.roundsCompleted >= 6) return 'Pattern Finder 🔍';
+  return 'Mapping Explorer 🌐';
 }
+type Phase = 'start' | 'countdown' | 'playing' | 'done';
+type SubPhase = 'show' | 'input' | 'result';
 
-type Phase  = 'start' | 'countdown' | 'playing' | 'done';
-type SubPhase = 'memorize' | 'recall' | 'paused';
-
-// ── Path generation ──────────────────────────────────────────────────────────
-function randomWalk(length: number): number[] {
-  const dirs = [-GRID, GRID, -1, 1]; // up, down, left, right
-  const path: number[] = [];
-  const visited = new Set<number>();
-  let cur = Math.floor(Math.random() * CELLS);
-  path.push(cur); visited.add(cur);
-
-  for (let step = 1; step < length; step++) {
-    const row = Math.floor(cur / GRID), col = cur % GRID;
-    const valid = dirs.filter(d => {
-      const next = cur + d;
-      if (next < 0 || next >= CELLS || visited.has(next)) return false;
-      if (d === -1 && col === 0) return false;   // would wrap left
-      if (d ===  1 && col === GRID - 1) return false; // would wrap right
-      return true;
-    });
-    if (valid.length === 0) break;
-    const d = valid[Math.floor(Math.random() * valid.length)];
-    cur += d; path.push(cur); visited.add(cur);
-  }
-  return path;
-}
-
-// ── Layout ───────────────────────────────────────────────────────────────────
-interface Layout { cellSize: number; gap: number; startX: number; startY: number; }
-function getLayout(W: number, H: number): Layout {
-  const maxGrid = Math.min(W * 0.82, H * 0.52, 340);
-  const gap     = Math.max(6, Math.floor(maxGrid * 0.035));
-  const cellSize = Math.floor((maxGrid - gap * (GRID - 1)) / GRID);
-  const totalW  = cellSize * GRID + gap * (GRID - 1);
-  const totalH  = totalW;
-  return {
-    cellSize, gap,
-    startX: Math.floor((W - totalW) / 2),
-    startY: Math.max(130, Math.floor((H - totalH) / 2)),
-  };
-}
-function cellCoords(idx: number, l: Layout) {
-  const row = Math.floor(idx / GRID), col = idx % GRID;
-  return { cx: l.startX + col * (l.cellSize + l.gap), cy: l.startY + row * (l.cellSize + l.gap) };
-}
-function cellCenter(idx: number, l: Layout) {
-  const { cx, cy } = cellCoords(idx, l);
-  return { x: cx + l.cellSize / 2, y: cy + l.cellSize / 2 };
-}
-function hitTest(x: number, y: number, l: Layout): number {
-  for (let i = 0; i < CELLS; i++) {
-    const { cx, cy } = cellCoords(i, l);
-    if (x >= cx && x <= cx + l.cellSize && y >= cy && y <= cy + l.cellSize) return i;
-  }
-  return -1;
-}
-
-// ── Rounded rect ─────────────────────────────────────────────────────────────
-function rRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
-  const rad = Math.min(r, w / 2, h / 2);
-  ctx.beginPath();
-  ctx.moveTo(x + rad, y); ctx.lineTo(x + w - rad, y); ctx.quadraticCurveTo(x + w, y, x + w, y + rad);
-  ctx.lineTo(x + w, y + h - rad); ctx.quadraticCurveTo(x + w, y + h, x + w - rad, y + h);
-  ctx.lineTo(x + rad, y + h); ctx.quadraticCurveTo(x, y + h, x, y + h - rad);
-  ctx.lineTo(x, y + rad); ctx.quadraticCurveTo(x, y, x + rad, y); ctx.closePath();
-}
-
-// ── Game state ────────────────────────────────────────────────────────────────
-interface CellFlash { color: string; end: number; }
-interface GameState {
-  running: boolean; timeLeft: number; sig: Signals; accentColor: string;
-  subPhase: SubPhase;
-  path: number[];           // cell indices in order
-  pathLength: number;
-  recallIdx: number;        // next expected cell to tap
-  recallStart: number;      // performance.now() when recall began
-  watchStart: number;       // performance.now() when watch began
-  cellFlashes: Map<number, CellFlash>;
-  pauseUntil: number; pauseSuccess: boolean;
-  round: number;
-}
-
-// ── Draw ──────────────────────────────────────────────────────────────────────
-function drawFrame(ctx: CanvasRenderingContext2D, W: number, H: number, s: GameState) {
-  const now    = performance.now();
-  const accent = s.accentColor;
-  const l      = getLayout(W, H);
-  const r      = Math.max(6, l.cellSize * 0.12);
-
-  // Background
-  const bg = ctx.createRadialGradient(W * 0.5, H * 0.35, 0, W * 0.5, H * 0.65, Math.max(W, H));
-  bg.addColorStop(0, '#020e16'); bg.addColorStop(0.6, '#010a12'); bg.addColorStop(1, '#000608');
-  ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
-
-  const pathSet = new Set(s.path);
-
-  // Phase label
-  const labelY = l.startY - 28;
-  ctx.save(); ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  ctx.font = `700 ${Math.max(16, Math.floor(W * 0.042))}px -apple-system, sans-serif`;
-
-  if (s.subPhase === 'memorize') {
-    const elapsed = now - s.watchStart;
-    const frac = Math.max(0, 1 - elapsed / WATCH_MS);
-    ctx.shadowBlur = 14; ctx.shadowColor = accent; ctx.fillStyle = accent;
-    ctx.fillText(`MEMORIZE  (${(frac * (WATCH_MS / 1000)).toFixed(1)}s)`, W / 2, labelY);
-  } else if (s.subPhase === 'recall') {
-    ctx.shadowBlur = 0; ctx.fillStyle = '#ffffff';
-    ctx.fillText(`TRACE  ${s.recallIdx} / ${s.path.length}`, W / 2, labelY);
-  } else {
-    const col = s.pauseSuccess ? '#4ade80' : '#ef4444';
-    ctx.shadowBlur = 14; ctx.shadowColor = col; ctx.fillStyle = col;
-    ctx.fillText(s.pauseSuccess ? '✓ MAPPED!' : '✗ Wrong path', W / 2, labelY);
-  }
-  ctx.restore();
-
-  // Draw path connecting lines during memorize
-  if (s.subPhase === 'memorize') {
-    ctx.save();
-    ctx.strokeStyle = `${accent}55`; ctx.lineWidth = 3; ctx.lineCap = 'round';
-    for (let i = 1; i < s.path.length; i++) {
-      const a = cellCenter(s.path[i - 1], l);
-      const b = cellCenter(s.path[i], l);
-      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
-    }
-    ctx.restore();
-  }
-
-  // Draw cells
-  for (let i = 0; i < CELLS; i++) {
-    const { cx, cy } = cellCoords(i, l);
-    const flash = s.cellFlashes.get(i);
-    const flashAlive = flash !== undefined && now < flash.end;
-    const onPath = pathSet.has(i);
-    const isStart = s.path[0] === i;
-    const isNext  = s.subPhase === 'recall' && s.path[s.recallIdx] === i;
-    const alreadyDone = s.subPhase === 'recall' && s.path.slice(0, s.recallIdx).includes(i);
-
-    ctx.save();
-    if (s.subPhase === 'memorize' && onPath) {
-      ctx.shadowBlur = isStart ? 28 : 18; ctx.shadowColor = accent;
-      ctx.fillStyle = isStart ? `${accent}ee` : `${accent}88`;
-      ctx.strokeStyle = accent; ctx.lineWidth = isStart ? 2.5 : 1.5;
-    } else if (alreadyDone) {
-      ctx.shadowBlur = 8; ctx.shadowColor = '#4ade80';
-      ctx.fillStyle = '#4ade8033'; ctx.strokeStyle = '#4ade80'; ctx.lineWidth = 1.5;
-    } else if (isNext) {
-      const pulse = 0.5 + 0.5 * Math.sin(now / 280);
-      ctx.shadowBlur = 12 + pulse * 10; ctx.shadowColor = '#fff';
-      ctx.fillStyle = 'rgba(255,255,255,0.14)'; ctx.strokeStyle = '#fff'; ctx.lineWidth = 2;
-    } else if (flashAlive && flash) {
-      const t = (flash.end - now) / FLASH_MS;
-      ctx.shadowBlur = t * 16; ctx.shadowColor = flash.color;
-      ctx.fillStyle = `${flash.color}44`; ctx.strokeStyle = flash.color; ctx.lineWidth = 2;
-    } else {
-      ctx.shadowBlur = 0; ctx.fillStyle = 'rgba(255,255,255,0.03)';
-      ctx.strokeStyle = 'rgba(255,255,255,0.12)'; ctx.lineWidth = 1;
-    }
-    rRect(ctx, cx, cy, l.cellSize, l.cellSize, r); ctx.fill(); ctx.stroke();
-
-    // Step number during memorize
-    if (s.subPhase === 'memorize' && onPath) {
-      const step = s.path.indexOf(i) + 1;
-      ctx.shadowBlur = 0; ctx.fillStyle = '#fff';
-      ctx.font = `700 ${Math.max(12, Math.floor(l.cellSize * 0.32))}px -apple-system, sans-serif`;
-      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      ctx.fillText(String(step), cx + l.cellSize / 2, cy + l.cellSize / 2);
-    }
-    ctx.restore();
-  }
-
-  // Recall progress dots
-  if (s.subPhase === 'recall') {
-    const dotY = l.startY + l.cellSize * GRID + l.gap * (GRID - 1) + 22;
-    const dotR = 5, spc = dotR * 2.8;
-    const totalW = s.path.length * spc;
-    const ox = W / 2 - totalW / 2 + dotR;
-    ctx.save();
-    for (let i = 0; i < s.path.length; i++) {
-      ctx.beginPath(); ctx.arc(ox + i * spc, dotY, dotR, 0, Math.PI * 2);
-      if (i < s.recallIdx) ctx.fillStyle = '#4ade80';
-      else if (i === s.recallIdx) { ctx.shadowBlur = 8; ctx.shadowColor = accent; ctx.fillStyle = accent; }
-      else { ctx.shadowBlur = 0; ctx.fillStyle = 'rgba(255,255,255,0.2)'; }
-      ctx.fill(); ctx.shadowBlur = 0;
-    }
-    ctx.restore();
-  }
-}
-
-// ── Component ──────────────────────────────────────────────────────────────────
 export default function SpatialMapGame() {
-  const theme       = useBrandTheme();
-  const canvasRef   = useRef<HTMLCanvasElement>(null);
-  const animRef     = useRef(0);
-  const timerRef    = useRef<ReturnType<typeof setInterval> | null>(null);
-  const stopMusicRef = useRef<(() => void) | null>(null);
-  const phaseRef    = useRef<Phase>('start');
+  const theme = useBrandTheme();
+  const mountRef = useRef<HTMLDivElement>(null);
+  const animRef = useRef(0);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const subTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const stateRef = useRef<GameState>({
-    running: false, timeLeft: DURATION, accentColor: ACCENT,
-    sig: { score: 0, roundsCompleted: 0, maxPathLength: 0, wrongTaps: 0, recallTimes: [] },
-    subPhase: 'memorize', path: [], pathLength: 4,
-    recallIdx: 0, recallStart: 0, watchStart: 0,
-    cellFlashes: new Map(), pauseUntil: 0, pauseSuccess: false, round: 1,
+  const stateRef = useRef({
+    renderer: null as THREE.WebGLRenderer | null,
+    scene: null as THREE.Scene | null,
+    camera: null as THREE.PerspectiveCamera | null,
+    cellMeshes: [] as THREE.Mesh[],
+    cellLights: [] as THREE.PointLight[],
+    pathLines: [] as THREE.Line[],
+    running: false, timeLeft: DURATION,
+    sig: { score: 0, roundsCompleted: 0, maxPathLength: 0, wrongTaps: 0, avgRecallMs: 0, totalRecallMs: 0, totalRounds: 0 } as Signals,
+    path: [] as number[],
+    playerInput: [] as number[],
+    subPhase: 'show' as SubPhase,
+    pathLength: 3, showStep: 0, showTimer: null as ReturnType<typeof setTimeout> | null,
+    inputStartMs: 0, resultTimer: 0, success: false,
+    cellWorldPos: [] as THREE.Vector3[],
   });
 
-  const [phase, setPhase]           = useState<Phase>('start');
-  const [timeLeft, setTimeLeft]     = useState(DURATION);
+  const [phase, setPhase] = useState<Phase>('start');
+  const [timeLeft, setTimeLeft] = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
-  const [subPhaseUI, setSubPhaseUI] = useState<SubPhase>('memorize');
-  const [finalSig, setFinalSig]     = useState<Signals | null>(null);
-  const [isNewBest, setIsNewBest]   = useState(false);
-  const playerSessionRef            = useRef<PlayerSession | null>(null);
+  const [finalSig, setFinalSig] = useState<Signals | null>(null);
+  const playerSessionRef = useRef<PlayerSession | null>(null);
 
-  useEffect(() => { stateRef.current.accentColor = theme.colors.accent ?? ACCENT; }, [theme]);
-
-  const startMemorize = useCallback((s: GameState) => {
-    const len  = Math.min(4 + Math.floor(s.round * 0.6), 10);
-    s.path     = randomWalk(len);
-    s.pathLength = s.path.length;
-    s.subPhase = 'memorize';
-    s.watchStart = performance.now();
-    s.recallIdx  = 0;
-    s.cellFlashes.clear();
-    setSubPhaseUI('memorize');
-    sfx.shimmer?.() ?? sfx.click();
-  }, []);
-
-  const startRecall = useCallback((s: GameState) => {
-    s.subPhase   = 'recall';
-    s.recallStart = performance.now();
-    s.cellFlashes.clear();
-    setSubPhaseUI('recall');
-    sfx.click();
+  const clearSubTimers = useCallback(() => {
+    if (subTimerRef.current) { clearTimeout(subTimerRef.current); subTimerRef.current = null; }
   }, []);
 
   const endGame = useCallback(() => {
+    clearSubTimers();
     const s = stateRef.current;
     s.running = false;
     cancelAnimationFrame(animRef.current);
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
-    if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
-    sfx.success(); haptic([100]);
-    try {
-      const pb = parseInt(localStorage.getItem(PB_KEY) ?? '0', 10);
-      if (s.sig.score > pb) { localStorage.setItem(PB_KEY, String(s.sig.score)); setIsNewBest(true); }
-    } catch { /* ignore */ }
+    if (s.renderer) { s.renderer.dispose(); s.renderer = null; }
+    try { const pb = parseInt(localStorage.getItem(PB_KEY) ?? '0'); if (s.sig.score > pb) localStorage.setItem(PB_KEY, String(s.sig.score)); } catch { /* ignore */ }
     setFinalSig({ ...s.sig });
-    phaseRef.current = 'done'; setPhase('done');
+    setPhase('done');
+  }, [clearSubTimers]);
+
+  const generatePath = useCallback((length: number): number[] => {
+    const path: number[] = [Math.floor(Math.random() * CELLS)];
+    while (path.length < length) {
+      const last = path[path.length - 1];
+      const row = Math.floor(last / GRID), col = last % GRID;
+      const neighbors: number[] = [];
+      if (row > 0) neighbors.push(last - GRID);
+      if (row < GRID - 1) neighbors.push(last + GRID);
+      if (col > 0) neighbors.push(last - 1);
+      if (col < GRID - 1) neighbors.push(last + 1);
+      const unused = neighbors.filter(n => !path.includes(n));
+      if (unused.length === 0) break;
+      path.push(unused[Math.floor(Math.random() * unused.length)]);
+    }
+    return path;
   }, []);
 
-  const startLoop = useCallback(() => {
-    const canvas = canvasRef.current; if (!canvas) return;
-    const ctx = canvas.getContext('2d'); if (!ctx) return;
+  const startRound = useCallback(() => {
+    clearSubTimers();
     const s = stateRef.current;
+    const path = generatePath(s.pathLength);
+    s.path = path; s.playerInput = []; s.subPhase = 'show'; s.showStep = 0;
+    s.sig.totalRounds++;
+    // Reset cell colors
+    s.cellMeshes.forEach(m => { (m.material as THREE.MeshStandardMaterial).emissive.setHex(0x000000); (m.material as THREE.MeshStandardMaterial).emissiveIntensity = 0; });
+    s.cellLights.forEach(l => { l.intensity = 0; });
 
-    s.running = true; s.timeLeft = DURATION; s.round = 1;
-    s.sig = { score: 0, roundsCompleted: 0, maxPathLength: 0, wrongTaps: 0, recallTimes: [] };
-    setScoreDisplay(0); setTimeLeft(DURATION);
-    phaseRef.current = 'playing'; setPhase('playing');
-    stopMusicRef.current = startMusic('calm');
+    // Show path step by step
+    const showStep = (step: number) => {
+      if (!s.running) return;
+      if (step > 0) {
+        const prevIdx = path[step - 1];
+        const mat = s.cellMeshes[prevIdx].material as THREE.MeshStandardMaterial;
+        mat.emissive.setHex(0x06b6d4); mat.emissiveIntensity = 0.2;
+        s.cellLights[prevIdx].intensity = 0;
+      }
+      if (step < path.length) {
+        const idx = path[step];
+        const mat = s.cellMeshes[idx].material as THREE.MeshStandardMaterial;
+        mat.emissive.setHex(0x06b6d4); mat.emissiveIntensity = 1.5;
+        s.cellLights[idx].intensity = 3;
+        sfx.collect(); haptic([20]);
+        subTimerRef.current = setTimeout(() => showStep(step + 1), WATCH_MS / path.length);
+      } else {
+        // Done showing — input phase
+        s.subPhase = 'input';
+        s.cellMeshes.forEach(m => { (m.material as THREE.MeshStandardMaterial).emissive.setHex(0x000000); (m.material as THREE.MeshStandardMaterial).emissiveIntensity = 0.05; });
+        s.cellLights.forEach(l => { l.intensity = 0; });
+        s.inputStartMs = Date.now();
+        // Timeout for input
+        subTimerRef.current = setTimeout(() => {
+          if (!s.running || s.subPhase !== 'input') return;
+          s.sig.wrongTaps++; s.subPhase = 'result'; s.success = false; s.resultTimer = 40;
+          sfx.collision(); haptic([30, 20, 30]);
+        }, 5000 + s.pathLength * 1200);
+      }
+    };
+    setTimeout(() => showStep(0), 300);
+  }, [clearSubTimers, generatePath]);
 
-    const dpr = window.devicePixelRatio || 1;
-    canvas.width = window.innerWidth * dpr; canvas.height = window.innerHeight * dpr;
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const startLoop = useCallback(() => {
+    const s = stateRef.current;
+    s.running = true; s.timeLeft = DURATION;
+    s.sig = { score: 0, roundsCompleted: 0, maxPathLength: 0, wrongTaps: 0, avgRecallMs: 0, totalRecallMs: 0, totalRounds: 0 };
+    s.pathLength = 3;
+    setScoreDisplay(0); setTimeLeft(DURATION); setPhase('playing');
+
+    const W = window.innerWidth, H = window.innerHeight;
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(W, H);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setClearColor(0x020a0a);
+    if (mountRef.current) { mountRef.current.innerHTML = ''; mountRef.current.appendChild(renderer.domElement); }
+    s.renderer = renderer;
+
+    const scene = new THREE.Scene();
+    s.scene = scene;
+    const camera = new THREE.PerspectiveCamera(65, W / H, 0.1, 100);
+    camera.position.set(0, 5, 6);
+    camera.lookAt(0, 0, 0);
+    s.camera = camera;
+
+    scene.add(new THREE.AmbientLight(0x010a0a, 3));
+    const topLight = new THREE.PointLight(0x06b6d4, 2, 20);
+    topLight.position.set(0, 8, 0);
+    scene.add(topLight);
+
+    // Stars
+    const sp = new Float32Array(300*3);
+    for (let i=0;i<300;i++){sp[i*3]=(Math.random()-.5)*50;sp[i*3+1]=(Math.random()-.5)*50;sp[i*3+2]=(Math.random()-.5)*50;}
+    const sg=new THREE.BufferGeometry();sg.setAttribute('position',new THREE.BufferAttribute(sp,3));
+    scene.add(new THREE.Points(sg,new THREE.PointsMaterial({color:0xffffff,size:0.06})));
+
+    // Grid platform
+    const platformGeo = new THREE.BoxGeometry(7, 0.1, 7);
+    const platformMat = new THREE.MeshStandardMaterial({ color: 0x0d1117, roughness: 0.8 });
+    const platform = new THREE.Mesh(platformGeo, platformMat);
+    platform.position.y = -0.35;
+    scene.add(platform);
+
+    // Create 4x4 grid cells
+    const cellMeshes: THREE.Mesh[] = [];
+    const cellLights: THREE.PointLight[] = [];
+    const cellWorldPos: THREE.Vector3[] = [];
+    const spacing = 1.5;
+    const offset = -(GRID - 1) * spacing / 2;
+    for (let r = 0; r < GRID; r++) {
+      for (let c = 0; c < GRID; c++) {
+        const idx = r * GRID + c;
+        const x = offset + c * spacing;
+        const z = offset + r * spacing;
+        const cellGeo = new THREE.BoxGeometry(1.1, 0.15, 1.1);
+        const cellMat = new THREE.MeshStandardMaterial({ color: 0x0d2433, emissive: 0x000000, emissiveIntensity: 0, roughness: 0.4, metalness: 0.5 });
+        const cellMesh = new THREE.Mesh(cellGeo, cellMat);
+        cellMesh.position.set(x, -0.2, z);
+        scene.add(cellMesh);
+        cellMeshes.push(cellMesh);
+        cellWorldPos.push(new THREE.Vector3(x, -0.2, z));
+        const cellLight = new THREE.PointLight(0x06b6d4, 0, 3);
+        cellLight.position.set(x, 0.5, z);
+        scene.add(cellLight);
+        cellLights.push(cellLight);
+        // Cell border
+        const borderGeo = new THREE.BoxGeometry(1.12, 0.16, 1.12);
+        const borderEdges = new THREE.EdgesGeometry(borderGeo);
+        const border = new THREE.LineSegments(borderEdges, new THREE.LineBasicMaterial({ color: 0x06b6d440 }));
+        border.position.set(x, -0.2, z);
+        scene.add(border);
+      }
+    }
+    s.cellMeshes = cellMeshes;
+    s.cellLights = cellLights;
+    s.cellWorldPos = cellWorldPos;
+
+    const handleResize = () => {
+      const w = window.innerWidth, h = window.innerHeight;
+      renderer.setSize(w, h); camera.aspect = w / h; camera.updateProjectionMatrix();
+    };
+    window.addEventListener('resize', handleResize);
+    (s as any)._cleanup = () => window.removeEventListener('resize', handleResize);
 
     timerRef.current = setInterval(() => {
-      s.timeLeft--;
-      setTimeLeft(s.timeLeft);
-      if (s.timeLeft === 10) sfx.warning();
-      if (s.timeLeft > 0 && s.timeLeft < 10) sfx.tick();
+      s.timeLeft--; setTimeLeft(s.timeLeft);
       if (s.timeLeft <= 0) endGame();
     }, 1000);
 
-    startMemorize(s);
+    startRound();
 
-    let prevSubPhase = s.subPhase;
-    const loop = (now: number) => {
+    const loop = () => {
       if (!s.running) return;
+      const t = Date.now() * 0.001;
 
-      // Auto-transition from memorize to recall
-      if (s.subPhase === 'memorize' && now - s.watchStart >= WATCH_MS) {
-        startRecall(s);
+      // Result phase
+      if (s.subPhase === 'result') {
+        s.resultTimer--;
+        topLight.color.setHex(s.success ? 0x22c55e : 0xef4444);
+        topLight.intensity = 3 + Math.sin(t * 8) * 1;
+        if (s.resultTimer <= 0) {
+          topLight.color.setHex(0x06b6d4);
+          topLight.intensity = 2;
+          if (s.success) s.pathLength = Math.min(s.pathLength + 1, 9);
+          else s.pathLength = Math.max(3, s.pathLength - 1);
+          startRound();
+        }
       }
 
-      // Transition from paused to next round
-      if (s.subPhase === 'paused' && now >= s.pauseUntil) {
-        s.round++;
-        startMemorize(s);
+      // Idle cell pulse in input phase
+      if (s.subPhase === 'input') {
+        cellMeshes.forEach((m, i) => {
+          if (!s.playerInput.includes(i)) {
+            const mat = m.material as THREE.MeshStandardMaterial;
+            mat.emissiveIntensity = 0.04 + Math.sin(t * 2 + i * 0.4) * 0.02;
+          }
+        });
       }
 
-      if (s.subPhase !== prevSubPhase) {
-        prevSubPhase = s.subPhase;
-        setSubPhaseUI(s.subPhase);
-      }
-
-      // Clean up expired flashes
-      for (const [k, fl] of s.cellFlashes) {
-        if (now >= fl.end) s.cellFlashes.delete(k);
-      }
-
-      drawFrame(ctx, window.innerWidth, window.innerHeight, s);
+      renderer.render(scene, camera);
       animRef.current = requestAnimationFrame(loop);
     };
     animRef.current = requestAnimationFrame(loop);
-  }, [endGame, startMemorize, startRecall]);
 
-  const handleTap = useCallback((clientX: number, clientY: number) => {
-    const canvas = canvasRef.current; if (!canvas) return;
-    const s = stateRef.current;
-    if (!s.running || s.subPhase !== 'recall') return;
-
-    const rect = canvas.getBoundingClientRect();
-    const x = (clientX - rect.left) * (canvas.offsetWidth / rect.width);
-    const y = (clientY - rect.top)  * (canvas.offsetHeight / rect.height);
-    const l = getLayout(window.innerWidth, window.innerHeight);
-    const idx = hitTest(x, y, l);
-    if (idx < 0) return;
-
-    const expected = s.path[s.recallIdx];
-    if (idx === expected) {
-      s.cellFlashes.set(idx, { color: '#4ade80', end: performance.now() + FLASH_MS });
-      sfx.collect(); haptic([30]);
-      s.recallIdx++;
-      if (s.recallIdx >= s.path.length) {
-        // Round complete
-        const recallMs = performance.now() - s.recallStart;
-        s.sig.recallTimes.push(recallMs);
-        s.sig.roundsCompleted++;
-        s.sig.maxPathLength = Math.max(s.sig.maxPathLength, s.path.length);
-        const pts = s.path.length * 8 + (s.path.length >= 7 ? 20 : 0);
-        s.sig.score += pts; setScoreDisplay(s.sig.score);
-        sfx.success(); haptic([30, 50, 30]);
-        s.subPhase = 'paused'; s.pauseUntil = performance.now() + PAUSE_MS; s.pauseSuccess = true;
-        setSubPhaseUI('paused');
+    // Tap handler
+    const onTap = (e: PointerEvent) => {
+      const s2 = stateRef.current;
+      if (!s2.running || s2.subPhase !== 'input') return;
+      const rect = mountRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const ndcX = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+      const ndcY = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+      const raycaster = new THREE.Raycaster();
+      raycaster.setFromCamera(new THREE.Vector2(ndcX, ndcY), camera);
+      const hits = raycaster.intersectObjects(cellMeshes);
+      if (hits.length > 0) {
+        const hitIdx = cellMeshes.indexOf(hits[0].object as THREE.Mesh);
+        if (hitIdx < 0) return;
+        const expected = s2.path[s2.playerInput.length];
+        const mat = cellMeshes[hitIdx].material as THREE.MeshStandardMaterial;
+        mat.emissive.setHex(0x06b6d4); mat.emissiveIntensity = 1.2;
+        cellLights[hitIdx].intensity = 2.5;
+        setTimeout(() => { mat.emissive.setHex(0x000000); mat.emissiveIntensity = 0; cellLights[hitIdx].intensity = 0; }, 300);
+        sfx.collect(); haptic([15]);
+        if (hitIdx === expected) {
+          s2.playerInput.push(hitIdx);
+          if (s2.playerInput.length === s2.path.length) {
+            clearSubTimers();
+            const recallMs = Date.now() - s2.inputStartMs;
+            s2.sig.totalRecallMs += recallMs;
+            s2.sig.roundsCompleted++;
+            if (s2.pathLength > s2.sig.maxPathLength) s2.sig.maxPathLength = s2.pathLength;
+            const pts = s2.path.length * 2;
+            s2.sig.score += pts; setScoreDisplay(s2.sig.score);
+            sfx.success(); haptic([50, 30, 50]);
+            s2.subPhase = 'result'; s2.success = true; s2.resultTimer = 45;
+          }
+        } else {
+          clearSubTimers();
+          s2.sig.wrongTaps++;
+          sfx.collision(); haptic([30, 20, 30]);
+          s2.subPhase = 'result'; s2.success = false; s2.resultTimer = 45;
+        }
       }
-    } else {
-      // Wrong tap — flash all path cells red, reset recall
-      const now = performance.now();
-      for (const ci of s.path) s.cellFlashes.set(ci, { color: '#ef4444', end: now + FLASH_MS });
-      sfx.collision(); haptic([20, 30, 20]);
-      s.sig.wrongTaps++;
-      s.sig.score = Math.max(0, s.sig.score - 5); setScoreDisplay(s.sig.score);
-      s.recallIdx = 0;
-    }
-  }, []);
-
-  useEffect(() => {
-    const canvas = canvasRef.current; if (!canvas) return;
-    const resize = () => {
-      const dpr = window.devicePixelRatio || 1;
-      canvas.style.width  = window.innerWidth  + 'px';
-      canvas.style.height = window.innerHeight + 'px';
-      canvas.width  = window.innerWidth  * dpr;
-      canvas.height = window.innerHeight * dpr;
-      const c = canvas.getContext('2d');
-      if (c) c.setTransform(dpr, 0, 0, dpr, 0, 0);
     };
-    resize(); window.addEventListener('resize', resize);
-    const onDown = (e: PointerEvent) => { if (phaseRef.current === 'playing') handleTap(e.clientX, e.clientY); };
-    canvas.addEventListener('pointerdown', onDown);
-    return () => { window.removeEventListener('resize', resize); canvas.removeEventListener('pointerdown', onDown); };
-  }, [handleTap]);
+    if (mountRef.current) mountRef.current.addEventListener('pointerdown', onTap);
+    (s as any)._tapCleanup = () => mountRef.current?.removeEventListener('pointerdown', onTap);
+  }, [endGame, startRound, clearSubTimers]);
 
   useEffect(() => () => {
+    clearSubTimers();
     cancelAnimationFrame(animRef.current);
     if (timerRef.current) clearInterval(timerRef.current);
-    if (stopMusicRef.current) stopMusicRef.current();
-  }, []);
+    const s = stateRef.current;
+    if (s.renderer) s.renderer.dispose();
+    (s as any)._cleanup?.(); (s as any)._tapCleanup?.();
+  }, [clearSubTimers]);
 
-  const handleStart = useCallback((name: string, avatar: string) => {
+  const handleStart = useCallback(async (name: string, avatar: string) => {
     playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar);
-    initAudio(); phaseRef.current = 'countdown'; setPhase('countdown');
+    await initAudio(); setPhase('countdown');
   }, []);
-  const handleCountdownDone = useCallback(() => { startLoop(); }, [startLoop]);
-  const handlePlayAgain = useCallback(() => {
-    setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null); setIsNewBest(false);
-    phaseRef.current = 'countdown'; setPhase('countdown');
-  }, []);
-
-  const buildInsights = useCallback((sig: Signals) => {
-    const avg = sig.recallTimes.length > 0
-      ? (sig.recallTimes.reduce((a, b) => a + b, 0) / sig.recallTimes.length / 1000).toFixed(1) : '—';
-    const ac = theme.colors.accent ?? ACCENT;
-    return [
-      { label: 'Rounds Done',  value: String(sig.roundsCompleted), color: ac },
-      { label: 'Longest Path', value: String(sig.maxPathLength),   color: sig.maxPathLength >= 7 ? '#4ade80' : ac },
-      { label: 'Wrong Taps',   value: String(sig.wrongTaps),       color: sig.wrongTaps <= 5 ? '#4ade80' : '#ef4444' },
-      { label: 'Avg Recall',   value: avg === '—' ? '—' : `${avg}s`, color: ac },
-    ];
-  }, [theme]);
+  const handlePlayAgain = useCallback(() => { setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null); }, []);
 
   const accent = theme.colors.accent ?? ACCENT;
 
-  // suppress unused warning for subPhaseUI — used only to force re-render when sub phase changes
-  void subPhaseUI;
-
   return (
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accent}
-      background="radial-gradient(ellipse at 50% 0%, rgba(6,182,212,0.12) 0%, transparent 55%), linear-gradient(180deg, #020e16 0%, #010a12 50%, #000608 100%)">
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accent}>
       {phase === 'start' && (
-        <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description={GAME_TAGLINE}
-          ctaLabel="Start" accentColor={accent} onStart={handleStart} />
+        <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description="Memorize the glowing 3D path on the grid, then tap the same cells in order!"
+          ctaLabel="Map It! 🗺️" accentColor={accent} onStart={handleStart} />
       )}
-      {phase === 'countdown' && <Countdown onComplete={handleCountdownDone} accentColor={accent} />}
+      {phase === 'countdown' && <Countdown onComplete={startLoop} accentColor={accent} />}
       {(phase === 'playing' || phase === 'countdown') && (
-        <>
-          <canvas ref={canvasRef} role="img" aria-label="Spatial Map game canvas"
-            style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none' }} />
-          {phase === 'playing' && (
-            <GameHUD accentColor={accent} items={[
-              { label: 'TIME',  value: timeLeft,     danger: timeLeft <= 10, testId: 'timer' },
-              { label: 'SCORE', value: scoreDisplay, testId: 'score' },
-            ]} />
-          )}
-        </>
+        <div ref={mountRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none' }} />
       )}
-      {isNewBest && phase === 'done' && (
-        <div style={{ position: 'fixed', top: '10%', left: '50%', transform: 'translateX(-50%)',
-          zIndex: 90, background: 'linear-gradient(135deg,#fbbf24,#f59e0b)', borderRadius: 20,
-          padding: '8px 20px', fontSize: 20, fontWeight: 900, color: '#000',
-          whiteSpace: 'nowrap', boxShadow: '0 4px 20px rgba(251,191,36,0.5)' }}>🏆 New Best!</div>
+      {phase === 'playing' && (
+        <GameHUD accentColor={accent} items={[
+          { label: 'TIME', value: timeLeft, danger: timeLeft <= 10 },
+          { label: 'SCORE', value: scoreDisplay },
+        ]} />
       )}
       {phase === 'done' && finalSig && (
         <>
           <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI}
             score={String(finalSig.score)} personality={getPersonality(finalSig)}
-            insights={buildInsights(finalSig)} accentColor={accent}
-            onPlayAgain={handlePlayAgain} didWin={finalSig.roundsCompleted >= 3} />
-          <WebhookEmitter theme={theme} sig={finalSig} personality={getPersonality(finalSig)} player={playerSessionRef.current} />
+            insights={[
+              { label: 'Rounds', value: String(finalSig.roundsCompleted), color: accent },
+              { label: 'Max Path', value: `${finalSig.maxPathLength} cells`, color: '#fbbf24' },
+              { label: 'Wrong Taps', value: String(finalSig.wrongTaps), color: finalSig.wrongTaps === 0 ? '#4ade80' : '#ef4444' },
+            ]}
+            accentColor={accent} onPlayAgain={handlePlayAgain} didWin={finalSig.maxPathLength >= 5} />
+          <WebhookHelper theme={theme} sig={finalSig} personality={getPersonality(finalSig)} player={playerSessionRef.current} />
         </>
       )}
     </GameShell>
   );
 }
 
-function WebhookEmitter({ theme, sig, personality, player }: {
-  theme: ReturnType<typeof useBrandTheme>; sig: Signals; personality: string; player: PlayerSession | null;
-}) {
+function WebhookHelper({ theme, sig, personality, player }: { theme: ReturnType<typeof useBrandTheme>; sig: Signals; personality: string; player: PlayerSession | null; }) {
   const fired = useRef(false);
-  useEffect(() => {
-    if (fired.current) return; fired.current = true;
-    postWebhook(theme, GAME_ID, { personality, score: sig.score }, player);
-  }, [theme, sig, personality, player]);
+  useEffect(() => { if (fired.current) return; fired.current = true; postWebhook(theme, GAME_ID, { personality, score: sig.score, maxPathLength: sig.maxPathLength, wrongTaps: sig.wrongTaps }, player); }, [theme, sig, personality, player]);
   return null;
 }

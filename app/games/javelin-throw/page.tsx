@@ -1,12 +1,10 @@
-/**
- * ══════════════════════════════════════════════════════════════════
- *  JAVELIN THROW — Ether Glimmer
- *  Swipe upward with power and angle to throw the javelin for distance.
- *  Mechanic: swipe velocity → launch angle + power → physics arc
- * ══════════════════════════════════════════════════════════════════
- */
 'use client';
+/**
+ * JAVELIN THROW — 3D stadium with physics arc throw.
+ * Swipe up-right with power and angle for max distance.
+ */
 import { useEffect, useRef, useState, useCallback } from 'react';
+import * as THREE from 'three';
 import GameShell from '@/components/GameShell';
 import GameHUD from '@/components/GameHUD';
 import GameStartScreen from '@/components/GameStartScreen';
@@ -17,125 +15,81 @@ import { hapticScore, hapticFail, hapticVictory } from '@/lib/haptics';
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
-import { Particle, spawnBurst, updateAndDrawParticles } from '@/lib/particles';
 import { motion, AnimatePresence } from 'framer-motion';
 import ScorePopEffect, { useScorePop } from '@/components/ScorePopEffect';
 
-// ── CONSTANTS ──────────────────────────────────────────────────────
-const GAME_ID      = 'javelin-throw';
-const PB_KEY       = 'pb_javelin-throw';
-const ACCENT       = '#a78bfa';
-const DURATION     = 30;
-const GAME_EMOJI   = '🥇';
-const GAME_TITLE   = 'Javelin Throw';
+const GAME_ID = 'javelin-throw';
+const PB_KEY = 'pb_javelin-throw';
+const ACCENT = '#a78bfa';
+const DURATION = 30;
+const GAME_EMOJI = '🥇';
+const GAME_TITLE = 'Javelin Throw';
 const GAME_TAGLINE = 'Swipe up with power and angle for max distance.';
 
-const GRAVITY      = 0.22;    // pixels/frame²
-const DRAG         = 0.0025;  // velocity drag coefficient
-const JAVELIN_LEN  = 50;      // px
-const PIXELS_PER_M = 8;       // screen pixels to "meters"
-
-// ── TYPES ───────────────────────────────────────────────────────────
-interface JavelinState {
-  x: number;
-  y: number;
-  vx: number;
-  vy: number;
-  angle: number;    // radians, current flight angle
-  active: boolean;
-  landed: boolean;
-  landX: number;
-  distanceM: number;
-}
-
-interface ThrowRecord {
-  distanceM: number;
-  angle: number;
-  power: number;
-}
+const GRAVITY = 9.8;
+const PIXELS_PER_M = 0.8;
 
 interface Signals {
-  score: number;          // sum of all distances (points)
-  bestThrow: number;      // meters, best single throw
-  throws: number;
-  goodThrows: number;     // throws > 30m
-  optimalThrows: number;  // throws within optimal angle range (35-50°)
-  maxStreak: number;
-  streak: number;         // consecutive throws > prev best
+  score: number; bestThrow: number; throws: number;
+  goodThrows: number; optimalThrows: number; maxStreak: number; streak: number;
 }
 
 type Phase = 'start' | 'countdown' | 'playing' | 'done';
 
-interface GState {
-  running: boolean;
-  timeLeft: number;
-  sig: Signals;
-  javelin: JavelinState;
-  throwHistory: ThrowRecord[];
-  particles: Particle[];
-  pointerStart: { x: number; y: number; time: number } | null;
-  gameStartTime: number;
-  athleteX: number;
-  runPhase: number;
-  isCharging: boolean;
-  accentColor: string;
-  prevBest: number;
-  landMarkers: { x: number; dist: number; fresh: boolean }[];
-  screenFlash: number;
-  aimVector: { x: number; y: number } | null;
-}
-
-// ── PERSONALITY ─────────────────────────────────────────────────────
 function getPersonality(sig: Signals): string {
-  if (sig.bestThrow >= 70)               return 'Olympic Champion 🥇';
+  if (sig.bestThrow >= 70) return 'Olympic Champion 🥇';
   if (sig.bestThrow >= 55 && sig.optimalThrows >= 3) return 'Technical Master 🎯';
-  if (sig.bestThrow >= 50)               return 'Power Thrower ⚡';
-  if (sig.optimalThrows >= 4)            return 'Angle Expert 📐';
-  if (sig.goodThrows >= 4)               return 'Consistent Athlete 💪';
-  if (sig.throws >= 8)                   return 'Never Quit 🔥';
+  if (sig.bestThrow >= 50) return 'Power Thrower ⚡';
+  if (sig.optimalThrows >= 4) return 'Angle Expert 📐';
+  if (sig.goodThrows >= 4) return 'Consistent Athlete 💪';
   return 'Javelin Rookie 🏃';
 }
 
-// ── COMPONENT ───────────────────────────────────────────────────────
 export default function JavelinThrowGame() {
-  const theme      = useBrandTheme();
-  const canvasRef  = useRef<HTMLCanvasElement>(null);
-  const animRef    = useRef(0);
-  const timerRef   = useRef<ReturnType<typeof setInterval> | null>(null);
+  const theme = useBrandTheme();
+  const mountRef = useRef<HTMLDivElement>(null);
+  const animRef = useRef(0);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const stopMusicRef = useRef<(() => void) | null>(null);
+  const playerSessionRef = useRef<PlayerSession | null>(null);
   const endCalledRef = useRef(false);
 
-  const stateRef = useRef<GState>({
+  const stateRef = useRef({
     running: false, timeLeft: DURATION,
-    sig: { score: 0, bestThrow: 0, throws: 0, goodThrows: 0, optimalThrows: 0, maxStreak: 0, streak: 0 },
-    javelin: { x: 0, y: 0, vx: 0, vy: 0, angle: -Math.PI / 4, active: false, landed: false, landX: 0, distanceM: 0 },
-    throwHistory: [], particles: [],
-    pointerStart: null, gameStartTime: 0,
-    athleteX: 0, runPhase: 0, isCharging: false,
-    accentColor: ACCENT, prevBest: 0,
-    landMarkers: [], screenFlash: 0,
-    aimVector: null,
+    sig: { score: 0, bestThrow: 0, throws: 0, goodThrows: 0, optimalThrows: 0, maxStreak: 0, streak: 0 } as Signals,
+    javelin: null as THREE.Group | null,
+    javelinActive: false, javelinLanded: false,
+    jVx: 0, jVy: 0, jVz: 0,
+    jPos: new THREE.Vector3(-8, 1, 0),
+    landMarkers: [] as THREE.Mesh[],
+    particles: [] as { mesh: THREE.Mesh; vx: number; vy: number; vz: number; life: number }[],
+    pointerStart: null as { x: number; y: number; time: number } | null,
+    isCharging: false, aimVector: null as { x: number; y: number } | null,
+    prevBest: 0, screenFlash: 0,
+    scene: null as THREE.Scene | null,
+    renderer: null as THREE.WebGLRenderer | null,
+    camera: null as THREE.PerspectiveCamera | null,
+    groundY: -2.5,
+    throwOriginX: -8,
+    aimArrow: null as THREE.Line | null,
   });
 
-  const [phase, setPhase]               = useState<Phase>('start');
-  const [timeLeft, setTimeLeft]         = useState(DURATION);
+  const [phase, setPhase] = useState<Phase>('start');
+  const [timeLeft, setTimeLeft] = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
-  const [finalSig, setFinalSig]         = useState<Signals | null>(null);
-  const [throwMsg, setThrowMsg]         = useState<{ text: string; color: string } | null>(null);
-  const [isNewBest, setIsNewBest]       = useState(false);
-  const { pops, triggerPop }            = useScorePop();
-  const playerSessionRef                = useRef<PlayerSession | null>(null);
-  const msgTimerRef                     = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const prevScoreRef                    = useRef(0);
+  const [finalSig, setFinalSig] = useState<Signals | null>(null);
+  const [throwMsg, setThrowMsg] = useState<{ text: string; color: string } | null>(null);
+  const [isNewBest, setIsNewBest] = useState(false);
+  const { pops, triggerPop } = useScorePop();
+  const prevScoreRef = useRef(0);
+  const msgTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  useEffect(() => { stateRef.current.accentColor = theme.colors.accent ?? ACCENT; }, [theme]);
   useEffect(() => {
     if (scoreDisplay > prevScoreRef.current)
       triggerPop(`+${scoreDisplay - prevScoreRef.current}`, window.innerWidth / 2, 200);
     prevScoreRef.current = scoreDisplay;
   }, [scoreDisplay, triggerPop]);
 
-  // ── END GAME ──────────────────────────────────────────────────────
   const endGame = useCallback(() => {
     if (endCalledRef.current) return;
     endCalledRef.current = true;
@@ -148,157 +102,189 @@ export default function JavelinThrowGame() {
     try {
       const prev = parseFloat(localStorage.getItem(PB_KEY) || '0');
       if (s.sig.bestThrow > prev) { localStorage.setItem(PB_KEY, String(s.sig.bestThrow)); setIsNewBest(true); }
-    } catch { /* ignore */ }
-    setFinalSig({ ...s.sig });
-    setPhase('done');
+    } catch { /**/ }
+    setFinalSig({ ...s.sig }); setPhase('done');
   }, []);
 
-  // ── GAME LOOP ────────────────────────────────────────────────────
   const startLoop = useCallback(() => {
-    const canvas = canvasRef.current; if (!canvas) return;
-    const ctx = canvas.getContext('2d'); if (!ctx) return;
+    if (!mountRef.current) return;
     const s = stateRef.current;
-
     endCalledRef.current = false;
     s.running = true; s.timeLeft = DURATION;
     s.sig = { score: 0, bestThrow: 0, throws: 0, goodThrows: 0, optimalThrows: 0, maxStreak: 0, streak: 0 };
-    s.throwHistory = []; s.particles = [];
-    s.pointerStart = null; s.gameStartTime = Date.now();
-    s.prevBest = 0; s.landMarkers = []; s.screenFlash = 0;
-    setScoreDisplay(0); setTimeLeft(DURATION);
-
-    const W = window.innerWidth, H = window.innerHeight;
-    s.athleteX = W * 0.15;
-    const groundY = H * 0.72;
-    s.javelin = { x: s.athleteX, y: groundY - 60, vx: 0, vy: 0, angle: -Math.PI * 0.42, active: false, landed: false, landX: 0, distanceM: 0 };
-
+    s.javelinActive = false; s.javelinLanded = false;
+    s.landMarkers = []; s.particles = []; s.screenFlash = 0;
+    setScoreDisplay(0); setTimeLeft(DURATION); setPhase('playing');
     stopMusicRef.current = startMusic('sports');
 
+    const W = window.innerWidth, H = window.innerHeight;
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(W, H);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setClearColor(0x0f172a);
+    mountRef.current.innerHTML = '';
+    mountRef.current.appendChild(renderer.domElement);
+    s.renderer = renderer;
+
+    const scene = new THREE.Scene();
+    scene.fog = new THREE.Fog(0x0f172a, 30, 80);
+    s.scene = scene;
+    const camera = new THREE.PerspectiveCamera(65, W / H, 0.1, 200);
+    camera.position.set(0, 2, 12);
+    camera.lookAt(0, 0, 0);
+    s.camera = camera;
+
+    // Lights
+    scene.add(new THREE.AmbientLight(0x1e1b4b, 4));
+    const sunLight = new THREE.DirectionalLight(0xffd700, 2);
+    sunLight.position.set(10, 20, 5);
+    scene.add(sunLight);
+    const purpleLight = new THREE.PointLight(0xa78bfa, 3, 30);
+    purpleLight.position.set(-5, 5, 5);
+    scene.add(purpleLight);
+
+    // Ground / field
+    const groundGeo = new THREE.PlaneGeometry(100, 40);
+    const groundMat = new THREE.MeshPhongMaterial({ color: 0x166534 });
+    const ground = new THREE.Mesh(groundGeo, groundMat);
+    ground.rotation.x = -Math.PI / 2;
+    ground.position.y = s.groundY;
+    scene.add(ground);
+
+    // Field lines
+    for (let i = 0; i < 15; i++) {
+      const lineGeo = new THREE.PlaneGeometry(0.05, 40);
+      const lineMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.15 });
+      const lineMesh = new THREE.Mesh(lineGeo, lineMat);
+      lineMesh.rotation.x = -Math.PI / 2;
+      lineMesh.position.set(-8 + i * 5, s.groundY + 0.01, 0);
+      scene.add(lineMesh);
+
+      // Distance labels as small markers
+      if (i > 0) {
+        const markerGeo = new THREE.BoxGeometry(0.08, 0.2, 0.05);
+        const markerMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.4 });
+        const marker = new THREE.Mesh(markerGeo, markerMat);
+        marker.position.set(-8 + i * 5, s.groundY + 0.1, 0);
+        scene.add(marker);
+      }
+    }
+
+    // Stadium stands (simplified)
+    for (let side = -1; side <= 1; side += 2) {
+      const standGeo = new THREE.BoxGeometry(80, 8, 3);
+      const standMat = new THREE.MeshPhongMaterial({ color: 0x1e1b4b, emissive: 0x0f0e2a });
+      const stand = new THREE.Mesh(standGeo, standMat);
+      stand.position.set(0, s.groundY + 2, side * 22);
+      scene.add(stand);
+    }
+
+    // Athlete (simplified stick figure)
+    const athleteGroup = new THREE.Group();
+    // Head
+    const headGeo = new THREE.SphereGeometry(0.25, 12, 12);
+    const athleteMat = new THREE.MeshPhongMaterial({ color: 0xa78bfa, emissive: 0x4c1d95 });
+    athleteGroup.add(new THREE.Mesh(headGeo, athleteMat));
+    // Body
+    const bodyGeo = new THREE.CylinderGeometry(0.08, 0.08, 0.8);
+    const bodyMesh = new THREE.Mesh(bodyGeo, athleteMat);
+    bodyMesh.position.y = -0.65;
+    athleteGroup.add(bodyMesh);
+    // Legs
+    for (let side = -1; side <= 1; side += 2) {
+      const legGeo = new THREE.CylinderGeometry(0.05, 0.05, 0.7);
+      const leg = new THREE.Mesh(legGeo, athleteMat);
+      leg.position.set(side * 0.15, -1.2, 0);
+      athleteGroup.add(leg);
+    }
+    athleteGroup.position.set(s.throwOriginX, s.groundY + 1.5, 0);
+    scene.add(athleteGroup);
+
+    // Javelin
+    const javelinGroup = new THREE.Group();
+    const shaftGeo = new THREE.CylinderGeometry(0.04, 0.04, 3.5);
+    const shaftMat = new THREE.MeshPhongMaterial({ color: 0xa78bfa, emissive: 0x4c1d95, shininess: 120 });
+    const shaft = new THREE.Mesh(shaftGeo, shaftMat);
+    shaft.rotation.z = Math.PI / 2;
+    javelinGroup.add(shaft);
+    // Tip
+    const tipGeo = new THREE.ConeGeometry(0.07, 0.5, 8);
+    const tipMat = new THREE.MeshPhongMaterial({ color: 0xfde68a, emissive: 0x78350f });
+    const tip = new THREE.Mesh(tipGeo, tipMat);
+    tip.position.x = 2;
+    tip.rotation.z = Math.PI / 2;
+    javelinGroup.add(tip);
+    javelinGroup.position.copy(s.jPos);
+    scene.add(javelinGroup);
+    s.javelin = javelinGroup;
+    s.jPos.set(s.throwOriginX, s.groundY + 1.5, 0);
+    javelinGroup.position.copy(s.jPos);
+
+    // Aim arrow line
+    const aimGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]);
+    const aimMat = new THREE.LineDashedMaterial({ color: 0xa78bfa, dashSize: 0.3, gapSize: 0.2, transparent: true, opacity: 0.6 });
+    const aimArrow = new THREE.Line(aimGeo, aimMat);
+    aimArrow.computeLineDistances();
+    scene.add(aimArrow);
+    s.aimArrow = aimArrow;
+
     timerRef.current = setInterval(() => {
-      s.timeLeft--;
-      setTimeLeft(s.timeLeft);
+      s.timeLeft--; setTimeLeft(s.timeLeft);
       sfx.tick();
       if (s.timeLeft === 10) sfx.warning();
       if (s.timeLeft <= 0) endGame();
     }, 1000);
 
+    const handleResize = () => {
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+    };
+    window.addEventListener('resize', handleResize);
+
+    let t = 0;
     const loop = () => {
-      if (!s.running) return;
-      const W2 = window.innerWidth, H2 = window.innerHeight;
-      const groundY2 = H2 * 0.72;
-      const now = Date.now();
+      if (!s.running) { renderer.dispose(); return; }
+      t += 0.016;
 
-      // Background — stadium/field
-      const bg = ctx.createLinearGradient(0, 0, 0, H2);
-      bg.addColorStop(0, '#0f172a');
-      bg.addColorStop(0.55, '#0f1f3f');
-      bg.addColorStop(1, '#0a1628');
-      ctx.fillStyle = bg; ctx.fillRect(0, 0, W2, H2);
-
-      // Stadium atmosphere - subtle gradient zones
-      ctx.save();
-      const atm = ctx.createRadialGradient(W2 * 0.5, H2 * 0.3, 0, W2 * 0.5, H2 * 0.5, W2 * 0.7);
-      atm.addColorStop(0, 'rgba(167,139,250,0.04)');
-      atm.addColorStop(1, 'rgba(0,0,0,0)');
-      ctx.fillStyle = atm; ctx.fillRect(0, 0, W2, H2);
-      ctx.restore();
-
-      // Field surface
-      ctx.fillStyle = '#166534';
-      ctx.fillRect(0, groundY2, W2, H2 - groundY2);
-      ctx.fillStyle = '#15803d';
-      ctx.fillRect(0, groundY2, W2, 6);
-
-      // Distance markers on field
-      const throwOriginX = s.athleteX;
-      const markerInterval = 40; // every 40px = 5m approx
-      for (let mi = 0; mi < 20; mi++) {
-        const mx = throwOriginX + mi * markerInterval;
-        if (mx > W2 - 20) break;
-        const distM = Math.round(mi * markerInterval / PIXELS_PER_M);
-        ctx.fillStyle = 'rgba(255,255,255,0.08)';
-        ctx.fillRect(mx, groundY2, 2, 15);
-        if (distM % 10 === 0 && distM > 0) {
-          ctx.fillStyle = 'rgba(255,255,255,0.3)';
-          ctx.font = '10px monospace';
-          ctx.textAlign = 'center';
-          ctx.fillText(`${distM}m`, mx, groundY2 + 26);
-        }
+      // Animate athlete legs
+      const legAngle = Math.sin(t * 4) * 0.3;
+      if (athleteGroup.children.length >= 3) {
+        (athleteGroup.children[2] as THREE.Mesh).rotation.z = legAngle;
+        if (athleteGroup.children[3]) (athleteGroup.children[3] as THREE.Mesh).rotation.z = -legAngle;
       }
 
-      // Previous land markers
-      for (let mi = s.landMarkers.length - 1; mi >= 0; mi--) {
-        const lm = s.landMarkers[mi];
-        ctx.save();
-        ctx.strokeStyle = lm.fresh ? '#fbbf24' : 'rgba(167,139,250,0.5)';
-        ctx.lineWidth = lm.fresh ? 3 : 1.5;
-        ctx.shadowBlur = lm.fresh ? 10 : 0; ctx.shadowColor = '#fbbf24';
-        ctx.beginPath();
-        ctx.moveTo(lm.x, groundY2 - 8); ctx.lineTo(lm.x, groundY2 + 8); ctx.stroke();
-        ctx.fillStyle = lm.fresh ? '#fbbf24' : 'rgba(255,255,255,0.4)';
-        ctx.font = `${lm.fresh ? 'bold ' : ''}11px monospace`;
-        ctx.textAlign = 'center';
-        ctx.fillText(`${lm.dist.toFixed(0)}m`, lm.x, groundY2 - 14);
-        ctx.restore();
-        if (lm.fresh) lm.fresh = false; // only fresh for one frame
-      }
+      if (s.javelinActive && s.javelin) {
+        // Physics
+        s.jVy -= GRAVITY * 0.016;
+        s.jPos.x += s.jVx * 0.016;
+        s.jPos.y += s.jVy * 0.016;
+        s.javelin.position.copy(s.jPos);
 
-      // Aim vector preview
-      if (s.aimVector && s.pointerStart && !s.javelin.active) {
-        const av = s.aimVector;
-        const aimLen = Math.sqrt(av.x * av.x + av.y * av.y);
-        if (aimLen > 5) {
-          ctx.save();
-          ctx.strokeStyle = 'rgba(167,139,250,0.6)';
-          ctx.lineWidth = 2;
-          ctx.setLineDash([5, 6]);
-          ctx.beginPath();
-          const nx = av.x / aimLen, ny = av.y / aimLen;
-          ctx.moveTo(s.javelin.x, s.javelin.y);
-          ctx.lineTo(s.javelin.x + nx * 80, s.javelin.y + ny * 80);
-          ctx.stroke();
-          ctx.setLineDash([]);
-          ctx.restore();
-        }
-      }
-
-      // Javelin physics
-      if (s.javelin.active) {
-        // Drag force
-        const speed = Math.sqrt(s.javelin.vx * s.javelin.vx + s.javelin.vy * s.javelin.vy);
-        const dragMult = 1 - DRAG * speed;
-        s.javelin.vx *= dragMult;
-        s.javelin.vy = s.javelin.vy * dragMult + GRAVITY;
-        s.javelin.x += s.javelin.vx;
-        s.javelin.y += s.javelin.vy;
-
-        // Flight angle tracks velocity
-        if (speed > 0.5) {
-          s.javelin.angle = Math.atan2(s.javelin.vy, s.javelin.vx);
+        // Javelin rotates to face velocity direction
+        const speed = Math.sqrt(s.jVx ** 2 + s.jVy ** 2);
+        if (speed > 0.3) {
+          s.javelin.rotation.z = -Math.atan2(s.jVy, s.jVx);
         }
 
         // Landing
-        if (s.javelin.y >= groundY2 - 6 && !s.javelin.landed) {
-          s.javelin.landed = true;
-          s.javelin.y = groundY2 - 6;
-          const distM = Math.max(0, (s.javelin.x - throwOriginX) / PIXELS_PER_M);
-          s.javelin.distanceM = distM;
-          s.sig.throws++;
+        if (s.jPos.y <= s.groundY + 0.1) {
+          s.jPos.y = s.groundY + 0.1;
+          s.javelinActive = false; s.javelinLanded = true;
 
-          // Scoring
-          const launchAngleDeg = s.throwHistory.length > 0 ? s.throwHistory[s.throwHistory.length - 1].angle : 40;
+          const distM = Math.max(0, (s.jPos.x - s.throwOriginX) * PIXELS_PER_M);
+          const launchAngleDeg = Math.abs(Math.atan2(-s.jVy, s.jVx) * 180 / Math.PI);
           const isOptimal = launchAngleDeg >= 33 && launchAngleDeg <= 52;
           if (isOptimal) s.sig.optimalThrows++;
           if (distM >= 30) s.sig.goodThrows++;
+
+          s.sig.throws++;
           if (distM > s.sig.bestThrow) {
-            s.sig.streak++;
-            if (s.sig.streak > s.sig.maxStreak) s.sig.maxStreak = s.sig.streak;
+            s.sig.streak++; if (s.sig.streak > s.sig.maxStreak) s.sig.maxStreak = s.sig.streak;
             s.sig.bestThrow = distM;
-            hapticVictory(); sfx.collect();
-            s.screenFlash = 0.8;
+            hapticVictory(); sfx.collect(); s.screenFlash = 0.8;
           } else {
-            s.sig.streak = 0;
-            sfx.nearMiss(); haptic([20, 30, 20]);
+            s.sig.streak = 0; sfx.nearMiss(); haptic([20, 30, 20]);
           }
 
           const pts = Math.round(distM * 0.8);
@@ -306,199 +292,127 @@ export default function JavelinThrowGame() {
           setScoreDisplay(s.sig.score);
 
           // Land marker
-          s.landMarkers.push({ x: s.javelin.x, dist: distM, fresh: true });
-          if (s.landMarkers.length > 6) s.landMarkers.shift();
+          const markerGeo = new THREE.CylinderGeometry(0.05, 0.05, 0.5);
+          const markerMat = new THREE.MeshPhongMaterial({ color: 0xfbbf24, emissive: 0x78350f });
+          const markerMesh = new THREE.Mesh(markerGeo, markerMat);
+          markerMesh.position.set(s.jPos.x, s.groundY + 0.25, 0);
+          scene.add(markerMesh);
+          s.landMarkers.push(markerMesh);
+          if (s.landMarkers.length > 6) { scene.remove(s.landMarkers.shift()!); }
 
-          // Particles on land
-          spawnBurst(s.particles, s.javelin.x, s.javelin.y, ACCENT, 12, 4);
+          // Particles
+          for (let p = 0; p < 10; p++) {
+            const pGeo = new THREE.SphereGeometry(0.07, 6, 6);
+            const pMat = new THREE.MeshBasicMaterial({ color: 0xa78bfa, transparent: true, opacity: 1 });
+            const pm = new THREE.Mesh(pGeo, pMat);
+            pm.position.copy(s.jPos);
+            scene.add(pm);
+            s.particles.push({ mesh: pm, vx: (Math.random() - 0.5) * 0.15, vy: Math.random() * 0.1, vz: (Math.random() - 0.5) * 0.1, life: 1 });
+          }
 
-          // Message
           const msg = distM >= 60 ? `🌟 ${distM.toFixed(0)}m — INCREDIBLE!` :
-                      distM >= 45 ? `🎯 ${distM.toFixed(0)}m — Great throw!` :
-                      distM >= 30 ? `💪 ${distM.toFixed(0)}m — Nice!` :
-                      `${distM.toFixed(0)}m`;
-          const color = distM >= 60 ? '#fde68a' : distM >= 45 ? '#86efac' : distM >= 30 ? '#7dd3fc' : '#94a3b8';
+            distM >= 45 ? `🎯 ${distM.toFixed(0)}m — Great!` :
+              distM >= 30 ? `💪 ${distM.toFixed(0)}m — Nice!` : `${distM.toFixed(0)}m`;
+          const color = distM >= 60 ? '#fde68a' : distM >= 45 ? '#86efac' : '#7dd3fc';
           setThrowMsg({ text: msg, color });
           if (msgTimerRef.current) clearTimeout(msgTimerRef.current);
           msgTimerRef.current = setTimeout(() => {
             setThrowMsg(null);
-            if (s.running) {
-              s.javelin.active = false; s.javelin.landed = false;
-              s.javelin.x = s.athleteX; s.javelin.y = groundY2 - 60;
-              s.javelin.angle = -Math.PI * 0.42;
+            if (s.running && s.javelin) {
+              s.javelinLanded = false;
+              s.jPos.set(s.throwOriginX, s.groundY + 1.5, 0);
+              s.javelin.position.copy(s.jPos);
+              s.javelin.rotation.z = -0.7;
             }
           }, 1400);
         }
       }
 
-      // Athlete
-      s.runPhase += s.javelin.active ? 0 : 0.15;
-      const legOsc = Math.sin(s.runPhase) * (s.isCharging ? 6 : 3);
-      const athY = groundY2;
-
-      ctx.save();
-      ctx.translate(s.athleteX, athY);
-      ctx.shadowBlur = 18; ctx.shadowColor = s.accentColor;
-      ctx.fillStyle = s.accentColor;
-      // Head
-      ctx.beginPath(); ctx.arc(0, -62, 10, 0, Math.PI * 2); ctx.fill();
-      // Torso
-      ctx.fillRect(-5, -52, 10, 28);
-      // Arm holding javelin
-      if (!s.javelin.active) {
-        ctx.strokeStyle = s.accentColor; ctx.lineWidth = 4;
-        ctx.beginPath(); ctx.moveTo(5, -40); ctx.lineTo(30, -55); ctx.stroke();
-      }
-      // Left arm
-      ctx.beginPath(); ctx.moveTo(-5, -40); ctx.lineTo(-20, -30); ctx.stroke();
-      // Legs
-      ctx.lineWidth = 4;
-      ctx.beginPath(); ctx.moveTo(-3, -24); ctx.lineTo(-6 + legOsc, -4); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(3, -24);  ctx.lineTo(6 - legOsc, -4);  ctx.stroke();
-      ctx.restore();
-
-      // Javelin
-      ctx.save();
-      ctx.translate(s.javelin.x, s.javelin.y);
-      ctx.rotate(s.javelin.angle);
-      ctx.shadowBlur = 14; ctx.shadowColor = s.accentColor;
-      // Shaft
-      ctx.strokeStyle = s.accentColor;
-      ctx.lineWidth = 4;
-      ctx.beginPath(); ctx.moveTo(-JAVELIN_LEN * 0.35, 0); ctx.lineTo(JAVELIN_LEN * 0.65, 0); ctx.stroke();
-      // Tip
-      ctx.fillStyle = '#fde68a';
-      ctx.beginPath();
-      ctx.moveTo(JAVELIN_LEN * 0.65, 0);
-      ctx.lineTo(JAVELIN_LEN * 0.65 + 12, -3);
-      ctx.lineTo(JAVELIN_LEN * 0.65 + 12, 3);
-      ctx.closePath(); ctx.fill();
-      // Tail fin
-      ctx.strokeStyle = '#7c3aed'; ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.moveTo(-JAVELIN_LEN * 0.35, 0); ctx.lineTo(-JAVELIN_LEN * 0.35 - 10, -8); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(-JAVELIN_LEN * 0.35, 0); ctx.lineTo(-JAVELIN_LEN * 0.35 - 10, 8);  ctx.stroke();
-      ctx.restore();
-
-      // Optimal angle indicator (35-50° arc)
-      if (!s.javelin.active && !s.javelin.landed) {
-        ctx.save();
-        ctx.translate(s.athleteX, groundY2 - 20);
-        const arcR = 50;
-        // Range arc
-        ctx.strokeStyle = 'rgba(74,222,128,0.3)';
-        ctx.lineWidth = 6;
-        ctx.beginPath();
-        ctx.arc(0, 0, arcR, -(Math.PI * 52 / 180 + Math.PI / 2), -(Math.PI * 33 / 180 + Math.PI / 2));
-        // actually render upward to upper-right
-        ctx.arc(0, 0, arcR, -Math.PI * 52 / 180, -Math.PI * 33 / 180, false);
-        ctx.stroke();
-        ctx.restore();
+      // Update aim arrow
+      if (s.aimVector && s.aimArrow && !s.javelinActive) {
+        const len = Math.sqrt(s.aimVector.x ** 2 + s.aimVector.y ** 2);
+        if (len > 10) {
+          const nx = s.aimVector.x / len, ny = -s.aimVector.y / len;
+          const pts2 = [s.jPos.clone(), new THREE.Vector3(s.jPos.x + nx * 3, s.jPos.y + ny * 3, 0)];
+          s.aimArrow.geometry.setFromPoints(pts2);
+          s.aimArrow.computeLineDistances();
+          (s.aimArrow.material as THREE.LineDashedMaterial).opacity = 0.6;
+        }
+      } else if (s.aimArrow) {
+        (s.aimArrow.material as THREE.LineDashedMaterial).opacity = 0;
       }
 
-      // Particles
-      if (s.particles.length > 0) updateAndDrawParticles(ctx, s.particles);
+      // Update particles
+      for (let i = s.particles.length - 1; i >= 0; i--) {
+        const p = s.particles[i];
+        p.mesh.position.x += p.vx; p.mesh.position.y += p.vy; p.mesh.position.z += p.vz;
+        p.vy -= 0.004; p.life -= 0.03;
+        (p.mesh.material as THREE.MeshBasicMaterial).opacity = p.life;
+        if (p.life <= 0) { scene.remove(p.mesh); s.particles.splice(i, 1); }
+      }
 
       // Screen flash
       if (s.screenFlash > 0) {
-        ctx.fillStyle = `rgba(167,139,250,${s.screenFlash * 0.2})`;
-        ctx.fillRect(0, 0, W2, H2);
-        s.screenFlash = Math.max(0, s.screenFlash - 0.06);
+        purpleLight.intensity = 3 + s.screenFlash * 5;
+        s.screenFlash -= 0.04;
+      } else {
+        purpleLight.intensity = 3;
       }
 
-      // Swipe hint
-      if (!s.javelin.active && !s.javelin.landed) {
-        ctx.save();
-        ctx.globalAlpha = 0.4 + Math.sin(now * 0.003) * 0.15;
-        ctx.fillStyle = '#c4b5fd';
-        ctx.font = 'bold 13px sans-serif';
-        ctx.textAlign = 'center';
-        ctx.fillText('↗ Swipe up-right to throw', W2 / 2, H2 * 0.9);
-        ctx.restore();
-      }
-
-      // Best distance display
-      if (s.sig.bestThrow > 0) {
-        ctx.fillStyle = 'rgba(255,255,255,0.4)';
-        ctx.font = 'bold 12px monospace';
-        ctx.textAlign = 'left';
-        ctx.fillText(`Best: ${s.sig.bestThrow.toFixed(1)}m`, 20, H2 - 30);
-      }
-
+      renderer.render(scene, camera);
       animRef.current = requestAnimationFrame(loop);
     };
-
     animRef.current = requestAnimationFrame(loop);
+
+    return () => {
+      s.running = false;
+      window.removeEventListener('resize', handleResize);
+      renderer.dispose();
+    };
   }, [endGame, triggerPop]);
 
-  // ── INPUT ────────────────────────────────────────────────────────
   useEffect(() => {
-    const canvas = canvasRef.current; if (!canvas) return;
-    const resize = () => {
-      const dpr = window.devicePixelRatio || 1;
-      canvas.style.width = window.innerWidth + 'px';
-      canvas.style.height = window.innerHeight + 'px';
-      canvas.width  = window.innerWidth * dpr;
-      canvas.height = window.innerHeight * dpr;
-      const ctx2 = canvas.getContext('2d');
-      if (ctx2) ctx2.setTransform(dpr, 0, 0, dpr, 0, 0);
-    };
-    resize();
-    window.addEventListener('resize', resize);
-
-    const onPointerDown = (e: PointerEvent) => {
+    const el = mountRef.current; if (!el) return;
+    const onDown = (e: PointerEvent) => {
       const s = stateRef.current;
-      if (!s.running || s.javelin.active) return;
+      if (!s.running || s.javelinActive) return;
       s.pointerStart = { x: e.clientX, y: e.clientY, time: Date.now() };
       s.isCharging = true;
     };
-    const onPointerMove = (e: PointerEvent) => {
+    const onMove = (e: PointerEvent) => {
       const s = stateRef.current;
       if (!s.pointerStart) return;
-      const dx = e.clientX - s.pointerStart.x;
-      const dy = e.clientY - s.pointerStart.y;
-      s.aimVector = { x: dx, y: dy };
+      s.aimVector = { x: e.clientX - s.pointerStart.x, y: e.clientY - s.pointerStart.y };
     };
-    const onPointerUp = (e: PointerEvent) => {
+    const onUp = (e: PointerEvent) => {
       const s = stateRef.current;
       s.isCharging = false;
-      if (!s.running || !s.pointerStart || s.javelin.active) { s.pointerStart = null; s.aimVector = null; return; }
+      if (!s.running || !s.pointerStart || s.javelinActive) { s.pointerStart = null; s.aimVector = null; return; }
       const dx = e.clientX - s.pointerStart.x;
       const dy = e.clientY - s.pointerStart.y;
       const dt = Math.max(1, Date.now() - s.pointerStart.time);
       s.pointerStart = null; s.aimVector = null;
-
       const dist2d = Math.sqrt(dx * dx + dy * dy);
       if (dist2d < 25) return;
-
-      // Velocity-based launch: faster swipe = more power
-      // Invert Y since screen Y is downward
       const speedPx = dist2d / (dt / 1000);
       const power = Math.min(speedPx / 80, 18);
       const nx = dx / dist2d, ny = dy / dist2d;
-      const vx = nx * power;
-      const vy = ny * power;
-
-      // Launch angle in degrees (0° = right, negative = upward)
-      const launchAngleDeg = -(Math.atan2(-vy, vx) * 180 / Math.PI);
-      s.throwHistory.push({ distanceM: 0, angle: launchAngleDeg, power });
-
-      s.javelin.vx = vx; s.javelin.vy = vy;
-      s.javelin.angle = Math.atan2(vy, vx);
-      s.javelin.active = true; s.javelin.landed = false;
-
+      // Convert screen swipe to 3D velocity (screen up = y+, screen right = x+)
+      s.jVx = nx * power * 0.5;
+      s.jVy = -ny * power * 0.5;  // invert screen Y
+      s.jVz = 0;
+      s.javelinActive = true; s.javelinLanded = false;
       hapticScore();
     };
-
-    canvas.addEventListener('pointerdown', onPointerDown);
-    canvas.addEventListener('pointermove', onPointerMove);
-    canvas.addEventListener('pointerup', onPointerUp);
-    window.addEventListener('pointerup', onPointerUp);
+    el.addEventListener('pointerdown', onDown);
+    el.addEventListener('pointermove', onMove);
+    el.addEventListener('pointerup', onUp);
+    window.addEventListener('pointerup', onUp);
     return () => {
-      window.removeEventListener('resize', resize);
-      canvas.removeEventListener('pointerdown', onPointerDown);
-      canvas.removeEventListener('pointermove', onPointerMove);
-      canvas.removeEventListener('pointerup', onPointerUp);
-      window.removeEventListener('pointerup', onPointerUp);
+      el.removeEventListener('pointerdown', onDown);
+      el.removeEventListener('pointermove', onMove);
+      el.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointerup', onUp);
     };
   }, []);
 
@@ -507,125 +421,74 @@ export default function JavelinThrowGame() {
     if (timerRef.current) clearInterval(timerRef.current);
     stopMusicRef.current?.();
     if (msgTimerRef.current) clearTimeout(msgTimerRef.current);
+    stateRef.current.renderer?.dispose();
   }, []);
 
   const handleStart = useCallback(async (name: string, avatar: string) => {
     playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar);
-    initAudio();
-    setPhase('countdown');
+    initAudio(); setPhase('countdown');
   }, []);
-
-  const handleCountdownDone = useCallback(() => {
-    startLoop();
-    setPhase('playing');
-  }, [startLoop]);
-
   const handlePlayAgain = useCallback(() => {
     endCalledRef.current = false;
     setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null); setIsNewBest(false);
-    prevScoreRef.current = 0;
-    setPhase('countdown');
+    prevScoreRef.current = 0; setPhase('countdown');
   }, []);
-
-  const buildInsights = (sig: Signals) => [
-    { label: 'Best Throw',     value: `${sig.bestThrow.toFixed(1)}m`,  color: '#fbbf24' },
-    { label: 'Good Throws',    value: `${sig.goodThrows}`,             color: '#4ade80' },
-    { label: 'Optimal Angle',  value: `${sig.optimalThrows}x`,         color: theme.colors.accent ?? ACCENT },
-    { label: 'Total Throws',   value: `${sig.throws}`,                 color: '#94a3b8' },
-  ];
 
   return (
     <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}
-      background="linear-gradient(180deg, #0f172a 0%, #1e1b4b 100%)">
-
+      background="linear-gradient(180deg,#0f172a 0%,#1e1b4b 100%)">
       {phase === 'start' && (
-        <GameStartScreen
-          emoji={GAME_EMOJI} title={GAME_TITLE} description={GAME_TAGLINE}
-          ctaLabel="Step up to Throw →"
-          sensorNote="Swipe up-right on screen to throw. Faster swipe = more power. Aim for 40°."
-          accentColor={theme.colors.accent ?? ACCENT}
-          ctaTextColor="#000"
-          onStart={handleStart}
-          gradient="radial-gradient(ellipse 80% 70% at 50% 30%, #1e1040 0%, #0f0828 60%, #05030f 100%)"
-        />
+        <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description={GAME_TAGLINE}
+          ctaLabel="Step up to Throw →" sensorNote="Swipe up-right on screen to throw"
+          accentColor={theme.colors.accent ?? ACCENT} onStart={handleStart}
+          gradient="radial-gradient(ellipse 80% 70% at 50% 30%,#1e1040 0%,#0f0828 60%,#05030f 100%)" />
       )}
-
-      {phase === 'countdown' && (
-        <Countdown onComplete={handleCountdownDone} accentColor={theme.colors.accent ?? ACCENT} />
+      {phase === 'countdown' && <Countdown onComplete={startLoop} accentColor={theme.colors.accent ?? ACCENT} />}
+      <div ref={mountRef} style={{ position: 'absolute', inset: 0, display: phase === 'playing' ? 'block' : 'none', touchAction: 'none' }} />
+      {phase === 'playing' && (
+        <GameHUD accentColor={theme.colors.accent ?? ACCENT} items={[
+          { label: 'TIME', value: timeLeft, danger: timeLeft <= 5, testId: 'timer' },
+          { label: 'SCORE', value: scoreDisplay, testId: 'score' },
+        ]} />
       )}
-
-      {(phase === 'playing' || phase === 'countdown') && (
-        <>
-          <canvas ref={canvasRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none' }} />
-          {phase === 'playing' && (
-            <GameHUD accentColor={theme.colors.accent ?? ACCENT} items={[
-              { label: 'TIME',  value: timeLeft,     danger: timeLeft <= 5, testId: 'timer' },
-              { label: 'SCORE', value: scoreDisplay, testId: 'score' },
-            ]} />
-          )}
-        </>
-      )}
-
       <AnimatePresence>
         {throwMsg && phase === 'playing' && (
-          <motion.div key="tmsg"
-            initial={{ opacity: 0, y: 20, scale: 0.7 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -30, scale: 0.85 }}
-            transition={{ duration: 0.28 }}
-            style={{
-              position: 'fixed', top: '24%', left: '50%', transform: 'translateX(-50%)',
-              zIndex: 80, pointerEvents: 'none', fontSize: 22, fontWeight: 900,
-              color: throwMsg.color, textShadow: `0 0 16px ${throwMsg.color}aa`, whiteSpace: 'nowrap',
-            }}>
+          <motion.div key="tmsg" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -30 }}
+            style={{ position: 'fixed', top: '24%', left: '50%', transform: 'translateX(-50%)', zIndex: 80, pointerEvents: 'none', fontSize: 22, fontWeight: 900, color: throwMsg.color, textShadow: `0 0 16px ${throwMsg.color}aa`, whiteSpace: 'nowrap' }}>
             {throwMsg.text}
           </motion.div>
         )}
       </AnimatePresence>
-
       <AnimatePresence>
         {isNewBest && phase === 'done' && (
           <motion.div key="nb" initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
-            style={{ position: 'fixed', top: '10%', left: '50%', transform: 'translateX(-50%)', zIndex: 90,
-              background: 'linear-gradient(135deg, #fbbf24, #f59e0b)', borderRadius: 20, padding: '8px 20px',
-              fontSize: 20, fontWeight: 900, color: '#000', whiteSpace: 'nowrap' }}>
+            style={{ position: 'fixed', top: '10%', left: '50%', transform: 'translateX(-50%)', zIndex: 90, background: 'linear-gradient(135deg,#fbbf24,#f59e0b)', borderRadius: 20, padding: '8px 20px', fontSize: 20, fontWeight: 900, color: '#000', whiteSpace: 'nowrap' }}>
             🏆 New Record!
           </motion.div>
         )}
       </AnimatePresence>
-
       {phase === 'done' && finalSig && (
-        <EndScreen
-          gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI}
+        <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI}
           score={`${finalSig.bestThrow.toFixed(1)}m`} personality={getPersonality(finalSig)}
-          insights={buildInsights(finalSig)} accentColor={theme.colors.accent ?? ACCENT}
-          onPlayAgain={handlePlayAgain} didWin={finalSig.bestThrow >= 40}
-        />
+          insights={[
+            { label: 'Best Throw', value: `${finalSig.bestThrow.toFixed(1)}m`, color: '#fbbf24' },
+            { label: 'Good Throws', value: `${finalSig.goodThrows}`, color: '#4ade80' },
+            { label: 'Optimal Angle', value: `${finalSig.optimalThrows}x`, color: theme.colors.accent ?? ACCENT },
+            { label: 'Total Throws', value: `${finalSig.throws}`, color: '#94a3b8' },
+          ]}
+          accentColor={theme.colors.accent ?? ACCENT} onPlayAgain={handlePlayAgain} didWin={finalSig.bestThrow >= 40} />
       )}
-
-      {phase === 'done' && finalSig && (
-        <WebhookEmitter theme={theme} sig={finalSig} personality={getPersonality(finalSig)} player={playerSessionRef.current} />
-      )}
-
-      {phase === 'playing' && (
-        <ScorePopEffect pops={pops} accentColor={theme.colors.accent ?? ACCENT} />
-      )}
+      {phase === 'done' && finalSig && <WebhookEmitter theme={theme} sig={finalSig} personality={getPersonality(finalSig)} player={playerSessionRef.current} />}
+      {phase === 'playing' && <ScorePopEffect pops={pops} accentColor={theme.colors.accent ?? ACCENT} />}
     </GameShell>
   );
 }
 
-// ── WEBHOOK EMITTER ─────────────────────────────────────────────────
-function WebhookEmitter({ theme, sig, personality, player }: {
-  theme: ReturnType<typeof useBrandTheme>;
-  sig: Signals; personality: string; player: PlayerSession | null;
-}) {
+function WebhookEmitter({ theme, sig, personality, player }: { theme: ReturnType<typeof useBrandTheme>; sig: Signals; personality: string; player: PlayerSession | null; }) {
   const fired = useRef(false);
   useEffect(() => {
     if (fired.current) return; fired.current = true;
-    postWebhook(theme, GAME_ID, {
-      personality, score: sig.score, bestThrow: sig.bestThrow,
-      throws: sig.throws, optimalThrows: sig.optimalThrows,
-    }, player);
+    postWebhook(theme, GAME_ID, { personality, score: sig.score, bestThrow: sig.bestThrow, throws: sig.throws, optimalThrows: sig.optimalThrows }, player);
   }, [theme, sig, personality, player]);
   return null;
 }

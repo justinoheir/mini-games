@@ -1,1026 +1,323 @@
-/**
- * ══════════════════════════════════════════════════════════════════
- *  SYMBOL SCAN — Ether Mini-Game
- *  Find target symbols in a 4×4 grid before the clock runs out.
- *  Measures visual search speed, accuracy, and sustained attention.
- * ══════════════════════════════════════════════════════════════════
- */
-
 'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
+import * as THREE from 'three';
 import GameShell from '@/components/GameShell';
 import GameHUD from '@/components/GameHUD';
 import GameStartScreen from '@/components/GameStartScreen';
 import Countdown from '@/components/Countdown';
 import EndScreen from '@/components/EndScreen';
-import { initAudio, sfx, haptic, startMusic, playScanBeep } from '@/lib/audio';
+import { initAudio, sfx } from '@/lib/audio';
+import { hapticScore, hapticFail, hapticVictory, hapticCombo } from '@/lib/haptics';
 import { useBrandTheme } from '@/lib/useBrandTheme';
-import { postWebhook } from '@/lib/webhook';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
-import { spawnBurst, updateAndDrawParticles, Particle } from '@/lib/particles';
-import { motion, AnimatePresence } from 'framer-motion';
-import ScorePopEffect, { useScorePop } from '@/components/ScorePopEffect';
-import StreakBadge from '@/components/StreakBadge';
-import { CATEGORY_THEMES } from '@/lib/theme';
-import SwipeInstructions from '@/components/SwipeInstructions';
-import { Search, Eye, Hand, Flame, Trophy } from 'lucide-react';
 
-const CATEGORY_ACCENT = CATEGORY_THEMES.cognitive.primaryAccent;
+const GAME_ID = 'symbol-scan';
+const ACCENT = '#818cf8';
+const DURATION = 45;
+const GAME_EMOJI = '🔣';
+const GAME_TITLE = 'Symbol Scan';
+const GAME_TAGLINE = 'Find the matching symbol. Tap fast!';
 
-// ─── SPRITE CACHE ─────────────────────────────────────────────────────────────
-const _spriteCache = new Map<string, HTMLImageElement>();
-function _loadSprite(src: string): HTMLImageElement {
-  if (_spriteCache.has(src)) return _spriteCache.get(src)!;
-  const img = new Image();
-  img.src = src;
-  _spriteCache.set(src, img);
-  return img;
-}
-if (typeof window !== 'undefined') {
-  _loadSprite('/sprites/symbol-scan/star.svg');
-  _loadSprite('/sprites/symbol-scan/circle.svg');
-  _loadSprite('/sprites/symbol-scan/triangle.svg');
-  _loadSprite('/sprites/symbol-scan/diamond.svg');
-  _loadSprite('/sprites/symbol-scan/heart.svg');
-}
-
-// ─── SPEC CONSTANTS ──────────────────────────────────────────────────────────
-
-const GAME_ID      = 'symbol-scan';
-const PB_KEY       = 'pb_symbol-scan';
-const ACCENT       = '#10b981';
-const DURATION     = 45;
-const GAME_EMOJI   = '🔍';
-const GAME_TITLE   = 'Symbol Scan';
-const GAME_TAGLINE = 'Find it. Tap it. Before the clock runs out.';
-
-const GRID_SIZE     = 4;        // 4×4
-const GRID_CELLS    = 16;
-const GRID_DURATION = 8000;     // ms before grid auto-refreshes
-const SYMBOLS_COUNT = 8;        // number of distinct symbols
-
-// ─── BEHAVIORAL SIGNALS ──────────────────────────────────────────────────────
-
-interface Signals {
-  targetsFound:  number;        // count of target symbols correctly tapped
-  falseTaps:     number;        // taps on non-target symbols
-  searchTimes:   number[];      // ms from grid appearing to first correct tap
-  gridsCleared:  number;        // grids where all targets were found
-  missedTargets: number;        // targets that expired without being tapped
-  score:         number;        // points (+10 hit, +20 grid clear, -5 false tap)
-}
-
-// ─── PERSONALITY CLASSIFICATION ──────────────────────────────────────────────
-
+interface Signals { total: number; found: number; missed: number; falseAlarms: number; avgReactionMs: number; totalMs: number; score: number; maxStreak: number; streakCurrent: number; }
 function getPersonality(sig: Signals): string {
-  const avgSearchTime = sig.searchTimes.length > 0
-    ? sig.searchTimes.reduce((a, b) => a + b, 0) / sig.searchTimes.length
-    : 9999;
-
-  if (sig.gridsCleared >= 5 && sig.falseTaps <= 3)          return 'Eagle Eye 🦅';
-  if (sig.targetsFound >= 20 && sig.falseTaps > 8)           return 'Rapid Scanner ⚡';
-  if (avgSearchTime < 3000 && sig.falseTaps <= 5)            return 'Methodical 🔬';
-  return 'Pattern Seeker 🌊';                                 // fallback
+  const acc = sig.total > 0 ? sig.found / sig.total : 0;
+  const avg = sig.found > 0 ? sig.totalMs / sig.found : 9999;
+  if (acc >= 0.9 && avg < 600) return 'Symbol Master 👁️';
+  if (acc >= 0.8) return 'Pattern Reader 🔣';
+  if (avg < 700) return 'Quick Scanner ⚡';
+  if (sig.found >= 12) return 'Diligent Seeker 🔍';
+  return 'Learning Symbols 📚';
 }
-
-// ─── SYMBOL DRAWING ──────────────────────────────────────────────────────────
-// 8 symbols drawn as pure canvas vector shapes — no emoji, no text rendering.
-// Indices: 0=hexagon, 1=diamond, 2=triangle, 3=circle, 4=star, 5=X, 6=square, 7=cross-circle
-
-function drawSymbol(
-  ctx: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  size: number,
-  symbolIndex: number,
-  color: string,
-  glowing = false,
-): void {
-  ctx.save();
-  ctx.fillStyle   = color;
-  ctx.strokeStyle = color;
-  ctx.lineCap     = 'round';
-  ctx.lineJoin    = 'round';
-
-  if (glowing) {
-    ctx.shadowBlur  = 20;
-    ctx.shadowColor = color;
-  }
-
-  const r = size * 0.44; // extent radius
-
-  switch (symbolIndex) {
-    case 0: { // Hexagon (outline)
-      ctx.beginPath();
-      for (let i = 0; i < 6; i++) {
-        const a = (Math.PI / 3) * i - Math.PI / 6;
-        const px = x + r * Math.cos(a);
-        const py = y + r * Math.sin(a);
-        if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
-      }
-      ctx.closePath();
-      ctx.lineWidth = size * 0.07;
-      ctx.stroke();
-      break;
-    }
-    case 1: { // Diamond (filled)
-      ctx.beginPath();
-      ctx.moveTo(x,          y - r);
-      ctx.lineTo(x + r * 0.7, y);
-      ctx.lineTo(x,          y + r);
-      ctx.lineTo(x - r * 0.7, y);
-      ctx.closePath();
-      ctx.fill();
-      break;
-    }
-    case 2: { // Triangle (filled, pointing up)
-      ctx.beginPath();
-      ctx.moveTo(x,               y - r);
-      ctx.lineTo(x + r * 0.866,   y + r * 0.5);
-      ctx.lineTo(x - r * 0.866,   y + r * 0.5);
-      ctx.closePath();
-      ctx.fill();
-      break;
-    }
-    case 3: { // Circle (outline)
-      ctx.beginPath();
-      ctx.arc(x, y, r * 0.88, 0, Math.PI * 2);
-      ctx.lineWidth = size * 0.07;
-      ctx.stroke();
-      break;
-    }
-    case 4: { // Star 5-pointed (filled)
-      ctx.beginPath();
-      for (let i = 0; i < 10; i++) {
-        const a  = (Math.PI / 5) * i - Math.PI / 2;
-        const rr = i % 2 === 0 ? r : r * 0.42;
-        const px = x + rr * Math.cos(a);
-        const py = y + rr * Math.sin(a);
-        if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
-      }
-      ctx.closePath();
-      ctx.fill();
-      break;
-    }
-    case 5: { // X (stroke)
-      const xs = r * 0.65;
-      ctx.lineWidth = size * 0.1;
-      ctx.beginPath(); ctx.moveTo(x - xs, y - xs); ctx.lineTo(x + xs, y + xs); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(x + xs, y - xs); ctx.lineTo(x - xs, y + xs); ctx.stroke();
-      break;
-    }
-    case 6: { // Filled square
-      const sq = r * 0.78;
-      ctx.fillRect(x - sq, y - sq, sq * 2, sq * 2);
-      break;
-    }
-    case 7: { // Cross-circle ⊕ (outline circle + plus inside)
-      const cr = r * 0.85;
-      ctx.lineWidth = size * 0.07;
-      ctx.beginPath(); ctx.arc(x, y, cr, 0, Math.PI * 2); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(x, y - cr); ctx.lineTo(x, y + cr); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(x - cr, y); ctx.lineTo(x + cr, y); ctx.stroke();
-      break;
-    }
-  }
-
-  ctx.restore();
-}
-
-// Confusable pairs for hard mode (round 6+)
-const CONFUSABLE_PAIRS: [number, number][] = [
-  [0, 3], // hexagon ↔ circle
-  [1, 6], // diamond ↔ square
-  [2, 4], // triangle ↔ star
-  [5, 7], // X ↔ cross-circle
-];
-
-function getConfusable(sym: number): number {
-  for (const [a, b] of CONFUSABLE_PAIRS) {
-    if (sym === a) return b;
-    if (sym === b) return a;
-  }
-  return (sym + 1) % SYMBOLS_COUNT;
-}
-
-// ─── GRID GENERATION ─────────────────────────────────────────────────────────
-
-interface GridData {
-  gridSymbols:       number[];
-  targetSymbol:      number;
-  targetCellIndices: number[];
-}
-
-function generateGrid(round: number): GridData {
-  const hardMode = round > 5;
-
-  // Random target symbol
-  const targetSymbol = Math.floor(Math.random() * SYMBOLS_COUNT);
-
-  // 2–4 target cells (Fisher-Yates shuffle to select positions)
-  const targetCount = 2 + Math.floor(Math.random() * 3);
-  const indices = Array.from({ length: GRID_CELLS }, (_, i) => i);
-  for (let i = indices.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [indices[i], indices[j]] = [indices[j], indices[i]];
-  }
-  const targetCellIndices = indices.slice(0, targetCount);
-
-  const confusable = getConfusable(targetSymbol);
-  const gridSymbols: number[] = new Array(GRID_CELLS).fill(-1);
-
-  // Place targets
-  for (const ci of targetCellIndices) {
-    gridSymbols[ci] = targetSymbol;
-  }
-
-  // Fill non-target cells
-  for (let i = 0; i < GRID_CELLS; i++) {
-    if (gridSymbols[i] !== -1) continue;
-    if (hardMode && Math.random() < 0.4) {
-      gridSymbols[i] = confusable;
-    } else {
-      let sym: number;
-      do { sym = Math.floor(Math.random() * SYMBOLS_COUNT); } while (sym === targetSymbol);
-      gridSymbols[i] = sym;
-    }
-  }
-
-  return { gridSymbols, targetSymbol, targetCellIndices };
-}
-
-// ─── GAME STATE ───────────────────────────────────────────────────────────────
-
-interface CellFlash {
-  type:    'hit' | 'miss';
-  endTime: number;
-}
-
-interface GameState {
-  running:            boolean;
-  timeLeft:           number;
-  sig:                Signals;
-
-  // Grid
-  gridSymbols:        number[];
-  targetSymbol:       number;
-  targetCellIndices:  number[];
-  cellFound:          boolean[];
-  cellFlashes:        Map<number, CellFlash>;
-
-  // Streak
-  currentStreak:      number;
-
-  // Timing
-  gridStartTime:      number;
-  firstTapInGrid:     number;   // Date.now() of first correct tap; -1 if none yet
-
-  // Progress
-  round:              number;
-  gridFlashAlpha:     number;   // brief white flash when grid changes
-
-  // Visual
-  particles:          Particle[];
-
-  // Layout (computed on resize)
-  cellSize:           number;
-  gridX:              number;
-  gridY:              number;
-  targetAreaH:        number;
-  targetAreaTop:      number;   // y-offset to clear the HUD overlay
-
-  // Theme
-  accentColor:        string;
-}
-
 type Phase = 'start' | 'countdown' | 'playing' | 'done';
 
-// ─── COMPONENT ────────────────────────────────────────────────────────────────
+const SHAPES = ['sphere', 'box', 'cone', 'torus', 'octahedron', 'tetrahedron', 'cylinder', 'ring'];
+const SHAPE_COLORS = [0x818cf8, 0xa855f7, 0x38bdf8, 0x34d399, 0xfbbf24, 0xf97316, 0xef4444, 0xec4899];
 
 export default function SymbolScanGame() {
-  const theme        = useBrandTheme();
-  const canvasRef    = useRef<HTMLCanvasElement>(null);
-  const animRef      = useRef(0);
-  const timerRef     = useRef<ReturnType<typeof setInterval> | null>(null);
-  const stopMusicRef = useRef<(() => void) | null>(null);
-
-  const stateRef = useRef<GameState>({
-    running:           false,
-    timeLeft:          DURATION,
-    sig: {
-      targetsFound: 0, falseTaps: 0, searchTimes: [],
-      gridsCleared: 0, missedTargets: 0, score: 0,
-    },
-    gridSymbols:       [],
-    targetSymbol:      0,
-    targetCellIndices: [],
-    cellFound:         new Array(GRID_CELLS).fill(false),
-    cellFlashes:       new Map(),
-    currentStreak:     0,
-    gridStartTime:     0,
-    firstTapInGrid:    -1,
-    round:             1,
-    gridFlashAlpha:    0,
-    particles:         [],
-    cellSize:          80,
-    gridX:             0,
-    gridY:             0,
-    targetAreaH:       200,
-    targetAreaTop:     150,
-    accentColor:       ACCENT,
+  const theme = useBrandTheme();
+  const mountRef = useRef<HTMLDivElement>(null);
+  const stateRef = useRef({
+    running: false, timeLeft: DURATION, animId: 0,
+    intervalId: null as ReturnType<typeof setInterval> | null,
+    renderer: null as THREE.WebGLRenderer | null,
+    scene: null as THREE.Scene | null,
+    camera: null as THREE.PerspectiveCamera | null,
+    sig: { total: 0, found: 0, missed: 0, falseAlarms: 0, avgReactionMs: 0, totalMs: 0, score: 0, maxStreak: 0, streakCurrent: 0 } as Signals,
+    gridMeshes: [] as { mesh: THREE.Mesh; shapeIdx: number; isTarget: boolean }[],
+    targetShapeIdx: 0,
+    roundStart: 0, frame: 0,
+    flashTimer: 0, flashSuccess: true,
+    hintMesh: null as THREE.Mesh | null,
   });
-
-  const [phase, setPhase]               = useState<Phase>('start');
-  const [showInstructions, setShowInstructions] = useState(true);
-  const [timeLeft, setTimeLeft]         = useState(DURATION);
+  const [phase, setPhase] = useState<Phase>('start');
+  const [timeLeft, setTimeLeft] = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
-  const [finalSig, setFinalSig]         = useState<Signals | null>(null);
-
-  const [playerName, setPlayerName]     = useState('');
-  const [playerAvatar, setPlayerAvatar] = useState('🎮');
-  const { pops, triggerPop } = useScorePop();
-  const [streak, setStreak] = useState(0);
-  const [isNewBest, setIsNewBest] = useState(false);
-  const prevScoreRef = useRef(0);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => {
-    const numScore = typeof scoreDisplay === 'number' ? scoreDisplay : 0;
-    if (numScore > prevScoreRef.current) {
-      triggerPop(`+${numScore - prevScoreRef.current}`, window.innerWidth / 2, 200);
-    }
-    prevScoreRef.current = numScore;
-  }, [scoreDisplay]); // triggerPop is stable — sfx fires synchronously in handleTap
-  const playerSessionRef                = useRef<PlayerSession | null>(null);
-
-  // Sync brand theme accent into state (so rAF loop picks it up)
-  useEffect(() => {
-    stateRef.current.accentColor = theme.colors.accent ?? ACCENT;
-  }, [theme]);
-
-  // ─── LAYOUT CALCULATION ────────────────────────────────────────────────────
-
-  const computeLayout = useCallback(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const s   = stateRef.current;
-    const W   = window.innerWidth;
-    const H   = window.innerHeight;
-    // HUD sits at top:64 with height ~80px; leave 150px clear at top of canvas
-    // so the target-symbol area renders below the HUD overlay.
-    const TOP = 150;
-    const TAH = Math.min(160, Math.max(120, (H - TOP) * 0.22)); // target area height
-    const PAD = 14;
-    const avail = H - TOP - TAH;
-    const cell  = Math.min(
-      (W   - PAD * 2) / GRID_SIZE,
-      (avail - PAD * 2) / GRID_SIZE,
-    );
-    s.cellSize      = cell;
-    s.targetAreaH   = TAH;
-    s.targetAreaTop = TOP;
-    s.gridX         = (W - cell * GRID_SIZE) / 2;
-    s.gridY         = TOP + TAH + (avail - cell * GRID_SIZE) / 2;
-  }, []);
-
-  // ─── SPAWN GRID ────────────────────────────────────────────────────────────
-
-  const spawnGrid = useCallback(() => {
-    const s = stateRef.current;
-    const { gridSymbols, targetSymbol, targetCellIndices } = generateGrid(s.round);
-    s.gridSymbols       = gridSymbols;
-    s.targetSymbol      = targetSymbol;
-    s.targetCellIndices = targetCellIndices;
-    s.cellFound         = new Array(GRID_CELLS).fill(false);
-    s.cellFlashes       = new Map();
-    s.gridStartTime     = Date.now();
-    s.firstTapInGrid    = -1;
-    s.gridFlashAlpha    = 0.55;
-  }, []);
-
-  // ─── END GAME ──────────────────────────────────────────────────────────────
+  const [finalSig, setFinalSig] = useState<Signals | null>(null);
+  const [targetHint, setTargetHint] = useState('');
+  const playerSessionRef = useRef<PlayerSession | null>(null);
 
   const endGame = useCallback(() => {
-    const s = stateRef.current;
-    s.running = false;
-    cancelAnimationFrame(animRef.current);
-    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
-    if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
-    // Personal best tracking
-    try {
-      const _pbPrev = parseInt(localStorage.getItem(PB_KEY) || '0', 10);
-      const _pbVal = parseFloat(String(s.sig?.score ?? 0));
-      if (!isNaN(_pbVal) && _pbVal > _pbPrev) {
-        localStorage.setItem(PB_KEY, String(Math.round(_pbVal)));
-        setIsNewBest(true);
-      }
-    } catch { /* ignore */ }
-
-
-    setFinalSig({ ...s.sig });
-    setPhase('done');
+    const s = stateRef.current; s.running = false;
+    cancelAnimationFrame(s.animId);
+    if (s.intervalId) { clearInterval(s.intervalId); s.intervalId = null; }
+    if (s.renderer) { s.renderer.dispose(); s.renderer = null; }
+    setFinalSig({ ...s.sig }); setPhase('done'); hapticVictory();
   }, []);
 
-  // ─── GAME LOOP ─────────────────────────────────────────────────────────────
-
   const startLoop = useCallback(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
     const s = stateRef.current;
-    s.running       = true;
-    s.timeLeft      = DURATION;
-    s.round         = 1;
-    s.gridFlashAlpha = 0;
-    s.particles     = [];
-    s.currentStreak = 0;
-    s.sig = {
-      targetsFound: 0, falseTaps: 0, searchTimes: [],
-      gridsCleared: 0, missedTargets: 0, score: 0,
+    s.running = true; s.timeLeft = DURATION; s.frame = 0;
+    s.sig = { total: 0, found: 0, missed: 0, falseAlarms: 0, avgReactionMs: 0, totalMs: 0, score: 0, maxStreak: 0, streakCurrent: 0 };
+    s.gridMeshes = []; s.flashTimer = 0;
+    setScoreDisplay(0); setTimeLeft(DURATION); setPhase('playing');
+
+    const W = window.innerWidth, H = window.innerHeight;
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(W, H);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setClearColor(0x0a0a1a);
+    if (mountRef.current) { mountRef.current.innerHTML = ''; mountRef.current.appendChild(renderer.domElement); }
+    s.renderer = renderer;
+
+    const scene = new THREE.Scene();
+    s.scene = scene;
+    const camera = new THREE.PerspectiveCamera(65, W / H, 0.1, 100);
+    camera.position.set(0, 0, 14);
+    camera.lookAt(0, 0, 0);
+    s.camera = camera;
+
+    scene.add(new THREE.AmbientLight(0x111133, 2));
+    const pLight = new THREE.PointLight(0x818cf8, 4, 30);
+    pLight.position.set(0, 5, 5);
+    scene.add(pLight);
+    const sLight = new THREE.PointLight(0xa855f7, 2, 20);
+    sLight.position.set(-5, 3, 3);
+    scene.add(sLight);
+
+    // Background grid
+    for (let i = -6; i <= 6; i++) {
+      const g1 = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(-8, i, -3), new THREE.Vector3(8, i, -3)]);
+      scene.add(new THREE.Line(g1, new THREE.LineBasicMaterial({ color: 0x818cf8, transparent: true, opacity: 0.05 })));
+    }
+
+    // Flash sphere
+    const flashGeo = new THREE.SphereGeometry(10, 16, 16);
+    const flashMat = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, side: THREE.BackSide });
+    scene.add(new THREE.Mesh(flashGeo, flashMat));
+
+    // Stars
+    const starPos = new Float32Array(400 * 3);
+    for (let i = 0; i < 400; i++) {
+      starPos[i * 3] = (Math.random() - 0.5) * 60; starPos[i * 3 + 1] = (Math.random() - 0.5) * 40; starPos[i * 3 + 2] = -20 + (Math.random() - 0.5) * 10;
+    }
+    const starGeo = new THREE.BufferGeometry();
+    starGeo.setAttribute('position', new THREE.BufferAttribute(starPos, 3));
+    scene.add(new THREE.Points(starGeo, new THREE.PointsMaterial({ color: 0xffffff, size: 0.06 })));
+
+    const makeGeo = (idx: number): THREE.BufferGeometry => {
+      const r = 0.38;
+      switch (SHAPES[idx]) {
+        case 'sphere': return new THREE.SphereGeometry(r, 12, 12);
+        case 'box': return new THREE.BoxGeometry(r * 1.8, r * 1.8, r * 0.6);
+        case 'cone': return new THREE.ConeGeometry(r, r * 2.2, 8);
+        case 'torus': return new THREE.TorusGeometry(r, r * 0.28, 8, 20);
+        case 'octahedron': return new THREE.OctahedronGeometry(r * 1.2);
+        case 'tetrahedron': return new THREE.TetrahedronGeometry(r * 1.35);
+        case 'cylinder': return new THREE.CylinderGeometry(r * 0.6, r * 0.6, r * 1.8, 10);
+        case 'ring': return new THREE.TorusGeometry(r * 0.9, r * 0.12, 8, 32);
+        default: return new THREE.SphereGeometry(r, 12, 12);
+      }
     };
 
-    setScoreDisplay(0);
-    setTimeLeft(DURATION);
-    setPhase('playing');
+    // Hint display mesh (top center)
+    const hintGeo = makeGeo(0);
+    const hintMat = new THREE.MeshStandardMaterial({ color: SHAPE_COLORS[0], emissive: SHAPE_COLORS[0], emissiveIntensity: 0.8, roughness: 0.3 });
+    const hintMesh = new THREE.Mesh(hintGeo, hintMat);
+    hintMesh.position.set(0, 5.5, 0);
+    hintMesh.scale.setScalar(1.3);
+    scene.add(hintMesh);
+    s.hintMesh = hintMesh;
 
-    computeLayout();
+    const spawnGrid = () => {
+      s.gridMeshes.forEach(gm => scene.remove(gm.mesh));
+      s.gridMeshes = [];
+      scene.remove(hintMesh);
+
+      const targetIdx = Math.floor(Math.random() * SHAPES.length);
+      s.targetShapeIdx = targetIdx;
+
+      // Rebuild hint mesh with new shape
+      const newHintGeo = makeGeo(targetIdx);
+      hintMesh.geometry.dispose();
+      hintMesh.geometry = newHintGeo;
+      (hintMesh.material as THREE.MeshStandardMaterial).color.setHex(SHAPE_COLORS[targetIdx]);
+      (hintMesh.material as THREE.MeshStandardMaterial).emissive.setHex(SHAPE_COLORS[targetIdx]);
+      scene.add(hintMesh);
+
+      setTargetHint(`Find: ${SHAPES[targetIdx]}`);
+
+      // Grid: 4x4 = 16 items with 1 target
+      const cols = 4, rows = 4;
+      const cellW = 2.8, cellH = 2.0;
+      const startX = -((cols - 1) / 2) * cellW;
+      const startY = -((rows - 1) / 2) * cellH + 0;
+
+      const positions: number[] = [];
+      for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) positions.push(r * cols + c);
+
+      // Pick one target position
+      const targetPos = Math.floor(Math.random() * positions.length);
+      const distractorCount = 4 + Math.floor(s.sig.score * 0.3);
+
+      positions.forEach((posIdx, i) => {
+        const r = Math.floor(posIdx / cols), c = posIdx % cols;
+        const x = startX + c * cellW + (Math.random() - 0.5) * 0.3;
+        const y = startY + r * cellH + (Math.random() - 0.5) * 0.3;
+        const isTarget = i === targetPos;
+        let shapeIdx = isTarget ? targetIdx : Math.floor(Math.random() * SHAPES.length);
+        while (!isTarget && shapeIdx === targetIdx && SHAPES.length > 1) shapeIdx = Math.floor(Math.random() * SHAPES.length);
+
+        const geo = makeGeo(shapeIdx);
+        const dim = 0.4 + Math.random() * 0.15;
+        const mat = new THREE.MeshStandardMaterial({
+          color: isTarget ? SHAPE_COLORS[shapeIdx] : 0x1e293b,
+          emissive: isTarget ? SHAPE_COLORS[shapeIdx] : 0x0f172a,
+          emissiveIntensity: isTarget ? 0.15 : 0.05,
+          roughness: 0.5, metalness: 0.2,
+        });
+        const mesh = new THREE.Mesh(geo, mat);
+        mesh.position.set(x, y, 0);
+        mesh.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, Math.random() * Math.PI);
+        scene.add(mesh);
+        s.gridMeshes.push({ mesh, shapeIdx, isTarget });
+      });
+
+      s.sig.total++;
+      s.roundStart = Date.now();
+    };
+
     spawnGrid();
 
-    stopMusicRef.current = startMusic('minimal');
-
-    timerRef.current = setInterval(() => {
-      s.timeLeft--;
-      setTimeLeft(s.timeLeft);
-      if (s.timeLeft <= 0) {
-        sfx.success(); haptic([30, 50, 30, 50, 100]); endGame();
-      } else if (s.timeLeft === 10) {
-        sfx.warning(); haptic([50, 30, 50]);
+    const raycaster = new THREE.Raycaster();
+    const onTap = (e: PointerEvent) => {
+      if (!s.running) return;
+      const rect = renderer.domElement.getBoundingClientRect();
+      const mouse = new THREE.Vector2(
+        ((e.clientX - rect.left) / rect.width) * 2 - 1,
+        -((e.clientY - rect.top) / rect.height) * 2 + 1
+      );
+      raycaster.setFromCamera(mouse, camera);
+      const meshes = s.gridMeshes.map(gm => gm.mesh);
+      const intersects = raycaster.intersectObjects(meshes);
+      if (!intersects.length) return;
+      const tapped = s.gridMeshes.find(gm => gm.mesh === intersects[0].object);
+      if (!tapped) return;
+      const elapsed = Date.now() - s.roundStart;
+      if (tapped.isTarget) {
+        s.sig.found++; s.sig.streakCurrent++;
+        if (s.sig.streakCurrent > s.sig.maxStreak) s.sig.maxStreak = s.sig.streakCurrent;
+        s.sig.totalMs += elapsed;
+        s.sig.avgReactionMs = s.sig.totalMs / s.sig.found;
+        const pts = (elapsed < 700 ? 2 : 1) + (s.sig.streakCurrent >= 3 ? 1 : 0);
+        s.sig.score += pts; setScoreDisplay(s.sig.score);
+        sfx.collect(); hapticScore();
+        s.flashTimer = 18; s.flashSuccess = true;
+        flashMat.color.setHex(0x10b981);
+        spawnGrid();
       } else {
-        sfx.tick();
+        s.sig.falseAlarms++; s.sig.streakCurrent = 0;
+        sfx.nearMiss(); hapticFail();
+        s.flashTimer = 14; s.flashSuccess = false;
+        flashMat.color.setHex(0xef4444);
+        (tapped.mesh.material as THREE.MeshStandardMaterial).emissive.setHex(0xef4444);
+        (tapped.mesh.material as THREE.MeshStandardMaterial).emissiveIntensity = 0.5;
       }
+    };
+    renderer.domElement.addEventListener('pointerdown', onTap);
+
+    const ROUND_TIMEOUT = 5000;
+
+    s.intervalId = setInterval(() => {
+      s.timeLeft--; setTimeLeft(s.timeLeft);
+      if (s.timeLeft <= 0) { sfx.fail(); endGame(); }
     }, 1000);
 
     const loop = () => {
       if (!s.running) return;
+      s.frame++;
 
-      const now = Date.now();
-      const W   = window.innerWidth;
-      const H   = window.innerHeight;
-      const { cellSize, gridX, gridY, targetAreaH, targetAreaTop, accentColor } = s;
-
-      // ── Background — deep indigo gradient for cognitive vibe ───────────────
-      const ssBg = ctx.createRadialGradient(W * 0.5, H * 0.35, 0, W * 0.5, H * 0.65, Math.max(W, H) * 0.9);
-      ssBg.addColorStop(0,   '#080f20');
-      ssBg.addColorStop(0.55, '#050a14');
-      ssBg.addColorStop(1,   '#020508');
-      ctx.fillStyle = ssBg;
-      ctx.fillRect(0, 0, W, H);
-
-      // Subtle vignette
-      const ssVig = ctx.createRadialGradient(W * 0.5, H * 0.5, H * 0.2, W * 0.5, H * 0.5, H * 0.8);
-      ssVig.addColorStop(0, 'rgba(0,0,0,0)');
-      ssVig.addColorStop(1, 'rgba(0,0,0,0.5)');
-      ctx.fillStyle = ssVig;
-      ctx.fillRect(0, 0, W, H);
-
-      // Subtle dot-grid background texture
-      ctx.fillStyle = 'rgba(255,255,255,0.022)';
-      for (let gx = 24; gx < W; gx += 40) {
-        for (let gy = 24; gy < H; gy += 40) {
-          ctx.beginPath();
-          ctx.arc(gx, gy, 1, 0, Math.PI * 2);
-          ctx.fill();
+      // Rotate meshes
+      s.gridMeshes.forEach((gm, i) => {
+        gm.mesh.rotation.y += 0.01;
+        gm.mesh.rotation.x += 0.005;
+        if (gm.isTarget) {
+          const pulse = 1 + Math.sin(s.frame * 0.1 + i) * 0.05;
+          gm.mesh.scale.setScalar(pulse);
+          (gm.mesh.material as THREE.MeshStandardMaterial).emissiveIntensity = 0.2 + Math.sin(s.frame * 0.1) * 0.1;
         }
+      });
+
+      // Hint rotation
+      hintMesh.rotation.y += 0.02;
+      hintMesh.rotation.x += 0.01;
+
+      // Flash decay
+      if (s.flashTimer > 0) {
+        s.flashTimer--;
+        flashMat.opacity = (s.flashTimer / 18) * 0.15;
+      } else {
+        flashMat.opacity = 0;
       }
 
-      // ── Grid timer check ───────────────────────────────────────────────────
-      const gridElapsed = now - s.gridStartTime;
-      if (gridElapsed >= GRID_DURATION) {
-        // Count missed targets before refreshing
-        const unfound = s.targetCellIndices.filter(ci => !s.cellFound[ci]).length;
-        s.sig.missedTargets += unfound;
-        if (unfound > 0) {
-          // Grid timed out with missed targets — reset streak
-          s.currentStreak = 0;
-          setStreak(0);
-        }
-        s.round++;
-        sfx.collision();
-        haptic([60]);
+      // Auto advance
+      if (Date.now() - s.roundStart > ROUND_TIMEOUT) {
+        s.sig.missed++; s.sig.streakCurrent = 0;
+        sfx.fail(); hapticFail();
         spawnGrid();
       }
 
-      // ── Target area ────────────────────────────────────────────────────────
-      // Accent-tinted band (starts below HUD)
-      ctx.fillStyle = `${accentColor}0a`;
-      ctx.fillRect(0, targetAreaTop, W, targetAreaH);
+      pLight.intensity = 4 + Math.sin(s.frame * 0.05) * 0.7;
 
-      // Separator line
-      ctx.strokeStyle = `${accentColor}30`;
-      ctx.lineWidth   = 1;
-      ctx.beginPath(); ctx.moveTo(0, targetAreaTop + targetAreaH - 1); ctx.lineTo(W, targetAreaTop + targetAreaH - 1); ctx.stroke();
-
-      // "FIND" label
-      ctx.save();
-      ctx.fillStyle  = 'rgba(255,255,255,0.45)';
-      ctx.font       = `700 18px 'Space Grotesk', sans-serif`;
-      ctx.textAlign  = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText('FIND', W / 2, targetAreaTop + targetAreaH * 0.22);
-      ctx.restore();
-
-      // Large target symbol with animated sine wave glow
-      const targetDisplaySize = Math.min(targetAreaH * 0.52, 72);
-      const glow = 8 + 6 * Math.sin(Date.now() / 500);
-      ctx.shadowBlur = glow;
-      ctx.shadowColor = accentColor;
-      drawSymbol(ctx, W / 2, targetAreaTop + targetAreaH * 0.58, targetDisplaySize, s.targetSymbol, accentColor, true);
-      ctx.shadowBlur = 0;
-
-      // Grid timer progress bar (bottom of target area)
-      const gridProgress = Math.min(1, Math.max(0, gridElapsed / GRID_DURATION));
-      const remaining    = 1 - gridProgress;
-      const barW = W * 0.72;
-      const barH = 5;
-      const barX = (W - barW) / 2;
-      const barY = targetAreaTop + targetAreaH - 14;
-      const barColor = remaining > 0.4 ? accentColor : remaining > 0.2 ? '#facc15' : '#ef4444';
-
-      // Track
-      ctx.fillStyle   = 'rgba(255,255,255,0.08)';
-      ctx.beginPath();
-      if (ctx.roundRect) {
-        ctx.roundRect(barX, barY, barW, barH, 3);
-      } else {
-        ctx.rect(barX, barY, barW, barH);
-      }
-      ctx.fill();
-
-      // Fill
-      if (remaining > 0) {
-        ctx.fillStyle = barColor;
-        ctx.beginPath();
-        if (ctx.roundRect) {
-          ctx.roundRect(barX, barY, barW * remaining, barH, 3);
-        } else {
-          ctx.rect(barX, barY, barW * remaining, barH);
-        }
-        ctx.fill();
-      }
-
-      // ── Grid cells ─────────────────────────────────────────────────────────
-      ctx.imageSmoothingEnabled = true;
-
-      // Grid flash overlay (grid change transition)
-      s.gridFlashAlpha = Math.max(0, s.gridFlashAlpha - 0.04);
-
-      for (let i = 0; i < GRID_CELLS; i++) {
-        const col  = i % GRID_SIZE;
-        const row  = Math.floor(i / GRID_SIZE);
-        const pad  = cellSize * 0.055;
-        const cw   = cellSize - pad * 2;
-        const cx   = gridX + col * cellSize + cellSize / 2;
-        const cy   = gridY + row * cellSize + cellSize / 2;
-        const bx   = gridX + col * cellSize + pad;
-        const by   = gridY + row * cellSize + pad;
-
-        const flash      = s.cellFlashes.get(i);
-        const isMissFlash = flash !== undefined && now < flash.endTime && flash.type === 'miss';
-        const isFound    = s.cellFound[i];
-
-        // Determine cell appearance
-        let bgColor     = 'rgba(255,255,255,0.04)';
-        let borderColor = 'rgba(255,255,255,0.08)';
-        let borderWidth = 1;
-
-        if (isFound) {
-          bgColor     = 'rgba(34,197,94,0.22)';
-          borderColor = '#22c55e';
-          borderWidth = 1.5;
-        } else if (isMissFlash) {
-          const t = 1 - (flash.endTime - now) / 300;
-          bgColor     = `rgba(239,68,68,${0.4 - t * 0.3})`;
-          borderColor = '#ef4444';
-          borderWidth = 1.5;
-        }
-
-        // Draw cell background
-        ctx.save();
-        ctx.fillStyle   = bgColor;
-        ctx.strokeStyle = borderColor;
-        ctx.lineWidth   = borderWidth;
-        ctx.beginPath();
-        if (ctx.roundRect) {
-          ctx.roundRect(bx, by, cw, cw, 7);
-        } else {
-          ctx.rect(bx, by, cw, cw);
-        }
-        ctx.fill();
-        ctx.stroke();
-        ctx.restore();
-
-        // Draw symbol or found indicator
-        if (isFound) {
-          // Checkmark
-          ctx.save();
-          ctx.strokeStyle = '#22c55e';
-          ctx.lineWidth   = cellSize * 0.065;
-          ctx.lineCap     = 'round';
-          ctx.lineJoin    = 'round';
-          ctx.globalAlpha = 0.9;
-          const cs = cellSize * 0.16;
-          ctx.beginPath();
-          ctx.moveTo(cx - cs, cy);
-          ctx.lineTo(cx - cs * 0.25, cy + cs * 0.9);
-          ctx.lineTo(cx + cs, cy - cs * 0.8);
-          ctx.stroke();
-          ctx.restore();
-        } else {
-          // Symbol
-          const symColor = isMissFlash ? '#ef4444' : 'rgba(255,255,255,0.82)';
-          drawSymbol(ctx, cx, cy, cellSize * 0.48, s.gridSymbols[i], symColor, false);
-        }
-
-        // Grid flash overlay on each cell
-        if (s.gridFlashAlpha > 0) {
-          ctx.save();
-          ctx.globalAlpha = s.gridFlashAlpha * 0.35;
-          ctx.fillStyle   = accentColor;
-          ctx.beginPath();
-          if (ctx.roundRect) {
-            ctx.roundRect(bx, by, cw, cw, 7);
-          } else {
-            ctx.rect(bx, by, cw, cw);
-          }
-          ctx.fill();
-          ctx.restore();
-        }
-      }
-
-      // ── Particles ──────────────────────────────────────────────────────────
-      updateAndDrawParticles(ctx, s.particles);
-
-      // ── Cleanup expired flashes ────────────────────────────────────────────
-      for (const [k, fl] of s.cellFlashes) {
-        if (now >= fl.endTime) s.cellFlashes.delete(k);
-      }
-
-      animRef.current = requestAnimationFrame(loop);
+      renderer.render(scene, camera);
+      s.animId = requestAnimationFrame(loop);
     };
+    s.animId = requestAnimationFrame(loop);
+  }, [endGame]);
 
-    animRef.current = requestAnimationFrame(loop);
-  }, [endGame, spawnGrid, computeLayout]);
-
-  // ─── TAP HANDLER ───────────────────────────────────────────────────────────
-
-  const handleTap = useCallback((clientX: number, clientY: number) => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const s = stateRef.current;
-    if (!s.running) return;
-
-    const rect = canvas.getBoundingClientRect();
-    const x    = (clientX - rect.left) * (canvas.offsetWidth  / rect.width);
-    const y    = (clientY - rect.top)  * (canvas.offsetHeight / rect.height);
-
-    const { cellSize, gridX, gridY } = s;
-
-    const col = Math.floor((x - gridX) / cellSize);
-    const row = Math.floor((y - gridY) / cellSize);
-    if (col < 0 || col >= GRID_SIZE || row < 0 || row >= GRID_SIZE) return;
-
-    const ci        = row * GRID_SIZE + col;
-    const isTarget  = s.targetCellIndices.includes(ci);
-    const isFound   = s.cellFound[ci];
-    if (isFound) return; // already tapped this target
-
-    if (isTarget) {
-      // ── CORRECT TAP ─────────────────────────────────────────────────────
-      s.cellFound[ci] = true;
-      s.cellFlashes.set(ci, { type: 'hit', endTime: Date.now() + 280 });
-
-      // Record search time on first correct tap in this grid
-      if (s.firstTapInGrid === -1) {
-        s.firstTapInGrid = Date.now();
-        s.sig.searchTimes.push(s.firstTapInGrid - s.gridStartTime);
-      }
-
-      s.sig.targetsFound++;
-      s.sig.score += 10;
-      s.currentStreak++;
-      setStreak(s.currentStreak);
-      setScoreDisplay(s.sig.score);
-      playScanBeep(true);
-      haptic([30]);
-
-      // Particle burst at tap point
-      const tapX = gridX + col * cellSize + cellSize / 2;
-      const tapY = gridY + row * cellSize + cellSize / 2;
-      spawnBurst(s.particles, tapX, tapY, s.accentColor, 10, 3.5);
-
-      // Check grid clear (all targets found)
-      const allFound = s.targetCellIndices.every(idx => s.cellFound[idx]);
-      if (allFound) {
-        s.sig.gridsCleared++;
-        s.sig.score += 20;
-        setScoreDisplay(s.sig.score);
-        sfx.success();
-        haptic([30, 50, 30]);
-
-        // Big burst in grid center
-        const cX = gridX + (GRID_SIZE / 2) * cellSize;
-        const cY = gridY + (GRID_SIZE / 2) * cellSize;
-        spawnBurst(s.particles, cX, cY, s.accentColor, 24, 5);
-
-        s.round++;
-        // Short pause before new grid
-        s.gridStartTime = Date.now() + 400; // prevents timer from triggering
-        setTimeout(() => {
-          if (s.running) spawnGrid();
-        }, 400);
-      }
-    } else {
-      // ── WRONG TAP ───────────────────────────────────────────────────────
-      s.cellFlashes.set(ci, { type: 'miss', endTime: Date.now() + 320 });
-      s.sig.falseTaps++;
-      s.sig.score = Math.max(0, s.sig.score - 5);
-      s.currentStreak = 0;
-      setStreak(0);
-      setScoreDisplay(s.sig.score);
-      playScanBeep(false);
-      haptic([80]);
-    }
-  }, [spawnGrid]);
-
-  // ─── CANVAS SETUP & RESIZE ────────────────────────────────────────────────
-
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    const resize = () => {
-      const dpr = window.devicePixelRatio || 1;
-      const w = window.innerWidth;
-      const h = window.innerHeight;
-      canvas.style.width  = w + 'px';
-      canvas.style.height = h + 'px';
-      canvas.width  = w * dpr;
-      canvas.height = h * dpr;
-      const ctx2 = canvas.getContext('2d');
-      if (ctx2) ctx2.setTransform(dpr, 0, 0, dpr, 0, 0);
-      computeLayout();
-    };
-    resize();
-    window.addEventListener('resize', resize);
-
-    const onPointerDown = (e: PointerEvent) => {
-      handleTap(e.clientX, e.clientY);
-    };
-    canvas.addEventListener('pointerdown', onPointerDown);
-
-    return () => {
-      window.removeEventListener('resize', resize);
-      canvas.removeEventListener('pointerdown', onPointerDown);
-    };
-  // Phase is intentionally included so this effect re-runs when the canvas
-  // enters the DOM (phase: 'start'→'countdown'), ensuring canvas.width/height
-  // and the pointerdown listener are set up before startLoop() fires.
-  }, [handleTap, computeLayout, phase]);
-
-  // ─── CLEANUP ON UNMOUNT ───────────────────────────────────────────────────
-
-  useEffect(() => {
-    return () => {
-      cancelAnimationFrame(animRef.current);
-      if (timerRef.current) clearInterval(timerRef.current);
-      if (stopMusicRef.current) stopMusicRef.current();
-    };
+  useEffect(() => () => {
+    const s = stateRef.current; s.running = false; cancelAnimationFrame(s.animId);
+    if (s.intervalId) clearInterval(s.intervalId);
+    if (s.renderer) { s.renderer.dispose(); s.renderer = null; }
   }, []);
 
-  // ─── PHASE TRANSITIONS ────────────────────────────────────────────────────
-
-  const handleStart = useCallback((name: string, avatar: string) => {
-    setPlayerName(name);
-    setPlayerAvatar(avatar);
-    initAudio();
-    playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar);
-    setPhase('countdown');
+  const handleStart = useCallback(async (name: string, avatar: string) => {
+    playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar); await initAudio(); setPhase('countdown');
   }, []);
-
-  const handleCountdownDone = useCallback(() => {
-    startLoop();
-  }, [startLoop]);
-
   const handlePlayAgain = useCallback(() => {
-    setPhase('start');
-    setScoreDisplay(0);
-    setTimeLeft(DURATION);
-    setFinalSig(null);
-  
-    setIsNewBest(false);
-    setStreak(0);
-    prevScoreRef.current = 0;
+    if (stateRef.current.renderer) { stateRef.current.renderer.dispose(); stateRef.current.renderer = null; }
+    if (mountRef.current) mountRef.current.innerHTML = '';
+    setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null);
   }, []);
-
-  // ─── END SCREEN INSIGHTS ─────────────────────────────────────────────────
-
-  const buildInsights = useCallback((sig: Signals) => {
-    const total   = sig.targetsFound + sig.falseTaps;
-    const acc     = total > 0 ? Math.round((sig.targetsFound / total) * 100) : 100;
-    const avgMs   = sig.searchTimes.length > 0
-      ? sig.searchTimes.reduce((a, b) => a + b, 0) / sig.searchTimes.length
-      : 0;
-    const avgSec  = (avgMs / 1000).toFixed(1);
-    const accent  = theme.colors.accent ?? ACCENT;
-
-    return [
-      {
-        label: 'Targets Found',
-        value: `${sig.targetsFound}`,
-        color: sig.targetsFound >= 20 ? '#22c55e' : sig.targetsFound >= 10 ? '#facc15' : '#ef4444',
-      },
-      {
-        label: 'Accuracy',
-        value: `${acc}%`,
-        color: acc >= 85 ? '#22c55e' : acc >= 70 ? '#facc15' : '#ef4444',
-      },
-      {
-        label: 'Grids Cleared',
-        value: `${sig.gridsCleared}`,
-        color: accent,
-      },
-      {
-        label: 'Avg Search',
-        value: `${avgSec}s`,
-        color: avgMs > 0 && avgMs < 2500 ? '#22c55e' : avgMs < 5000 ? '#facc15' : '#ef4444',
-      },
-    ];
-  }, [theme]);
-
-  // ─── RENDER ───────────────────────────────────────────────────────────────
 
   const accent = theme.colors.accent ?? ACCENT;
-
   return (
-    <>
-      {phase === 'start' && showInstructions && (
-        <SwipeInstructions
-          gameId="symbol-scan"
-          steps={[
-            { icon: <Eye size={64} color="#10b981" strokeWidth={1.5} />, title: "Find the symbol", body: "Scan the grid to find the target symbol." },
-            { icon: <Hand size={64} color="#10b981" strokeWidth={1.5} />, title: "Tap it fast", body: "Tap the correct symbol before time runs out." },
-            { icon: <Flame size={64} color="#10b981" strokeWidth={1.5} />, title: "Chain correct taps", body: "Fast correct answers build your streak." },
-          ]}
-          onDone={() => setShowInstructions(false)}
-        />
-      )}
-    <GameShell
-      title={GAME_TITLE}
-      emoji={GAME_EMOJI}
-      titleIcon={<Search size={20} color="#fff" strokeWidth={2} />}
-      accentColor={accent}
-      background="radial-gradient(ellipse at 50% 35%, rgba(16,185,129,0.08) 0%, transparent 55%), radial-gradient(ellipse at 50% 100%, rgba(8,15,32,0.6) 0%, transparent 50%), linear-gradient(180deg, #080f20 0%, #050a14 35%, #04080f 60%, #050a14 85%, #080f20 100%)"
-    >
-
-      {/* ── Start Screen ──────────────────────────────────────────────────── */}
-      {phase === 'start' && (
-        <GameStartScreen
-          emoji={GAME_EMOJI}
-          title={GAME_TITLE}
-          description={GAME_TAGLINE}
-          ctaLabel="Start"
-          accentColor={accent}
-          onStart={handleStart}
-          iconNode={<Search size={72} color={accent} strokeWidth={1.5} />}
-          gradient="radial-gradient(ellipse 80% 70% at 50% 30%, #080f20 0%, #050a14 55%, #020508 100%)"
-        />
-      )}
-
-      {/* ── Countdown ─────────────────────────────────────────────────────── */}
-      {phase === 'countdown' && (
-        <Countdown onComplete={handleCountdownDone} accentColor={accent} />
-      )}
-
-      {/* ── Game Canvas + HUD ─────────────────────────────────────────────── */}
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accent}>
+      {phase === 'start' && <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description={GAME_TAGLINE} ctaLabel="Start Scanning!" accentColor={accent} onStart={handleStart} />}
+      {phase === 'countdown' && <Countdown onComplete={startLoop} accentColor={accent} />}
       {(phase === 'playing' || phase === 'countdown') && (
-        <>
-          <canvas
-            ref={canvasRef}
-            style={{
-              position:    'absolute',
-              inset:       0,
-              width:       '100%',
-              height:      '100%',
-              touchAction: 'none',
-            }}
-          />
-          {phase === 'playing' && (
-            <GameHUD
-              accentColor={accent}
-              items={[
-                { label: 'TIME',  value: timeLeft,     danger: timeLeft <= 10, testId: 'timer' },
-                { label: 'SCORE', value: scoreDisplay, testId: 'score' },
-              ]}
-            />
-          )}
-        </>
+        <div ref={mountRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none' }} />
       )}
-      {/* New best banner */}
-      <AnimatePresence>
-        {isNewBest && (
-          <motion.div
-            key="new-best"
-            initial={{ opacity: 0, y: -20, scale: 0.8 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -20 }}
-            transition={{ duration: 0.4, delay: 0.5 }}
-            style={{
-              position: 'fixed', top: '10%', left: '50%', transform: 'translateX(-50%)',
-              zIndex: 90, pointerEvents: 'none',
-              background: 'linear-gradient(135deg, #fbbf24, #f59e0b)',
-              borderRadius: 20, padding: '8px 20px', fontSize: 20,
-              fontWeight: 900, color: '#000', whiteSpace: 'nowrap',
-              boxShadow: '0 4px 20px rgba(251,191,36,0.5)',
-            }}
-          >
-            <Trophy size={20} strokeWidth={2.5} style={{ display: 'inline-block', verticalAlign: 'middle', marginRight: 6 }} />
-            New Best!
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-
-
-      {/* ── End Screen ────────────────────────────────────────────────────── */}
+      {phase === 'playing' && <>
+        <GameHUD accentColor={accent} items={[{ label: 'TIME', value: timeLeft, danger: timeLeft <= 10 }, { label: 'SCORE', value: scoreDisplay }]} />
+        <div style={{ position: 'fixed', bottom: '8%', left: '50%', transform: 'translateX(-50%)', zIndex: 50, background: 'rgba(0,0,0,0.6)', borderRadius: 20, padding: '8px 20px', border: `1px solid ${accent}44`, color: accent, fontWeight: 700, fontSize: 14 }}>
+          {targetHint}
+        </div>
+      </>}
       {phase === 'done' && finalSig && (
-        <EndScreen
-          gameId={GAME_ID}
-          title={getPersonality(finalSig)}
-          emoji={GAME_EMOJI}
-          score={String(finalSig.score)}
-          personality={getPersonality(finalSig)}
-          insights={buildInsights(finalSig)}
-          accentColor={accent}
-          onPlayAgain={handlePlayAgain}
-          didWin={finalSig.targetsFound >= 10}
-        />
-      )}
-
-      {/* ── Webhook (fires once on mount) ─────────────────────────────────── */}
-      {phase === 'done' && finalSig && (
-        <WebhookEmitter
-          theme={theme}
-          gameId={GAME_ID}
-          sig={finalSig}
-          personality={getPersonality(finalSig)}
-          player={playerSessionRef.current}
-        />
-      )}
-
-      {phase === 'playing' && (
-        <>
-          <ScorePopEffect pops={pops} accentColor={CATEGORY_ACCENT} />
-          <StreakBadge streak={streak} accentColor={CATEGORY_ACCENT} />
-        </>
+        <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI} score={String(finalSig.score)} personality={getPersonality(finalSig)}
+          insights={[{ label: 'Found', value: `${finalSig.found}/${finalSig.total}`, color: '#4ade80' }, { label: 'False Alarms', value: String(finalSig.falseAlarms), color: finalSig.falseAlarms === 0 ? '#4ade80' : '#ef4444' }, { label: 'Best Streak', value: `×${finalSig.maxStreak}`, color: accent }, { label: 'Avg React', value: finalSig.avgReactionMs > 0 ? `${Math.round(finalSig.avgReactionMs)}ms` : '—', color: '#fbbf24' }]}
+          accentColor={accent} onPlayAgain={handlePlayAgain} didWin={finalSig.score >= 12} />
       )}
     </GameShell>
-    </>
   );
-}
-
-// ─── WEBHOOK EMITTER ─────────────────────────────────────────────────────────
-
-function WebhookEmitter({
-  theme, gameId, sig, personality, player,
-}: {
-  theme:       ReturnType<typeof useBrandTheme>;
-  gameId:      string;
-  sig:         Signals;
-  personality: string;
-  player:      PlayerSession | null;
-}) {
-  const fired = useRef(false);
-  useEffect(() => {
-    if (fired.current) return;
-    fired.current = true;
-
-    const total  = sig.targetsFound + sig.falseTaps;
-    const acc    = total > 0 ? sig.targetsFound / total : 1;
-    const avgMs  = sig.searchTimes.length > 0
-      ? Math.round(sig.searchTimes.reduce((a, b) => a + b, 0) / sig.searchTimes.length)
-      : null;
-
-    postWebhook(theme, gameId, {
-      personality,
-      score:           sig.score,
-      targetsFound:    sig.targetsFound,
-      falseTaps:       sig.falseTaps,
-      gridsCleared:    sig.gridsCleared,
-      missedTargets:   sig.missedTargets,
-      accuracy:        parseFloat(acc.toFixed(3)),
-      avgSearchTimeMs: avgMs,
-    }, player);
-  }, [theme, gameId, sig, personality, player]);
-  return null;
 }

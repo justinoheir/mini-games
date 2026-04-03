@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
+import * as THREE from 'three';
 import GameShell from '@/components/GameShell';
 import GameHUD from '@/components/GameHUD';
 import GameStartScreen from '@/components/GameStartScreen';
@@ -17,13 +18,11 @@ const GAME_EMOJI = '🚀';
 const GAME_TITLE = 'Orbit Launch';
 const GAME_TAGLINE = 'Nail the angle. Own the orbit.';
 
-interface Satellite { x: number; y: number; vx: number; vy: number; active: boolean; trail: Array<{ x: number; y: number }>; orbitComplete: boolean; }
-interface OrbitalZone { minR: number; maxR: number; color: string; pts: number; label: string; }
-
 interface Signals {
   totalLaunches: number; orbitsAchieved: number; perfectOrbits: number;
   maxStreak: number; streakCurrent: number; score: number; closestApproach: number;
 }
+type Phase = 'start' | 'countdown' | 'playing' | 'done';
 
 function getPersonality(sig: Signals): string {
   if (sig.perfectOrbits >= 3 && sig.maxStreak >= 3) return 'Orbital Maestro 🌌';
@@ -33,365 +32,340 @@ function getPersonality(sig: Signals): string {
   return 'Gravity Student 📚';
 }
 
-type Phase = 'start' | 'countdown' | 'playing' | 'done';
-
-interface GameState {
-  running: boolean; timeLeft: number; sig: Signals;
-  satellite: Satellite; planetX: number; planetY: number; planetR: number;
-  zones: OrbitalZone[]; launchX: number; launchY: number;
-  pulling: boolean; pullStartX: number; pullStartY: number;
-  curPullX: number; curPullY: number;
-  accentColor: string; floats: Array<{ x: number; y: number; text: string; alpha: number; vy: number; color: string }>;
-  scorePop: number; frame: number; stars: Array<{ x: number; y: number; r: number; twinkle: number }>;
-}
-
 export default function OrbitLaunch() {
   const theme = useBrandTheme();
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const mountRef = useRef<HTMLDivElement>(null);
+  const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
+  const sceneRef = useRef<THREE.Scene | null>(null);
+  const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const animRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const stateRef = useRef<GameState>({
+  const playerSessionRef = useRef<PlayerSession | null>(null);
+  const satelliteRef = useRef<THREE.Mesh | null>(null);
+  const trailRef = useRef<THREE.Line | null>(null);
+  const orbitRingsRef = useRef<THREE.Line[]>([]);
+  const launchLineRef = useRef<THREE.Line | null>(null);
+
+  const stateRef = useRef({
     running: false, timeLeft: DURATION,
-    sig: { totalLaunches: 0, orbitsAchieved: 0, perfectOrbits: 0, maxStreak: 0, streakCurrent: 0, score: 0, closestApproach: 9999 },
-    satellite: { x: 0, y: 0, vx: 0, vy: 0, active: false, trail: [], orbitComplete: false },
-    planetX: 0, planetY: 0, planetR: 40, zones: [],
-    launchX: 0, launchY: 0, pulling: false, pullStartX: 0, pullStartY: 0, curPullX: 0, curPullY: 0,
-    accentColor: ACCENT, floats: [], scorePop: 0, frame: 0, stars: [],
+    sig: { totalLaunches: 0, orbitsAchieved: 0, perfectOrbits: 0, maxStreak: 0, streakCurrent: 0, score: 0, closestApproach: 9999 } as Signals,
+    satX: 0, satY: 0, satVX: 0, satVY: 0, satActive: false,
+    trailPoints: [] as THREE.Vector3[],
+    orbitFrames: 0, orbitComplete: false,
+    pulling: false, pullStartX: 0, pullStartY: 0, curPullX: 0, curPullY: 0,
+    planetR: 1.2,
+    accentColor: ACCENT,
   });
 
   const [phase, setPhase] = useState<Phase>('start');
   const [timeLeft, setTimeLeft] = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
   const [finalSig, setFinalSig] = useState<Signals | null>(null);
-  const playerSessionRef = useRef<PlayerSession | null>(null);
 
   useEffect(() => { stateRef.current.accentColor = theme.colors.accent ?? ACCENT; }, [theme]);
 
   const endGame = useCallback(() => {
-    const s = stateRef.current;
-    s.running = false;
+    const s = stateRef.current; s.running = false;
     cancelAnimationFrame(animRef.current);
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
-    const pb = parseInt(localStorage.getItem(`pb_${GAME_ID}`) ?? '0');
-    if (s.sig.score > pb) localStorage.setItem(`pb_${GAME_ID}`, String(s.sig.score));
-    setFinalSig({ ...s.sig });
-    setPhase('done');
     hapticVictory();
+    try { const pb = parseInt(localStorage.getItem(`pb_${GAME_ID}`) ?? '0'); if (s.sig.score > pb) localStorage.setItem(`pb_${GAME_ID}`, String(s.sig.score)); } catch { /**/ }
+    setFinalSig({ ...s.sig }); setPhase('done');
   }, []);
 
   const startLoop = useCallback(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+    const mount = mountRef.current; if (!mount) return;
     const s = stateRef.current;
-    const W = canvas.width, H = canvas.height;
-
     s.running = true; s.timeLeft = DURATION;
     s.sig = { totalLaunches: 0, orbitsAchieved: 0, perfectOrbits: 0, maxStreak: 0, streakCurrent: 0, score: 0, closestApproach: 9999 };
-    s.planetX = W / 2; s.planetY = H / 2;
-    s.planetR = 36;
-    s.zones = [
-      { minR: 80, maxR: 110, color: '#fbbf24', pts: 5, label: 'PERFECT' },
-      { minR: 110, maxR: 150, color: '#10b981', pts: 3, label: 'GOOD' },
-      { minR: 150, maxR: 200, color: '#6366f1', pts: 1, label: 'OK' },
-    ];
-    s.launchX = W * 0.15; s.launchY = H * 0.85;
-    s.satellite = { x: s.launchX, y: s.launchY, vx: 0, vy: 0, active: false, trail: [], orbitComplete: false };
-    s.pulling = false; s.frame = 0; s.floats = []; s.scorePop = 0;
-    s.stars = Array.from({ length: 60 }, () => ({ x: Math.random() * W, y: Math.random() * H, r: Math.random() * 2, twinkle: Math.random() * Math.PI * 2 }));
+    s.satActive = false; s.pulling = false; s.trailPoints = []; s.orbitFrames = 0;
     setScoreDisplay(0); setTimeLeft(DURATION); setPhase('playing');
+
+    const W = window.innerWidth, H = window.innerHeight;
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x020212);
+    scene.fog = new THREE.Fog(0x020212, 25, 50);
+    sceneRef.current = scene;
+
+    const camera = new THREE.PerspectiveCamera(60, W / H, 0.1, 100);
+    camera.position.set(0, 0, 14);
+    cameraRef.current = camera;
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(W, H);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    mount.appendChild(renderer.domElement);
+    rendererRef.current = renderer;
+
+    // Lights
+    scene.add(new THREE.AmbientLight(0x111133, 2));
+    const sunLight = new THREE.PointLight(0x8888ff, 120, 40);
+    sunLight.position.set(0, 0, 10);
+    scene.add(sunLight);
+
+    // Stars
+    const starGeo = new THREE.BufferGeometry();
+    const sp = new Float32Array(900);
+    for (let i = 0; i < 900; i += 3) {
+      sp[i] = (Math.random() - 0.5) * 80;
+      sp[i + 1] = (Math.random() - 0.5) * 80;
+      sp[i + 2] = (Math.random() - 0.5) * 20 - 15;
+    }
+    starGeo.setAttribute('position', new THREE.BufferAttribute(sp, 3));
+    scene.add(new THREE.Points(starGeo, new THREE.PointsMaterial({ color: 0xffffff, size: 0.07 })));
+
+    // Planet
+    const planetGeo = new THREE.SphereGeometry(s.planetR, 32, 32);
+    const planetMat = new THREE.MeshStandardMaterial({ color: 0x1a1aff, emissive: 0x0000aa, roughness: 0.6, metalness: 0.3 });
+    const planet = new THREE.Mesh(planetGeo, planetMat);
+    scene.add(planet);
+    // Atmosphere glow
+    const atmGeo = new THREE.SphereGeometry(s.planetR + 0.3, 32, 32);
+    const atmMat = new THREE.MeshStandardMaterial({ color: 0x3333ff, transparent: true, opacity: 0.15, side: THREE.BackSide });
+    scene.add(new THREE.Mesh(atmGeo, atmMat));
+
+    // Orbital zone rings
+    const zones = [
+      { minR: 2.5, maxR: 3.5, color: 0x4ade80, pts: 3, label: 'Perfect' },
+      { minR: 3.5, maxR: 5.0, color: 0xfbbf24, pts: 2, label: 'Good' },
+      { minR: 5.0, maxR: 7.0, color: 0xf97316, pts: 1, label: 'Far' },
+    ];
+    orbitRingsRef.current = [];
+    zones.forEach(z => {
+      [z.minR, z.maxR].forEach(r => {
+        const pts: THREE.Vector3[] = [];
+        for (let i = 0; i <= 64; i++) {
+          const a = (i / 64) * Math.PI * 2;
+          pts.push(new THREE.Vector3(Math.cos(a) * r, Math.sin(a) * r, 0));
+        }
+        const line = new THREE.Line(
+          new THREE.BufferGeometry().setFromPoints(pts),
+          new THREE.LineBasicMaterial({ color: z.color, transparent: true, opacity: 0.25 }),
+        );
+        scene.add(line);
+        orbitRingsRef.current.push(line);
+      });
+    });
+
+    // Launch pad marker
+    const padGeo = new THREE.ConeGeometry(0.15, 0.4, 6);
+    const padMat = new THREE.MeshStandardMaterial({ color: 0xfbbf24, emissive: 0x7a5c00 });
+    const pad = new THREE.Mesh(padGeo, padMat);
+    pad.position.set(-6, -3, 0);
+    pad.rotation.z = Math.PI / 4;
+    scene.add(pad);
+
+    // Satellite mesh
+    const satGeo = new THREE.OctahedronGeometry(0.22);
+    const satMat = new THREE.MeshStandardMaterial({ color: 0xfbbf24, emissive: 0x7a5c00, roughness: 0.2, metalness: 0.8 });
+    const sat = new THREE.Mesh(satGeo, satMat);
+    sat.visible = false;
+    scene.add(sat);
+    satelliteRef.current = sat;
+
+    // Trail line
+    const trailGeo = new THREE.BufferGeometry();
+    const trailLine = new THREE.Line(trailGeo, new THREE.LineBasicMaterial({ color: 0x6366f1, transparent: true, opacity: 0.6 }));
+    scene.add(trailLine);
+    trailRef.current = trailLine;
+
+    // Launch direction line
+    const lGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0,0,0), new THREE.Vector3(0,0,0)]);
+    const launchLine = new THREE.Line(lGeo, new THREE.LineBasicMaterial({ color: 0xfbbf24, transparent: true, opacity: 0.5 }));
+    scene.add(launchLine);
+    launchLineRef.current = launchLine;
+
+    // Input
+    const LAUNCH_X = -6, LAUNCH_Y = -3;
+    const onDown = (e: PointerEvent) => {
+      if (!s.running || s.satActive) return;
+      s.pulling = true;
+      s.pullStartX = e.clientX; s.pullStartY = e.clientY;
+      s.curPullX = e.clientX; s.curPullY = e.clientY;
+    };
+    const onMove = (e: PointerEvent) => {
+      if (!s.pulling) return;
+      s.curPullX = e.clientX; s.curPullY = e.clientY;
+    };
+    const onUp = () => {
+      if (!s.running || !s.pulling || s.satActive) return;
+      s.pulling = false;
+      // Convert pull to launch velocity
+      const dx = s.pullStartX - s.curPullX;
+      const dy = s.pullStartY - s.curPullY;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist < 10) return;
+      const speed = Math.min(dist / 60, 0.18);
+      const angle = Math.atan2(-dy, dx);
+      s.satX = LAUNCH_X; s.satY = LAUNCH_Y;
+      s.satVX = Math.cos(angle) * speed;
+      s.satVY = Math.sin(angle) * speed;
+      s.satActive = true; s.orbitFrames = 0; s.orbitComplete = false;
+      s.trailPoints = [];
+      s.sig.totalLaunches++;
+      if (sat) sat.visible = true;
+      sfx.click(); hapticScore();
+    };
+    renderer.domElement.addEventListener('pointerdown', onDown);
+    renderer.domElement.addEventListener('pointermove', onMove);
+    renderer.domElement.addEventListener('pointerup', onUp);
 
     timerRef.current = setInterval(() => {
       s.timeLeft--; setTimeLeft(s.timeLeft);
-      if (s.timeLeft <= 0) { sfx.fail(); endGame(); }
+      if (s.timeLeft === 10) sfx.warning();
+      if (s.timeLeft <= 0) endGame();
     }, 1000);
 
-    const G = 2500; // gravitational constant
-    let orbitAngleAccum = 0;
-    let prevAngle = 0;
-    let orbitCheckActive = false;
-
+    const GRAVITY = 0.002;
+    let t = 0;
     const loop = () => {
       if (!s.running) return;
-      ctx.clearRect(0, 0, W, H);
-      s.frame++;
-
-      // Space background
-      ctx.fillStyle = '#030310';
-      ctx.fillRect(0, 0, W, H);
-
-      // Stars with twinkling
-      s.stars.forEach(star => {
-        star.twinkle += 0.04;
-        const alpha = 0.3 + Math.sin(star.twinkle) * 0.3;
-        ctx.fillStyle = `rgba(255,255,255,${alpha})`;
-        ctx.beginPath(); ctx.arc(star.x, star.y, star.r, 0, Math.PI * 2); ctx.fill();
-      });
-
-      // Draw orbital zones
-      s.zones.forEach(zone => {
-        ctx.save();
-        ctx.strokeStyle = zone.color + '40';
-        ctx.lineWidth = zone.maxR - zone.minR;
-        ctx.beginPath();
-        ctx.arc(s.planetX, s.planetY, (zone.minR + zone.maxR) / 2, 0, Math.PI * 2);
-        ctx.stroke();
-        ctx.restore();
-      });
-
-      // Planet
-      const planetGrad = ctx.createRadialGradient(s.planetX - 12, s.planetY - 12, 4, s.planetX, s.planetY, s.planetR);
-      planetGrad.addColorStop(0, '#4a90d9');
-      planetGrad.addColorStop(0.5, '#2563eb');
-      planetGrad.addColorStop(1, '#1e3a5f');
-      ctx.save();
-      ctx.shadowBlur = 30; ctx.shadowColor = '#3b82f6';
-      ctx.fillStyle = planetGrad;
-      ctx.beginPath(); ctx.arc(s.planetX, s.planetY, s.planetR, 0, Math.PI * 2); ctx.fill();
-      ctx.restore();
-
-      // Atmosphere ring
-      ctx.save();
-      ctx.strokeStyle = '#93c5fd44';
-      ctx.lineWidth = 8;
-      ctx.beginPath(); ctx.arc(s.planetX, s.planetY, s.planetR + 10, 0, Math.PI * 2); ctx.stroke();
-      ctx.restore();
-
-      // Satellite physics
-      if (s.satellite.active) {
-        const dx = s.planetX - s.satellite.x;
-        const dy = s.planetY - s.satellite.y;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-
-        if (s.sig.closestApproach > dist) s.sig.closestApproach = dist;
-
-        // Gravity
-        const force = G / (dist * dist);
-        s.satellite.vx += (dx / dist) * force * 0.016;
-        s.satellite.vy += (dy / dist) * force * 0.016;
-
-        s.satellite.x += s.satellite.vx;
-        s.satellite.y += s.satellite.vy;
-
-        // Track orbit angle
-        const angle = Math.atan2(s.satellite.y - s.planetY, s.satellite.x - s.planetX);
-        const dAngle = angle - prevAngle;
-        const wrappedDAngle = ((dAngle + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
-        orbitAngleAccum += wrappedDAngle;
-        prevAngle = angle;
-
-        if (orbitCheckActive && Math.abs(orbitAngleAccum) >= Math.PI * 2) {
-          // Orbit complete!
-          const zone = s.zones.find(z => dist >= z.minR && dist <= z.maxR);
-          const pts = zone?.pts ?? 0;
-          if (pts > 0) {
-            s.sig.orbitsAchieved++;
-            if (zone?.label === 'PERFECT') s.sig.perfectOrbits++;
-            s.sig.streakCurrent++;
-            if (s.sig.streakCurrent > s.sig.maxStreak) s.sig.maxStreak = s.sig.streakCurrent;
-            const mult = s.sig.streakCurrent >= 3 ? 2 : 1;
-            s.sig.score += pts * mult;
-            s.scorePop = Date.now() + 400;
-            setScoreDisplay(s.sig.score);
-            sfx.success(); hapticScore();
-            s.floats.push({ x: W / 2, y: H / 4, text: `+${pts * mult} ${zone?.label || ''} ORBIT! 🌌`, alpha: 1, vy: -1.5, color: zone?.color || ACCENT });
-          }
-          s.satellite.active = false;
-          s.satellite = { x: s.launchX, y: s.launchY, vx: 0, vy: 0, active: false, trail: [], orbitComplete: false };
-          orbitAngleAccum = 0;
-        }
-
-        // Crash
-        if (dist < s.planetR + 8) {
-          s.satellite.active = false;
-          s.sig.streakCurrent = 0;
-          sfx.collision(); hapticFail();
-          s.floats.push({ x: W / 2, y: H * 0.4, text: 'CRASH! 💥', alpha: 1, vy: -2, color: '#ef4444' });
-          s.satellite = { x: s.launchX, y: s.launchY, vx: 0, vy: 0, active: false, trail: [], orbitComplete: false };
-          orbitAngleAccum = 0;
-        }
-
-        // Escaped
-        if (s.satellite.x < -100 || s.satellite.x > W + 100 || s.satellite.y < -100 || s.satellite.y > H + 100) {
-          s.satellite.active = false;
-          s.sig.streakCurrent = 0;
-          sfx.collision(); hapticFail();
-          s.floats.push({ x: W / 2, y: H * 0.4, text: 'Escaped orbit!', alpha: 1, vy: -2, color: '#f97316' });
-          s.satellite = { x: s.launchX, y: s.launchY, vx: 0, vy: 0, active: false, trail: [], orbitComplete: false };
-          orbitAngleAccum = 0;
-        }
-
-        // Trail
-        s.satellite.trail.push({ x: s.satellite.x, y: s.satellite.y });
-        if (s.satellite.trail.length > 80) s.satellite.trail.shift();
-
-        // Draw trail
-        if (s.satellite.trail.length > 2) {
-          ctx.save();
-          for (let i = 1; i < s.satellite.trail.length; i++) {
-            const alpha = i / s.satellite.trail.length * 0.7;
-            ctx.strokeStyle = `rgba(99,102,241,${alpha})`;
-            ctx.lineWidth = 2;
-            ctx.beginPath();
-            ctx.moveTo(s.satellite.trail[i - 1].x, s.satellite.trail[i - 1].y);
-            ctx.lineTo(s.satellite.trail[i].x, s.satellite.trail[i].y);
-            ctx.stroke();
-          }
-          ctx.restore();
-        }
-
-        // Draw satellite
-        ctx.save();
-        ctx.fillStyle = '#ffffff';
-        ctx.shadowBlur = 12; ctx.shadowColor = '#6366f1';
-        ctx.translate(s.satellite.x, s.satellite.y);
-        ctx.rotate(s.frame * 0.05);
-        ctx.fillRect(-8, -3, 16, 6);
-        ctx.fillRect(-3, -8, 6, 16);
-        ctx.restore();
-      } else {
-        orbitCheckActive = false;
-        // Draw satellite at launch position
-        ctx.save();
-        ctx.fillStyle = '#aaaaff';
-        ctx.shadowBlur = 8; ctx.shadowColor = '#6366f1';
-        ctx.translate(s.launchX, s.launchY);
-        ctx.fillRect(-8, -3, 16, 6);
-        ctx.fillRect(-3, -8, 6, 16);
-        ctx.restore();
-
-        // Draw pull indicator
-        if (s.pulling) {
-          const dx = s.launchX - s.curPullX;
-          const dy = s.launchY - s.curPullY;
-          const power = Math.min(Math.sqrt(dx * dx + dy * dy) / 80, 1);
-          ctx.save();
-          ctx.strokeStyle = `rgba(${Math.round(power * 255)},${Math.round((1 - power) * 200)},255,0.6)`;
-          ctx.lineWidth = 2;
-          ctx.setLineDash([5, 4]);
-          const vx = (dx / 80) * 6, vy = (dy / 80) * 6;
-          ctx.beginPath(); ctx.moveTo(s.launchX, s.launchY);
-          let tx = s.launchX, ty = s.launchY, tvx = vx, tvy = vy;
-          for (let i = 0; i < 20; i++) {
-            const ddx = s.planetX - tx, ddy = s.planetY - ty;
-            const d = Math.sqrt(ddx * ddx + ddy * ddy);
-            tvx += (ddx / d) * (G / (d * d)) * 0.016;
-            tvy += (ddy / d) * (G / (d * d)) * 0.016;
-            tx += tvx; ty += tvy;
-            ctx.lineTo(tx, ty);
-          }
-          ctx.stroke(); ctx.setLineDash([]); ctx.restore();
-        }
-      }
-
-      // Score pop
-      if (s.scorePop > Date.now()) {
-        const t = (s.scorePop - Date.now()) / 400;
-        ctx.save(); ctx.globalAlpha = t;
-        ctx.font = `bold ${Math.round(38 * (1 + (1 - t) * 0.3))}px sans-serif`;
-        ctx.fillStyle = ACCENT; ctx.textAlign = 'center';
-        ctx.fillText(`${s.sig.score}`, W / 2, 80); ctx.restore();
-      }
-
-      s.floats = s.floats.filter(f => f.alpha > 0.02);
-      s.floats.forEach(f => {
-        ctx.save(); ctx.globalAlpha = f.alpha;
-        ctx.fillStyle = f.color; ctx.font = 'bold 22px sans-serif'; ctx.textAlign = 'center';
-        ctx.fillText(f.text, f.x, f.y); ctx.restore();
-        f.y += f.vy; f.alpha *= 0.96;
-      });
-
       animRef.current = requestAnimationFrame(loop);
+      t += 0.01;
+      planet.rotation.y += 0.003;
+
+      if (s.satActive) {
+        // Gravity toward planet
+        const dx = -s.satX, dy = -s.satY;
+        const dist2 = dx * dx + dy * dy;
+        const dist = Math.sqrt(dist2);
+        const force = GRAVITY * s.planetR * s.planetR / dist2;
+        s.satVX += (dx / dist) * force;
+        s.satVY += (dy / dist) * force;
+        s.satX += s.satVX;
+        s.satY += s.satVY;
+
+        if (dist < s.sig.closestApproach) s.sig.closestApproach = dist;
+
+        // Check collision with planet
+        if (dist < s.planetR + 0.1) {
+          s.satActive = false; s.sig.streakCurrent = 0;
+          sat.visible = false; sfx.collision(); hapticFail();
+          s.trailPoints = [];
+        } else if (dist > 12) {
+          s.satActive = false; s.sig.streakCurrent = 0;
+          sat.visible = false;
+          s.trailPoints = [];
+        } else {
+          s.orbitFrames++;
+          s.trailPoints.push(new THREE.Vector3(s.satX, s.satY, 0));
+          if (s.trailPoints.length > 200) s.trailPoints.shift();
+          sat.position.set(s.satX, s.satY, 0);
+          sat.rotation.y += 0.05;
+
+          // Check orbit completion (360 degrees covered with consistent radius)
+          if (s.orbitFrames > 120 && !s.orbitComplete) {
+            // simplified: check if dist is in a zone
+            const perfect = dist >= 2.5 && dist <= 3.5;
+            const good = dist >= 3.5 && dist <= 5.0;
+            const far = dist >= 5.0 && dist <= 7.0;
+            if (perfect || good || far) {
+              const pts = perfect ? 3 : good ? 2 : 1;
+              s.orbitComplete = true;
+              s.sig.orbitsAchieved++;
+              if (perfect) s.sig.perfectOrbits++;
+              s.sig.streakCurrent++;
+              if (s.sig.streakCurrent > s.sig.maxStreak) s.sig.maxStreak = s.sig.streakCurrent;
+              s.sig.score += pts * 10 * Math.max(1, s.sig.streakCurrent);
+              setScoreDisplay(s.sig.score);
+              sfx.collect(); hapticVictory();
+              setTimeout(() => {
+                if (s.running) { s.satActive = false; sat.visible = false; s.trailPoints = []; s.orbitFrames = 0; s.orbitComplete = false; }
+              }, 1200);
+            }
+          }
+          // Update trail geometry
+          if (trailRef.current && s.trailPoints.length > 1) {
+            trailRef.current.geometry.setFromPoints(s.trailPoints);
+          }
+        }
+      }
+
+      // Pull line
+      if (s.pulling && launchLineRef.current) {
+        const ndcStartX = (LAUNCH_X / 7) * (W / 2);
+        const ndcStartY = (LAUNCH_Y / 7) * (H / 2);
+        const dx = (s.curPullX - s.pullStartX) * 0.02;
+        const dy = (s.curPullY - s.pullStartY) * -0.02;
+        launchLineRef.current.geometry.setFromPoints([
+          new THREE.Vector3(LAUNCH_X, LAUNCH_Y, 0),
+          new THREE.Vector3(LAUNCH_X - dx * 3, LAUNCH_Y + dy * 3, 0),
+        ]);
+        launchLineRef.current.visible = true;
+      } else if (launchLineRef.current) {
+        launchLineRef.current.visible = false;
+      }
+
+      renderer.render(scene, camera);
     };
     animRef.current = requestAnimationFrame(loop);
+
+    return () => {
+      renderer.domElement.removeEventListener('pointerdown', onDown);
+      renderer.domElement.removeEventListener('pointermove', onMove);
+      renderer.domElement.removeEventListener('pointerup', onUp);
+    };
   }, [endGame]);
 
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const resize = () => { canvas.width = canvas.offsetWidth; canvas.height = canvas.offsetHeight; };
-    resize();
-    window.addEventListener('resize', resize);
-
-    const onPointerDown = (e: PointerEvent) => {
-      if (phase !== 'playing') return;
-      const s = stateRef.current;
-      if (s.satellite.active) return;
-      const rect = canvas.getBoundingClientRect();
-      const px = (e.clientX - rect.left) * (canvas.width / rect.width);
-      const py = (e.clientY - rect.top) * (canvas.height / rect.height);
-      if (Math.hypot(px - s.launchX, py - s.launchY) < 50) {
-        s.pulling = true; s.pullStartX = px; s.pullStartY = py;
-        s.curPullX = px; s.curPullY = py;
-      }
+    const onResize = () => {
+      if (!cameraRef.current || !rendererRef.current) return;
+      const W = window.innerWidth, H = window.innerHeight;
+      cameraRef.current.aspect = W / H;
+      cameraRef.current.updateProjectionMatrix();
+      rendererRef.current.setSize(W, H);
     };
-    const onPointerMove = (e: PointerEvent) => {
-      if (phase !== 'playing') return;
-      const s = stateRef.current;
-      if (!s.pulling) return;
-      const rect = canvas.getBoundingClientRect();
-      s.curPullX = (e.clientX - rect.left) * (canvas.width / rect.width);
-      s.curPullY = (e.clientY - rect.top) * (canvas.height / rect.height);
-    };
-    const onPointerUp = () => {
-      if (phase !== 'playing') return;
-      const s = stateRef.current;
-      if (!s.pulling) return;
-      s.pulling = false;
-      const dx = s.launchX - s.curPullX;
-      const dy = s.launchY - s.curPullY;
-      const power = Math.min(Math.sqrt(dx * dx + dy * dy) / 80, 1);
-      if (power > 0.1) {
-        s.satellite.x = s.launchX; s.satellite.y = s.launchY;
-        s.satellite.vx = (dx / 80) * 6;
-        s.satellite.vy = (dy / 80) * 6;
-        s.satellite.active = true; s.satellite.trail = [];
-        s.sig.totalLaunches++;
-        sfx.click(); hapticScore();
-      }
-    };
-
-    canvas.addEventListener('pointerdown', onPointerDown);
-    canvas.addEventListener('pointermove', onPointerMove);
-    canvas.addEventListener('pointerup', onPointerUp);
+    window.addEventListener('resize', onResize);
     return () => {
-      window.removeEventListener('resize', resize);
-      canvas.removeEventListener('pointerdown', onPointerDown);
-      canvas.removeEventListener('pointermove', onPointerMove);
-      canvas.removeEventListener('pointerup', onPointerUp);
+      window.removeEventListener('resize', onResize);
+      cancelAnimationFrame(animRef.current);
+      if (timerRef.current) clearInterval(timerRef.current);
+      if (rendererRef.current && mountRef.current) {
+        try { mountRef.current.removeChild(rendererRef.current.domElement); } catch { /**/ }
+        rendererRef.current.dispose();
+      }
     };
-  }, [phase]);
-
-  useEffect(() => () => {
-    cancelAnimationFrame(animRef.current);
-    if (timerRef.current) clearInterval(timerRef.current);
   }, []);
 
-  const handleStart = useCallback(async (name: string, avatar: string) => {
+  const handleStart = useCallback((name: string, avatar: string) => {
     playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar);
-    await initAudio(); setPhase('countdown');
+    initAudio(); setPhase('countdown');
   }, []);
+  const handleCountdownDone = useCallback(() => { startLoop(); }, [startLoop]);
   const handlePlayAgain = useCallback(() => {
-    setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null);
+    stateRef.current.running = false;
+    cancelAnimationFrame(animRef.current);
+    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+    if (rendererRef.current && mountRef.current) {
+      try { mountRef.current.removeChild(rendererRef.current.domElement); } catch { /**/ }
+      rendererRef.current.dispose(); rendererRef.current = null;
+    }
+    setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null);
+    setPhase('countdown');
   }, []);
 
+  const accent = theme.colors.accent ?? ACCENT;
   return (
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accent}
+      background="radial-gradient(ellipse at 50% 50%, rgba(99,102,241,0.1) 0%, transparent 70%), linear-gradient(180deg, #020212 0%, #010108 100%)">
       {phase === 'start' && (
-        <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description="Drag the satellite and release to launch it into orbit around the planet!"
-          ctaLabel="Launch! 🚀" accentColor={theme.colors.accent ?? ACCENT} onStart={handleStart} />
+        <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description={GAME_TAGLINE}
+          ctaLabel="Launch!" accentColor={accent} onStart={handleStart} />
       )}
-      {phase === 'countdown' && <Countdown onComplete={startLoop} accentColor={theme.colors.accent ?? ACCENT} />}
+      {phase === 'countdown' && <Countdown onComplete={handleCountdownDone} accentColor={accent} />}
       {(phase === 'playing' || phase === 'countdown') && (
         <>
-          <canvas ref={canvasRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none' }}
-            role="img" aria-label="Orbital launch game canvas" />
+          <div ref={mountRef} style={{ position: 'absolute', inset: 0, touchAction: 'none' }} />
           {phase === 'playing' && (
-            <GameHUD accentColor={theme.colors.accent ?? ACCENT} items={[
-              { label: 'TIME', value: timeLeft, danger: timeLeft <= 10 },
-              { label: 'SCORE', value: scoreDisplay },
-            ]} />
+            <>
+              <GameHUD accentColor={accent} items={[
+                { label: 'TIME', value: timeLeft, danger: timeLeft <= 10, testId: 'timer' },
+                { label: 'SCORE', value: scoreDisplay, testId: 'score' },
+              ]} />
+              <div style={{ position: 'absolute', bottom: '8%', left: '50%', transform: 'translateX(-50%)', color: 'rgba(255,255,255,0.5)', fontSize: 13, pointerEvents: 'none', textAlign: 'center' }}>
+                Pull & release to launch · Orbit the planet to score
+              </div>
+            </>
           )}
         </>
       )}
@@ -399,12 +373,12 @@ export default function OrbitLaunch() {
         <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI}
           score={String(finalSig.score)} personality={getPersonality(finalSig)}
           insights={[
-            { label: 'Orbits', value: String(finalSig.orbitsAchieved), color: ACCENT },
-            { label: 'Perfect Orbits', value: String(finalSig.perfectOrbits), color: '#fbbf24' },
-            { label: 'Best Streak', value: `×${finalSig.maxStreak}`, color: '#4ade80' },
-            { label: 'Launches', value: String(finalSig.totalLaunches), color: '#06b6d4' },
+            { label: 'Orbits', value: String(finalSig.orbitsAchieved), color: '#4ade80' },
+            { label: 'Perfect', value: String(finalSig.perfectOrbits), color: '#fbbf24' },
+            { label: 'Launches', value: String(finalSig.totalLaunches), color: accent },
+            { label: 'Best Streak', value: `×${finalSig.maxStreak}`, color: '#c084fc' },
           ]}
-          accentColor={theme.colors.accent ?? ACCENT} onPlayAgain={handlePlayAgain} didWin={finalSig.orbitsAchieved >= 3} />
+          accentColor={accent} onPlayAgain={handlePlayAgain} didWin={finalSig.orbitsAchieved >= 3} />
       )}
     </GameShell>
   );

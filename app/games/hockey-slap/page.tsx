@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
+import * as THREE from 'three';
 import GameShell from '@/components/GameShell';
 import GameHUD from '@/components/GameHUD';
 import GameStartScreen from '@/components/GameStartScreen';
@@ -9,7 +10,8 @@ import { initAudio, sfx } from '@/lib/audio';
 import { hapticScore, hapticFail, hapticVictory, hapticImpact } from '@/lib/haptics';
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
-const GAME_ID = 'hockey-slap'; const ACCENT = '#3b82f6'; const DURATION = 45; const GAME_EMOJI = '🏒'; const GAME_TITLE = 'Hockey Slap'; const GAME_TAGLINE = 'Pick your angle. Fire away.';
+
+const GAME_ID = 'hockey-slap'; const ACCENT = '#3b82f6'; const DURATION = 45; const GAME_EMOJI = '🏒'; const GAME_TITLE = 'Hockey Slap'; const GAME_TAGLINE = 'Swipe to shoot the puck into the net!';
 interface Signals { shots: number; goals: number; saved: number; topCorner: number; maxStreak: number; streakCurrent: number; score: number; }
 function getPersonality(sig: Signals): string {
   const g = sig.shots > 0 ? sig.goals / sig.shots : 0;
@@ -19,111 +21,297 @@ function getPersonality(sig: Signals): string {
   return 'Slap Happy 🎪';
 }
 type Phase = 'start' | 'countdown' | 'playing' | 'done';
-interface Goalie { x: number; direction: number; speed: number; w: number; h: number; }
-interface Puck { x: number; y: number; vx: number; vy: number; active: boolean; }
-interface GameState {
+
+interface GS {
   running: boolean; timeLeft: number; sig: Signals;
-  goalie: Goalie; puck: Puck; swipeStartX: number; swipeStartY: number; swiping: boolean;
-  netX: number; netY: number; netW: number; netH: number;
-  accentColor: string; floats: Array<{x:number;y:number;text:string;alpha:number;vy:number;color:string}>; scorePop: number; frame: number; goalFlash: number;
+  puckX: number; puckY: number; puckVX: number; puckVY: number; puckActive: boolean;
+  goalieX: number; goalieDir: number; goalieSpeed: number;
+  swipeStartX: number; swipeStartY: number; swiping: boolean;
+  frame: number;
 }
 
 export default function HockeySlap() {
   const theme = useBrandTheme();
-  const canvasRef = useRef<HTMLCanvasElement>(null); const animRef = useRef(0); const timerRef = useRef<ReturnType<typeof setInterval>|null>(null);
-  const stateRef = useRef<GameState>({ running:false,timeLeft:DURATION,sig:{shots:0,goals:0,saved:0,topCorner:0,maxStreak:0,streakCurrent:0,score:0},goalie:{x:0,direction:1,speed:3,w:60,h:80},puck:{x:0,y:0,vx:0,vy:0,active:false},swipeStartX:0,swipeStartY:0,swiping:false,netX:0,netY:0,netW:0,netH:0,accentColor:ACCENT,floats:[],scorePop:0,frame:0,goalFlash:0 });
-  const [phase,setPhase]=useState<Phase>('start'); const [timeLeft,setTimeLeft]=useState(DURATION); const [scoreDisplay,setScoreDisplay]=useState(0); const [finalSig,setFinalSig]=useState<Signals|null>(null);
-  const playerSessionRef=useRef<PlayerSession|null>(null);
-  useEffect(()=>{stateRef.current.accentColor=theme.colors.accent??ACCENT;},[theme]);
-  const endGame=useCallback(()=>{const s=stateRef.current;s.running=false;cancelAnimationFrame(animRef.current);if(timerRef.current){clearInterval(timerRef.current);timerRef.current=null;}const pb=parseInt(localStorage.getItem(`pb_${GAME_ID}`)??"0");if(s.sig.score>pb)localStorage.setItem(`pb_${GAME_ID}`,String(s.sig.score));setFinalSig({...s.sig});setPhase('done');hapticVictory();},[]);
+  const mountRef = useRef<HTMLDivElement>(null);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const stateRef = useRef<GS>({
+    running: false, timeLeft: DURATION,
+    sig: { shots: 0, goals: 0, saved: 0, topCorner: 0, maxStreak: 0, streakCurrent: 0, score: 0 },
+    puckX: 0, puckY: -3.5, puckVX: 0, puckVY: 0, puckActive: false,
+    goalieX: 0, goalieDir: 1, goalieSpeed: 0.06, swiping: false,
+    swipeStartX: 0, swipeStartY: 0, frame: 0,
+  });
+  const threeRef = useRef<{
+    renderer: THREE.WebGLRenderer; scene: THREE.Scene; camera: THREE.PerspectiveCamera;
+    puck: THREE.Mesh; goalie: THREE.Mesh; goalieLight: THREE.PointLight;
+    goalMesh: THREE.Mesh; net: THREE.Mesh;
+    floatMeshes: Array<{ mesh: THREE.Mesh; vy: number; alpha: number; born: number }>;
+    animId: number;
+  } | null>(null);
 
-  const startLoop=useCallback(()=>{
-    const canvas=canvasRef.current;if(!canvas)return;const ctx=canvas.getContext('2d');if(!ctx)return;
-    const s=stateRef.current; const W=canvas.width,H=canvas.height;
-    s.running=true;s.timeLeft=DURATION;s.sig={shots:0,goals:0,saved:0,topCorner:0,maxStreak:0,streakCurrent:0,score:0};
-    s.netX=W*0.2;s.netY=H*0.08;s.netW=W*0.6;s.netH=H*0.18;
-    s.goalie={x:W/2,direction:1,speed:3+Math.random()*2,w:70,h:90};
-    s.puck={x:W/2,y:H*0.82,vx:0,vy:0,active:false};
-    s.frame=0;s.floats=[];s.scorePop=0;s.goalFlash=0;
-    setScoreDisplay(0);setTimeLeft(DURATION);setPhase('playing');
-    timerRef.current=setInterval(()=>{s.timeLeft--;setTimeLeft(s.timeLeft);if(s.timeLeft<=0){sfx.fail();endGame();}},1000);
-    const loop=()=>{
-      if(!s.running)return;ctx.clearRect(0,0,W,H);s.frame++;
-      // Ice rink
-      const bg=ctx.createRadialGradient(W/2,H/2,0,W/2,H/2,H);bg.addColorStop(0,'#e8f4ff');bg.addColorStop(1,'#c8e0f0');
-      ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);
-      // Ice lines
-      ctx.strokeStyle='rgba(59,130,246,0.15)';ctx.lineWidth=2;
-      ctx.beginPath();ctx.moveTo(0,H*0.5);ctx.lineTo(W,H*0.5);ctx.stroke();
-      ctx.beginPath();ctx.arc(W/2,H*0.5,80,0,Math.PI*2);ctx.stroke();
-      ctx.beginPath();ctx.ellipse(W/2,H*0.75,W*0.2,H*0.08,0,0,Math.PI*2);ctx.stroke();
-      // Net
-      ctx.fillStyle='rgba(200,230,255,0.6)';ctx.fillRect(s.netX,s.netY,s.netW,s.netH);
-      ctx.strokeStyle='#1d4ed8';ctx.lineWidth=3;ctx.strokeRect(s.netX,s.netY,s.netW,s.netH);
-      // Net lines
-      ctx.strokeStyle='rgba(100,150,200,0.4)';ctx.lineWidth=1;
-      for(let gx=s.netX;gx<s.netX+s.netW;gx+=20){ctx.beginPath();ctx.moveTo(gx,s.netY);ctx.lineTo(gx,s.netY+s.netH);ctx.stroke();}
-      for(let gy=s.netY;gy<s.netY+s.netH;gy+=15){ctx.beginPath();ctx.moveTo(s.netX,gy);ctx.lineTo(s.netX+s.netW,gy);ctx.stroke();}
+  const [phase, setPhase] = useState<Phase>('start');
+  const [timeLeft, setTimeLeft] = useState(DURATION);
+  const [scoreDisplay, setScoreDisplay] = useState(0);
+  const [finalSig, setFinalSig] = useState<Signals | null>(null);
+  const playerSessionRef = useRef<PlayerSession | null>(null);
+
+  const endGame = useCallback(() => {
+    const s = stateRef.current; s.running = false;
+    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+    const t = threeRef.current;
+    if (t) { cancelAnimationFrame(t.animId); t.renderer.dispose(); }
+    const pb = parseInt(localStorage.getItem(`pb_${GAME_ID}`) ?? '0');
+    if (s.sig.score > pb) localStorage.setItem(`pb_${GAME_ID}`, String(s.sig.score));
+    setFinalSig({ ...s.sig }); setPhase('done'); hapticVictory();
+  }, []);
+
+  const startLoop = useCallback(() => {
+    const mount = mountRef.current; if (!mount) return;
+    const s = stateRef.current;
+    s.running = true; s.timeLeft = DURATION;
+    s.sig = { shots: 0, goals: 0, saved: 0, topCorner: 0, maxStreak: 0, streakCurrent: 0, score: 0 };
+    s.puckX = 0; s.puckY = -3.5; s.puckActive = false; s.frame = 0;
+    s.goalieX = 0; s.goalieDir = 1; s.goalieSpeed = 0.06;
+    setScoreDisplay(0); setTimeLeft(DURATION); setPhase('playing');
+
+    const W = mount.clientWidth, H = mount.clientHeight;
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(W, H); renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setClearColor(0xd0e8f5);
+    renderer.shadowMap.enabled = true;
+    mount.innerHTML = ''; mount.appendChild(renderer.domElement);
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0a1a2e);
+    const camera = new THREE.PerspectiveCamera(65, W / H, 0.1, 100);
+    camera.position.set(0, 10, 8);
+    camera.lookAt(0, 0, -1);
+
+    scene.add(new THREE.AmbientLight(0xaaccff, 0.6));
+    const iceLight = new THREE.DirectionalLight(0xffffff, 1.2);
+    iceLight.position.set(0, 15, 5);
+    scene.add(iceLight);
+    const goalieLight = new THREE.PointLight(0x3b82f6, 2, 8);
+    scene.add(goalieLight);
+
+    // Ice rink
+    const iceGeo = new THREE.BoxGeometry(12, 0.15, 14);
+    const iceMat = new THREE.MeshStandardMaterial({ color: 0xe8f4ff, roughness: 0.1, metalness: 0.4 });
+    const ice = new THREE.Mesh(iceGeo, iceMat);
+    ice.position.y = -0.075;
+    scene.add(ice);
+
+    // Rink lines (painted on ice)
+    const lineMat = new THREE.MeshBasicMaterial({ color: 0x3b82f6 });
+    const centerLine = new THREE.Mesh(new THREE.BoxGeometry(12, 0.01, 0.1), lineMat);
+    scene.add(centerLine);
+    const redLine = new THREE.Mesh(new THREE.BoxGeometry(12, 0.01, 0.15), new THREE.MeshBasicMaterial({ color: 0xef4444 }));
+    redLine.position.z = 2;
+    scene.add(redLine);
+
+    // Center circle
+    const circleGeo = new THREE.TorusGeometry(1.5, 0.06, 8, 48);
+    const circleMesh = new THREE.Mesh(circleGeo, lineMat.clone());
+    circleMesh.rotation.x = -Math.PI / 2;
+    circleMesh.position.y = 0.01;
+    scene.add(circleMesh);
+
+    // Net/goal structure
+    const netGeo = new THREE.BoxGeometry(4, 1.5, 0.5);
+    const netMat = new THREE.MeshStandardMaterial({ color: 0xaaccff, transparent: true, opacity: 0.3, metalness: 0.5, roughness: 0.3 });
+    const net = new THREE.Mesh(netGeo, netMat);
+    net.position.set(0, 0.75, -5.5);
+    scene.add(net);
+
+    // Goal posts
+    const postMat = new THREE.MeshStandardMaterial({ color: 0xff3333, metalness: 0.7, roughness: 0.2 });
+    const postGeo = new THREE.CylinderGeometry(0.08, 0.08, 1.5, 8);
+    [-2, 2].forEach(px => {
+      const post = new THREE.Mesh(postGeo, postMat);
+      post.position.set(px, 0.75, -5);
+      scene.add(post);
+    });
+    const crossBarGeo = new THREE.CylinderGeometry(0.06, 0.06, 4.08, 8);
+    const crossBar = new THREE.Mesh(crossBarGeo, postMat);
+    crossBar.rotation.z = Math.PI / 2;
+    crossBar.position.set(0, 1.5, -5);
+    scene.add(crossBar);
+    const goalMesh = new THREE.Mesh(netGeo, netMat);
+    goalMesh.position.set(0, 0.75, -5.5);
+
+    // Goalie
+    const goalieGeo = new THREE.BoxGeometry(1.2, 1.6, 0.6);
+    const goalieMat = new THREE.MeshStandardMaterial({ color: 0x1d4ed8, emissive: 0x1e40af, emissiveIntensity: 0.2, metalness: 0.3, roughness: 0.5 });
+    const goalie = new THREE.Mesh(goalieGeo, goalieMat);
+    goalie.position.set(0, 0.8, -5);
+    scene.add(goalie);
+    // Goalie helmet
+    const helmetGeo = new THREE.BoxGeometry(0.5, 0.5, 0.5);
+    const helmet = new THREE.Mesh(helmetGeo, new THREE.MeshStandardMaterial({ color: 0xfbbf24, metalness: 0.5 }));
+    helmet.position.set(0, 0.85, 0);
+    goalie.add(helmet);
+
+    // Puck
+    const puckGeo = new THREE.CylinderGeometry(0.3, 0.3, 0.12, 16);
+    const puckMat = new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.8 });
+    const puck = new THREE.Mesh(puckGeo, puckMat);
+    puck.position.set(0, 0.06, -3.5);
+    scene.add(puck);
+
+    // Rink boards
+    const boardMat = new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.6 });
+    [[12, 0.5, 0.2, 0, 0, -7], [12, 0.5, 0.2, 0, 0, 7], [0.2, 0.5, 14, -6, 0, 0], [0.2, 0.5, 14, 6, 0, 0]].forEach(([bw, bh, bd, bx, by, bz]) => {
+      const board = new THREE.Mesh(new THREE.BoxGeometry(bw, bh, bd), boardMat);
+      board.position.set(bx, by + 0.25, bz);
+      scene.add(board);
+    });
+
+    const floatMeshes: Array<{ mesh: THREE.Mesh; vy: number; alpha: number; born: number }> = [];
+    const obj = { renderer, scene, camera, puck, goalie, goalieLight, goalMesh: net, net, floatMeshes, animId: 0 };
+    threeRef.current = obj;
+
+    timerRef.current = setInterval(() => {
+      s.timeLeft--; setTimeLeft(s.timeLeft);
+      if (s.timeLeft <= 0) { sfx.fail?.(); endGame(); }
+    }, 1000);
+
+    const NET_X_HALF = 2, NET_Z = -5, NET_TOP = 1.5;
+    const GOALIE_HALF = 0.6;
+
+    const animate = () => {
+      obj.animId = requestAnimationFrame(animate);
+      if (!s.running) return;
+      s.frame++;
+
       // Goalie move
-      s.goalie.x+=s.goalie.direction*s.goalie.speed;
-      if(s.goalie.x-s.goalie.w/2<s.netX)s.goalie.direction=1;
-      if(s.goalie.x+s.goalie.w/2>s.netX+s.netW)s.goalie.direction=-1;
-      // Draw goalie
-      ctx.save();ctx.shadowBlur=4;ctx.shadowColor='#1e40af';
-      ctx.fillStyle='#1d4ed8';ctx.fillRect(s.goalie.x-s.goalie.w/2,s.netY+s.netH-s.goalie.h,s.goalie.w,s.goalie.h);
-      ctx.fillStyle='#fbbf24';ctx.fillRect(s.goalie.x-10,s.netY+s.netH-s.goalie.h,20,20);// helmet
-      ctx.restore();
-      // Puck
-      if(s.puck.active){
-        s.puck.x+=s.puck.vx;s.puck.y+=s.puck.vy;s.puck.vy-=0.05;// slight gravity
-        // Goal check
-        if(s.puck.y<s.netY+s.netH&&s.puck.y>s.netY&&s.puck.x>s.netX&&s.puck.x<s.netX+s.netW){
-          const isTopCorner=s.puck.y<s.netY+s.netH*0.4&&(s.puck.x<s.netX+s.netW*0.3||s.puck.x>s.netX+s.netW*0.7);
-          const goalieSaved=Math.abs(s.puck.x-s.goalie.x)<s.goalie.w/2;
-          if(!goalieSaved){
-            s.sig.goals++;if(isTopCorner)s.sig.topCorner++;
-            s.sig.streakCurrent++;if(s.sig.streakCurrent>s.sig.maxStreak)s.sig.maxStreak=s.sig.streakCurrent;
-            const mult=s.sig.streakCurrent>=3?2:1;const pts=(isTopCorner?3:2)*mult;
-            s.sig.score+=pts;s.scorePop=Date.now()+400;setScoreDisplay(s.sig.score);
-            sfx.success();hapticScore();s.goalFlash=30;
-            s.floats.push({x:W/2,y:H*0.35,text:isTopCorner?`+${pts} TOP CORNER! 🎯`:`+${pts} GOAL!`,alpha:1,vy:-2,color:'#fbbf24'});
-          }else{s.sig.saved++;sfx.collision();hapticFail();s.sig.streakCurrent=0;s.floats.push({x:W/2,y:H*0.3,text:'SAVED! 🧤',alpha:1,vy:-1.5,color:'#ef4444'});}
-          s.puck.active=false;s.puck.x=W/2;s.puck.y=H*0.82;
-        }
-        if(s.puck.y<-20||s.puck.x<-20||s.puck.x>W+20){s.puck.active=false;s.puck.x=W/2;s.puck.y=H*0.82;s.sig.streakCurrent=0;}
-        if(s.puck.active){ctx.save();ctx.fillStyle='#1a1a1a';ctx.shadowBlur=6;ctx.shadowColor='#000';ctx.beginPath();ctx.ellipse(s.puck.x,s.puck.y,12,7,0,0,Math.PI*2);ctx.fill();ctx.restore();}
-      }else{// stationary puck
-        ctx.save();ctx.fillStyle='#1a1a1a';ctx.beginPath();ctx.ellipse(W/2,H*0.82,12,7,0,0,Math.PI*2);ctx.fill();ctx.restore();
-      }
-      if(s.goalFlash>0){ctx.fillStyle=`rgba(251,191,36,${s.goalFlash/30*0.3})`;ctx.fillRect(0,0,W,H);s.goalFlash--;}
-      if(s.scorePop>Date.now()){const t=(s.scorePop-Date.now())/400;ctx.save();ctx.globalAlpha=t;ctx.font=`bold ${Math.round(38*(1+(1-t)*0.3))}px sans-serif`;ctx.fillStyle=ACCENT;ctx.textAlign='center';ctx.fillText(`${s.sig.score}`,W/2,H*0.65);ctx.restore();}
-      s.floats=s.floats.filter(f=>f.alpha>0.02);s.floats.forEach(f=>{ctx.save();ctx.globalAlpha=f.alpha;ctx.fillStyle=f.color;ctx.font='bold 22px sans-serif';ctx.textAlign='center';ctx.fillText(f.text,f.x,f.y);ctx.restore();f.y+=f.vy;f.alpha*=0.96;});
-      animRef.current=requestAnimationFrame(loop);
-    };
-    animRef.current=requestAnimationFrame(loop);
-  },[endGame]);
+      s.goalieX += s.goalieDir * s.goalieSpeed;
+      if (s.goalieX > 1.6) s.goalieDir = -1;
+      if (s.goalieX < -1.6) s.goalieDir = 1;
+      goalie.position.x = s.goalieX;
+      goalieLight.position.set(s.goalieX, 2, -4.5);
 
-  useEffect(()=>{
-    const canvas=canvasRef.current;if(!canvas)return;
-    const resize=()=>{canvas.width=canvas.offsetWidth;canvas.height=canvas.offsetHeight;};resize();window.addEventListener('resize',resize);
-    const onDown=(e:PointerEvent)=>{if(phase!=='playing')return;const s=stateRef.current;if(s.puck.active)return;const rect=canvas.getBoundingClientRect();s.swipeStartX=(e.clientX-rect.left)*(canvas.width/rect.width);s.swipeStartY=(e.clientY-rect.top)*(canvas.height/rect.height);s.swiping=true;};
-    const onUp=(e:PointerEvent)=>{if(phase!=='playing')return;const s=stateRef.current;if(!s.swiping)return;s.swiping=false;const rect=canvas.getBoundingClientRect();const ex=(e.clientX-rect.left)*(canvas.width/rect.width),ey=(e.clientY-rect.top)*(canvas.height/rect.height);
-      const dx=ex-s.swipeStartX,dy=ey-s.swipeStartY;const speed=Math.min(Math.sqrt(dx*dx+dy*dy)/20,12);if(speed>2){const len=Math.sqrt(dx*dx+dy*dy);s.puck.vx=(dx/len)*speed;s.puck.vy=(dy/len)*speed;s.puck.active=true;s.sig.shots++;sfx.click();hapticImpact();}};
-    canvas.addEventListener('pointerdown',onDown);canvas.addEventListener('pointerup',onUp);
-    return()=>{window.removeEventListener('resize',resize);canvas.removeEventListener('pointerdown',onDown);canvas.removeEventListener('pointerup',onUp);};
-  },[phase]);
-  useEffect(()=>()=>{cancelAnimationFrame(animRef.current);if(timerRef.current)clearInterval(timerRef.current);},[]);
-  const handleStart=useCallback(async(name:string,avatar:string)=>{playerSessionRef.current=savePlayerSession(GAME_ID,name,avatar);await initAudio();setPhase('countdown');},[]);
-  const handlePlayAgain=useCallback(()=>{setPhase('start');setScoreDisplay(0);setTimeLeft(DURATION);setFinalSig(null);},[]);
-  return(
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent??ACCENT}>
-      {phase==='start'&&<GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description="Swipe to shoot the puck into the net past the goalie!" ctaLabel="Shoot! 🏒" accentColor={theme.colors.accent??ACCENT} onStart={handleStart}/>}
-      {phase==='countdown'&&<Countdown onComplete={startLoop} accentColor={theme.colors.accent??ACCENT}/>}
-      {(phase==='playing'||phase==='countdown')&&(<><canvas ref={canvasRef} style={{position:'absolute',inset:0,width:'100%',height:'100%',touchAction:'none'}} role="img" aria-label="Hockey slap shot game canvas"/>
-      {phase==='playing'&&<GameHUD accentColor={theme.colors.accent??ACCENT} items={[{label:'TIME',value:timeLeft,danger:timeLeft<=10},{label:'SCORE',value:scoreDisplay}]}/>}</>)}
-      {phase==='done'&&finalSig&&(<EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI} score={String(finalSig.score)} personality={getPersonality(finalSig)}
-        insights={[{label:'Goals',value:String(finalSig.goals),color:ACCENT},{label:'Top Corner',value:String(finalSig.topCorner),color:'#fbbf24'},{label:'Best Streak',value:`×${finalSig.maxStreak}`,color:'#4ade80'},{label:'Shots',value:String(finalSig.shots),color:'#06b6d4'}]}
-        accentColor={theme.colors.accent??ACCENT} onPlayAgain={handlePlayAgain} didWin={finalSig.goals>=5}/>)}
+      // Puck physics
+      if (s.puckActive) {
+        s.puckX += s.puckVX; s.puckY += s.puckVY;
+        puck.position.set(s.puckX, 0.06, s.puckY);
+        puck.rotation.y += s.puckVX * 0.5;
+
+        // Goal check
+        if (s.puckY < NET_Z && s.puckY > NET_Z - 0.8 && Math.abs(s.puckX) < NET_X_HALF) {
+          const isTopCorner = Math.abs(s.puckX) > NET_X_HALF * 0.6;
+          const goalieSaved = Math.abs(s.puckX - s.goalieX) < GOALIE_HALF;
+          if (!goalieSaved) {
+            s.sig.goals++;
+            if (isTopCorner) s.sig.topCorner++;
+            s.sig.streakCurrent++;
+            if (s.sig.streakCurrent > s.sig.maxStreak) s.sig.maxStreak = s.sig.streakCurrent;
+            const mult = s.sig.streakCurrent >= 3 ? 2 : 1;
+            const pts = (isTopCorner ? 3 : 2) * mult;
+            s.sig.score += pts;
+            setScoreDisplay(s.sig.score);
+            sfx.success?.(); hapticScore();
+            // Flash net
+            (net.material as THREE.MeshStandardMaterial).emissive.set(0xfbbf24);
+            (net.material as THREE.MeshStandardMaterial).emissiveIntensity = 0.8;
+            setTimeout(() => { (net.material as THREE.MeshStandardMaterial).emissiveIntensity = 0; }, 400);
+          } else {
+            s.sig.saved++; sfx.collision?.(); hapticFail(); s.sig.streakCurrent = 0;
+          }
+          s.puckActive = false;
+          setTimeout(() => {
+            if (!s.running) return;
+            s.puckX = 0; s.puckY = -3.5; puck.position.set(0, 0.06, -3.5);
+          }, 600);
+        }
+
+        // Out of bounds
+        if (s.puckY < -8 || Math.abs(s.puckX) > 6.5) {
+          s.puckActive = false; s.sig.streakCurrent = 0;
+          setTimeout(() => {
+            if (!s.running) return;
+            s.puckX = 0; s.puckY = -3.5; puck.position.set(0, 0.06, -3.5);
+          }, 400);
+        }
+      } else {
+        puck.position.set(s.puckX, 0.06, s.puckY);
+      }
+
+      // Float text cleanup
+      const now = Date.now();
+      for (let i = floatMeshes.length - 1; i >= 0; i--) {
+        const ft = floatMeshes[i];
+        ft.mesh.position.y += ft.vy;
+        ft.alpha -= 0.025;
+        (ft.mesh.material as THREE.MeshBasicMaterial).opacity = Math.max(0, ft.alpha);
+        if (now - ft.born > 1500) { scene.remove(ft.mesh); floatMeshes.splice(i, 1); }
+      }
+
+      // Ice shimmer
+      (ice.material as THREE.MeshStandardMaterial).emissive.setHSL(0.6, 0.5, 0.02 + Math.sin(s.frame * 0.05) * 0.01);
+
+      renderer.render(scene, camera);
+    };
+    animate();
+
+    const handleResize = () => {
+      const w = mount.clientWidth, h = mount.clientHeight;
+      camera.aspect = w / h; camera.updateProjectionMatrix(); renderer.setSize(w, h);
+    };
+    window.addEventListener('resize', handleResize);
+  }, [endGame]);
+
+  useEffect(() => {
+    const mount = mountRef.current; if (!mount || phase !== 'playing') return;
+    let swipeStartX = 0, swipeStartY = 0, swiping = false;
+    const onDown = (e: PointerEvent) => {
+      swipeStartX = e.clientX; swipeStartY = e.clientY; swiping = true;
+    };
+    const onUp = (e: PointerEvent) => {
+      if (!swiping) return; swiping = false;
+      const s = stateRef.current; if (!s.running || s.puckActive) return;
+      const dx = e.clientX - swipeStartX; const dy = e.clientY - swipeStartY;
+      const speed = Math.min(Math.sqrt(dx*dx+dy*dy)/40, 0.25);
+      if (speed > 0.04) {
+        const len = Math.sqrt(dx*dx+dy*dy);
+        // Map screen swipe to 3D puck direction (y screen = -z world)
+        s.puckVX = (dx/len)*speed*1.2;
+        s.puckVY = -(dy/len)*speed*1.2;
+        s.puckActive = true; s.sig.shots++;
+        sfx.click?.(); hapticImpact();
+      }
+    };
+    mount.addEventListener('pointerdown', onDown);
+    mount.addEventListener('pointerup', onUp);
+    return () => { mount.removeEventListener('pointerdown', onDown); mount.removeEventListener('pointerup', onUp); };
+  }, [phase]);
+
+  useEffect(() => () => {
+    if (timerRef.current) clearInterval(timerRef.current);
+    const t = threeRef.current;
+    if (t) { cancelAnimationFrame(t.animId); t.renderer.dispose(); }
+  }, []);
+
+  const handleStart = useCallback(async (name: string, avatar: string) => {
+    playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar);
+    await initAudio(); setPhase('countdown');
+  }, []);
+  const handlePlayAgain = useCallback(() => { setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null); }, []);
+
+  return (
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
+      {phase === 'start' && <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description="Swipe to shoot the puck past the goalie!" ctaLabel="Shoot! 🏒" accentColor={theme.colors.accent ?? ACCENT} onStart={handleStart} />}
+      {phase === 'countdown' && <Countdown onComplete={startLoop} accentColor={theme.colors.accent ?? ACCENT} />}
+      {(phase === 'playing' || phase === 'countdown') && (
+        <>
+          <div ref={mountRef} style={{ position: 'absolute', inset: 0, touchAction: 'none' }} />
+          {phase === 'playing' && <GameHUD accentColor={theme.colors.accent ?? ACCENT} items={[{ label: 'TIME', value: timeLeft, danger: timeLeft <= 10 }, { label: 'SCORE', value: scoreDisplay }]} />}
+        </>
+      )}
+      {phase === 'done' && finalSig && (
+        <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI} score={String(finalSig.score)} personality={getPersonality(finalSig)}
+          insights={[{ label: 'Goals', value: String(finalSig.goals), color: ACCENT }, { label: 'Top Corner', value: String(finalSig.topCorner), color: '#fbbf24' }, { label: 'Best Streak', value: `×${finalSig.maxStreak}`, color: '#4ade80' }, { label: 'Shots', value: String(finalSig.shots), color: '#06b6d4' }]}
+          accentColor={theme.colors.accent ?? ACCENT} onPlayAgain={handlePlayAgain} didWin={finalSig.goals >= 5} />
+      )}
     </GameShell>
   );
 }

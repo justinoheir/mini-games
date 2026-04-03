@@ -1,39 +1,23 @@
 'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { Mic, VolumeX, Zap, Target } from 'lucide-react';
+import * as THREE from 'three';
 import GameShell from '@/components/GameShell';
 import GameHUD from '@/components/GameHUD';
 import GameStartScreen from '@/components/GameStartScreen';
 import Countdown from '@/components/Countdown';
 import EndScreen from '@/components/EndScreen';
-import { initAudio, sfx, haptic, startMusic, increaseMusicTempo, playScoreHit, playVictoryFanfare, playNearMiss, playPersonalBest } from '@/lib/audio';
+import { initAudio, sfx, haptic, startMusic, increaseMusicTempo, playScoreHit, playVictoryFanfare, playNearMiss } from '@/lib/audio';
 import { hapticScore, hapticFail, hapticVictory } from '@/lib/haptics';
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
-import { motion, AnimatePresence } from 'framer-motion';
-import ScorePopEffect, { useScorePop } from '@/components/ScorePopEffect';
-import StreakBadge from '@/components/StreakBadge';
-import SwipeInstructions from '@/components/SwipeInstructions';
-import BombIcon from '@/components/BombIcon';
-
-
-
-
 
 const GAME_ID = 'whisper-bomb';
 const GAME_ACCENT = '#ef4444';
 const PB_KEY = 'pb_whisper-bomb';
 
 type GameState = 'start' | 'requesting' | 'countdown' | 'playing' | 'done';
-interface BehaviorData {
-  avgVolume: number;
-  noiseSpikes: number;
-  dangerSeconds: number;
-  defused: boolean;
-  fuseRemaining: number;
-}
-
+interface BehaviorData { avgVolume: number; noiseSpikes: number; dangerSeconds: number; defused: boolean; fuseRemaining: number; }
 function getProfile(b: BehaviorData) {
   if (b.defused && b.noiseSpikes < 3) return 'Calm 🧘';
   if (b.noiseSpikes > 10) return 'Explosive 💥';
@@ -43,11 +27,10 @@ function getProfile(b: BehaviorData) {
 export default function WhisperBomb() {
   const theme = useBrandTheme();
   const accent = theme.id !== 'ether' ? theme.colors.accent : GAME_ACCENT;
-
+  const mountRef = useRef<HTMLDivElement>(null);
   const stopMusicRef = useRef<(() => void) | null>(null);
   const stateRef = useRef({
-    fuse: 100, timeLeft: 45,
-    volumeSamples: [] as number[],
+    fuse: 100, timeLeft: 45, volumeSamples: [] as number[],
     noiseSpikes: 0, dangerFrames: 0, quietStreak: 0,
     animId: 0, timerIntervalId: null as ReturnType<typeof setInterval> | null,
     stream: null as MediaStream | null,
@@ -55,695 +38,307 @@ export default function WhisperBomb() {
     audioCtx: null as AudioContext | null,
     running: false, musicSped: false,
     lastSpikeTime: 0,
-    lastSpikeCountTime: 0,
-    ambientBaseline: 0,
+    fuseParticles: [] as { mesh: THREE.Mesh; vx: number; vy: number; life: number; color: number }[],
+    frame: 0,
+    bombMesh: null as THREE.Mesh | null,
+    fuseMesh: null as THREE.Mesh | null,
+    fuseGlowMesh: null as THREE.Mesh | null,
+    scene: null as THREE.Scene | null,
+    renderer: null as THREE.WebGLRenderer | null,
   });
-
-  // Touch-fallback volume (0-100). Updated by pointer events when mic unavailable.
   const touchVolumeRef = useRef<number>(0);
   const [micFallback, setMicFallback] = useState(false);
-
-  // ── DOM refs for 60fps updates ─────────────────────────────────────────────
-  const playAreaRef          = useRef<HTMLDivElement>(null);
-  const bombContainerRef     = useRef<HTMLDivElement>(null);
-  const bombFuseRef          = useRef<HTMLDivElement>(null);
-  const fuseBarFillRef       = useRef<HTMLDivElement>(null);
-  const fusePercentTextRef   = useRef<HTMLSpanElement>(null);
-  const volumeBarFillRef     = useRef<HTMLDivElement>(null);
-  const volumeValueTextRef   = useRef<HTMLSpanElement>(null);
-  const flashRef             = useRef<HTMLDivElement>(null);
-  const flashTimeoutRef      = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const instructionTextRef   = useRef<HTMLParagraphElement>(null);
-  const defuseContainerRef   = useRef<HTMLDivElement>(null);
-  const defuseBarFillRef     = useRef<HTMLDivElement>(null);
-  const defuseBarTextRef     = useRef<HTMLSpanElement>(null);
-
-  // ── Milestone/overlay refs ─────────────────────────────────────────────────
-  const lastStreakMilestoneRef = useRef(0);
-  const nearMissShownRef       = useRef(false);
-  const nearMissTimeoutRef     = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const copiedTimeoutRef       = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  // ── React state ────────────────────────────────────────────────────────────
-  const [gameState, setGameState]       = useState<GameState>('start');
-  const [showInstructions, setShowInstructions] = useState(true);
-  const [displayTime, setDisplayTime]   = useState(45);
-  const [fuseDisplay, setFuseDisplay]   = useState(100);
-  const [behavior, setBehavior]         = useState<BehaviorData | null>(null);
-  const [micError, setMicError]         = useState(false);
-  const [playerName, setPlayerName]     = useState('');
-  const [playerAvatar, setPlayerAvatar] = useState('🎮');
-  const { pops, triggerPop: _triggerPop } = useScorePop(); // retained for future score pop integration
-  const playerSessionRef                = useRef<PlayerSession | null>(null);
-
-  // ── Polish state ───────────────────────────────────────────────────────────
-  const [scorePop, setScorePop]         = useState<{ value: number; key: number } | null>(null);
-  const [streakDisplay, setStreakDisplay] = useState(0);
-  const [personalBest, setPersonalBest] = useState<number | null>(null);
-  const [isNewPB, setIsNewPB]           = useState(false);
-  const [nearMiss, setNearMiss]         = useState(false);
-  const [copied, setCopied]             = useState(false);
-
-  // Load PB on mount
-  useEffect(() => {
-    const saved = localStorage.getItem(PB_KEY);
-    if (saved) setPersonalBest(Number(saved));
-  }, []);
+  const [gameState, setGameState] = useState<GameState>('start');
+  const [displayTime, setDisplayTime] = useState(45);
+  const [fuseDisplay, setFuseDisplay] = useState(100);
+  const [behavior, setBehavior] = useState<BehaviorData | null>(null);
+  const [micError, setMicError] = useState(false);
+  const playerSessionRef = useRef<PlayerSession | null>(null);
 
   const getVolume = useCallback((): number => {
     const s = stateRef.current;
-    const analyser = s.analyser;
-    // Touch fallback: if mic was denied/unavailable, use touch-driven synthetic volume
-    if (!analyser) return touchVolumeRef.current;
-    const data = new Uint8Array(analyser.frequencyBinCount);
-    analyser.getByteFrequencyData(data);
+    if (!s.analyser) return touchVolumeRef.current;
+    const data = new Uint8Array(s.analyser.frequencyBinCount);
+    s.analyser.getByteFrequencyData(data);
     const sumSq = data.reduce((acc, v) => acc + v * v, 0);
-    const raw = Math.min(100, (Math.sqrt(sumSq / data.length) / 128) * 100);
-    return Math.max(0, raw - s.ambientBaseline);
+    return Math.min(100, (Math.sqrt(sumSq / data.length) / 128) * 100);
   }, []);
 
-  const endGame = useCallback((defused: boolean, capturedTheme: typeof theme) => {
-    const s = stateRef.current;
-    s.running = false;
+  const endGame = useCallback((defused: boolean) => {
+    const s = stateRef.current; s.running = false;
     cancelAnimationFrame(s.animId);
-    if (s.timerIntervalId) clearInterval(s.timerIntervalId);
-    if (flashTimeoutRef.current) clearTimeout(flashTimeoutRef.current);
+    if (s.timerIntervalId) { clearInterval(s.timerIntervalId); s.timerIntervalId = null; }
     if (s.stream) s.stream.getTracks().forEach(t => t.stop());
     if (s.audioCtx) s.audioCtx.close().catch(() => {});
     if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
+    if (s.renderer) { s.renderer.dispose(); s.renderer = null; }
 
-    const avgVol = s.volumeSamples.length > 0
-      ? s.volumeSamples.reduce((a, v) => a + v, 0) / s.volumeSamples.length
-      : 0;
+    const avgVol = s.volumeSamples.length > 0 ? s.volumeSamples.reduce((a, b) => a + b, 0) / s.volumeSamples.length : 0;
     const bData: BehaviorData = {
-      avgVolume: Math.round(avgVol),
+      avgVolume: avgVol,
       noiseSpikes: s.noiseSpikes,
       dangerSeconds: Math.round(s.dangerFrames / 60),
       defused,
-      fuseRemaining: Math.max(0, Math.round(s.fuse)),
+      fuseRemaining: s.fuse,
     };
-
-    // Personal best check
-    const score = defused ? bData.fuseRemaining : 0;
-    const savedPB = localStorage.getItem(PB_KEY);
-    const prevPB = savedPB !== null ? Number(savedPB) : null;
-    const newPB = prevPB === null || score > prevPB;
-    if (newPB && score > 0) {
-      localStorage.setItem(PB_KEY, String(score));
-      setPersonalBest(score);
-      setIsNewPB(true);
-      playPersonalBest();
-      hapticVictory();
-    } else {
-      setIsNewPB(false);
-      if (defused) {
-        playVictoryFanfare();
-        hapticVictory();
-      } else {
-        hapticFail();
-      }
-    }
-
-    // Reset overlay states
-    setStreakDisplay(0);
-    setNearMiss(false);
-    lastStreakMilestoneRef.current = 0;
-    nearMissShownRef.current = false;
-
+    try {
+      const pb = parseInt(localStorage.getItem(PB_KEY) || '0', 10);
+      const score = defused ? 100 : Math.round(s.fuse);
+      if (score > pb) localStorage.setItem(PB_KEY, String(score));
+    } catch { }
     setBehavior(bData);
     setGameState('done');
-    postWebhook(capturedTheme, 'whisper-bomb', {
-      score: defused ? `${bData.fuseRemaining}%` : '0%',
-      personality: getProfile(bData),
-      signals: { noiseSpikes: bData.noiseSpikes, avgVolume: bData.avgVolume, fuseRemaining: bData.fuseRemaining },
-    }, playerSessionRef.current);
+    if (defused) hapticVictory(); else hapticFail();
   }, []);
 
-  const startLoop = useCallback(() => {
+  const startLoop = useCallback(async () => {
     const s = stateRef.current;
-    s.fuse = 100; s.timeLeft = 45; s.volumeSamples = []; s.noiseSpikes = 0;
-    s.dangerFrames = 0; s.quietStreak = 0; s.running = true; s.musicSped = false;
-    s.lastSpikeCountTime = 0;
-    setDisplayTime(45);
-    setFuseDisplay(100);
-    setScorePop(null);
-    setStreakDisplay(0);
-    setNearMiss(false);
-    lastStreakMilestoneRef.current = 0;
-    nearMissShownRef.current = false;
-    setGameState('playing');
-    stopMusicRef.current = startMusic('pulse');
-    const capturedTheme = theme;
+    // Request mic
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const ctx = new AudioContext();
+      const src = ctx.createMediaStreamSource(stream);
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 512;
+      src.connect(analyser);
+      s.stream = stream; s.analyser = analyser; s.audioCtx = ctx;
+    } catch {
+      setMicFallback(true); setMicError(true);
+    }
+
+    s.running = true; s.timeLeft = 45; s.fuse = 100;
+    s.volumeSamples = []; s.noiseSpikes = 0; s.dangerFrames = 0;
+    s.quietStreak = 0; s.musicSped = false; s.lastSpikeTime = 0;
+    s.fuseParticles = []; s.frame = 0;
+    setFuseDisplay(100); setDisplayTime(45); setGameState('playing');
+    stopMusicRef.current = startMusic('tense');
+
+    const W = window.innerWidth, H = window.innerHeight;
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(W, H);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setClearColor(0x0d0800);
+    s.renderer = renderer;
+    if (mountRef.current) { mountRef.current.innerHTML = ''; mountRef.current.appendChild(renderer.domElement); }
+
+    const scene = new THREE.Scene();
+    s.scene = scene;
+    const camera = new THREE.PerspectiveCamera(65, W / H, 0.1, 100);
+    camera.position.set(0, 0, 10);
+    camera.lookAt(0, 0, 0);
+
+    scene.add(new THREE.AmbientLight(0x220000, 2));
+    const dangerLight = new THREE.PointLight(0xef4444, 3, 20);
+    dangerLight.position.set(0, 0, 5);
+    scene.add(dangerLight);
+    const coolLight = new THREE.PointLight(0x4ade80, 0, 15);
+    coolLight.position.set(0, 3, 3);
+    scene.add(coolLight);
+
+    // Stars
+    const starPos = new Float32Array(300 * 3);
+    for (let i = 0; i < 300; i++) {
+      starPos[i * 3] = (Math.random() - 0.5) * 40; starPos[i * 3 + 1] = (Math.random() - 0.5) * 30; starPos[i * 3 + 2] = -15 + (Math.random() - 0.5) * 10;
+    }
+    const starGeo = new THREE.BufferGeometry();
+    starGeo.setAttribute('position', new THREE.BufferAttribute(starPos, 3));
+    scene.add(new THREE.Points(starGeo, new THREE.PointsMaterial({ color: 0xffffff, size: 0.08 })));
+
+    // Bomb body
+    const bombGeo = new THREE.SphereGeometry(1.4, 20, 20);
+    const bombMat = new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.3, metalness: 0.9, emissive: 0x220000, emissiveIntensity: 0.2 });
+    const bombMesh = new THREE.Mesh(bombGeo, bombMat);
+    bombMesh.castShadow = true;
+    scene.add(bombMesh);
+    s.bombMesh = bombMesh;
+
+    // Spiral ring around bomb
+    const spiralGeo = new THREE.TorusGeometry(1.7, 0.08, 8, 32);
+    const spiralMat = new THREE.MeshStandardMaterial({ color: 0xef4444, emissive: 0xef4444, emissiveIntensity: 0.5 });
+    const spiral = new THREE.Mesh(spiralGeo, spiralMat);
+    scene.add(spiral);
+
+    // Fuse (cylinder that shrinks)
+    const fuseGeo = new THREE.CylinderGeometry(0.08, 0.08, 2, 8);
+    const fuseMat = new THREE.MeshStandardMaterial({ color: 0x92400e, roughness: 0.8 });
+    const fuseMesh = new THREE.Mesh(fuseGeo, fuseMat);
+    fuseMesh.position.set(0.8, 1.6, 0);
+    fuseMesh.rotation.z = -0.5;
+    scene.add(fuseMesh);
+    s.fuseMesh = fuseMesh;
+
+    // Fuse glow (spark at tip)
+    const sparkGeo = new THREE.SphereGeometry(0.18, 10, 10);
+    const sparkMat = new THREE.MeshStandardMaterial({ color: 0xfbbf24, emissive: 0xfbbf24, emissiveIntensity: 1 });
+    const spark = new THREE.Mesh(sparkGeo, sparkMat);
+    spark.position.set(1.5, 2.5, 0);
+    scene.add(spark);
+    s.fuseGlowMesh = spark;
+
+    const sparkLight = new THREE.PointLight(0xfbbf24, 3, 5);
+    spark.add(sparkLight);
+
+    // Defuse progress ring
+    const defuseRingGeo = new THREE.TorusGeometry(2.0, 0.1, 8, 64);
+    const defuseRingMat = new THREE.MeshStandardMaterial({ color: 0x4ade80, emissive: 0x4ade80, emissiveIntensity: 0.5, transparent: true, opacity: 0.0 });
+    const defuseRing = new THREE.Mesh(defuseRingGeo, defuseRingMat);
+    defuseRing.rotation.x = Math.PI / 2;
+    scene.add(defuseRing);
+
+    // Touch events for mic fallback
+    renderer.domElement.addEventListener('pointerdown', () => { touchVolumeRef.current = 70; });
+    renderer.domElement.addEventListener('pointerup', () => { touchVolumeRef.current = 0; });
 
     s.timerIntervalId = setInterval(() => {
-      if (!s.running) return;
-      s.timeLeft--;
-      setDisplayTime(s.timeLeft);
-      setFuseDisplay(Math.round(Math.max(0, s.fuse)));
-      sfx.tick();
-      if (s.timeLeft === 15 && !s.musicSped) {
-        s.musicSped = true;
-        try { increaseMusicTempo(130); } catch { /* ignore in test env */ }
-      }
-      if (s.timeLeft === 8) {
-        try { increaseMusicTempo(160); } catch { /* ignore in test env */ }
-        sfx.warning();
-      }
-      if (s.timeLeft <= 0) { sfx.boom(); hapticFail(); endGame(false, capturedTheme); }
+      s.timeLeft--; setDisplayTime(s.timeLeft);
+      if (s.timeLeft <= 0) endGame(false);
     }, 1000);
+
+    const NOISE_THRESHOLD = 20, SPIKE_THRESHOLD = 40;
+    const FUSE_DRAIN_RATE = 0.8, FUSE_RECOVER_RATE = 0.3;
 
     const loop = () => {
       if (!s.running) return;
+      s.frame++;
       const vol = getVolume();
       s.volumeSamples.push(vol);
 
-      const fuse      = s.fuse;
-      const fuseColor = fuse > 60 ? '#00ff88' : fuse > 30 ? '#ffaa00' : '#ef4444';
-      const volColor  = vol > 25  ? '#ef4444'  : vol > 8   ? '#ffaa00' : '#00ff88';
-      const bombScale = 1 + (vol / 200);
-      const bgR       = Math.min(30, 10 + Math.round(vol * 0.5));
+      // Fuse logic
+      const isNoise = vol > NOISE_THRESHOLD;
+      const isSpike = vol > SPIKE_THRESHOLD;
 
-      if (bombContainerRef.current) {
-        if (fuse < 35) {
-          // Bomb shakes with increasing intensity as fuse burns low
-          const shakeAmt = ((35 - fuse) / 35) * 5;
-          const dx = (Math.random() - 0.5) * shakeAmt;
-          const dy = (Math.random() - 0.5) * shakeAmt;
-          bombContainerRef.current.style.transform = `scale(${bombScale}) translate(${dx}px, ${dy}px)`;
-        } else {
-          bombContainerRef.current.style.transform = `scale(${bombScale})`;
+      if (isSpike && Date.now() - s.lastSpikeTime > 300) {
+        s.noiseSpikes++;
+        s.lastSpikeTime = Date.now();
+        sfx.tick(); hapticFail();
+        // Spark burst
+        for (let i = 0; i < 5; i++) {
+          const pg = new THREE.SphereGeometry(0.08, 6, 6);
+          const pm = new THREE.MeshStandardMaterial({ color: 0xfbbf24, emissive: 0xfbbf24, emissiveIntensity: 1 });
+          const pMesh = new THREE.Mesh(pg, pm);
+          pMesh.position.copy(spark.position);
+          scene.add(pMesh);
+          const angle = Math.random() * Math.PI * 2;
+          s.fuseParticles.push({ mesh: pMesh, vx: Math.cos(angle) * 0.1, vy: 0.05 + Math.random() * 0.1, life: 1, color: 0xfbbf24 });
         }
       }
-      if (bombFuseRef.current) {
-        bombFuseRef.current.style.height = `${Math.max(0, fuse) * 0.55}px`;
-        bombFuseRef.current.style.backgroundColor = fuseColor;
-      }
-      if (fuseBarFillRef.current) {
-        fuseBarFillRef.current.style.width = `${Math.max(0, fuse)}%`;
-        fuseBarFillRef.current.style.backgroundColor = fuseColor;
-      }
-      if (fusePercentTextRef.current) {
-        fusePercentTextRef.current.textContent = `${Math.round(Math.max(0, fuse))}%`;
-        fusePercentTextRef.current.style.color = fuseColor;
-      }
-      if (volumeBarFillRef.current) {
-        volumeBarFillRef.current.style.width = `${vol}%`;
-        volumeBarFillRef.current.style.backgroundColor = volColor;
-      }
-      if (volumeValueTextRef.current) {
-        volumeValueTextRef.current.textContent = `${Math.round(vol)}`;
-        volumeValueTextRef.current.style.color = volColor;
-      }
-      if (playAreaRef.current)
-        playAreaRef.current.style.background =
-          `radial-gradient(ellipse at center, rgba(${bgR * 3},5,5,1) 0%, rgba(${bgR},3,3,1) 40%, #000 100%)`;
-      if (instructionTextRef.current)
-        instructionTextRef.current.textContent =
-          fuse < 25 ? 'STAY SILENT — DEFUSING...' : 'Keep quiet to slow the fuse';
 
-      if (defuseContainerRef.current)
-        defuseContainerRef.current.style.display = fuse < 25 ? 'block' : 'none';
-      if (fuse < 25) {
-        const defuseProgress = Math.min(100, (s.quietStreak / 5) * 100);
-        if (defuseBarFillRef.current)
-          defuseBarFillRef.current.style.width = `${defuseProgress}%`;
-        if (defuseBarTextRef.current)
-          defuseBarTextRef.current.textContent = `${Math.ceil(5 - s.quietStreak)}s`;
-      }
-
-      // ── Fuse logic ────────────────────────────────────────────────────────
-      if (vol > 25) {
-        const now = Date.now();
-        if (now - s.lastSpikeCountTime >= 500) {
-          s.noiseSpikes++;
-          s.lastSpikeCountTime = now;
-        }
-        s.fuse -= 5 / 60;
+      if (isNoise) {
+        s.fuse -= FUSE_DRAIN_RATE;
+        s.quietStreak = 0;
         s.dangerFrames++;
-        s.quietStreak = 0;
-        // Reset streak display when they make noise
-        if (lastStreakMilestoneRef.current > 0) {
-          lastStreakMilestoneRef.current = 0;
-          setStreakDisplay(0);
-        }
-        if (now - s.lastSpikeTime > 400) {
-          sfx.whoosh(); haptic([30]); s.lastSpikeTime = now;
-          if (flashRef.current) {
-            flashRef.current.style.backgroundColor = 'rgba(255,68,68,0.3)';
-            if (flashTimeoutRef.current) clearTimeout(flashTimeoutRef.current);
-            flashTimeoutRef.current = setTimeout(() => {
-              if (flashRef.current) flashRef.current.style.backgroundColor = 'transparent';
-            }, 120);
-          }
-        }
-      } else if (vol < 8) {
-        s.fuse = Math.min(100, s.fuse + 1 / 60);
-        s.quietStreak += 1 / 60;
-        // Score pop every whole second of quiet streak
-        const streakSecs = Math.floor(s.quietStreak);
-        if (streakSecs > lastStreakMilestoneRef.current && streakSecs > 0) {
-          lastStreakMilestoneRef.current = streakSecs;
-          setScorePop({ value: streakSecs, key: Date.now() });
-          setStreakDisplay(streakSecs);
-          hapticScore();
-          playScoreHit('default', 10);
-        }
       } else {
-        s.fuse -= 2 / 60;
-        s.quietStreak = 0;
-        if (lastStreakMilestoneRef.current > 0) {
-          lastStreakMilestoneRef.current = 0;
-          setStreakDisplay(0);
-        }
+        s.fuse = Math.min(100, s.fuse + FUSE_RECOVER_RATE);
+        s.quietStreak++;
+      }
+      s.fuse = Math.max(0, Math.min(100, s.fuse));
+      setFuseDisplay(Math.round(s.fuse));
+
+      if (s.fuse <= 0) { sfx.fail(); haptic([100, 50, 200]); endGame(false); return; }
+
+      // Check defuse (very quiet for a long time)
+      if (s.quietStreak > 300) {
+        sfx.success(); haptic([50, 30, 50, 30, 100]); endGame(true); return;
       }
 
-      // ── Near-miss: fuse enters 25-35% zone for the first time ─────────────
-      if (fuse < 35 && fuse >= 25 && !nearMissShownRef.current) {
-        nearMissShownRef.current = true;
-        setNearMiss(true);
-        playNearMiss();
-        if (nearMissTimeoutRef.current) clearTimeout(nearMissTimeoutRef.current);
-        nearMissTimeoutRef.current = setTimeout(() => setNearMiss(false), 2000);
+      // Update bomb visuals
+      const fusePct = s.fuse / 100;
+      if (bombMesh) {
+        (bombMat as THREE.MeshStandardMaterial).emissiveIntensity = 0.1 + (1 - fusePct) * 0.5;
+        (bombMat as THREE.MeshStandardMaterial).emissive.setHex(fusePct > 0.5 ? 0x220000 : 0x440000);
+        bombMesh.rotation.y += (1 - fusePct) * 0.02;
       }
-      if (fuse >= 35) nearMissShownRef.current = false;
 
-      if (s.fuse < 25 && s.quietStreak >= 5) {
-        // Green flash celebration before EndScreen
-        if (flashRef.current) {
-          flashRef.current.style.backgroundColor = 'rgba(0,255,136,0.45)';
-          if (flashTimeoutRef.current) clearTimeout(flashTimeoutRef.current);
-          flashTimeoutRef.current = setTimeout(() => {
-            if (flashRef.current) flashRef.current.style.backgroundColor = 'transparent';
-          }, 300);
-        }
-        sfx.defuse(); haptic([30, 50, 30, 50, 100]); endGame(true, capturedTheme); return;
+      // Fuse shrinks
+      if (fuseMesh) {
+        fuseMesh.scale.y = Math.max(0.1, fusePct);
+        fuseMesh.position.y = 1.6 * fusePct;
       }
-      if (s.fuse <= 0) {
-        sfx.boom(); hapticFail(); endGame(false, capturedTheme); return;
+      if (spark) {
+        spark.position.set(0.8 + Math.sin(s.frame * 0.1) * 0.05, 0.5 + 2 * fusePct, 0);
+        sparkLight.intensity = 2 + Math.sin(s.frame * 0.2) * 1;
       }
+
+      // Spiral ring
+      spiral.rotation.y += 0.02;
+      spiral.rotation.z += 0.01;
+      (spiralMat as THREE.MeshStandardMaterial).emissiveIntensity = 0.3 + (1 - fusePct) * 0.7;
+      (spiralMat as THREE.MeshStandardMaterial).color.setHSL((1 - fusePct) * 0.02, 0.9, 0.5);
+
+      // Defuse ring (shows when quiet)
+      const quietPct = Math.min(1, s.quietStreak / 300);
+      (defuseRingMat as THREE.MeshStandardMaterial).opacity = quietPct * 0.7;
+      defuseRing.rotation.z += 0.02;
+      defuseRing.scale.setScalar(1 + quietPct * 0.1);
+
+      // Lights
+      dangerLight.intensity = 3 + (1 - fusePct) * 3 + Math.sin(s.frame * 0.1) * 0.5;
+      dangerLight.color.setHSL((1 - fusePct) * 0.02, 0.9, 0.5);
+      coolLight.intensity = isNoise ? 0 : s.quietStreak / 100;
+
+      // Fuse particles
+      for (let i = s.fuseParticles.length - 1; i >= 0; i--) {
+        const p = s.fuseParticles[i];
+        p.mesh.position.x += p.vx; p.mesh.position.y += p.vy;
+        p.vy -= 0.003; p.life -= 0.04;
+        (p.mesh.material as THREE.MeshStandardMaterial).opacity = p.life;
+        (p.mesh.material as THREE.MeshStandardMaterial).transparent = true;
+        if (p.life <= 0) { scene.remove(p.mesh); s.fuseParticles.splice(i, 1); }
+      }
+
+      // Camera shake when fuse low
+      if (fusePct < 0.3 && isNoise) {
+        camera.position.x = (Math.random() - 0.5) * 0.05 * (1 - fusePct);
+        camera.position.y = (Math.random() - 0.5) * 0.05 * (1 - fusePct);
+      } else {
+        camera.position.x *= 0.9;
+        camera.position.y *= 0.9;
+      }
+
+      renderer.render(scene, camera);
       s.animId = requestAnimationFrame(loop);
     };
     s.animId = requestAnimationFrame(loop);
-  }, [getVolume, endGame, theme]);
-
-  /** Shared mic setup — used by both handleStart and handlePlayAgain. */
-  const setupMic = useCallback(async (fastCalib = false): Promise<boolean> => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const audioCtx = new AudioContext();
-      const source = audioCtx.createMediaStreamSource(stream);
-      const analyser = audioCtx.createAnalyser();
-      analyser.fftSize = 256;
-      analyser.smoothingTimeConstant = 0.3;
-      source.connect(analyser);
-      const s = stateRef.current;
-      s.stream = stream; s.analyser = analyser; s.audioCtx = audioCtx;
-
-      if (fastCalib) {
-        // Fast path: skip calibration (test mode or play-again quick restart)
-        s.ambientBaseline = 0;
-      } else {
-        // Full ambient calibration (production first play)
-        const calibData = new Uint8Array(analyser.frequencyBinCount);
-        const calibSamples: number[] = [];
-        for (let i = 0; i < 10; i++) {
-          await new Promise<void>(r => setTimeout(r, 100));
-          analyser.getByteFrequencyData(calibData);
-          const rms = Math.sqrt(calibData.reduce((acc, v) => acc + v * v, 0) / calibData.length);
-          calibSamples.push((rms / 128) * 100);
-        }
-        s.ambientBaseline = Math.min(
-          calibSamples.reduce((a, b) => a + b, 0) / calibSamples.length,
-          20
-        );
-      }
-      return true;
-    } catch {
-      return false;
-    }
-  }, []);
-
-  const handleStart = useCallback(async (name: string, avatar: string) => {
-    setPlayerName(name);
-    setPlayerAvatar(avatar);
-    playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar);
-    await initAudio(); sfx.click();
-    setMicError(false);
-    setMicFallback(false);
-    setGameState('requesting');
-    // Test-mode fast path: audio/mic not needed in headless test env
-    if ((window as unknown as Record<string, unknown>).__DISABLE_AUDIO) {
-      touchVolumeRef.current = 0;
-      setGameState('countdown');
-      return;
-    }
-    // Production: full mic setup with ambient calibration
-    const ok = await setupMic(false);
-    if (ok) {
-      touchVolumeRef.current = 0;
-      setGameState('countdown');
-    } else {
-      // Mic denied → touch-fallback mode (on-screen press drives volume)
-      setMicFallback(true);
-      touchVolumeRef.current = 0;
-      setGameState('countdown');
-    }
-  }, [setupMic]);
-
-  const handlePlayAgain = useCallback(async () => {
-    if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
-    if (flashTimeoutRef.current) { clearTimeout(flashTimeoutRef.current); flashTimeoutRef.current = null; }
-    setIsNewPB(false);
-    setMicError(false);
-    setStreakDisplay(0);
-    setScorePop(null);
-    setNearMiss(false);
-    touchVolumeRef.current = 0;
-    // Test-mode fast path: skip mic re-acquisition (no audio in test env)
-    if ((window as unknown as Record<string, unknown>).__DISABLE_AUDIO) {
-      setGameState('countdown');
-      return;
-    }
-    // Production: re-acquire mic then restart — no need to tap Start again.
-    // Uses fast calibration (250ms vs 1s) for a snappy replay.
-    setGameState('requesting');
-    const ok = await setupMic(true /* fast */);
-    if (ok) {
-      setMicFallback(false);
-      setGameState('countdown');
-    } else {
-      // Keep fallback mode and continue — no reason to go back to start
-      setMicFallback(true);
-      setGameState('countdown');
-    }
-  }, [setupMic]);
-
-  const handleShare = useCallback(async () => {
-    if (!behavior) return;
-    const score = behavior.defused ? `${behavior.fuseRemaining}% fuse remaining` : 'BOOM 💥';
-    const text = `I ${behavior.defused ? 'defused' : 'blew up'} the Whisper Bomb — ${score}! Can you stay quieter? 💣\nhttps://mini-games-green.vercel.app/games/whisper-bomb`;
-    try {
-      await navigator.share({ text });
-    } catch {
-      try {
-        await navigator.clipboard.writeText(text);
-        setCopied(true);
-        if (copiedTimeoutRef.current) clearTimeout(copiedTimeoutRef.current);
-        copiedTimeoutRef.current = setTimeout(() => setCopied(false), 2000);
-      } catch { /* ignore */ }
-    }
-  }, [behavior]);
+  }, [endGame, getVolume]);
 
   useEffect(() => () => {
-    const s = stateRef.current;
-    s.running = false;
-    cancelAnimationFrame(s.animId);
+    const s = stateRef.current; s.running = false; cancelAnimationFrame(s.animId);
     if (s.timerIntervalId) clearInterval(s.timerIntervalId);
-    if (flashTimeoutRef.current) clearTimeout(flashTimeoutRef.current);
-    if (nearMissTimeoutRef.current) clearTimeout(nearMissTimeoutRef.current);
-    if (copiedTimeoutRef.current) clearTimeout(copiedTimeoutRef.current);
     if (s.stream) s.stream.getTracks().forEach(t => t.stop());
     if (s.audioCtx) s.audioCtx.close().catch(() => {});
     if (stopMusicRef.current) stopMusicRef.current();
+    if (s.renderer) { s.renderer.dispose(); s.renderer = null; }
+  }, []);
+
+  const handleStart = useCallback(async (name: string, avatar: string) => {
+    playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar);
+    await initAudio(); setGameState('countdown');
+  }, []);
+  const handlePlayAgain = useCallback(() => {
+    if (stateRef.current.renderer) { stateRef.current.renderer.dispose(); stateRef.current.renderer = null; }
+    if (mountRef.current) mountRef.current.innerHTML = '';
+    setGameState('start'); setFuseDisplay(100); setDisplayTime(45); setBehavior(null); setMicError(false); setMicFallback(false);
   }, []);
 
   return (
-    <>
-      {gameState === 'start' && showInstructions && (
-        <SwipeInstructions
-          gameId="whisper-bomb"
-          steps={[
-            { icon: <VolumeX size={28} color="#ec4899" />, title: "Stay silent", body: "Noise burns the fuse — silence slows it down and lets it recover." },
-            { icon: <Zap size={28} color="#ef4444" />, title: "Loud = danger", body: "Volume spikes make the fuse burn fast. Hold your breath." },
-            { icon: <Target size={28} color="#00ff88" />, title: "Defuse at the end", body: "When the fuse is nearly gone, hold silent for 5 full seconds to defuse!" },
-          ]}
-          onDone={() => setShowInstructions(false)}
-        />
+    <GameShell title="Whisper Bomb" emoji="💣" accentColor={accent} background="radial-gradient(ellipse at 50% 50%, #220000 0%, #0d0800 100%)">
+      {gameState === 'start' && <GameStartScreen emoji="💣" title="Whisper Bomb" description="Stay SILENT to defuse the bomb. Any noise drains the fuse!" ctaLabel="Arm the Bomb 💣" accentColor={accent} onStart={handleStart} sensorNote="Uses microphone" />}
+      {gameState === 'countdown' && <Countdown onComplete={startLoop} accentColor={accent} />}
+      {(gameState === 'playing' || gameState === 'countdown') && (
+        <div ref={mountRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none' }} />
       )}
-    <GameShell title="Whisper Bomb" emoji="💣" titleIcon={<BombIcon size={22} strokeColor={accent} />} accentColor={accent} theme={theme} gameId={GAME_ID}
-      background="radial-gradient(ellipse at 50% 60%, rgba(255,240,200,0.12) 0%, rgba(255,200,100,0.05) 30%, transparent 60%), linear-gradient(180deg, #020202 0%, #050505 50%, #020202 100%)">
-      {/* Flash overlay */}
-      <div
-        ref={flashRef}
-        style={{ position: 'absolute', inset: 0, backgroundColor: 'transparent', pointerEvents: 'none', zIndex: 100 }}
-      />
-
-      <AnimatePresence mode="wait">
-        {gameState === 'countdown' && (
-          <motion.div
-            key="countdown"
-            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            transition={{ duration: 0.2 }}
-            style={{ position: 'absolute', inset: 0 }}
-          >
-            <Countdown onComplete={startLoop} accentColor={accent} />
-          </motion.div>
-        )}
-
-        {gameState === 'start' && (
-          <motion.div
-            key="start"
-            initial={{ opacity: 1, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -12 }}
-            transition={{ duration: 0.2 }}
-            style={{ position: 'absolute', inset: 0 }}
-          >
-            <GameStartScreen
-              emoji="💣"
-              iconNode={<BombIcon size={88} strokeColor={accent} />}
-              title="Whisper Bomb"
-              description="Stay silent to slow the fuse. Hold quiet for 5 seconds at the end to defuse."
-              sensorNote="Uses microphone"
-              ctaLabel="Allow Mic & Start →"
-              accentColor={accent}
-              ctaTextColor="#fff"
-              onStart={handleStart}
-              gradient="radial-gradient(ellipse 80% 70% at 50% 30%, #1a0303 0%, #0e0202 55%, #060101 100%)"
-            >
-              {micError && (
-                <div style={{
-                  marginTop: 12, padding: '10px 14px',
-                  background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.4)',
-                  borderRadius: 10, color: '#ef4444', fontSize: 14, textAlign: 'center',
-                }}>
-                  Microphone access unavailable — tap Start to play with the on-screen button.
-                </div>
-              )}
-            </GameStartScreen>
-          </motion.div>
-        )}
-
-        {gameState === 'requesting' && (
-          <motion.div
-            key="requesting"
-            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            transition={{ duration: 0.2 }}
-            style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: 12, color: 'var(--color-text-secondary)', position: 'absolute', inset: 0 }}
-          >
-            <Mic size={40} color="rgba(255,255,255,0.7)" />
-            <div style={{ fontSize: 16, fontWeight: 600 }}>Calibrating microphone…</div>
-            <div style={{ fontSize: 14, color: '#555', maxWidth: 220, textAlign: 'center', lineHeight: 1.5 }}>
-              Measuring ambient noise level. Keep quiet for a moment.
-            </div>
-          </motion.div>
-        )}
-
-        {gameState === 'playing' && (
-          <motion.div
-            key="playing"
-            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            transition={{ duration: 0.2 }}
-            style={{ position: 'absolute', inset: 0 }}
-          >
-            <GameHUD
-              accentColor={accent}
-              items={[
-                { label: 'TIME', value: displayTime, danger: displayTime <= 10, testId: 'timer' },
-                { label: 'FUSE', value: `${fuseDisplay}%`, testId: 'score' },
-              ]}
-            />
-            <div
-              ref={playAreaRef}
-              style={{
-                position: 'relative', display: 'flex', flexDirection: 'column',
-                alignItems: 'center', justifyContent: 'center', height: '100%',
-                gap: 24, padding: '80px 24px 24px',
-                background: 'radial-gradient(ellipse at center, rgba(30,5,5,1) 0%, rgba(10,3,3,1) 40%, #000 100%)',
-              }}
-            >
-
-              {/* Score pop overlay */}
-              <AnimatePresence>
-                {scorePop && (
-                  <motion.div
-                    key={scorePop.key}
-                    initial={{ scale: 1, y: 0, opacity: 1 }}
-                    animate={{ scale: 1.5, y: -40, opacity: 0 }}
-                    exit={{ opacity: 0 }}
-                    transition={{ duration: 0.7, ease: 'easeOut' }}
-                    style={{
-                      position: 'absolute', top: '38%', left: '50%', transform: 'translateX(-50%)',
-                      fontSize: 48, fontWeight: 900, color: '#00ff88',
-                      pointerEvents: 'none', zIndex: 50,
-                      textShadow: '0 0 20px rgba(0,255,136,0.8)',
-                    }}
-                    onAnimationComplete={() => setScorePop(null)}
-                  >
-                    +{scorePop.value}s
-                  </motion.div>
-                )}
-              </AnimatePresence>
-
-              {/* Near-miss banner */}
-              <AnimatePresence>
-                {nearMiss && (
-                  <motion.div
-                    key="nearmiss"
-                    initial={{ opacity: 0, scale: 0.8, y: -10 }}
-                    animate={{ opacity: 1, scale: 1, y: 0 }}
-                    exit={{ opacity: 0, scale: 0.8, y: -10 }}
-                    transition={{ type: 'spring', stiffness: 300, damping: 22 }}
-                    style={{
-                      position: 'absolute', top: '22%',
-                      background: 'rgba(255,170,0,0.12)', border: '1px solid rgba(255,170,0,0.5)',
-                      borderRadius: 12, padding: '8px 16px',
-                      fontSize: 20, fontWeight: 800, color: '#ffaa00',
-                      pointerEvents: 'none', zIndex: 50,
-                    }}
-                  >
-                    NEAR MISS!
-                  </motion.div>
-                )}
-              </AnimatePresence>
-
-              {/* Bomb */}
-              <div
-                ref={bombContainerRef}
-                style={{ position: 'relative', display: 'inline-block', transform: 'scale(1)', transition: 'transform 0.05s' }}
-              >
-                <BombIcon
-                  size={110}
-                  strokeColor={accent}
-                  fuseColor="#00ff88"
-                  bodyColor="#1a1a1a"
-                />
-                {/* Hidden div kept for rAF compat (fuse height/color updates; fuseBar is the primary indicator) */}
-                <div ref={bombFuseRef} style={{ display: 'none' }} />
-              </div>
-
-              {/* Fuse bar */}
-              <div style={{ width: '80%', maxWidth: 300 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                  <span style={{ color: '#666', fontSize: 18, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.1em' }}>FUSE</span>
-                  <span ref={fusePercentTextRef} style={{ color: '#00ff88', fontSize: 40, fontWeight: 800, lineHeight: 1 }}>100%</span>
-                </div>
-                <div style={{ backgroundColor: '#222', borderRadius: 4, height: 10, overflow: 'hidden' }}>
-                  <div ref={fuseBarFillRef} style={{ width: '100%', height: '100%', backgroundColor: '#00ff88', borderRadius: 4, transition: 'width 0.08s' }} />
-                </div>
-              </div>
-
-              {/* Volume meter */}
-              <div style={{ width: '80%', maxWidth: 300 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                  <span style={{ color: '#666', fontSize: 18, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.1em' }}>VOLUME</span>
-                  <span ref={volumeValueTextRef} style={{ color: '#00ff88', fontSize: 40, fontWeight: 800, lineHeight: 1 }}>0</span>
-                </div>
-                <div style={{ backgroundColor: '#222', borderRadius: 4, height: 8, overflow: 'hidden' }}>
-                  <div ref={volumeBarFillRef} style={{ width: '0%', height: '100%', backgroundColor: '#00ff88', borderRadius: 4, transition: 'width 0.04s' }} />
-                </div>
-              </div>
-
-              {/* Defuse progress */}
-              <div
-                ref={defuseContainerRef}
-                style={{
-                  display: 'none', width: '80%', maxWidth: 300,
-                  padding: '12px 16px', background: 'rgba(0,255,136,0.08)',
-                  border: '1px solid rgba(0,255,136,0.35)', borderRadius: 12,
-                }}
-              >
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                  <span style={{ color: '#00ff88', fontSize: 18, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em' }}>DEFUSING</span>
-                  <span ref={defuseBarTextRef} style={{ color: '#00ff88', fontSize: 28, fontWeight: 800, lineHeight: 1 }}>5s</span>
-                </div>
-                <div style={{ backgroundColor: '#111', borderRadius: 4, height: 8, overflow: 'hidden' }}>
-                  <div ref={defuseBarFillRef} style={{ width: '0%', height: '100%', backgroundColor: '#00ff88', borderRadius: 4, transition: 'width 0.1s' }} />
-                </div>
-              </div>
-
-              <p
-                ref={instructionTextRef}
-                style={{ color: 'rgba(255,255,255,0.7)', fontSize: 16, textAlign: 'center', margin: 0, lineHeight: 1.5 }}
-              >
-                Keep quiet to slow the fuse
-              </p>
-
-              {/* Touch fallback: shown when mic is unavailable */}
-              {micFallback && (
-                <div style={{ width: '80%', maxWidth: 300 }}>
-                  <div
-                    aria-label="Press and hold to make noise"
-                    role="button"
-                    tabIndex={0}
-                    onPointerDown={() => { touchVolumeRef.current = 55; }}
-                    onPointerUp={() => { touchVolumeRef.current = 0; }}
-                    onPointerLeave={() => { touchVolumeRef.current = 0; }}
-                    onPointerCancel={() => { touchVolumeRef.current = 0; }}
-                    onKeyDown={(e) => { if (e.key === ' ' || e.key === 'Enter') touchVolumeRef.current = 55; }}
-                    onKeyUp={() => { touchVolumeRef.current = 0; }}
-                    style={{
-                      background: 'rgba(239,68,68,0.15)',
-                      border: '2px solid rgba(239,68,68,0.5)',
-                      borderRadius: 16,
-                      padding: '18px 0',
-                      textAlign: 'center',
-                      cursor: 'pointer',
-                      userSelect: 'none',
-                      WebkitUserSelect: 'none',
-                      touchAction: 'none',
-                    }}
-                  >
-                    <span style={{ fontSize: 28 }}>🔊</span>
-                    <p style={{ color: 'rgba(255,255,255,0.85)', fontSize: 13, fontWeight: 700, margin: '8px 0 0', letterSpacing: '0.05em', textTransform: 'uppercase' }}>
-                      Hold to simulate noise
-                    </p>
-                    <p style={{ color: 'rgba(255,255,255,0.45)', fontSize: 11, margin: '4px 0 0' }}>
-                      Release = silence (mic unavailable)
-                    </p>
-                  </div>
-                </div>
-              )}
-            </div>
-          </motion.div>
-        )}
-
-        {gameState === 'done' && behavior && (
-          <EndScreen
-            gameId={GAME_ID}
-            title={getProfile(behavior)}
-            emoji={behavior.defused ? '✅' : '💥'}
-            score={behavior.defused ? `${behavior.fuseRemaining}%` : '0%'}
-            personality={getProfile(behavior)}
-            insights={[
-              { label: 'Noise spikes', value: String(behavior.noiseSpikes), color: '#ef4444' },
-              { label: 'Avg volume',   value: `${behavior.avgVolume}/100`,   color: '#ffaa00' },
-              { label: 'Danger time',  value: `${behavior.dangerSeconds}s`,  color: '#ff6666' },
-              { label: 'Fuse left',    value: `${behavior.fuseRemaining}%`,  color: behavior.defused ? '#00ff88' : '#aaa' },
-            ]}
-            accentColor={accent}
-            ctaTextColor="#fff"
-            onPlayAgain={handlePlayAgain}
-            didWin={behavior.defused}
-            finalScore={behavior.defused ? behavior.fuseRemaining : 0}
-          />
-        )}
-      </AnimatePresence>
-      {gameState === 'playing' && (
-        <>
-          <ScorePopEffect pops={pops} accentColor={accent} />
-          <StreakBadge streak={streakDisplay} accentColor={accent} position="bottom-center" />
-        </>
+      {gameState === 'playing' && <>
+        <GameHUD accentColor={accent} items={[{ label: 'TIME', value: displayTime, danger: displayTime <= 10 }, { label: 'FUSE', value: `${fuseDisplay}%`, danger: fuseDisplay <= 20 }]} />
+        <div style={{ position: 'fixed', bottom: '8%', left: '50%', transform: 'translateX(-50%)', color: fuseDisplay < 40 ? '#ef4444' : 'rgba(255,255,255,0.5)', fontSize: 15, fontWeight: 700, zIndex: 50 }}>
+          {micFallback ? '🤫 Hold to make noise' : fuseDisplay < 40 ? '⚠️ STAY QUIET!' : '🤫 Shh...'}
+        </div>
+      </>}
+      {gameState === 'done' && behavior && (
+        <EndScreen gameId={GAME_ID} title={getProfile(behavior)} emoji={behavior.defused ? '✅' : '💥'} score={behavior.defused ? '100' : String(Math.round(behavior.fuseRemaining))}
+          personality={getProfile(behavior)}
+          insights={[{ label: 'Status', value: behavior.defused ? 'Defused! ✅' : 'BOOM! 💥', color: behavior.defused ? '#4ade80' : '#ef4444' }, { label: 'Noise Spikes', value: String(behavior.noiseSpikes), color: behavior.noiseSpikes < 3 ? '#4ade80' : '#ef4444' }, { label: 'Danger Seconds', value: `${behavior.dangerSeconds}s`, color: '#fbbf24' }, { label: 'Fuse Left', value: `${Math.round(behavior.fuseRemaining)}%`, color: accent }]}
+          accentColor={accent} onPlayAgain={handlePlayAgain} didWin={behavior.defused} />
       )}
     </GameShell>
-    </>
   );
 }

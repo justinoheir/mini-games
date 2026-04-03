@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
+import * as THREE from 'three';
 import GameShell from '@/components/GameShell';
 import GameHUD from '@/components/GameHUD';
 import GameStartScreen from '@/components/GameStartScreen';
@@ -15,307 +16,309 @@ const ACCENT = '#a855f7';
 const DURATION = 60;
 const GAME_EMOJI = '🕰️';
 const GAME_TITLE = 'Pendulum Swing';
-const GAME_TAGLINE = 'Keep the rhythm. Don\'t let it stop.';
+const GAME_TAGLINE = "Keep the rhythm. Don't let it stop.";
 
 interface Signals {
   totalSwings: number; rhythmicSwings: number; misTimedSwings: number;
   maxAmplitude: number; maxStreak: number; streakCurrent: number; score: number;
 }
+type Phase = 'start' | 'countdown' | 'playing' | 'done';
 
 function getPersonality(sig: Signals): string {
   const rhythm = sig.totalSwings > 0 ? sig.rhythmicSwings / sig.totalSwings : 0;
-  if (rhythm >= 0.8 && sig.maxAmplitude >= 150) return 'Maestro 🎵';
+  if (rhythm >= 0.8 && sig.maxAmplitude >= 2.5) return 'Maestro 🎵';
   if (sig.maxStreak >= 8) return 'In the Zone 🌀';
   if (rhythm >= 0.6) return 'Steady Beat 🥁';
   if (sig.totalSwings >= 20) return 'Persistent 💪';
   return 'Finding the Rhythm 🎶';
 }
 
-type Phase = 'start' | 'countdown' | 'playing' | 'done';
-
-interface GameState {
-  running: boolean; timeLeft: number; sig: Signals;
-  angle: number; angularVelocity: number; pivotX: number; pivotY: number; length: number;
-  targetZoneMin: number; targetZoneMax: number; lastPeakSide: number;
-  isAtPeak: boolean; pushWindow: boolean; pushWindowTimer: number;
-  accentColor: string; floats: Array<{ x: number; y: number; text: string; alpha: number; vy: number; color: string }>;
-  scorePop: number; frame: number; amplitude: number; maxAmplitudeReached: number;
-}
-
 export default function PendulumSwing() {
   const theme = useBrandTheme();
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const mountRef = useRef<HTMLDivElement>(null);
+  const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
+  const sceneRef = useRef<THREE.Scene | null>(null);
+  const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const animRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const stateRef = useRef<GameState>({
+  const playerSessionRef = useRef<PlayerSession | null>(null);
+  const bobRef = useRef<THREE.Mesh | null>(null);
+  const rodRef = useRef<THREE.Mesh | null>(null);
+  const glowRingRef = useRef<THREE.Mesh | null>(null);
+  const trailRef = useRef<THREE.Line | null>(null);
+
+  const stateRef = useRef({
     running: false, timeLeft: DURATION,
-    sig: { totalSwings: 0, rhythmicSwings: 0, misTimedSwings: 0, maxAmplitude: 0, maxStreak: 0, streakCurrent: 0, score: 0 },
-    angle: 0.3, angularVelocity: 0.02, pivotX: 0, pivotY: 0, length: 200,
-    targetZoneMin: 0, targetZoneMax: 0, lastPeakSide: 0,
-    isAtPeak: false, pushWindow: false, pushWindowTimer: 0,
-    accentColor: ACCENT, floats: [], scorePop: 0, frame: 0, amplitude: 0.3, maxAmplitudeReached: 0,
+    sig: { totalSwings: 0, rhythmicSwings: 0, misTimedSwings: 0, maxAmplitude: 0, maxStreak: 0, streakCurrent: 0, score: 0 } as Signals,
+    angle: 0.4, angularVelocity: 0.01, amplitude: 0.4,
+    prevAngularVelocity: 0, pushWindow: false, pushWindowTimer: 0, lastPeakSide: 0,
+    scoreTimer: 0, trailPoints: [] as THREE.Vector3[],
+    accentColor: ACCENT,
   });
 
   const [phase, setPhase] = useState<Phase>('start');
   const [timeLeft, setTimeLeft] = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
+  const [showTap, setShowTap] = useState(false);
   const [finalSig, setFinalSig] = useState<Signals | null>(null);
-  const playerSessionRef = useRef<PlayerSession | null>(null);
 
   useEffect(() => { stateRef.current.accentColor = theme.colors.accent ?? ACCENT; }, [theme]);
 
   const endGame = useCallback(() => {
-    const s = stateRef.current;
-    s.running = false;
+    const s = stateRef.current; s.running = false;
     cancelAnimationFrame(animRef.current);
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
-    const pb = parseInt(localStorage.getItem(`pb_${GAME_ID}`) ?? '0');
-    if (s.sig.score > pb) localStorage.setItem(`pb_${GAME_ID}`, String(s.sig.score));
-    setFinalSig({ ...s.sig });
-    setPhase('done');
     hapticVictory();
+    try { const pb = parseInt(localStorage.getItem(`pb_${GAME_ID}`) ?? '0'); if (s.sig.score > pb) localStorage.setItem(`pb_${GAME_ID}`, String(s.sig.score)); } catch { /**/ }
+    setFinalSig({ ...s.sig }); setPhase('done');
   }, []);
 
   const startLoop = useCallback(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+    const mount = mountRef.current; if (!mount) return;
     const s = stateRef.current;
-    const W = canvas.width, H = canvas.height;
-
     s.running = true; s.timeLeft = DURATION;
     s.sig = { totalSwings: 0, rhythmicSwings: 0, misTimedSwings: 0, maxAmplitude: 0, maxStreak: 0, streakCurrent: 0, score: 0 };
-    s.pivotX = W / 2; s.pivotY = H * 0.18;
-    s.length = Math.min(W, H) * 0.45;
-    s.angle = 0.4; s.angularVelocity = 0.01;
-    s.amplitude = 0.4; s.frame = 0; s.floats = []; s.scorePop = 0;
-    s.lastPeakSide = 0; s.pushWindow = false;
+    s.angle = 0.4; s.angularVelocity = 0.01; s.amplitude = 0.4;
+    s.pushWindow = false; s.pushWindowTimer = 0; s.prevAngularVelocity = 0;
+    s.scoreTimer = 0; s.trailPoints = [];
     setScoreDisplay(0); setTimeLeft(DURATION); setPhase('playing');
+
+    const W = window.innerWidth, H = window.innerHeight;
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x080612);
+    sceneRef.current = scene;
+
+    const camera = new THREE.PerspectiveCamera(70, W / H, 0.1, 100);
+    camera.position.set(0, 1, 12);
+    cameraRef.current = camera;
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(W, H);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    mount.appendChild(renderer.domElement);
+    rendererRef.current = renderer;
+
+    // Lights
+    scene.add(new THREE.AmbientLight(0x1a0a2e, 3));
+    const accentLight = new THREE.PointLight(0xa855f7, 80, 20);
+    accentLight.position.set(0, 3, 6);
+    scene.add(accentLight);
+    const rimLight = new THREE.PointLight(0x6366f1, 30, 15);
+    rimLight.position.set(4, -2, 4);
+    scene.add(rimLight);
+
+    // Stars
+    const sg = new THREE.BufferGeometry();
+    const sp = new Float32Array(600);
+    for (let i = 0; i < 600; i += 3) { sp[i] = (Math.random()-0.5)*50; sp[i+1] = (Math.random()-0.5)*50; sp[i+2] = (Math.random()-0.5)*10-12; }
+    sg.setAttribute('position', new THREE.BufferAttribute(sp, 3));
+    scene.add(new THREE.Points(sg, new THREE.PointsMaterial({ color: 0xffffff, size: 0.06 })));
+
+    // Clock tower structure
+    const wallMat = new THREE.MeshStandardMaterial({ color: 0x2a1f4a, roughness: 0.8 });
+    const archGeo = new THREE.TorusGeometry(1.2, 0.15, 8, 24, Math.PI);
+    const arch = new THREE.Mesh(archGeo, wallMat);
+    arch.position.set(0, 3.5, 0);
+    arch.rotation.z = Math.PI;
+    scene.add(arch);
+
+    // Pivot
+    const pivotGeo = new THREE.SphereGeometry(0.18, 16, 16);
+    const pivotMat = new THREE.MeshStandardMaterial({ color: 0xa855f7, emissive: 0x4a1a7f, roughness: 0.2, metalness: 0.8 });
+    const pivot = new THREE.Mesh(pivotGeo, pivotMat);
+    pivot.position.set(0, 3.5, 0);
+    scene.add(pivot);
+
+    // Rod (will be repositioned dynamically)
+    const rodGeo = new THREE.CylinderGeometry(0.04, 0.04, 1, 8);
+    const rodMat = new THREE.MeshStandardMaterial({ color: 0x7c3aed, emissive: 0x2a0a5e, metalness: 0.9, roughness: 0.1 });
+    const rod = new THREE.Mesh(rodGeo, rodMat);
+    scene.add(rod);
+    rodRef.current = rod;
+
+    // Bob sphere
+    const bobGeo = new THREE.SphereGeometry(0.5, 32, 32);
+    const bobMat = new THREE.MeshStandardMaterial({ color: 0xe879f9, emissive: 0x7c3aed, roughness: 0.1, metalness: 0.7 });
+    const bob = new THREE.Mesh(bobGeo, bobMat);
+    scene.add(bob);
+    bobRef.current = bob;
+
+    // Glow ring (target zone indicator)
+    const ringGeo = new THREE.TorusGeometry(2.2, 0.05, 8, 48);
+    const ringMat = new THREE.MeshStandardMaterial({ color: 0xa855f7, emissive: 0xa855f7, emissiveIntensity: 0.5, transparent: true, opacity: 0.3 });
+    const ring = new THREE.Mesh(ringGeo, ringMat);
+    ring.position.y = 3.5;
+    ring.rotation.x = Math.PI / 2;
+    scene.add(ring);
+    glowRingRef.current = ring;
+
+    // Trail line
+    const trailLine = new THREE.Line(
+      new THREE.BufferGeometry(),
+      new THREE.LineBasicMaterial({ color: 0xa855f7, transparent: true, opacity: 0.4 }),
+    );
+    scene.add(trailLine);
+    trailRef.current = trailLine;
+
+    // Input
+    const onPointerDown = () => {
+      if (!s.running) return;
+      if (!s.pushWindow) {
+        s.sig.misTimedSwings++;
+        sfx.collision(); hapticFail();
+        return;
+      }
+      const pushForce = 0.025;
+      s.angularVelocity += s.lastPeakSide > 0 ? pushForce : -pushForce;
+      s.sig.rhythmicSwings++; s.sig.streakCurrent++;
+      if (s.sig.streakCurrent > s.sig.maxStreak) s.sig.maxStreak = s.sig.streakCurrent;
+      const mult = s.sig.streakCurrent >= 3 ? 2 : 1;
+      s.sig.score += 2 * mult; setScoreDisplay(s.sig.score);
+      sfx.collect(); hapticScore();
+      s.pushWindow = false;
+    };
+    renderer.domElement.addEventListener('pointerdown', onPointerDown);
 
     timerRef.current = setInterval(() => {
       s.timeLeft--; setTimeLeft(s.timeLeft);
       if (s.timeLeft <= 0) { sfx.fail(); endGame(); }
     }, 1000);
 
-    const DAMPING = 0.998;
-    const GRAVITY = 0.0025;
-    let prevAngularVelocity = 0;
+    const DAMPING = 0.998, GRAVITY = 0.0028;
+    const ROD_LEN = 4.5;
+    const PIVOT_Y = 3.5;
 
     const loop = () => {
       if (!s.running) return;
-      ctx.clearRect(0, 0, W, H);
-      s.frame++;
-
-      // Background: dark clock tower
-      ctx.fillStyle = '#0a0810';
-      ctx.fillRect(0, 0, W, H);
-
-      // Ornate grid
-      ctx.strokeStyle = 'rgba(168,85,247,0.05)';
-      ctx.lineWidth = 1;
-      for (let gx = 0; gx < W; gx += 40) { ctx.beginPath(); ctx.moveTo(gx, 0); ctx.lineTo(gx, H); ctx.stroke(); }
-      for (let gy = 0; gy < H; gy += 40) { ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(W, gy); ctx.stroke(); }
+      animRef.current = requestAnimationFrame(loop);
+      s.scoreTimer++;
 
       // Physics
-      const g = GRAVITY;
-      s.angularVelocity -= Math.sin(s.angle) * g;
+      s.angularVelocity -= Math.sin(s.angle) * GRAVITY;
       s.angularVelocity *= DAMPING;
       s.angle += s.angularVelocity;
 
-      // Detect peak (velocity sign change)
-      const newSide = s.angularVelocity < 0 ? -1 : 1;
-      if (Math.sign(s.angularVelocity) !== Math.sign(prevAngularVelocity) && prevAngularVelocity !== 0) {
-        // Just passed peak on one side
-        s.pushWindow = true;
-        s.pushWindowTimer = 30;
-        s.lastPeakSide = newSide;
+      // Peak detection
+      if (Math.sign(s.angularVelocity) !== Math.sign(s.prevAngularVelocity) && s.prevAngularVelocity !== 0) {
+        s.pushWindow = true; s.pushWindowTimer = 40;
+        s.lastPeakSide = s.angularVelocity < 0 ? -1 : 1;
         s.sig.totalSwings++;
         hapticTick();
+        setShowTap(true);
       }
-      if (s.pushWindowTimer > 0) s.pushWindowTimer--;
-      else s.pushWindow = false;
-      prevAngularVelocity = s.angularVelocity;
+      if (s.pushWindowTimer > 0) { s.pushWindowTimer--; }
+      else { s.pushWindow = false; setShowTap(false); }
+      s.prevAngularVelocity = s.angularVelocity;
 
-      const bobX = s.pivotX + Math.sin(s.angle) * s.length;
-      const bobY = s.pivotY + Math.cos(s.angle) * s.length;
       const currentAmp = Math.abs(s.angle);
-      s.maxAmplitudeReached = Math.max(s.maxAmplitudeReached, currentAmp * s.length);
+      if (currentAmp > s.sig.maxAmplitude) s.sig.maxAmplitude = currentAmp;
 
-      // Target zone arcs
-      const tMin = 0.35, tMax = 0.65;
-      ctx.save();
-      ctx.strokeStyle = `rgba(168,85,247,${s.pushWindow ? 0.6 : 0.2})`;
-      ctx.lineWidth = 3;
-      const arcLeft = -tMax, arcRight = tMax;
-      ctx.beginPath();
-      ctx.arc(s.pivotX, s.pivotY, s.length, Math.PI / 2 + arcLeft, Math.PI / 2 + arcRight - Math.PI * 0.4);
-      ctx.stroke();
-      ctx.restore();
-
-      // Pivot
-      ctx.save();
-      ctx.fillStyle = '#4a4060';
-      ctx.shadowBlur = 8; ctx.shadowColor = ACCENT;
-      ctx.beginPath(); ctx.arc(s.pivotX, s.pivotY, 10, 0, Math.PI * 2); ctx.fill();
-      ctx.restore();
-
-      // Rod
-      ctx.save();
-      ctx.strokeStyle = s.accentColor + '88';
-      ctx.lineWidth = 3;
-      ctx.shadowBlur = 6; ctx.shadowColor = ACCENT;
-      ctx.beginPath(); ctx.moveTo(s.pivotX, s.pivotY); ctx.lineTo(bobX, bobY); ctx.stroke();
-      ctx.restore();
-
-      // Bob with amplitude glow
-      const glowIntensity = Math.min(1, currentAmp / 0.6);
-      ctx.save();
-      ctx.shadowBlur = 20 + glowIntensity * 20;
-      ctx.shadowColor = ACCENT;
-      const bobGrad = ctx.createRadialGradient(bobX - 6, bobY - 6, 2, bobX, bobY, 22);
-      bobGrad.addColorStop(0, '#e879f9');
-      bobGrad.addColorStop(1, '#7c3aed');
-      ctx.fillStyle = bobGrad;
-      ctx.beginPath(); ctx.arc(bobX, bobY, 22, 0, Math.PI * 2); ctx.fill();
-      ctx.strokeStyle = '#ffffff33';
-      ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.arc(bobX, bobY, 22, 0, Math.PI * 2); ctx.stroke();
-      ctx.restore();
-
-      // Amplitude meter (right side)
-      const meterH = H * 0.4;
-      const meterY = H * 0.3;
-      const meterX = W - 30;
-      const ampPct = Math.min(1, currentAmp / 0.8);
-      ctx.fillStyle = '#1a1030';
-      ctx.fillRect(meterX - 8, meterY, 16, meterH);
-      ctx.fillStyle = ACCENT;
-      ctx.fillRect(meterX - 8, meterY + meterH * (1 - ampPct), 16, meterH * ampPct);
-      ctx.strokeStyle = ACCENT + '44';
-      ctx.lineWidth = 1;
-      ctx.strokeRect(meterX - 8, meterY, 16, meterH);
-
-      // Push window indicator
-      if (s.pushWindow) {
-        ctx.save();
-        ctx.fillStyle = '#a855f7';
-        ctx.globalAlpha = 0.7;
-        ctx.font = 'bold 18px sans-serif';
-        ctx.textAlign = 'center';
-        ctx.fillText('TAP! 🔵', W / 2, H * 0.88);
-        ctx.restore();
+      // Bob position
+      const bobX = Math.sin(s.angle) * ROD_LEN;
+      const bobY = PIVOT_Y - Math.cos(s.angle) * ROD_LEN;
+      if (bobRef.current) {
+        bobRef.current.position.set(bobX, bobY, 0);
+        (bobRef.current.material as THREE.MeshStandardMaterial).emissiveIntensity = 0.5 + currentAmp * 2;
       }
 
-      // Amplitude score drain
-      if (s.frame % 120 === 0 && s.running) {
-        const ampScore = Math.round(currentAmp * s.length / 10);
-        if (ampScore > 0) {
-          s.sig.score += ampScore;
-          s.sig.maxAmplitude; // no-op just reference
-          if (currentAmp * s.length > s.sig.maxAmplitude) s.sig.maxAmplitude = currentAmp * s.length;
-          s.scorePop = Date.now() + 300;
-          setScoreDisplay(s.sig.score);
-        }
-        if (currentAmp < 0.05) {
-          // Too slow - end
-          hapticFail();
-          sfx.fail();
-          endGame();
-        }
+      // Rod: position between pivot and bob
+      if (rodRef.current) {
+        const midX = bobX / 2, midY = PIVOT_Y - Math.cos(s.angle) * ROD_LEN / 2;
+        rodRef.current.position.set(midX, midY, 0);
+        rodRef.current.scale.y = ROD_LEN;
+        rodRef.current.rotation.z = -s.angle;
       }
 
-      // Score pop
-      if (s.scorePop > Date.now()) {
-        const t = (s.scorePop - Date.now()) / 300;
-        ctx.save(); ctx.globalAlpha = t;
-        ctx.font = `bold ${Math.round(36 * (1 + (1 - t) * 0.3))}px sans-serif`;
-        ctx.fillStyle = ACCENT; ctx.textAlign = 'center';
-        ctx.fillText(`${s.sig.score}`, W / 2, 80); ctx.restore();
+      // Trail
+      s.trailPoints.push(new THREE.Vector3(bobX, bobY, 0));
+      if (s.trailPoints.length > 80) s.trailPoints.shift();
+      if (trailRef.current && s.trailPoints.length > 1) trailRef.current.geometry.setFromPoints(s.trailPoints);
+
+      // Ring pulse
+      if (glowRingRef.current) {
+        (glowRingRef.current.material as THREE.MeshStandardMaterial).emissiveIntensity = s.pushWindow ? 2 : 0.3;
+        glowRingRef.current.scale.setScalar(1 + currentAmp * 0.4);
       }
 
-      // Float texts
-      s.floats = s.floats.filter(f => f.alpha > 0.02);
-      s.floats.forEach(f => {
-        ctx.save(); ctx.globalAlpha = f.alpha;
-        ctx.fillStyle = f.color; ctx.font = 'bold 24px sans-serif'; ctx.textAlign = 'center';
-        ctx.fillText(f.text, f.x, f.y); ctx.restore();
-        f.y += f.vy; f.alpha *= 0.95;
-      });
+      // Passive score for amplitude
+      if (s.scoreTimer % 120 === 0 && s.running) {
+        const ampScore = Math.round(currentAmp * 5);
+        if (ampScore > 0) { s.sig.score += ampScore; setScoreDisplay(s.sig.score); }
+        if (currentAmp < 0.06) { hapticFail(); sfx.fail(); endGame(); }
+      }
 
-      animRef.current = requestAnimationFrame(loop);
+      accentLight.position.x = bobX * 0.5;
+      accentLight.intensity = 40 + currentAmp * 60;
+      renderer.render(scene, camera);
     };
     animRef.current = requestAnimationFrame(loop);
+
+    return () => { renderer.domElement.removeEventListener('pointerdown', onPointerDown); };
   }, [endGame]);
 
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const resize = () => { canvas.width = canvas.offsetWidth; canvas.height = canvas.offsetHeight; };
-    resize();
-    window.addEventListener('resize', resize);
-
-    const onPointerDown = (e: PointerEvent) => {
-      if (phase !== 'playing') return;
-      const s = stateRef.current;
-      if (!s.pushWindow) {
-        s.sig.misTimedSwings++;
-        sfx.collision();
-        s.floats.push({ x: s.pivotX, y: s.pivotY + 50, text: 'Wrong timing!', alpha: 1, vy: -1.5, color: '#ef4444' });
-        return;
-      }
-      // Push the pendulum in direction of travel
-      const pushForce = 0.04;
-      s.angularVelocity += s.lastPeakSide > 0 ? pushForce : -pushForce;
-      s.sig.rhythmicSwings++;
-      s.sig.streakCurrent++;
-      if (s.sig.streakCurrent > s.sig.maxStreak) s.sig.maxStreak = s.sig.streakCurrent;
-      const mult = s.sig.streakCurrent >= 3 ? 2 : 1;
-      s.sig.score += 2 * mult;
-      s.scorePop = Date.now() + 300;
-      setScoreDisplay(s.sig.score);
-      sfx.collect();
-      hapticScore();
-      s.floats.push({ x: s.pivotX, y: s.pivotY + 50, text: `+${2 * mult} ✨`, alpha: 1, vy: -2, color: '#a855f7' });
-      s.pushWindow = false;
+    const onResize = () => {
+      if (!cameraRef.current || !rendererRef.current) return;
+      const W = window.innerWidth, H = window.innerHeight;
+      cameraRef.current.aspect = W / H; cameraRef.current.updateProjectionMatrix();
+      rendererRef.current.setSize(W, H);
     };
-
-    canvas.addEventListener('pointerdown', onPointerDown);
+    window.addEventListener('resize', onResize);
     return () => {
-      window.removeEventListener('resize', resize);
-      canvas.removeEventListener('pointerdown', onPointerDown);
+      window.removeEventListener('resize', onResize);
+      cancelAnimationFrame(animRef.current);
+      if (timerRef.current) clearInterval(timerRef.current);
+      if (rendererRef.current && mountRef.current) {
+        try { mountRef.current.removeChild(rendererRef.current.domElement); } catch { /**/ }
+        rendererRef.current.dispose();
+      }
     };
-  }, [phase]);
-
-  useEffect(() => () => {
-    cancelAnimationFrame(animRef.current);
-    if (timerRef.current) clearInterval(timerRef.current);
   }, []);
 
-  const handleStart = useCallback(async (name: string, avatar: string) => {
+  const handleStart = useCallback((name: string, avatar: string) => {
     playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar);
-    await initAudio(); setPhase('countdown');
+    initAudio(); setPhase('countdown');
   }, []);
+  const handleCountdownDone = useCallback(() => { startLoop(); }, [startLoop]);
   const handlePlayAgain = useCallback(() => {
-    setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null);
+    stateRef.current.running = false;
+    cancelAnimationFrame(animRef.current);
+    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+    if (rendererRef.current && mountRef.current) {
+      try { mountRef.current.removeChild(rendererRef.current.domElement); } catch { /**/ }
+      rendererRef.current.dispose(); rendererRef.current = null;
+    }
+    setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null); setShowTap(false);
+    setPhase('countdown');
   }, []);
 
+  const accent = theme.colors.accent ?? ACCENT;
+  const sig = stateRef.current.sig;
   return (
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accent}
+      background="radial-gradient(ellipse at 50% 0%, rgba(168,85,247,0.15) 0%, transparent 60%), linear-gradient(180deg, #080612 0%, #040308 100%)">
       {phase === 'start' && (
         <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description={GAME_TAGLINE}
-          ctaLabel="Swing! 🕰️" accentColor={theme.colors.accent ?? ACCENT} onStart={handleStart} />
+          ctaLabel="Swing! 🕰️" accentColor={accent} onStart={handleStart} />
       )}
-      {phase === 'countdown' && <Countdown onComplete={startLoop} accentColor={theme.colors.accent ?? ACCENT} />}
+      {phase === 'countdown' && <Countdown onComplete={handleCountdownDone} accentColor={accent} />}
       {(phase === 'playing' || phase === 'countdown') && (
         <>
-          <canvas ref={canvasRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none' }}
-            role="img" aria-label="Pendulum swing game canvas" />
+          <div ref={mountRef} style={{ position: 'absolute', inset: 0, touchAction: 'none' }} />
           {phase === 'playing' && (
-            <GameHUD accentColor={theme.colors.accent ?? ACCENT} items={[
-              { label: 'TIME', value: timeLeft, danger: timeLeft <= 10 },
-              { label: 'SCORE', value: scoreDisplay },
-            ]} />
+            <>
+              <GameHUD accentColor={accent} items={[
+                { label: 'TIME', value: timeLeft, danger: timeLeft <= 10, testId: 'timer' },
+                { label: 'SCORE', value: scoreDisplay, testId: 'score' },
+              ]} />
+              {showTap && (
+                <div style={{ position: 'absolute', bottom: '15%', left: '50%', transform: 'translateX(-50%)',
+                  color: accent, fontSize: 24, fontWeight: 900, pointerEvents: 'none',
+                  textShadow: `0 0 20px ${accent}`, animation: 'pulse 0.3s ease-out' }}>
+                  TAP! 🔵
+                </div>
+              )}
+            </>
           )}
         </>
       )}
@@ -323,15 +326,13 @@ export default function PendulumSwing() {
         <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI}
           score={String(finalSig.score)} personality={getPersonality(finalSig)}
           insights={[
-            { label: 'Rhythmic Swings', value: String(finalSig.rhythmicSwings), color: ACCENT },
+            { label: 'Rhythmic Swings', value: String(finalSig.rhythmicSwings), color: accent },
             { label: 'Mis-timed', value: String(finalSig.misTimedSwings), color: '#ef4444' },
             { label: 'Best Streak', value: `×${finalSig.maxStreak}`, color: '#fbbf24' },
-            { label: 'Max Amplitude', value: `${Math.round(finalSig.maxAmplitude)}px`, color: '#4ade80' },
+            { label: 'Max Amplitude', value: `${finalSig.maxAmplitude.toFixed(2)} rad`, color: '#4ade80' },
           ]}
-          accentColor={theme.colors.accent ?? ACCENT} onPlayAgain={handlePlayAgain} didWin={finalSig.rhythmicSwings >= 10} />
+          accentColor={accent} onPlayAgain={handlePlayAgain} didWin={finalSig.rhythmicSwings >= 10} />
       )}
     </GameShell>
   );
 }
-
-

@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
+import * as THREE from 'three';
 import GameShell from '@/components/GameShell';
 import GameHUD from '@/components/GameHUD';
 import GameStartScreen from '@/components/GameStartScreen';
@@ -16,47 +17,42 @@ const DURATION = 45;
 const GAME_EMOJI = '🌱';
 const GAME_TITLE = 'Spring Leap';
 const GAME_TAGLINE = 'Hold to charge. Release to fly.';
+const GRAVITY = -0.015;
+const GROUND_Y = -2.5;
 
-interface Platform { x: number; y: number; w: number; h: number; color: string; bonus: boolean; scored: boolean; }
-
-interface Signals {
-  totalLeaps: number; landings: number; perfectLandings: number;
-  missedLandings: number; maxHeight: number; maxStreak: number; streakCurrent: number; score: number;
-}
-
+interface Platform { x: number; y: number; w: number; color: number; bonus: boolean; scored: boolean; mesh: THREE.Mesh; light: THREE.PointLight; }
+interface Signals { totalLeaps: number; landings: number; perfectLandings: number; missedLandings: number; maxHeight: number; maxStreak: number; streakCurrent: number; score: number; }
 function getPersonality(sig: Signals): string {
   const acc = sig.totalLeaps > 0 ? sig.landings / sig.totalLeaps : 0;
   if (acc >= 0.85 && sig.perfectLandings >= 4) return 'Spring Master 🌱';
-  if (sig.maxHeight >= 400) return 'High Flyer 🦅';
+  if (sig.maxHeight >= 8) return 'High Flyer 🦅';
   if (sig.maxStreak >= 5) return 'Bouncing Beast 🐸';
   if (acc >= 0.6) return 'Good Jumper 🦘';
   return 'Still Bouncing 🌀';
 }
-
 type Phase = 'start' | 'countdown' | 'playing' | 'done';
 
-interface GameState {
-  running: boolean; timeLeft: number; sig: Signals;
-  playerX: number; playerY: number; playerVX: number; playerVY: number;
-  onGround: boolean; platforms: Platform[]; scrollY: number;
-  charging: boolean; chargeStart: number; chargeLevel: number;
-  cameraY: number; maxCameraY: number;
-  accentColor: string; floats: Array<{ x: number; y: number; text: string; alpha: number; vy: number; color: string }>;
-  scorePop: number; frame: number;
-}
-
-export default function SpringLeap() {
+export default function SpringLeapGame() {
   const theme = useBrandTheme();
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const mountRef = useRef<HTMLDivElement>(null);
   const animRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const stateRef = useRef<GameState>({
+
+  const stateRef = useRef({
+    renderer: null as THREE.WebGLRenderer | null,
+    scene: null as THREE.Scene | null,
+    camera: null as THREE.PerspectiveCamera | null,
+    playerMesh: null as THREE.Mesh | null,
+    playerLight: null as THREE.PointLight | null,
+    chargeRing: null as THREE.Mesh | null,
+    platforms: [] as Platform[],
     running: false, timeLeft: DURATION,
-    sig: { totalLeaps: 0, landings: 0, perfectLandings: 0, missedLandings: 0, maxHeight: 0, maxStreak: 0, streakCurrent: 0, score: 0 },
-    playerX: 0, playerY: 0, playerVX: 0, playerVY: 0, onGround: true,
-    platforms: [], scrollY: 0, charging: false, chargeStart: 0, chargeLevel: 0,
-    cameraY: 0, maxCameraY: 0,
-    accentColor: ACCENT, floats: [], scorePop: 0, frame: 0,
+    sig: { totalLeaps: 0, landings: 0, perfectLandings: 0, missedLandings: 0, maxHeight: 0, maxStreak: 0, streakCurrent: 0, score: 0 } as Signals,
+    playerX: 0, playerY: GROUND_Y, playerVX: 0, playerVY: 0,
+    onGround: true, onPlatform: false, charging: false, chargeLevel: 0, chargeStart: 0,
+    cameraOffset: 0, cameraTarget: 0,
+    particlePool: [] as { mesh: THREE.Mesh; vx: number; vy: number; life: number }[],
+    spawnZ: 0,
   });
 
   const [phase, setPhase] = useState<Phase>('start');
@@ -65,304 +61,279 @@ export default function SpringLeap() {
   const [finalSig, setFinalSig] = useState<Signals | null>(null);
   const playerSessionRef = useRef<PlayerSession | null>(null);
 
-  useEffect(() => { stateRef.current.accentColor = theme.colors.accent ?? ACCENT; }, [theme]);
-
   const endGame = useCallback(() => {
     const s = stateRef.current;
     s.running = false;
     cancelAnimationFrame(animRef.current);
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+    if (s.renderer) { s.renderer.dispose(); s.renderer = null; }
     const pb = parseInt(localStorage.getItem(`pb_${GAME_ID}`) ?? '0');
     if (s.sig.score > pb) localStorage.setItem(`pb_${GAME_ID}`, String(s.sig.score));
-    setFinalSig({ ...s.sig });
-    setPhase('done');
-    hapticVictory();
-  }, []);
-
-  const generatePlatforms = useCallback((W: number, H: number) => {
-    const platforms: Platform[] = [];
-    const PLATFORM_COLORS = ['#22c55e', '#16a34a', '#15803d', '#4ade80'];
-    // Ground platform
-    platforms.push({ x: 0, y: H - 40, w: W, h: 40, color: '#166534', bonus: false, scored: false });
-    // Ascending platforms
-    for (let i = 0; i < 30; i++) {
-      const py = H - 140 - i * 80;
-      const pw = 60 + Math.random() * 80;
-      const px = Math.random() * (W - pw);
-      const isBonus = Math.random() < 0.2;
-      platforms.push({ x: px, y: py, w: pw, h: 16, color: isBonus ? '#fbbf24' : PLATFORM_COLORS[i % PLATFORM_COLORS.length], bonus: isBonus, scored: false });
-    }
-    return platforms;
+    setFinalSig({ ...s.sig }); setPhase('done'); hapticVictory();
   }, []);
 
   const startLoop = useCallback(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
     const s = stateRef.current;
-    const W = canvas.width, H = canvas.height;
-
     s.running = true; s.timeLeft = DURATION;
     s.sig = { totalLeaps: 0, landings: 0, perfectLandings: 0, missedLandings: 0, maxHeight: 0, maxStreak: 0, streakCurrent: 0, score: 0 };
-    s.platforms = generatePlatforms(W, H);
-    s.playerX = W / 2; s.playerY = H - 60;
-    s.playerVX = 0; s.playerVY = 0;
-    s.onGround = true; s.cameraY = 0; s.maxCameraY = 0;
-    s.charging = false; s.frame = 0; s.floats = []; s.scorePop = 0;
+    s.playerX = 0; s.playerY = GROUND_Y; s.playerVX = 0; s.playerVY = 0;
+    s.onGround = true; s.onPlatform = false; s.charging = false; s.chargeLevel = 0;
+    s.cameraOffset = 0; s.cameraTarget = 0; s.platforms = []; s.particlePool = [];
     setScoreDisplay(0); setTimeLeft(DURATION); setPhase('playing');
+
+    const W = window.innerWidth, H = window.innerHeight;
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(W, H);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setClearColor(0x0a0a1a);
+    if (mountRef.current) { mountRef.current.innerHTML = ''; mountRef.current.appendChild(renderer.domElement); }
+    s.renderer = renderer;
+
+    const scene = new THREE.Scene();
+    scene.fog = new THREE.Fog(0x0a0a1a, 15, 30);
+    s.scene = scene;
+    const camera = new THREE.PerspectiveCamera(65, W / H, 0.1, 100);
+    camera.position.set(0, 0, 6);
+    camera.lookAt(0, 0, 0);
+    s.camera = camera;
+
+    scene.add(new THREE.AmbientLight(0x0a0a1a, 3));
+    const mainLight = new THREE.PointLight(0x4ade80, 2, 20);
+    mainLight.position.set(0, 5, 3);
+    scene.add(mainLight);
+    const playerLight = new THREE.PointLight(0x4ade80, 3, 6);
+    scene.add(playerLight);
+    s.playerLight = playerLight;
+
+    // Stars
+    const sp = new Float32Array(300*3);
+    for (let i=0;i<300;i++){sp[i*3]=(Math.random()-.5)*50;sp[i*3+1]=(Math.random()-.5)*50;sp[i*3+2]=(Math.random()-.5)*50;}
+    const sg=new THREE.BufferGeometry();sg.setAttribute('position',new THREE.BufferAttribute(sp,3));
+    scene.add(new THREE.Points(sg,new THREE.PointsMaterial({color:0xffffff,size:0.05})));
+
+    // Ground
+    const groundGeo = new THREE.PlaneGeometry(20, 0.2);
+    const groundMat = new THREE.MeshStandardMaterial({ color: 0x1a2e1a, roughness: 0.9 });
+    const ground = new THREE.Mesh(groundGeo, groundMat);
+    ground.rotation.x = -Math.PI / 2;
+    ground.position.y = GROUND_Y;
+    scene.add(ground);
+
+    // Player cube
+    const playerGeo = new THREE.BoxGeometry(0.4, 0.5, 0.4);
+    const playerMat = new THREE.MeshStandardMaterial({ color: 0x4ade80, emissive: 0x4ade80, emissiveIntensity: 0.3, roughness: 0.3 });
+    const playerMesh = new THREE.Mesh(playerGeo, playerMat);
+    playerMesh.position.set(0, GROUND_Y + 0.25, 0);
+    scene.add(playerMesh);
+    s.playerMesh = playerMesh;
+
+    // Charge ring
+    const chargeRingGeo = new THREE.TorusGeometry(0.35, 0.04, 6, 24);
+    const chargeRingMat = new THREE.MeshStandardMaterial({ color: 0xfbbf24, emissive: 0xfbbf24, emissiveIntensity: 0, transparent: true, opacity: 0 });
+    const chargeRing = new THREE.Mesh(chargeRingGeo, chargeRingMat);
+    chargeRing.rotation.x = Math.PI / 2;
+    scene.add(chargeRing);
+    s.chargeRing = chargeRing;
+
+    // Spawn initial platforms
+    const platColors = [0x4ade80, 0x22c55e, 0x34d399, 0xa855f7, 0x06b6d4];
+    for (let i = 0; i < 6; i++) {
+      const x = (Math.random() - 0.5) * 6;
+      const y = GROUND_Y + 1.5 + i * 1.8 + Math.random() * 0.8;
+      const w = 0.8 + Math.random() * 0.8;
+      const color = platColors[Math.floor(Math.random() * platColors.length)];
+      const bonus = Math.random() < 0.2;
+      const platGeo = new THREE.BoxGeometry(w, 0.18, 0.5);
+      const platMat = new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: bonus ? 0.5 : 0.1, roughness: 0.4 });
+      const mesh = new THREE.Mesh(platGeo, platMat);
+      mesh.position.set(x, y, 0);
+      scene.add(mesh);
+      const pLight = new THREE.PointLight(color, 1, 3);
+      pLight.position.set(x, y + 0.5, 0.3);
+      scene.add(pLight);
+      s.platforms.push({ x, y, w, color, bonus, scored: false, mesh, light: pLight });
+    }
+
+    const handleResize = () => {
+      const w = window.innerWidth, h = window.innerHeight;
+      renderer.setSize(w, h); camera.aspect = w / h; camera.updateProjectionMatrix();
+    };
+    window.addEventListener('resize', handleResize);
+    (s as any)._cleanup = () => window.removeEventListener('resize', handleResize);
 
     timerRef.current = setInterval(() => {
       s.timeLeft--; setTimeLeft(s.timeLeft);
-      if (s.timeLeft <= 0) { sfx.fail(); endGame(); }
+      if (s.timeLeft <= 10 && s.timeLeft > 0) sfx.tick();
+      if (s.timeLeft <= 0) endGame();
     }, 1000);
 
-    const GRAVITY = 0.5;
-    const PLAYER_R = 18;
+    const spawnParticles = (x: number, y: number, color: number) => {
+      for (let i = 0; i < 8; i++) {
+        const geo = new THREE.SphereGeometry(0.06, 4, 4);
+        const mat = new THREE.MeshStandardMaterial({ color, transparent: true, opacity: 1 });
+        const mesh = new THREE.Mesh(geo, mat);
+        mesh.position.set(x, y, 0);
+        scene.add(mesh);
+        const angle = Math.random() * Math.PI * 2;
+        s.particlePool.push({ mesh, vx: Math.cos(angle) * 0.08, vy: 0.05 + Math.random() * 0.08, life: 20 });
+      }
+    };
 
     const loop = () => {
       if (!s.running) return;
-      ctx.clearRect(0, 0, W, H);
-      s.frame++;
+      const t = Date.now() * 0.001;
 
-      // Background: lush forest
-      const bg = ctx.createLinearGradient(0, 0, 0, H);
-      bg.addColorStop(0, '#022c1a');
-      bg.addColorStop(0.5, '#014010');
-      bg.addColorStop(1, '#012208');
-      ctx.fillStyle = bg;
-      ctx.fillRect(0, 0, W, H);
-
-      // Bamboo stalks in background
-      ctx.strokeStyle = 'rgba(34,197,94,0.1)';
-      ctx.lineWidth = 6;
-      for (let bx = 20; bx < W; bx += 50) {
-        ctx.beginPath(); ctx.moveTo(bx, 0); ctx.lineTo(bx, H); ctx.stroke();
+      // Charge ring
+      if (s.charging) {
+        s.chargeLevel = Math.min(1, (Date.now() - s.chargeStart) / 800);
+        const mat = chargeRing.material as THREE.MeshStandardMaterial;
+        mat.opacity = s.chargeLevel * 0.8;
+        mat.emissiveIntensity = s.chargeLevel * 1.5;
+        chargeRing.scale.setScalar(1 + s.chargeLevel * 0.5);
+        chargeRing.position.set(s.playerX, s.playerY - 0.25, 0);
+      } else {
+        (chargeRing.material as THREE.MeshStandardMaterial).opacity = 0;
       }
-
-      const camOffset = s.cameraY;
-
-      // Draw platforms
-      s.platforms.forEach(p => {
-        const py = p.y + camOffset;
-        if (py < -40 || py > H + 40) return;
-        ctx.save();
-        ctx.shadowBlur = p.bonus ? 12 : 4;
-        ctx.shadowColor = p.bonus ? '#fbbf24' : '#4ade80';
-        ctx.fillStyle = p.color;
-        ctx.beginPath();
-        (ctx as any).roundRect?.(p.x, py, p.w, p.h, 6) ?? ctx.rect(p.x, py, p.w, p.h);
-        ctx.fill();
-        if (p.bonus) {
-          ctx.fillStyle = '#fbbf24';
-          ctx.font = '12px sans-serif'; ctx.textAlign = 'center';
-          ctx.fillText('⭐', p.x + p.w / 2, py + 12);
-        }
-        ctx.restore();
-      });
 
       // Physics
-      if (!s.onGround) {
+      if (!s.onGround && !s.onPlatform) {
         s.playerVY += GRAVITY;
-        s.playerY += s.playerVY;
         s.playerX += s.playerVX;
-        s.playerVX *= 0.99;
-        s.playerX = Math.max(PLAYER_R, Math.min(W - PLAYER_R, s.playerX));
-
-        // Check platform collisions
-        for (const p of s.platforms) {
-          const py = p.y + camOffset;
-          if (s.playerVY > 0 && s.playerY + PLAYER_R > py && s.playerY + PLAYER_R < py + p.h + 8 && s.playerX > p.x - 5 && s.playerX < p.x + p.w + 5) {
-            s.playerY = py - PLAYER_R;
-            s.playerVY = 0;
-            s.onGround = true;
-            s.sig.landings++;
-            const chargeTime = s.chargeLevel;
-            const isPerfect = chargeTime >= 0.7 && chargeTime <= 0.95;
-            if (isPerfect) s.sig.perfectLandings++;
-            s.sig.streakCurrent++;
-            if (s.sig.streakCurrent > s.sig.maxStreak) s.sig.maxStreak = s.sig.streakCurrent;
-            if (!p.scored) {
-              p.scored = true;
-              const mult = s.sig.streakCurrent >= 3 ? 2 : 1;
-              const pts = (p.bonus ? 3 : 1) * mult;
-              s.sig.score += pts;
-              s.scorePop = Date.now() + 300;
-              setScoreDisplay(s.sig.score);
-              sfx.collect(); hapticScore();
-              s.floats.push({ x: s.playerX, y: s.playerY - 30 + camOffset, text: `+${pts}${p.bonus ? ' ⭐' : ''}`, alpha: 1, vy: -2, color: p.bonus ? '#fbbf24' : '#4ade80' });
-            }
-            hapticImpact();
-            break;
-          }
-        }
-
-        // Camera follows
-        if (s.playerY < H * 0.4) {
-          const shift = H * 0.4 - s.playerY;
-          s.cameraY += shift;
-          s.playerY += shift;
-          if (s.cameraY > s.maxCameraY) {
-            s.maxCameraY = s.cameraY;
-            const heightPts = Math.round(s.cameraY / 100);
-            if (heightPts > s.sig.maxHeight) s.sig.maxHeight = heightPts;
-          }
-        }
-
-        // Fell off bottom
-        if (s.playerY > H + 50) {
-          s.sig.missedLandings++;
-          s.sig.streakCurrent = 0;
-          hapticFail(); sfx.fail();
-          // Respawn
-          s.playerX = W / 2;
-          s.playerY = H - 60;
-          s.cameraY = 0;
+        s.playerY += s.playerVY;
+        // Max height
+        if (s.playerY > s.sig.maxHeight) s.sig.maxHeight = s.playerY;
+        // Ground landing
+        if (s.playerY <= GROUND_Y) {
+          s.playerY = GROUND_Y; s.playerVX = 0; s.playerVY = 0;
           s.onGround = true;
-          s.playerVY = 0; s.playerVX = 0;
+          s.sig.missedLandings++; s.sig.streakCurrent = 0;
+          sfx.collision(); hapticFail();
+        }
+        // Platform landing
+        for (const plat of s.platforms) {
+          if (!plat.scored && s.playerVY < 0 && Math.abs(s.playerX - plat.x) < plat.w / 2 + 0.2) {
+            if (s.playerY >= plat.y - 0.05 && s.playerY <= plat.y + 0.4) {
+              s.playerY = plat.y + 0.28; s.playerVX = 0; s.playerVY = 0;
+              s.onPlatform = true; s.onGround = false;
+              const isPerfect = Math.abs(s.playerX - plat.x) < plat.w * 0.2;
+              s.sig.landings++;
+              if (isPerfect) s.sig.perfectLandings++;
+              s.sig.streakCurrent++;
+              if (s.sig.streakCurrent > s.sig.maxStreak) s.sig.maxStreak = s.sig.streakCurrent;
+              const pts = (plat.bonus ? 4 : 2) + (isPerfect ? 1 : 0) + Math.floor(s.sig.streakCurrent / 3);
+              s.sig.score += pts; setScoreDisplay(s.sig.score);
+              plat.scored = true;
+              sfx.collect(); hapticScore();
+              spawnParticles(s.playerX, s.playerY, plat.color);
+              // Camera follow
+              s.cameraTarget = Math.max(0, s.playerY - 1);
+              break;
+            }
+          }
         }
       }
 
-      // Charge animation
-      if (s.charging) {
-        s.chargeLevel = Math.min(1, (Date.now() - s.chargeStart) / 1500);
-        const chargeR = PLAYER_R + s.chargeLevel * 20;
-        ctx.save();
-        ctx.strokeStyle = `rgba(74,222,128,${s.chargeLevel * 0.8})`;
-        ctx.lineWidth = 3;
-        ctx.beginPath(); ctx.arc(s.playerX, s.playerY, chargeR, 0, Math.PI * 2); ctx.stroke();
-        ctx.restore();
+      // Camera follow
+      s.cameraOffset += (s.cameraTarget - s.cameraOffset) * 0.05;
+      camera.position.y = s.cameraOffset;
+      camera.lookAt(0, s.cameraOffset, 0);
+      ground.position.y = GROUND_Y;
+
+      // Player mesh
+      playerMesh.position.set(s.playerX, s.playerY + 0.25, 0);
+      playerMesh.rotation.z = s.playerVX * 5;
+      playerLight.position.set(s.playerX, s.playerY + 0.5, 0.5);
+      const playerMat2 = playerMesh.material as THREE.MeshStandardMaterial;
+      playerMat2.emissiveIntensity = s.charging ? 0.5 + s.chargeLevel : 0.2;
+
+      // Particles
+      for (let pi = s.particlePool.length - 1; pi >= 0; pi--) {
+        const p = s.particlePool[pi];
+        p.mesh.position.x += p.vx; p.mesh.position.y += p.vy; p.vy += GRAVITY * 0.5;
+        p.life--;
+        (p.mesh.material as THREE.MeshStandardMaterial).opacity = p.life / 20;
+        if (p.life <= 0) { scene.remove(p.mesh); s.particlePool.splice(pi, 1); }
       }
 
-      // Draw player (spring frog)
-      ctx.save();
-      ctx.shadowBlur = 16; ctx.shadowColor = ACCENT;
-      const squish = s.charging ? 1 - s.chargeLevel * 0.3 : (s.onGround ? 1.1 : 0.85);
-      const stretch = s.charging ? 1 + s.chargeLevel * 0.3 : (s.onGround ? 0.9 : 1.15);
-      ctx.scale(squish, stretch);
-      const grad = ctx.createRadialGradient(s.playerX / squish - 4, s.playerY / stretch - 4, 2, s.playerX / squish, s.playerY / stretch, PLAYER_R);
-      grad.addColorStop(0, '#86efac');
-      grad.addColorStop(1, '#16a34a');
-      ctx.fillStyle = grad;
-      ctx.beginPath(); ctx.arc(s.playerX / squish, s.playerY / stretch, PLAYER_R, 0, Math.PI * 2); ctx.fill();
-      // Eyes
-      ctx.fillStyle = '#ffffff';
-      ctx.beginPath(); ctx.arc(s.playerX / squish - 6, s.playerY / stretch - 4, 5, 0, Math.PI * 2); ctx.fill();
-      ctx.beginPath(); ctx.arc(s.playerX / squish + 6, s.playerY / stretch - 4, 5, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = '#1a2e1a';
-      ctx.beginPath(); ctx.arc(s.playerX / squish - 5, s.playerY / stretch - 4, 2, 0, Math.PI * 2); ctx.fill();
-      ctx.beginPath(); ctx.arc(s.playerX / squish + 7, s.playerY / stretch - 4, 2, 0, Math.PI * 2); ctx.fill();
-      ctx.restore();
-
-      // Height progress bar
-      const maxH = s.platforms[s.platforms.length - 1]?.y ? Math.abs(s.platforms[s.platforms.length - 1].y - (H - 40)) : 2000;
-      const heightPct = Math.min(1, s.maxCameraY / maxH);
-      const barH = H * 0.5;
-      ctx.fillStyle = '#1a2e1a';
-      ctx.fillRect(W - 20, H * 0.25, 10, barH);
-      ctx.fillStyle = ACCENT;
-      ctx.fillRect(W - 20, H * 0.25 + barH * (1 - heightPct), 10, barH * heightPct);
-
-      // Score pop
-      if (s.scorePop > Date.now()) {
-        const t = (s.scorePop - Date.now()) / 300;
-        ctx.save(); ctx.globalAlpha = t;
-        ctx.font = `bold ${Math.round(38 * (1 + (1 - t) * 0.3))}px sans-serif`;
-        ctx.fillStyle = ACCENT; ctx.textAlign = 'center';
-        ctx.fillText(`${s.sig.score}`, W / 2, 80); ctx.restore();
-      }
-
-      s.floats = s.floats.filter(f => f.alpha > 0.02);
-      s.floats.forEach(f => {
-        ctx.save(); ctx.globalAlpha = f.alpha;
-        ctx.fillStyle = f.color; ctx.font = 'bold 22px sans-serif'; ctx.textAlign = 'center';
-        ctx.fillText(f.text, f.x, f.y); ctx.restore();
-        f.y += f.vy; f.alpha *= 0.95;
-      });
-
+      renderer.render(scene, camera);
       animRef.current = requestAnimationFrame(loop);
     };
     animRef.current = requestAnimationFrame(loop);
-  }, [endGame, generatePlatforms]);
 
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const resize = () => { canvas.width = canvas.offsetWidth; canvas.height = canvas.offsetHeight; };
-    resize();
-    window.addEventListener('resize', resize);
-
-    const onPointerDown = (e: PointerEvent) => {
-      if (phase !== 'playing') return;
-      const s = stateRef.current;
-      if (!s.onGround) return;
-      s.charging = true; s.chargeStart = Date.now(); s.chargeLevel = 0;
+    // Input
+    const onDown = () => {
+      const s2 = stateRef.current;
+      if (!s2.running || (!s2.onGround && !s2.onPlatform)) return;
+      s2.charging = true; s2.chargeStart = Date.now();
     };
-
-    const onPointerUp = () => {
-      if (phase !== 'playing') return;
-      const s = stateRef.current;
-      if (!s.charging || !s.onGround) return;
-      s.charging = false;
-      const jumpForce = -(8 + s.chargeLevel * 14);
-      s.playerVY = jumpForce;
-      s.playerVX = (Math.random() - 0.5) * 3;
-      s.onGround = false;
-      s.sig.totalLeaps++;
-      sfx.click(); hapticScore();
+    const onUp = () => {
+      const s2 = stateRef.current;
+      if (!s2.running || !s2.charging) return;
+      s2.charging = false;
+      s2.chargeLevel = Math.min(1, (Date.now() - s2.chargeStart) / 800);
+      const jumpPower = 0.12 + s2.chargeLevel * 0.2;
+      const nextPlat = s2.platforms.find(p => !p.scored && p.y > s2.playerY);
+      const targetX = nextPlat ? nextPlat.x + (Math.random() - 0.5) * 0.5 : (Math.random() - 0.5) * 4;
+      const dx = targetX - s2.playerX;
+      s2.playerVX = dx * 0.04;
+      s2.playerVY = jumpPower;
+      s2.onGround = false; s2.onPlatform = false;
+      s2.sig.totalLeaps++;
+      sfx.collect(); hapticImpact?.();
     };
-
-    canvas.addEventListener('pointerdown', onPointerDown);
-    canvas.addEventListener('pointerup', onPointerUp);
-    return () => {
-      window.removeEventListener('resize', resize);
-      canvas.removeEventListener('pointerdown', onPointerDown);
-      canvas.removeEventListener('pointerup', onPointerUp);
+    if (mountRef.current) {
+      mountRef.current.addEventListener('pointerdown', onDown);
+      mountRef.current.addEventListener('pointerup', onUp);
+    }
+    (s as any)._inputCleanup = () => {
+      mountRef.current?.removeEventListener('pointerdown', onDown);
+      mountRef.current?.removeEventListener('pointerup', onUp);
     };
-  }, [phase]);
+  }, [endGame]);
 
   useEffect(() => () => {
     cancelAnimationFrame(animRef.current);
     if (timerRef.current) clearInterval(timerRef.current);
+    const s = stateRef.current;
+    if (s.renderer) s.renderer.dispose();
+    (s as any)._cleanup?.(); (s as any)._inputCleanup?.();
   }, []);
 
-  const handleStart = useCallback(async (name: string, avatar: string) => {
-    playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar);
+  const handleStart = useCallback(async (n: string, a: string) => {
+    playerSessionRef.current = savePlayerSession(GAME_ID, n, a);
     await initAudio(); setPhase('countdown');
   }, []);
-  const handlePlayAgain = useCallback(() => {
-    setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null);
-  }, []);
+  const handlePlayAgain = useCallback(() => { setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null); }, []);
+
+  const accent = theme.colors.accent ?? ACCENT;
 
   return (
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accent}
+      background="linear-gradient(180deg, #0a0a1a 0%, #050510 100%)">
       {phase === 'start' && (
-        <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description="Hold to charge your spring, release to leap to platforms!"
-          ctaLabel="Jump! 🌱" accentColor={theme.colors.accent ?? ACCENT} onStart={handleStart} />
+        <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description={GAME_TAGLINE}
+          ctaLabel="Leap! 🌱" accentColor={accent} onStart={handleStart} />
       )}
-      {phase === 'countdown' && <Countdown onComplete={startLoop} accentColor={theme.colors.accent ?? ACCENT} />}
+      {phase === 'countdown' && <Countdown onComplete={startLoop} accentColor={accent} />}
       {(phase === 'playing' || phase === 'countdown') && (
-        <>
-          <canvas ref={canvasRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none' }}
-            role="img" aria-label="Spring leap platform game canvas" />
-          {phase === 'playing' && (
-            <GameHUD accentColor={theme.colors.accent ?? ACCENT} items={[
-              { label: 'TIME', value: timeLeft, danger: timeLeft <= 10 },
-              { label: 'SCORE', value: scoreDisplay },
-            ]} />
-          )}
-        </>
+        <div ref={mountRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none' }} />
+      )}
+      {phase === 'playing' && (
+        <GameHUD accentColor={accent} items={[
+          { label: 'TIME', value: timeLeft, danger: timeLeft <= 10 },
+          { label: 'SCORE', value: scoreDisplay },
+        ]} />
       )}
       {phase === 'done' && finalSig && (
         <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI}
           score={String(finalSig.score)} personality={getPersonality(finalSig)}
           insights={[
-            { label: 'Landings', value: String(finalSig.landings), color: ACCENT },
-            { label: 'Perfect Landings', value: String(finalSig.perfectLandings), color: '#fbbf24' },
-            { label: 'Best Streak', value: `×${finalSig.maxStreak}`, color: '#06b6d4' },
-            { label: 'Max Height', value: `${finalSig.maxHeight}`, color: '#a855f7' },
+            { label: 'Landings', value: String(finalSig.landings), color: accent },
+            { label: 'Perfects', value: String(finalSig.perfectLandings), color: '#fbbf24' },
+            { label: 'Max Height', value: `${finalSig.maxHeight.toFixed(1)}`, color: '#06b6d4' },
+            { label: 'Best Streak', value: `×${finalSig.maxStreak}`, color: '#a855f7' },
           ]}
-          accentColor={theme.colors.accent ?? ACCENT} onPlayAgain={handlePlayAgain} didWin={finalSig.landings >= 8} />
+          accentColor={accent} onPlayAgain={handlePlayAgain} didWin={finalSig.landings >= 8} />
       )}
     </GameShell>
   );

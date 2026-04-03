@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
+import * as THREE from 'three';
 import GameShell from '@/components/GameShell';
 import GameHUD from '@/components/GameHUD';
 import GameStartScreen from '@/components/GameStartScreen';
@@ -9,9 +10,7 @@ import { initAudio, sfx, haptic, startMusic } from '@/lib/audio';
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
-import { Particle, spawnBurst, updateAndDrawParticles } from '@/lib/particles';
 import { hapticScore, hapticFail, hapticVictory } from '@/lib/haptics';
-import { motion, AnimatePresence } from 'framer-motion';
 
 const GAME_ID = 'vocal-shield';
 const ACCENT = '#818cf8';
@@ -20,18 +19,11 @@ const GAME_EMOJI = '🛡️';
 const GAME_TITLE = 'Vocal Shield';
 const GAME_TAGLINE = 'Sustain your voice. The shield holds as long as you do.';
 const PB_KEY = 'mg_pb_vocal-shield';
-const SHIELD_THRESHOLD = 0.2;  // voice must be above this to power shield
-const SHIELD_BASE_R = 55;      // base shield radius
-const SHIELD_MAX_BONUS = 85;   // extra radius at full volume
+const SHIELD_THRESHOLD = 0.2;
+const SHIELD_BASE_R = 2.0;
+const SHIELD_MAX_BONUS = 1.5;
 
-interface Signals {
-  score: number;
-  blocked: number;
-  passed: number;
-  sustainSeconds: number;
-  peakVolume: number;
-}
-
+interface Signals { score: number; blocked: number; passed: number; sustainSeconds: number; peakVolume: number; }
 function getPersonality(sig: Signals): string {
   const total = sig.blocked + sig.passed;
   const blockRate = total > 0 ? sig.blocked / total : 0;
@@ -41,77 +33,42 @@ function getPersonality(sig: Signals): string {
   if (blockRate >= 0.65) return 'Defender 🗡️';
   return 'Apprentice ⚔️';
 }
-
-interface Enemy {
-  x: number;
-  y: number;
-  speed: number;
-  r: number;
-  color: string;
-  hue: number;
-  bouncing: boolean;
-  bounceVx: number;
-  bounceVy: number;
-  bounceT: number;
-  id: number;
-}
-
 type Phase = 'start' | 'countdown' | 'playing' | 'done';
-
-function WebhookEmitter({ theme, sig, personality, player }: {
-  theme: ReturnType<typeof useBrandTheme>;
-  sig: Signals;
-  personality: string;
-  player: PlayerSession | null;
-}) {
+function WebhookEmitter({ theme, sig, personality, player }: { theme: ReturnType<typeof useBrandTheme>; sig: Signals; personality: string; player: PlayerSession | null; }) {
   const fired = useRef(false);
-  useEffect(() => {
-    if (fired.current) return;
-    fired.current = true;
-    postWebhook(theme, GAME_ID, { personality, score: sig.score }, player);
-  }, [theme, sig, personality, player]);
+  useEffect(() => { if (fired.current) return; fired.current = true; postWebhook(theme, GAME_ID, { personality, score: sig.score }, player); }, [theme, sig, personality, player]);
   return null;
 }
 
+interface Enemy3D { mesh: THREE.Mesh; x: number; y: number; vx: number; vy: number; speed: number; r: number; color: number; }
+
 export default function VocalShield() {
   const theme = useBrandTheme();
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const mountRef = useRef<HTMLDivElement>(null);
   const stopMusicRef = useRef<(() => void) | null>(null);
-
   const stateRef = useRef({
-    running: false,
-    timeLeft: DURATION,
-    score: 0,
-    blocked: 0,
-    passed: 0,
-    sustainFrames: 0,
-    peakVol: 0,
-    shieldPower: 0,        // 0-1, smoothed vol when above threshold
-    shieldR: SHIELD_BASE_R,
-    enemies: [] as Enemy[],
-    particles: [] as Particle[],
+    running: false, timeLeft: DURATION, animId: 0,
+    intervalId: null as ReturnType<typeof setInterval> | null,
+    renderer: null as THREE.WebGLRenderer | null,
+    scene: null as THREE.Scene | null,
+    sig: { score: 0, blocked: 0, passed: 0, sustainSeconds: 0, sustainFrames: 0, peakVol: 0 },
+    shieldPower: 0, shieldR: SHIELD_BASE_R,
+    enemies: [] as Enemy3D[],
     analyser: null as AnalyserNode | null,
     audioCtx: null as AudioContext | null,
     stream: null as MediaStream | null,
-    animId: 0,
-    timerIntervalId: null as ReturnType<typeof setInterval> | null,
-    nextEnemyIn: 60,
-    enemyIdCounter: 0,
-    lives: 5,
-    lastHitTime: 0,
-    flashRed: 0,
-    flashBlue: 0,
-    shieldPulse: 0,
-    shieldAngle: 0,
+    nextEnemyIn: 60, enemyId: 0, lives: 5,
+    frame: 0,
+    shieldMesh: null as THREE.Mesh | null,
+    shieldGlowMesh: null as THREE.Mesh | null,
   });
-
   const [phase, setPhase] = useState<Phase>('start');
   const [timeLeft, setTimeLeft] = useState(DURATION);
-  const [displayScore, setDisplayScore] = useState(0);
+  const [scoreDisplay, setScoreDisplay] = useState(0);
   const [finalSig, setFinalSig] = useState<Signals | null>(null);
-  const playerSessionRef = useRef<PlayerSession | null>(null);
+  const [micError, setMicError] = useState(false);
   const [isNewBest, setIsNewBest] = useState(false);
-  const accent = theme.colors.accent ?? ACCENT;
+  const playerSessionRef = useRef<PlayerSession | null>(null);
 
   const getVolume = useCallback((): number => {
     const s = stateRef.current;
@@ -122,461 +79,253 @@ export default function VocalShield() {
   }, []);
 
   const endGame = useCallback(() => {
-    const s = stateRef.current;
-    s.running = false;
+    const s = stateRef.current; s.running = false;
     cancelAnimationFrame(s.animId);
-    if (s.timerIntervalId) clearInterval(s.timerIntervalId);
+    if (s.intervalId) { clearInterval(s.intervalId); s.intervalId = null; }
     if (s.stream) s.stream.getTracks().forEach(t => t.stop());
     if (s.audioCtx) s.audioCtx.close().catch(() => {});
     if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
-    sfx.success();
-    hapticVictory();
+    if (s.renderer) { s.renderer.dispose(); s.renderer = null; }
+    sfx.success(); hapticVictory();
     const sig: Signals = {
-      score: s.score,
-      blocked: s.blocked,
-      passed: s.passed,
-      sustainSeconds: Math.round(s.sustainFrames / 60),
-      peakVolume: s.peakVol,
+      score: s.sig.score, blocked: s.sig.blocked, passed: s.sig.passed,
+      sustainSeconds: Math.round(s.sig.sustainFrames / 60), peakVolume: s.sig.peakVol,
     };
     try {
-      const prev = parseInt(localStorage.getItem(PB_KEY) || '0', 10);
-      if (sig.score > prev) { localStorage.setItem(PB_KEY, String(sig.score)); setIsNewBest(true); }
-    } catch { /* ignore */ }
-    setFinalSig(sig);
-    setPhase('done');
+      const pb = parseInt(localStorage.getItem(PB_KEY) || '0', 10);
+      if (sig.score > pb) { localStorage.setItem(PB_KEY, String(sig.score)); setIsNewBest(true); }
+    } catch { }
+    setFinalSig(sig); setPhase('done');
   }, []);
 
-  const startLoop = useCallback(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+  const startLoop = useCallback(async () => {
     const s = stateRef.current;
-    s.running = true;
-    s.timeLeft = DURATION;
-    s.score = 0;
-    s.blocked = 0;
-    s.passed = 0;
-    s.sustainFrames = 0;
-    s.peakVol = 0;
-    s.shieldPower = 0;
-    s.shieldR = SHIELD_BASE_R;
-    s.enemies = [];
-    s.particles = [];
-    s.nextEnemyIn = 60;
-    s.enemyIdCounter = 0;
-    s.lives = 5;
-    s.lastHitTime = 0;
-    s.flashRed = 0;
-    s.flashBlue = 0;
-    s.shieldPulse = 0;
-    s.shieldAngle = 0;
-    setDisplayScore(0);
-    setTimeLeft(DURATION);
-    setIsNewBest(false);
-    setPhase('playing');
-    stopMusicRef.current = startMusic('calm');
+    // Request mic
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const ctx = new AudioContext();
+      const src = ctx.createMediaStreamSource(stream);
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 256;
+      src.connect(analyser);
+      s.stream = stream; s.analyser = analyser; s.audioCtx = ctx;
+    } catch {
+      setMicError(true);
+    }
 
-    s.timerIntervalId = setInterval(() => {
-      if (!s.running) return;
-      s.timeLeft--;
-      setTimeLeft(s.timeLeft);
-      setDisplayScore(s.score);
-      sfx.tick();
-      if (s.timeLeft === 10) sfx.warning();
+    s.running = true; s.timeLeft = DURATION; s.frame = 0;
+    s.sig = { score: 0, blocked: 0, passed: 0, sustainSeconds: 0, sustainFrames: 0, peakVol: 0 };
+    s.shieldPower = 0; s.shieldR = SHIELD_BASE_R; s.enemies = []; s.nextEnemyIn = 60; s.enemyId = 0; s.lives = 5;
+    setScoreDisplay(0); setTimeLeft(DURATION); setPhase('playing');
+    stopMusicRef.current = startMusic('tense');
+
+    const W = window.innerWidth, H = window.innerHeight;
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(W, H);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setClearColor(0x0a0a1a);
+    if (mountRef.current) { mountRef.current.innerHTML = ''; mountRef.current.appendChild(renderer.domElement); }
+    s.renderer = renderer;
+
+    const scene = new THREE.Scene();
+    scene.fog = new THREE.FogExp2(0x0a0a1a, 0.03);
+    s.scene = scene;
+    const camera = new THREE.PerspectiveCamera(65, W / H, 0.1, 100);
+    camera.position.set(0, 0, 14);
+    camera.lookAt(0, 0, 0);
+
+    scene.add(new THREE.AmbientLight(0x111133, 2));
+    const pLight = new THREE.PointLight(0x818cf8, 4, 25);
+    pLight.position.set(0, 0, 5);
+    scene.add(pLight);
+    const enemyLight = new THREE.PointLight(0xef4444, 0, 15);
+    scene.add(enemyLight);
+
+    // Stars
+    const starCount = 500;
+    const starPos = new Float32Array(starCount * 3);
+    for (let i = 0; i < starCount; i++) {
+      starPos[i * 3] = (Math.random() - 0.5) * 60; starPos[i * 3 + 1] = (Math.random() - 0.5) * 60; starPos[i * 3 + 2] = -20 + (Math.random() - 0.5) * 10;
+    }
+    const starGeo = new THREE.BufferGeometry();
+    starGeo.setAttribute('position', new THREE.BufferAttribute(starPos, 3));
+    scene.add(new THREE.Points(starGeo, new THREE.PointsMaterial({ color: 0xffffff, size: 0.06 })));
+
+    // Shield core (player avatar)
+    const coreGeo = new THREE.IcosahedronGeometry(0.4, 1);
+    const coreMat = new THREE.MeshStandardMaterial({ color: 0x818cf8, emissive: 0x818cf8, emissiveIntensity: 0.6, roughness: 0.2, metalness: 0.8 });
+    const core = new THREE.Mesh(coreGeo, coreMat);
+    scene.add(core);
+
+    // Shield sphere
+    const shieldGeo = new THREE.SphereGeometry(SHIELD_BASE_R, 24, 24);
+    const shieldMat = new THREE.MeshStandardMaterial({ color: 0x818cf8, transparent: true, opacity: 0.15, emissive: 0x818cf8, emissiveIntensity: 0.3, side: THREE.DoubleSide });
+    const shield = new THREE.Mesh(shieldGeo, shieldMat);
+    scene.add(shield);
+    s.shieldMesh = shield;
+
+    // Shield rings
+    const shieldRings: THREE.Mesh[] = [];
+    for (let i = 0; i < 3; i++) {
+      const rGeo = new THREE.TorusGeometry(SHIELD_BASE_R + i * 0.3, 0.05, 8, 32);
+      const rMat = new THREE.MeshStandardMaterial({ color: 0x818cf8, emissive: 0x818cf8, emissiveIntensity: 0.4, transparent: true, opacity: 0.25 });
+      const r = new THREE.Mesh(rGeo, rMat);
+      r.rotation.x = (i / 3) * Math.PI; r.rotation.z = (i / 3) * Math.PI / 2;
+      scene.add(r); shieldRings.push(r);
+    }
+
+    // Lives display (heart spheres)
+    const liveMeshes: THREE.Mesh[] = [];
+    for (let i = 0; i < 5; i++) {
+      const lGeo = new THREE.SphereGeometry(0.18, 8, 8);
+      const lMat = new THREE.MeshStandardMaterial({ color: 0xef4444, emissive: 0xef4444, emissiveIntensity: 0.5 });
+      const lm = new THREE.Mesh(lGeo, lMat);
+      lm.position.set(-2.5 + i * 1.2, 5, 0);
+      scene.add(lm); liveMeshes.push(lm);
+    }
+
+    // Enemy colors
+    const ENEMY_COLORS = [0xef4444, 0xf97316, 0xec4899, 0xfbbf24, 0x7c3aed];
+
+    const spawnEnemy = () => {
+      const angle = Math.random() * Math.PI * 2;
+      const startR = 9;
+      const ex = Math.cos(angle) * startR;
+      const ey = Math.sin(angle) * startR;
+      const speed = 0.04 + Math.random() * 0.03;
+      const color = ENEMY_COLORS[Math.floor(Math.random() * ENEMY_COLORS.length)];
+      const r = 0.2 + Math.random() * 0.2;
+      const geo = new THREE.SphereGeometry(r, 10, 10);
+      const mat = new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.4, roughness: 0.5 });
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.position.set(ex, ey, 0);
+      scene.add(mesh);
+      const toCenter = Math.sqrt(ex * ex + ey * ey);
+      s.enemies.push({ mesh, x: ex, y: ey, vx: -ex / toCenter, vy: -ey / toCenter, speed, r, color });
+    };
+
+    s.intervalId = setInterval(() => {
+      s.timeLeft--; setTimeLeft(s.timeLeft);
       if (s.timeLeft <= 0) endGame();
     }, 1000);
 
     const loop = () => {
       if (!s.running) return;
-      const W = window.innerWidth;
-      const H = window.innerHeight;
-      const cx = W / 2;
-      const cy = H / 2;
+      s.frame++;
+      const diff = (DURATION - s.timeLeft) / DURATION;
+
       const vol = getVolume();
-      if (vol > s.peakVol) s.peakVol = vol;
-      const now = Date.now();
-      s.shieldAngle += 0.015;
-
-      // Shield power: smooth toward volume when above threshold, decay when silent
-      const powered = vol >= SHIELD_THRESHOLD;
-      if (powered) {
-        s.shieldPower = Math.min(1, s.shieldPower * 0.88 + vol * 0.12 + 0.08);
-        s.sustainFrames++;
+      if (vol > SHIELD_THRESHOLD) {
+        s.shieldPower = Math.min(1, s.shieldPower + 0.05);
+        if (vol > s.sig.peakVol) s.sig.peakVol = vol;
+        s.sig.sustainFrames++;
       } else {
-        s.shieldPower = Math.max(0, s.shieldPower - 0.04);
+        s.shieldPower = Math.max(0, s.shieldPower - 0.03);
       }
-      s.shieldR = SHIELD_BASE_R + s.shieldPower * SHIELD_MAX_BONUS;
+      const currentShieldR = SHIELD_BASE_R + s.shieldPower * SHIELD_MAX_BONUS;
 
-      // Spawn enemies from edges
+      // Update shield visuals
+      shield.scale.setScalar(currentShieldR / SHIELD_BASE_R);
+      (shieldMat as THREE.MeshStandardMaterial).opacity = 0.05 + s.shieldPower * 0.3;
+      (shieldMat as THREE.MeshStandardMaterial).emissiveIntensity = 0.2 + s.shieldPower * 0.6;
+      (shieldMat as THREE.MeshStandardMaterial).color.setHSL(0.65 + s.shieldPower * 0.1, 0.9, 0.6);
+      shieldRings.forEach((r, i) => {
+        r.rotation.y += 0.01 + i * 0.01;
+        r.rotation.z += 0.005 + i * 0.005;
+        (r.material as THREE.MeshStandardMaterial).opacity = 0.15 + s.shieldPower * 0.4;
+        (r.material as THREE.MeshStandardMaterial).emissiveIntensity = 0.3 + s.shieldPower * 0.5;
+      });
+
+      pLight.intensity = 4 + s.shieldPower * 3;
+      pLight.color.setHSL(0.65 + s.shieldPower * 0.1, 0.9, 0.6);
+
+      // Pulse core
+      core.rotation.x += 0.02; core.rotation.y += 0.03;
+      (coreMat as THREE.MeshStandardMaterial).emissiveIntensity = 0.4 + s.shieldPower * 0.8;
+
+      // Spawn enemies
       s.nextEnemyIn--;
       if (s.nextEnemyIn <= 0) {
-        const edge = Math.floor(Math.random() * 4);
-        let ex = 0, ey = 0;
-        if (edge === 0) { ex = Math.random() * W; ey = -20; }
-        else if (edge === 1) { ex = W + 20; ey = Math.random() * H; }
-        else if (edge === 2) { ex = Math.random() * W; ey = H + 20; }
-        else { ex = -20; ey = Math.random() * H; }
-        const hue = 0 + Math.random() * 30;
-        const diff = 1 + (DURATION - s.timeLeft) / DURATION * 1.2;
-        s.enemies.push({
-          x: ex, y: ey,
-          speed: (0.5 + Math.random() * 0.4) * diff,
-          r: 14 + Math.random() * 10,
-          color: `hsl(${hue}, 85%, 55%)`,
-          hue,
-          bouncing: false,
-          bounceVx: 0, bounceVy: 0, bounceT: 0,
-          id: s.enemyIdCounter++,
-        });
-        const interval = Math.max(30, 65 - s.score * 2);
-        s.nextEnemyIn = interval;
+        s.nextEnemyIn = Math.max(20, 60 - diff * 40);
+        spawnEnemy();
       }
 
-      // Background
-      const bgR = Math.round(s.shieldPower * 20);
-      const bg = ctx.createRadialGradient(cx, cy, 0, cx, cy, Math.max(W, H));
-      bg.addColorStop(0, `rgba(${bgR}, ${bgR}, ${Math.round(30 + s.shieldPower * 50)}, 1)`);
-      bg.addColorStop(1, '#000008');
-      ctx.fillStyle = bg;
-      ctx.fillRect(0, 0, W, H);
-
-      // Shield glow
-      if (s.shieldPower > 0.05) {
-        const sGlow = ctx.createRadialGradient(cx, cy, s.shieldR * 0.5, cx, cy, s.shieldR * 1.8);
-        sGlow.addColorStop(0, `rgba(129,140,248,${s.shieldPower * 0.22})`);
-        sGlow.addColorStop(1, 'transparent');
-        ctx.fillStyle = sGlow;
-        ctx.fillRect(0, 0, W, H);
-      }
-
-      // Update and draw enemies
+      // Move enemies
       for (let i = s.enemies.length - 1; i >= 0; i--) {
-        const e = s.enemies[i];
+        const en = s.enemies[i];
+        en.x += en.vx * en.speed;
+        en.y += en.vy * en.speed;
+        en.mesh.position.set(en.x, en.y, 0);
+        en.mesh.rotation.x += 0.05; en.mesh.rotation.y += 0.05;
 
-        if (e.bouncing) {
-          e.x += e.bounceVx;
-          e.y += e.bounceVy;
-          e.bounceT += 0.07;
-          const bounceAge = (now - (e.bounceT * 1000)) / 1200;
-          if (e.x < -50 || e.x > W + 50 || e.y < -50 || e.y > H + 50 || bounceAge > 1) {
-            s.enemies.splice(i, 1);
-            continue;
-          }
-        } else {
-          // Move toward center
-          const dx = cx - e.x;
-          const dy = cy - e.y;
-          const len = Math.hypot(dx, dy);
-          e.x += (dx / len) * e.speed;
-          e.y += (dy / len) * e.speed;
+        const dist = Math.sqrt(en.x * en.x + en.y * en.y);
 
-          // Shield collision
-          const distToCenter = Math.hypot(e.x - cx, e.y - cy);
-          if (distToCenter < s.shieldR + e.r) {
-            if (s.shieldPower >= 0.3) {
-              // Bounce!
-              const nx = (e.x - cx) / distToCenter;
-              const ny = (e.y - cy) / distToCenter;
-              e.bouncing = true;
-              e.bounceVx = nx * (3 + s.shieldPower * 3);
-              e.bounceVy = ny * (3 + s.shieldPower * 3);
-              e.bounceT = now / 1000;
-              s.blocked++;
-              s.score++;
-              sfx.collect();
-              hapticScore();
-              spawnBurst(s.particles, e.x, e.y, '#818cf8', 10, 4);
-              s.flashBlue = now;
-              s.shieldPulse = now;
-            } else if (distToCenter < 30 && now - s.lastHitTime > 600) {
-              // Passed through
-              s.passed++;
-              s.lives--;
-              s.enemies.splice(i, 1);
-              sfx.collision();
-              hapticFail();
-              s.flashRed = now;
-              s.lastHitTime = now;
-              if (s.lives <= 0) { endGame(); return; }
-              continue;
-            }
-          }
-        }
-
-        // Draw enemy
-        ctx.save();
-        ctx.shadowBlur = 12;
-        ctx.shadowColor = e.color;
-        ctx.fillStyle = e.color;
-        ctx.beginPath();
-        ctx.arc(e.x, e.y, e.r, 0, Math.PI * 2);
-        ctx.fill();
-        // Eye spike
-        ctx.shadowBlur = 0;
-        ctx.fillStyle = '#fff';
-        ctx.beginPath();
-        ctx.arc(e.x, e.y, e.r * 0.28, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.fillStyle = '#000';
-        ctx.beginPath();
-        ctx.arc(e.x, e.y, e.r * 0.14, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.restore();
-      }
-
-      // Particles
-      updateAndDrawParticles(ctx, s.particles);
-
-      // Shield rings
-      const pulseBoom = s.shieldPulse > 0 && now - s.shieldPulse < 400
-        ? (1 - (now - s.shieldPulse) / 400) * 18
-        : 0;
-
-      // Outer decorative rings (spinning)
-      if (s.shieldPower > 0.1) {
-        for (let ring = 0; ring < 3; ring++) {
-          const ringR = s.shieldR + ring * 10 + pulseBoom;
-          const ringAlpha = (s.shieldPower - 0.1) * (0.6 - ring * 0.15);
-          ctx.save();
-          ctx.strokeStyle = `rgba(129,140,248,${ringAlpha})`;
-          ctx.lineWidth = 1.5 - ring * 0.3;
-          ctx.setLineDash([8, 8]);
-          ctx.lineDashOffset = s.shieldAngle * 40 * (ring % 2 === 0 ? 1 : -1);
-          ctx.beginPath();
-          ctx.arc(cx, cy, ringR, 0, Math.PI * 2);
-          ctx.stroke();
-          ctx.restore();
+        if (dist <= currentShieldR + en.r) {
+          // Blocked!
+          s.sig.blocked++; s.sig.score++;
+          setScoreDisplay(s.sig.score);
+          sfx.tick(); hapticScore();
+          // Bounce back
+          en.vx *= -1.5; en.vy *= -1.5;
+          (en.mesh.material as THREE.MeshStandardMaterial).color.setHex(0x4ade80);
+          setTimeout(() => { scene.remove(en.mesh); }, 300);
+          s.enemies.splice(i, 1);
+        } else if (dist <= 0.5 + en.r) {
+          // Hit the player!
+          s.sig.passed++; s.lives--;
+          liveMeshes[Math.max(0, s.lives)].visible = false;
+          sfx.fail(); hapticFail();
+          scene.remove(en.mesh);
+          s.enemies.splice(i, 1);
+          if (s.lives <= 0) endGame();
+        } else if (Math.abs(en.x) > 12 || Math.abs(en.y) > 12) {
+          scene.remove(en.mesh); s.enemies.splice(i, 1);
         }
       }
 
-      // Main shield
-      const shieldAlpha = 0.08 + s.shieldPower * 0.25;
-      ctx.save();
-      ctx.shadowBlur = 20 + s.shieldPower * 40;
-      ctx.shadowColor = `rgba(129,140,248,${s.shieldPower})`;
-      ctx.strokeStyle = `rgba(129,140,248,${0.3 + s.shieldPower * 0.6})`;
-      ctx.lineWidth = 2.5 + s.shieldPower * 3;
-      ctx.beginPath();
-      ctx.arc(cx, cy, s.shieldR + pulseBoom, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.fillStyle = `rgba(129,140,248,${shieldAlpha})`;
-      ctx.fill();
-      ctx.restore();
-
-      // Core orb
-      const coreR = 18 + s.shieldPower * 10;
-      ctx.save();
-      ctx.shadowBlur = 30 + s.shieldPower * 30;
-      ctx.shadowColor = powered ? '#818cf8' : '#334155';
-      ctx.fillStyle = powered ? `rgba(129,140,248,${0.6 + s.shieldPower * 0.4})` : 'rgba(51,65,85,0.6)';
-      ctx.beginPath();
-      ctx.arc(cx, cy, coreR, 0, Math.PI * 2);
-      ctx.fill();
-      // Inner glow
-      ctx.fillStyle = powered ? `rgba(255,255,255,${s.shieldPower * 0.5})` : 'rgba(255,255,255,0.1)';
-      ctx.beginPath();
-      ctx.arc(cx - coreR * 0.25, cy - coreR * 0.25, coreR * 0.35, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.restore();
-
-      // Shield power bar
-      const barW = 120, barH = 6;
-      const barX = cx - barW / 2, barY = cy + s.shieldR + 25;
-      ctx.fillStyle = 'rgba(255,255,255,0.08)';
-      ctx.fillRect(barX, barY, barW, barH);
-      const powerColor = s.shieldPower > 0.5 ? '#818cf8' : (s.shieldPower > 0.2 ? '#fbbf24' : '#ef4444');
-      ctx.fillStyle = powerColor;
-      ctx.shadowBlur = powered ? 8 : 0;
-      ctx.shadowColor = powerColor;
-      ctx.fillRect(barX, barY, barW * s.shieldPower, barH);
-      ctx.shadowBlur = 0;
-      ctx.fillStyle = 'rgba(255,255,255,0.35)';
-      ctx.font = '700 11px "Space Grotesk", sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillText(powered ? 'SHIELD ACTIVE' : 'SPEAK TO POWER', cx, barY + barH + 14);
-      ctx.textAlign = 'left';
-
-      // Lives
-      ctx.save();
-      for (let i = 0; i < 5; i++) {
-        ctx.globalAlpha = i < s.lives ? 0.9 : 0.18;
-        ctx.font = '16px serif';
-        ctx.fillText('💜', 12 + i * 22, H - 16);
-      }
-      ctx.restore();
-
-      // Mic bar
-      const mbW = 60, mbH = 4;
-      ctx.fillStyle = 'rgba(255,255,255,0.1)';
-      ctx.fillRect(W - mbW - 10, H - 16, mbW, mbH);
-      ctx.fillStyle = powered ? '#818cf8' : 'rgba(255,255,255,0.2)';
-      ctx.fillRect(W - mbW - 10, H - 16, mbW * Math.min(1, vol * 1.5), mbH);
-
-      // Flashes
-      if (now - s.flashBlue < 300) {
-        ctx.fillStyle = `rgba(129,140,248,${(1 - (now - s.flashBlue) / 300) * 0.15})`;
-        ctx.fillRect(0, 0, W, H);
-      }
-      if (now - s.flashRed < 300) {
-        ctx.fillStyle = `rgba(239,68,68,${(1 - (now - s.flashRed) / 300) * 0.2})`;
-        ctx.fillRect(0, 0, W, H);
-      }
-
+      renderer.render(scene, camera);
       s.animId = requestAnimationFrame(loop);
     };
     s.animId = requestAnimationFrame(loop);
-  }, [getVolume, endGame]);
+  }, [endGame, getVolume]);
+
+  useEffect(() => () => {
+    const s = stateRef.current; s.running = false; cancelAnimationFrame(s.animId);
+    if (s.intervalId) clearInterval(s.intervalId);
+    if (s.stream) s.stream.getTracks().forEach(t => t.stop());
+    if (s.audioCtx) s.audioCtx.close().catch(() => {});
+    if (stopMusicRef.current) stopMusicRef.current();
+    if (s.renderer) { s.renderer.dispose(); s.renderer = null; }
+  }, []);
 
   const handleStart = useCallback(async (name: string, avatar: string) => {
-    playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar);
-    await initAudio();
-    sfx.click();
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const audioCtx = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
-      const src = audioCtx.createMediaStreamSource(stream);
-      const analyser = audioCtx.createAnalyser();
-      analyser.fftSize = 256;
-      analyser.smoothingTimeConstant = 0.4;
-      src.connect(analyser);
-      const s = stateRef.current;
-      s.stream = stream;
-      s.analyser = analyser;
-      s.audioCtx = audioCtx;
-    } catch { /* mic denied */ }
-    setPhase('countdown');
+    playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar); await initAudio(); setPhase('countdown');
   }, []);
-
   const handlePlayAgain = useCallback(() => {
-    setIsNewBest(false);
-    setFinalSig(null);
-    setPhase('start');
+    if (stateRef.current.renderer) { stateRef.current.renderer.dispose(); stateRef.current.renderer = null; }
+    if (mountRef.current) mountRef.current.innerHTML = '';
+    setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null); setIsNewBest(false); setMicError(false);
   }, []);
 
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const dpr = window.devicePixelRatio || 1;
-    const resize = () => {
-      canvas.width = window.innerWidth * dpr;
-      canvas.height = window.innerHeight * dpr;
-      canvas.style.width = window.innerWidth + 'px';
-      canvas.style.height = window.innerHeight + 'px';
-      const c = canvas.getContext('2d');
-      if (c) c.setTransform(dpr, 0, 0, dpr, 0, 0);
-    };
-    resize();
-    window.addEventListener('resize', resize);
-    return () => {
-      window.removeEventListener('resize', resize);
-      const s = stateRef.current;
-      s.running = false;
-      cancelAnimationFrame(s.animId);
-      if (s.timerIntervalId) clearInterval(s.timerIntervalId);
-      if (s.stream) s.stream.getTracks().forEach(t => t.stop());
-      if (s.audioCtx) s.audioCtx.close().catch(() => {});
-      if (stopMusicRef.current) stopMusicRef.current();
-    };
-  }, []);
-
-  // suppress unused
-  void haptic;
-  void startMusic;
-
+  const accent = theme.colors.accent ?? ACCENT;
   return (
-    <GameShell
-      title={GAME_TITLE}
-      emoji={GAME_EMOJI}
-      accentColor={accent}
-      theme={theme}
-      background="radial-gradient(ellipse at 50% 50%, #0a0a20 0%, #050510 60%, #000 100%)"
-    >
-      <canvas
-        ref={canvasRef}
-        style={{ display: phase === 'playing' ? 'block' : 'none', position: 'absolute', top: 0, left: 0, touchAction: 'none' }}
-        role="img"
-        aria-label="Vocal Shield game canvas — sustain your voice to power the shield"
-      />
-
-      {phase === 'playing' && (
-        <GameHUD
-          accentColor={accent}
-          items={[
-            { label: 'BLOCKED', value: displayScore, testId: 'score' },
-            { label: 'TIME', value: timeLeft, danger: timeLeft <= 10, testId: 'timer' },
-          ]}
-        />
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accent}>
+      {phase === 'start' && <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description={GAME_TAGLINE} ctaLabel="Activate Shield 🛡️" accentColor={accent} onStart={handleStart} sensorNote="Uses microphone" />}
+      {phase === 'countdown' && <Countdown onComplete={startLoop} accentColor={accent} />}
+      {(phase === 'playing' || phase === 'countdown') && (
+        <div ref={mountRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none' }} />
       )}
-
-      <AnimatePresence mode="wait">
-        {phase === 'start' && (
-          <motion.div key="start" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} style={{ height: '100%' }}>
-            <GameStartScreen
-              emoji={GAME_EMOJI}
-              title={GAME_TITLE}
-              description={GAME_TAGLINE + ' Speak or hum continuously to keep your energy shield up. Enemies bounce off when powered — fall silent and they break through.'}
-              sensorNote="🎤 Uses microphone"
-              ctaLabel="Allow Mic & Defend →"
-              accentColor={accent}
-              onStart={handleStart}
-              gradient="radial-gradient(ellipse 80% 70% at 50% 30%, #0a0a20 0%, #050510 55%, #000 100%)"
-            />
-          </motion.div>
-        )}
-        {phase === 'countdown' && (
-          <motion.div key="countdown" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-            <Countdown onComplete={startLoop} accentColor={accent} />
-          </motion.div>
-        )}
-        {phase === 'done' && finalSig && (
-          <motion.div key="done" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} style={{ height: '100%' }}>
-            <EndScreen
-              gameId={GAME_ID}
-              title={getPersonality(finalSig)}
-              emoji={GAME_EMOJI}
-              score={String(finalSig.score)}
-              personality={getPersonality(finalSig)}
-              insights={[
-                { label: 'Enemies blocked', value: String(finalSig.blocked), color: '#818cf8' },
-                { label: 'Voice sustained', value: `${finalSig.sustainSeconds}s`, color: '#22d3ee' },
-                { label: 'Broke through', value: String(finalSig.passed), color: '#ef4444' },
-                { label: 'Peak power', value: `${Math.round(finalSig.peakVolume * 100)}%`, color: '#fbbf24' },
-              ]}
-              accentColor={accent}
-              onPlayAgain={handlePlayAgain}
-              didWin={finalSig.score >= 8}
-              finalScore={finalSig.score}
-            />
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {phase === 'done' && finalSig && (
+      {phase === 'playing' && <>
+        <GameHUD accentColor={accent} items={[{ label: 'TIME', value: timeLeft, danger: timeLeft <= 10 }, { label: 'BLOCKED', value: scoreDisplay }]} />
+        {micError && <div style={{ position: 'fixed', bottom: '15%', left: '50%', transform: 'translateX(-50%)', color: '#fbbf24', background: 'rgba(0,0,0,0.7)', padding: '8px 16px', borderRadius: 12, fontSize: 14, zIndex: 50 }}>🎤 No mic — tap to block!</div>}
+        <div style={{ position: 'fixed', bottom: '8%', left: '50%', transform: 'translateX(-50%)', zIndex: 50, color: 'rgba(255,255,255,0.6)', fontSize: 13 }}>Speak to power the shield 🗣️</div>
+      </>}
+      {phase === 'done' && finalSig && <>
+        <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI} score={String(finalSig.score)} personality={getPersonality(finalSig)}
+          insights={[{ label: 'Blocked', value: String(finalSig.blocked), color: accent }, { label: 'Passed', value: String(finalSig.passed), color: finalSig.passed === 0 ? '#4ade80' : '#ef4444' }, { label: 'Sustained', value: `${finalSig.sustainSeconds}s`, color: '#fbbf24' }, { label: 'Peak Volume', value: `${Math.round(finalSig.peakVolume * 100)}%`, color: '#34d399' }]}
+          accentColor={accent} onPlayAgain={handlePlayAgain} didWin={finalSig.blocked >= 10} />
         <WebhookEmitter theme={theme} sig={finalSig} personality={getPersonality(finalSig)} player={playerSessionRef.current} />
-      )}
-
-      <AnimatePresence>
-        {isNewBest && phase === 'done' && (
-          <motion.div
-            key="new-best"
-            initial={{ opacity: 0, y: -20, scale: 0.8 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -20 }}
-            transition={{ duration: 0.4, delay: 0.5 }}
-            style={{
-              position: 'fixed', top: '10%', left: '50%', transform: 'translateX(-50%)',
-              zIndex: 90, pointerEvents: 'none',
-              background: 'linear-gradient(135deg, #fbbf24, #f59e0b)',
-              borderRadius: 20, padding: '8px 20px', fontSize: 20,
-              fontWeight: 900, color: '#000', whiteSpace: 'nowrap',
-              boxShadow: '0 4px 20px rgba(251,191,36,0.5)',
-            }}
-          >
-            🏆 New Best!
-          </motion.div>
-        )}
-      </AnimatePresence>
+      </>}
     </GameShell>
   );
 }

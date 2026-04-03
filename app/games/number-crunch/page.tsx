@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
+import * as THREE from 'three';
 import GameShell from '@/components/GameShell';
 import GameHUD from '@/components/GameHUD';
 import GameStartScreen from '@/components/GameStartScreen';
@@ -21,333 +22,321 @@ type Op = '+' | '-' | '×' | '÷';
 
 interface Problem { question: string; answer: number; choices: number[]; timeLimit: number; }
 interface Signals {
-  totalProblems: number;
-  correct: number;
-  wrong: number;
-  maxStreak: number;
-  streakCurrent: number;
-  avgResponseMs: number;
-  responseTimes: number[];
-  score: number;
-  difficultyReached: number;
+  totalProblems: number; correct: number; wrong: number;
+  maxStreak: number; streakCurrent: number; avgResponseMs: number;
+  responseTimes: number[]; score: number; difficultyReached: number;
 }
-
-interface GameState {
-  running: boolean;
-  timeLeft: number;
-  sig: Signals;
-  problem: Problem | null;
-  problemStart: number;
-  difficulty: number;
-  answerFlash: { correct: boolean; idx: number } | null;
-  flashTimer: number;
-  accentColor: string;
-  particles: Array<{x:number;y:number;vx:number;vy:number;alpha:number;color:string}>;
-  questionAnim: number;
-}
-
 type Phase = 'start' | 'countdown' | 'playing' | 'done';
 
 function getPersonality(sig: Signals): string {
   const acc = sig.totalProblems > 0 ? sig.correct / sig.totalProblems : 0;
-  const avgMs = sig.avgResponseMs;
-  if (acc >= 0.90 && avgMs < 2000) return 'Math Genius 🧮';
+  if (acc >= 0.90 && sig.avgResponseMs < 2000) return 'Math Genius 🧮';
   if (acc >= 0.80) return 'Sharp Calculator 💡';
   if (sig.maxStreak >= 8) return 'Streak Machine ⚡';
   if (sig.difficultyReached >= 4) return 'Challenge Seeker 🎯';
   return 'Learning the Ropes 📚';
 }
 
-function generateProblem(difficulty: number): Problem {
-  const ops: Op[] = difficulty >= 3 ? ['+','-','×','÷'] : difficulty >= 2 ? ['+','-','×'] : ['+','-'];
+function genProblem(difficulty: number): Problem {
+  const ops: Op[] = difficulty < 2 ? ['+', '-'] : difficulty < 4 ? ['+', '-', '×'] : ['+', '-', '×', '÷'];
   const op = ops[Math.floor(Math.random() * ops.length)];
-  let a: number, b: number, answer: number, question: string;
-
-  const maxN = 5 + difficulty * 5;
-  a = Math.floor(Math.random() * maxN) + 1;
-  b = Math.floor(Math.random() * maxN) + 1;
-
-  switch (op) {
-    case '+': answer = a + b; question = `${a} + ${b}`; break;
-    case '-':
-      if (b > a) [a, b] = [b, a];
-      answer = a - b; question = `${a} − ${b}`; break;
-    case '×':
-      a = Math.floor(Math.random() * Math.min(maxN, 12)) + 1;
-      b = Math.floor(Math.random() * Math.min(maxN, 12)) + 1;
-      answer = a * b; question = `${a} × ${b}`; break;
-    case '÷':
-      b = Math.floor(Math.random() * 9) + 2;
-      answer = Math.floor(Math.random() * 9) + 1;
-      a = b * answer; question = `${a} ÷ ${b}`; break;
-    default: answer = a + b; question = `${a} + ${b}`;
+  let a = 0, b = 0, answer = 0;
+  if (op === '+') { a = Math.floor(Math.random() * (difficulty * 8 + 5)) + 1; b = Math.floor(Math.random() * (difficulty * 8 + 5)) + 1; answer = a + b; }
+  else if (op === '-') { a = Math.floor(Math.random() * (difficulty * 8 + 10)) + 5; b = Math.floor(Math.random() * a) + 1; answer = a - b; }
+  else if (op === '×') { a = Math.floor(Math.random() * (difficulty * 3 + 3)) + 2; b = Math.floor(Math.random() * (difficulty * 2 + 3)) + 2; answer = a * b; }
+  else { b = Math.floor(Math.random() * (difficulty + 2)) + 2; a = b * (Math.floor(Math.random() * (difficulty + 2)) + 2); answer = a / b; }
+  const choices: number[] = [answer];
+  while (choices.length < 4) {
+    const wrong = answer + (Math.random() < 0.5 ? 1 : -1) * (Math.floor(Math.random() * (difficulty * 3 + 3)) + 1);
+    if (!choices.includes(wrong) && wrong >= 0) choices.push(wrong);
   }
-
-  // Generate 3 wrong choices
-  const wrongs = new Set<number>();
-  while (wrongs.size < 3) {
-    const offset = Math.floor(Math.random() * 5) + 1;
-    const wrong = Math.random() > 0.5 ? answer + offset : Math.max(0, answer - offset);
-    if (wrong !== answer) wrongs.add(wrong);
-  }
-  const choices = [...wrongs, answer].sort(() => Math.random() - 0.5);
-
-  const timeLimit = Math.max(3, 8 - difficulty * 0.5);
-  return { question, answer, choices, timeLimit };
+  for (let i = choices.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [choices[i], choices[j]] = [choices[j], choices[i]]; }
+  return { question: `${a} ${op} ${b} = ?`, answer, choices, timeLimit: Math.max(3000, 6000 - difficulty * 400) };
 }
 
 export default function NumberCrunchGame() {
   const theme = useBrandTheme();
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const mountRef = useRef<HTMLDivElement>(null);
+  const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
+  const sceneRef = useRef<THREE.Scene | null>(null);
+  const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const animRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const stopMusicRef = useRef<(() => void) | null>(null);
-  const problemTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cubesRef = useRef<THREE.Mesh[]>([]);
+  const particlesRef = useRef<THREE.Points | null>(null);
+  const flashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const playerSessionRef = useRef<PlayerSession | null>(null);
 
-  const stateRef = useRef<GameState>({
+  const stateRef = useRef({
     running: false, timeLeft: DURATION,
     sig: { totalProblems: 0, correct: 0, wrong: 0, maxStreak: 0, streakCurrent: 0,
-           avgResponseMs: 0, responseTimes: [], score: 0, difficultyReached: 1 },
-    problem: null, problemStart: 0, difficulty: 1,
-    answerFlash: null, flashTimer: 0, accentColor: ACCENT,
-    particles: [], questionAnim: 0,
+           avgResponseMs: 0, responseTimes: [], score: 0, difficultyReached: 1 } as Signals,
+    problem: null as Problem | null, problemStart: 0, difficulty: 1,
+    answerFlash: null as { correct: boolean; idx: number } | null,
+    accentColor: ACCENT,
   });
 
   const [phase, setPhase] = useState<Phase>('start');
   const [timeLeft, setTimeLeft] = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
-  const [currentProblem, setCurrentProblem] = useState<Problem | null>(null);
-  const [answerFeedback, setAnswerFeedback] = useState<{ idx: number; correct: boolean } | null>(null);
+  const [question, setQuestion] = useState('');
   const [finalSig, setFinalSig] = useState<Signals | null>(null);
-  const [playerName, setPlayerName] = useState('');
-  const [playerAvatar, setPlayerAvatar] = useState('🔢');
-  const playerSessionRef = useRef<PlayerSession | null>(null);
+  const [flashState, setFlashState] = useState<{ idx: number; correct: boolean } | null>(null);
 
   useEffect(() => { stateRef.current.accentColor = theme.colors.accent ?? ACCENT; }, [theme]);
-
-  const nextProblem = useCallback(() => {
-    const s = stateRef.current;
-    if (!s.running) return;
-    if (problemTimerRef.current) { clearTimeout(problemTimerRef.current); problemTimerRef.current = null; }
-    s.problem = generateProblem(s.difficulty);
-    s.problemStart = Date.now();
-    s.sig.totalProblems++;
-    s.answerFlash = null; s.flashTimer = 0;
-    s.questionAnim = 0;
-    setCurrentProblem({ ...s.problem });
-    setAnswerFeedback(null);
-    // Auto-wrong if timeout
-    problemTimerRef.current = setTimeout(() => {
-      const st = stateRef.current;
-      if (!st.running || !st.problem) return;
-      st.sig.wrong++;
-      st.sig.streakCurrent = 0;
-      sfx.fail(); haptic([20, 30, 20]);
-      setAnswerFeedback({ idx: -1, correct: false });
-      setTimeout(() => { if (st.running) nextProblem(); }, 400);
-    }, (s.problem.timeLimit) * 1000);
-  }, []);
-
-  const handleAnswer = useCallback((idx: number) => {
-    const s = stateRef.current;
-    if (!s.running || !s.problem) return;
-    if (problemTimerRef.current) { clearTimeout(problemTimerRef.current); problemTimerRef.current = null; }
-
-    const responseMs = Date.now() - s.problemStart;
-    s.sig.responseTimes.push(responseMs);
-    const chosen = s.problem.choices[idx];
-    const isCorrect = chosen === s.problem.answer;
-
-    if (isCorrect) {
-      s.sig.correct++;
-      s.sig.streakCurrent++;
-      if (s.sig.streakCurrent > s.sig.maxStreak) s.sig.maxStreak = s.sig.streakCurrent;
-      // Speed bonus
-      const speedBonus = responseMs < 1500 ? 3 : responseMs < 3000 ? 2 : 1;
-      const comboBonus = s.sig.streakCurrent >= 5 ? 2 : 1;
-      s.sig.score += speedBonus * comboBonus;
-      // Difficulty scaling
-      if (s.sig.correct % 5 === 0) {
-        s.difficulty = Math.min(5, s.difficulty + 1);
-        if (s.difficulty > s.sig.difficultyReached) s.sig.difficultyReached = s.difficulty;
-      }
-      setScoreDisplay(s.sig.score);
-      sfx.collect(); haptic([30]);
-    } else {
-      s.sig.wrong++;
-      s.sig.streakCurrent = 0;
-      if (s.difficulty > 1) s.difficulty = Math.max(1, s.difficulty - 1);
-      sfx.fail(); haptic([20, 30, 20]);
-    }
-
-    setAnswerFeedback({ idx, correct: isCorrect });
-    setTimeout(() => { if (s.running) nextProblem(); }, isCorrect ? 300 : 600);
-  }, [nextProblem]);
 
   const endGame = useCallback(() => {
     const s = stateRef.current;
     s.running = false;
     cancelAnimationFrame(animRef.current);
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
-    if (problemTimerRef.current) { clearTimeout(problemTimerRef.current); problemTimerRef.current = null; }
     if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
-    s.sig.avgResponseMs = s.sig.responseTimes.length > 0
-      ? Math.round(s.sig.responseTimes.reduce((a, b) => a + b, 0) / s.sig.responseTimes.length) : 0;
-    setFinalSig({ ...s.sig });
-    setPhase('done');
+    if (s.sig.responseTimes.length > 0) s.sig.avgResponseMs = s.sig.responseTimes.reduce((a, b) => a + b, 0) / s.sig.responseTimes.length;
+    sfx.success(); haptic([100]);
+    try { const pb = parseInt(localStorage.getItem(`pb_${GAME_ID}`) ?? '0'); if (s.sig.score > pb) localStorage.setItem(`pb_${GAME_ID}`, String(s.sig.score)); } catch { /**/ }
+    setFinalSig({ ...s.sig }); setPhase('done');
   }, []);
 
-  const startLoop = useCallback(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    const s = stateRef.current;
+  const newProblem = useCallback(() => {
+    const s = stateRef.current; if (!s.running) return;
+    s.difficulty = Math.min(6, 1 + Math.floor(s.sig.correct / 3));
+    if (s.difficulty > s.sig.difficultyReached) s.sig.difficultyReached = s.difficulty;
+    const p = genProblem(s.difficulty);
+    s.problem = p; s.problemStart = Date.now();
+    setQuestion(p.question);
+    // Update cube labels
+    cubesRef.current.forEach((mesh, i) => {
+      (mesh.userData as { choice: number }).choice = p.choices[i];
+      const mat = mesh.material as THREE.MeshStandardMaterial;
+      mat.color.set(0x3b82f6);
+      mat.emissive.set(0x1e3a6a);
+    });
+  }, []);
 
+  const handleAnswer = useCallback((idx: number) => {
+    const s = stateRef.current;
+    if (!s.running || !s.problem || s.answerFlash) return;
+    const choice = s.problem.choices[idx];
+    const correct = choice === s.problem.answer;
+    const rt = Date.now() - s.problemStart;
+    s.sig.totalProblems++;
+    s.sig.responseTimes.push(rt);
+    if (correct) {
+      s.sig.correct++; s.sig.streakCurrent++;
+      if (s.sig.streakCurrent > s.sig.maxStreak) s.sig.maxStreak = s.sig.streakCurrent;
+      const mult = s.sig.streakCurrent >= 5 ? 3 : s.sig.streakCurrent >= 3 ? 2 : 1;
+      s.sig.score += mult * 10;
+      setScoreDisplay(s.sig.score);
+      sfx.collect(); haptic([30]);
+    } else {
+      s.sig.wrong++; s.sig.streakCurrent = 0;
+      sfx.collision(); haptic([30, 20, 30]);
+    }
+    s.answerFlash = { correct, idx };
+    setFlashState({ idx, correct });
+    // Flash cube color
+    const cube = cubesRef.current[idx];
+    if (cube) {
+      const mat = cube.material as THREE.MeshStandardMaterial;
+      mat.color.set(correct ? 0x4ade80 : 0xef4444);
+      mat.emissive.set(correct ? 0x1a5f2a : 0x5f1a1a);
+    }
+    if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
+    flashTimerRef.current = setTimeout(() => {
+      s.answerFlash = null; setFlashState(null);
+      newProblem();
+    }, 500);
+  }, [newProblem]);
+
+  const startLoop = useCallback(() => {
+    const mount = mountRef.current; if (!mount) return;
+    const s = stateRef.current;
     s.running = true; s.timeLeft = DURATION;
     s.sig = { totalProblems: 0, correct: 0, wrong: 0, maxStreak: 0, streakCurrent: 0,
               avgResponseMs: 0, responseTimes: [], score: 0, difficultyReached: 1 };
-    s.difficulty = 1; s.problem = null; s.questionAnim = 0;
-    setScoreDisplay(0); setTimeLeft(DURATION); setCurrentProblem(null); setPhase('playing');
-    stopMusicRef.current = startMusic('drive');
+    setScoreDisplay(0); setTimeLeft(DURATION); setPhase('playing');
+    stopMusicRef.current = startMusic('minimal');
+
+    const W = window.innerWidth, H = window.innerHeight;
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0a0a1a);
+    scene.fog = new THREE.Fog(0x0a0a1a, 18, 35);
+    sceneRef.current = scene;
+
+    const camera = new THREE.PerspectiveCamera(65, W / H, 0.1, 100);
+    camera.position.set(0, 0, 12);
+    cameraRef.current = camera;
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(W, H);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.shadowMap.enabled = true;
+    mount.appendChild(renderer.domElement);
+    rendererRef.current = renderer;
+
+    // Lights
+    scene.add(new THREE.AmbientLight(0x222244, 1.5));
+    const pLight = new THREE.PointLight(0x3b82f6, 80, 30);
+    pLight.position.set(0, 5, 8);
+    scene.add(pLight);
+    const pLight2 = new THREE.PointLight(0x6366f1, 40, 20);
+    pLight2.position.set(-5, -3, 5);
+    scene.add(pLight2);
+
+    // Stars
+    const starGeo = new THREE.BufferGeometry();
+    const starPos = new Float32Array(600);
+    for (let i = 0; i < 600; i += 3) {
+      starPos[i] = (Math.random() - 0.5) * 60;
+      starPos[i + 1] = (Math.random() - 0.5) * 60;
+      starPos[i + 2] = (Math.random() - 0.5) * 30 - 10;
+    }
+    starGeo.setAttribute('position', new THREE.BufferAttribute(starPos, 3));
+    const stars = new THREE.Points(starGeo, new THREE.PointsMaterial({ color: 0xffffff, size: 0.08 }));
+    scene.add(stars);
+
+    // Answer cubes — 2x2 grid
+    const cubeGeo = new THREE.RoundedBoxGeometry(2.8, 1.6, 0.4, 4, 0.12);
+    const positions = [[-2, 1.2, 0], [2, 1.2, 0], [-2, -1.2, 0], [2, -1.2, 0]];
+    cubesRef.current = [];
+    positions.forEach((pos, i) => {
+      const mat = new THREE.MeshStandardMaterial({ color: 0x1e3a6a, emissive: 0x0a1a3a, roughness: 0.3, metalness: 0.6 });
+      const mesh = new THREE.Mesh(cubeGeo, mat);
+      mesh.position.set(pos[0], pos[1], pos[2]);
+      mesh.castShadow = true;
+      mesh.userData = { choice: 0, idx: i };
+      scene.add(mesh);
+      cubesRef.current.push(mesh);
+    });
+
+    // Raycaster for tap
+    const raycaster = new THREE.Raycaster();
+    const onTap = (e: PointerEvent) => {
+      if (phase === 'playing' || stateRef.current.running) {
+        const rect = renderer.domElement.getBoundingClientRect();
+        const mouse = new THREE.Vector2(
+          ((e.clientX - rect.left) / rect.width) * 2 - 1,
+          -((e.clientY - rect.top) / rect.height) * 2 + 1,
+        );
+        raycaster.setFromCamera(mouse, camera);
+        const hits = raycaster.intersectObjects(cubesRef.current);
+        if (hits.length > 0) handleAnswer((hits[0].object.userData as { idx: number }).idx);
+      }
+    };
+    renderer.domElement.addEventListener('pointerdown', onTap);
 
     timerRef.current = setInterval(() => {
-      s.timeLeft--;
-      setTimeLeft(s.timeLeft);
-      if (s.timeLeft <= 0) { sfx.fail(); haptic([300]); endGame(); }
+      s.timeLeft--; setTimeLeft(s.timeLeft);
+      if (s.timeLeft === 10) sfx.warning();
+      if (s.timeLeft > 0 && s.timeLeft < 10) sfx.tick();
+      if (s.timeLeft <= 0) endGame();
     }, 1000);
 
-    setTimeout(() => { if (s.running) nextProblem(); }, 500);
+    newProblem();
 
-    // Light background animation loop
+    let t = 0;
     const loop = () => {
       if (!s.running) return;
-      const W = canvas.width; const H = canvas.height;
-      s.questionAnim++;
-
-      ctx.fillStyle = '#0f1b35';
-      ctx.fillRect(0, 0, W, H);
-
-      // Grid bg
-      ctx.strokeStyle = `${ACCENT}11`;
-      ctx.lineWidth = 1;
-      for (let x = 0; x < W; x += 40) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke(); }
-      for (let y = 0; y < H; y += 40) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
-
-      // Difficulty indicator
-      ctx.fillStyle = ACCENT + '44';
-      ctx.fillRect(0, H - 4, W * (s.difficulty / 5), 4);
-
       animRef.current = requestAnimationFrame(loop);
+      t += 0.01;
+      // Subtle float animation on cubes
+      cubesRef.current.forEach((cube, i) => {
+        cube.position.y = [1.2, 1.2, -1.2, -1.2][i] + Math.sin(t + i * 1.5) * 0.06;
+        cube.rotation.y = Math.sin(t * 0.5 + i) * 0.04;
+      });
+      pLight.position.x = Math.sin(t * 0.4) * 3;
+      stars.rotation.y += 0.0003;
+      renderer.render(scene, camera);
     };
     animRef.current = requestAnimationFrame(loop);
-  }, [endGame, nextProblem]);
+
+    return () => { renderer.domElement.removeEventListener('pointerdown', onTap); };
+  }, [endGame, newProblem, handleAnswer, phase]);
 
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const resize = () => { canvas.width = canvas.offsetWidth; canvas.height = canvas.offsetHeight; };
-    resize(); window.addEventListener('resize', resize);
-    return () => window.removeEventListener('resize', resize);
-  }, []);
-
-  useEffect(() => {
+    const onResize = () => {
+      if (!cameraRef.current || !rendererRef.current) return;
+      const W = window.innerWidth, H = window.innerHeight;
+      cameraRef.current.aspect = W / H;
+      cameraRef.current.updateProjectionMatrix();
+      rendererRef.current.setSize(W, H);
+    };
+    window.addEventListener('resize', onResize);
     return () => {
+      window.removeEventListener('resize', onResize);
       cancelAnimationFrame(animRef.current);
       if (timerRef.current) clearInterval(timerRef.current);
-      if (problemTimerRef.current) clearTimeout(problemTimerRef.current);
+      if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
       if (stopMusicRef.current) stopMusicRef.current();
+      if (rendererRef.current && mountRef.current) {
+        try { mountRef.current.removeChild(rendererRef.current.domElement); } catch { /**/ }
+        rendererRef.current.dispose();
+      }
     };
   }, []);
 
   const handleStart = useCallback((name: string, avatar: string) => {
-    setPlayerName(name); setPlayerAvatar(avatar);
-    initAudio(); playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar);
-    setPhase('countdown');
+    playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar);
+    initAudio(); setPhase('countdown');
   }, []);
   const handleCountdownDone = useCallback(() => { startLoop(); }, [startLoop]);
   const handlePlayAgain = useCallback(() => {
-    setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null);
-    setCurrentProblem(null); setAnswerFeedback(null);
+    stateRef.current.running = false;
+    cancelAnimationFrame(animRef.current);
+    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+    if (rendererRef.current && mountRef.current) {
+      try { mountRef.current.removeChild(rendererRef.current.domElement); } catch { /**/ }
+      rendererRef.current.dispose(); rendererRef.current = null;
+    }
+    setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null); setQuestion('');
+    setPhase('countdown');
   }, []);
 
-  const buildInsights = (sig: Signals) => {
-    const acc = sig.totalProblems > 0 ? Math.round((sig.correct / sig.totalProblems) * 100) : 0;
-    return [
-      { label: 'Accuracy',      value: `${acc}%`,           color: acc >= 80 ? '#4ade80' : acc >= 50 ? '#facc15' : '#ef4444' },
-      { label: 'Avg Speed',     value: `${sig.avgResponseMs}ms`, color: ACCENT },
-      { label: 'Best Streak',   value: `×${sig.maxStreak}`,   color: ACCENT },
-      { label: 'Max Difficulty',value: `Level ${sig.difficultyReached}`, color: 'var(--color-text)' },
-    ];
-  };
-
-  const CHOICE_COLORS = ['#ef4444', '#f97316', '#22c55e', '#3b82f6'];
+  const accent = theme.colors.accent ?? ACCENT;
+  const problem = stateRef.current.problem;
 
   return (
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accent}
+      background="radial-gradient(ellipse at 50% 0%, rgba(59,130,246,0.15) 0%, transparent 60%), linear-gradient(180deg, #0a0a1a 0%, #050510 100%)">
       {phase === 'start' && (
         <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description={GAME_TAGLINE}
-          ctaLabel="Start Crunching" accentColor={theme.colors.accent ?? ACCENT} onStart={handleStart} />
+          ctaLabel="Crunch!" accentColor={accent} onStart={handleStart} />
       )}
-      {phase === 'countdown' && (
-        <Countdown onComplete={handleCountdownDone} accentColor={theme.colors.accent ?? ACCENT} />
-      )}
+      {phase === 'countdown' && <Countdown onComplete={handleCountdownDone} accentColor={accent} />}
       {(phase === 'playing' || phase === 'countdown') && (
         <>
-          <canvas ref={canvasRef} role="img" aria-label="Number crunch math game"
-            style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none' }} />
+          <div ref={mountRef} style={{ position: 'absolute', inset: 0, touchAction: 'none' }} />
           {phase === 'playing' && (
             <>
-              <GameHUD accentColor={theme.colors.accent ?? ACCENT} items={[
-                { label: 'TIME', value: timeLeft, danger: timeLeft <= 5 },
-                { label: 'SCORE', value: scoreDisplay },
+              <GameHUD accentColor={accent} items={[
+                { label: 'TIME', value: timeLeft, danger: timeLeft <= 10, testId: 'timer' },
+                { label: 'SCORE', value: scoreDisplay, testId: 'score' },
               ]} />
-              {currentProblem && (
-                <div style={{
-                  position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column',
-                  alignItems: 'center', justifyContent: 'center', pointerEvents: 'none',
-                }}>
-                  <div style={{ fontSize: '48px', fontWeight: 'bold', color: '#fff',
-                    textShadow: `0 0 20px ${ACCENT}`, marginBottom: '8px' }}>
-                    {currentProblem.question}
-                  </div>
-                  <div style={{ fontSize: '14px', color: ACCENT, marginBottom: '32px' }}>
-                    = ?
-                  </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px',
-                    width: '80%', maxWidth: '300px', pointerEvents: 'all' }}>
-                    {currentProblem.choices.map((choice, i) => {
-                      const feedback = answerFeedback;
-                      const isSelected = feedback?.idx === i;
-                      const isCorrectChoice = choice === currentProblem.answer && feedback !== null;
-                      const bg = feedback
-                        ? isSelected
-                          ? feedback.correct ? '#4ade80' : '#ef4444'
-                          : isCorrectChoice ? '#4ade8044' : '#1e293b'
-                        : '#1e293b';
-                      return (
-                        <button
-                          key={i}
-                          aria-label={`Answer ${choice}`}
-                          onClick={() => handleAnswer(i)}
-                          disabled={feedback !== null}
-                          style={{
-                            backgroundColor: bg,
-                            border: `2px solid ${CHOICE_COLORS[i]}`,
-                            borderRadius: '12px', padding: '16px 8px',
-                            fontSize: '28px', fontWeight: 'bold', color: '#fff',
-                            cursor: feedback ? 'default' : 'pointer',
-                            minHeight: '64px',
-                            transition: 'background-color 0.15s',
-                          }}
-                        >
-                          {choice}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
+              {/* Question overlay */}
+              <div style={{
+                position: 'absolute', top: '12%', left: '50%', transform: 'translateX(-50%)',
+                zIndex: 10, textAlign: 'center', pointerEvents: 'none',
+              }}>
+                <div style={{ fontSize: 'clamp(28px,7vw,52px)', fontWeight: 900, color: '#fff',
+                  textShadow: `0 0 30px ${accent}`, letterSpacing: 2 }}>{question}</div>
+              </div>
+              {/* Choice labels overlay */}
+              {problem && (() => {
+                const labels = [
+                  { x: '28%', y: '38%' }, { x: '72%', y: '38%' },
+                  { x: '28%', y: '62%' }, { x: '72%', y: '62%' },
+                ];
+                return problem.choices.map((c, i) => (
+                  <div key={i} style={{
+                    position: 'absolute', left: labels[i].x, top: labels[i].y,
+                    transform: 'translate(-50%,-50%)', zIndex: 10, pointerEvents: 'none',
+                    fontSize: 'clamp(22px,5vw,38px)', fontWeight: 900,
+                    color: flashState?.idx === i ? (flashState.correct ? '#4ade80' : '#ef4444') : '#fff',
+                    textShadow: `0 0 20px ${accent}`,
+                  }}>{c}</div>
+                ));
+              })()}
             </>
           )}
         </>
@@ -355,27 +344,24 @@ export default function NumberCrunchGame() {
       {phase === 'done' && finalSig && (
         <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI}
           score={String(finalSig.score)} personality={getPersonality(finalSig)}
-          insights={buildInsights(finalSig)} accentColor={theme.colors.accent ?? ACCENT}
-          onPlayAgain={handlePlayAgain} didWin={finalSig.correct >= 10} />
+          insights={[
+            { label: 'Correct', value: `${finalSig.correct}/${finalSig.totalProblems}`, color: '#4ade80' },
+            { label: 'Avg Speed', value: finalSig.avgResponseMs > 0 ? `${Math.round(finalSig.avgResponseMs)}ms` : '—', color: accent },
+            { label: 'Best Streak', value: `×${finalSig.maxStreak}`, color: '#fbbf24' },
+            { label: 'Difficulty', value: `Lv ${finalSig.difficultyReached}`, color: accent },
+          ]}
+          accentColor={accent} onPlayAgain={handlePlayAgain} didWin={finalSig.correct >= 8} />
       )}
-      {phase === 'done' && finalSig && (
-        <WebhookEmitter theme={theme} gameId={GAME_ID} sig={finalSig}
-          personality={getPersonality(finalSig)} player={playerSessionRef.current} />
-      )}
+      {phase === 'done' && finalSig && <WebhookEmitter theme={theme} sig={finalSig} personality={getPersonality(finalSig)} player={playerSessionRef.current} />}
     </GameShell>
   );
 }
 
-function WebhookEmitter({ theme, gameId, sig, personality, player }: {
-  theme: ReturnType<typeof useBrandTheme>; gameId: string; sig: Signals; personality: string; player: PlayerSession | null;
-}) {
+function WebhookEmitter({ theme, sig, personality, player }: { theme: ReturnType<typeof useBrandTheme>; sig: Signals; personality: string; player: PlayerSession | null; }) {
   const fired = useRef(false);
   useEffect(() => {
     if (fired.current) return; fired.current = true;
-    const acc = sig.totalProblems > 0 ? sig.correct / sig.totalProblems : 0;
-    postWebhook(theme, gameId, { personality, score: sig.score, accuracy: parseFloat(acc.toFixed(3)),
-      avgResponseMs: sig.avgResponseMs, maxStreak: sig.maxStreak,
-      difficultyReached: sig.difficultyReached, totalProblems: sig.totalProblems }, player);
-  }, [theme, gameId, sig, personality, player]);
+    postWebhook(theme, GAME_ID, { personality, score: sig.score }, player);
+  }, [theme, sig, personality, player]);
   return null;
 }

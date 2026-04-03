@@ -1,5 +1,9 @@
 'use client';
+/**
+ * LASER GUIDE — 3D laser beams bouncing through space with draggable mirrors.
+ */
 import { useEffect, useRef, useState, useCallback } from 'react';
+import * as THREE from 'three';
 import GameShell from '@/components/GameShell';
 import GameHUD from '@/components/GameHUD';
 import GameStartScreen from '@/components/GameStartScreen';
@@ -17,9 +21,9 @@ const GAME_EMOJI = '🔴';
 const GAME_TITLE = 'Laser Guide';
 const GAME_TAGLINE = 'Reflect the beam. Hit the target.';
 
-interface Mirror { x: number; y: number; angle: number; id: number; dragging: boolean; }
-interface LevelConfig { mirrors: Mirror[]; targetX: number; targetY: number; targetR: number; sourceX: number; sourceY: number; sourceAngle: number; }
+interface MirrorObj { mesh: THREE.Mesh; id: number; angle: number; }
 interface Signals { puzzlesSolved: number; movesUsed: number; perfectSolves: number; maxStreak: number; streakCurrent: number; score: number; }
+
 function getPersonality(sig: Signals): string {
   if (sig.perfectSolves >= 3 && sig.maxStreak >= 3) return 'Laser Wizard 🔴';
   if (sig.puzzlesSolved >= 5) return 'Optics Expert 🔬';
@@ -27,127 +31,260 @@ function getPersonality(sig: Signals): string {
   if (sig.puzzlesSolved >= 2) return 'Getting in Focus 🎯';
   return 'Learning to Reflect 💡';
 }
+
 type Phase = 'start' | 'countdown' | 'playing' | 'done';
-interface GameState {
-  running: boolean; timeLeft: number; sig: Signals;
-  level: LevelConfig; mirrors: Mirror[]; hitTarget: boolean; movesThisRound: number;
-  accentColor: string; floats: Array<{ x: number; y: number; text: string; alpha: number; vy: number; color: string }>;
-  scorePop: number; frame: number; hitFlash: number;
-  draggingMirror: number | null; dragOffX: number; dragOffY: number;
-}
 
-function reflectDirection(dx: number, dy: number, mirrorAngle: number): { dx: number; dy: number } {
-  const nx = Math.cos(mirrorAngle + Math.PI/2);
-  const ny = Math.sin(mirrorAngle + Math.PI/2);
+function reflectDir(dx: number, dy: number, angle: number): [number, number] {
+  const nx = Math.cos(angle + Math.PI / 2), ny = Math.sin(angle + Math.PI / 2);
   const dot = dx * nx + dy * ny;
-  return { dx: dx - 2 * dot * nx, dy: dy - 2 * dot * ny };
+  return [dx - 2 * dot * nx, dy - 2 * dot * ny];
 }
 
-function castRay(sourceX: number, sourceY: number, dx: number, dy: number, mirrors: Mirror[], W: number, H: number): Array<{ x: number; y: number }> {
-  const points: Array<{ x: number; y: number }> = [{ x: sourceX, y: sourceY }];
-  let cx = sourceX, cy = sourceY, cdx = dx, cdy = dy;
-  const MIRROR_LEN = 40;
-  for (let bounce = 0; bounce < 10; bounce++) {
-    let tMin = 9999, hitMirror: Mirror | null = null, hitT = 0;
-    for (const m of mirrors) {
-      const mx1 = m.x - Math.cos(m.angle) * MIRROR_LEN;
-      const my1 = m.y - Math.sin(m.angle) * MIRROR_LEN;
-      const mx2 = m.x + Math.cos(m.angle) * MIRROR_LEN;
-      const my2 = m.y + Math.sin(m.angle) * MIRROR_LEN;
-      // Ray-segment intersection
-      const denom = (mx2-mx1)*cdy - (my2-my1)*cdx;
-      if (Math.abs(denom) < 0.0001) continue;
-      const t1 = ((cx-mx1)*cdy - (cy-my1)*cdx) / denom;
-      const t2 = ((cx-mx1)*(my2-my1) - (cy-my1)*(mx2-mx1)) / denom;
-      if (t1 >= 0 && t1 <= 1 && t2 > 0.01 && t2 < tMin) { tMin = t2; hitMirror = m; hitT = t1; }
-    }
-    // Wall check
-    let wallT = 9999;
-    if (cdx > 0) wallT = Math.min(wallT, (W - cx) / cdx);
-    else if (cdx < 0) wallT = Math.min(wallT, (0 - cx) / cdx);
-    if (cdy > 0) wallT = Math.min(wallT, (H - cy) / cdy);
-    else if (cdy < 0) wallT = Math.min(wallT, (0 - cy) / cdy);
-
-    if (hitMirror && tMin < wallT) {
-      cx += cdx * tMin; cy += cdy * tMin;
-      points.push({ x: cx, y: cy });
-      const ref = reflectDirection(cdx, cdy, hitMirror.angle);
-      cdx = ref.dx; cdy = ref.dy;
-    } else {
-      cx += cdx * wallT; cy += cdy * wallT;
-      points.push({ x: cx, y: cy });
-      break;
-    }
-  }
-  return points;
-}
-
-export default function LaserGuide() {
+export default function LaserGuideGame() {
   const theme = useBrandTheme();
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const mountRef = useRef<HTMLDivElement>(null);
   const animRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const stateRef = useRef<GameState>({
+  const playerSessionRef = useRef<PlayerSession | null>(null);
+
+  const stateRef = useRef({
     running: false, timeLeft: DURATION,
-    sig: { puzzlesSolved: 0, movesUsed: 0, perfectSolves: 0, maxStreak: 0, streakCurrent: 0, score: 0 },
-    level: { mirrors: [], targetX: 0, targetY: 0, targetR: 25, sourceX: 0, sourceY: 0, sourceAngle: 0 },
-    mirrors: [], hitTarget: false, movesThisRound: 0,
-    accentColor: ACCENT, floats: [], scorePop: 0, frame: 0, hitFlash: 0,
-    draggingMirror: null, dragOffX: 0, dragOffY: 0,
+    sig: { puzzlesSolved: 0, movesUsed: 0, perfectSolves: 0, maxStreak: 0, streakCurrent: 0, score: 0 } as Signals,
+    mirrors: [] as MirrorObj[],
+    laserPoints: [] as THREE.Vector3[],
+    laserLine: null as THREE.Line | null,
+    targetMesh: null as THREE.Mesh | null,
+    sourceMesh: null as THREE.Mesh | null,
+    sourcePos: new THREE.Vector3(-6, 0, 0),
+    sourceDir: new THREE.Vector2(1, 0.3).normalize(),
+    targetPos: new THREE.Vector3(6, 2, 0),
+    hitTarget: false, movesThisRound: 0,
+    scene: null as THREE.Scene | null,
+    camera: null as THREE.PerspectiveCamera | null,
+    renderer: null as THREE.WebGLRenderer | null,
+    raycaster: new THREE.Raycaster(),
+    dragging: null as { id: number; offX: number; offY: number } | null,
+    pendingPointer: null as { x: number; y: number; type: 'down' | 'move' | 'up' } | null,
+    hitFlash: 0, frame: 0,
+    scorePop: 0,
+    levelNum: 0,
   });
+
   const [phase, setPhase] = useState<Phase>('start');
   const [timeLeft, setTimeLeft] = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
   const [finalSig, setFinalSig] = useState<Signals | null>(null);
-  const playerSessionRef = useRef<PlayerSession | null>(null);
-  useEffect(() => { stateRef.current.accentColor = theme.colors.accent ?? ACCENT; }, [theme]);
 
   const endGame = useCallback(() => {
     const s = stateRef.current;
-    s.running = false; cancelAnimationFrame(animRef.current);
+    s.running = false;
+    cancelAnimationFrame(animRef.current);
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
     const pb = parseInt(localStorage.getItem(`pb_${GAME_ID}`) ?? '0');
     if (s.sig.score > pb) localStorage.setItem(`pb_${GAME_ID}`, String(s.sig.score));
     setFinalSig({ ...s.sig }); setPhase('done'); hapticVictory();
   }, []);
 
-  const generateLevel = useCallback((W: number, H: number, levelNum: number) => {
-    const mirrors: Mirror[] = [];
+  const generateLevel = useCallback((scene: THREE.Scene, levelNum: number) => {
+    const s = stateRef.current;
+    // Remove old mirrors
+    s.mirrors.forEach(m => scene.remove(m.mesh));
+    s.mirrors = [];
+
     const count = 2 + Math.min(levelNum, 3);
     for (let i = 0; i < count; i++) {
-      mirrors.push({ id: i, x: 80 + Math.random() * (W - 160), y: 100 + Math.random() * (H - 200), angle: Math.random() * Math.PI, dragging: false });
+      const mirrorGeo = new THREE.BoxGeometry(2.5, 0.15, 0.15);
+      const mirrorMat = new THREE.MeshPhongMaterial({ color: 0x38bdf8, emissive: 0x0c4a6e, shininess: 200 });
+      const mirror = new THREE.Mesh(mirrorGeo, mirrorMat);
+      const angle = Math.random() * Math.PI;
+      mirror.rotation.z = angle;
+      mirror.position.set(
+        (Math.random() - 0.5) * 10,
+        (Math.random() - 0.5) * 6,
+        0,
+      );
+      scene.add(mirror);
+      s.mirrors.push({ mesh: mirror, id: i, angle });
     }
-    return { mirrors, targetX: W - 60, targetY: 100 + Math.random() * (H - 200), targetR: 25, sourceX: 30, sourceY: 100 + Math.random() * (H - 200), sourceAngle: Math.random() * 0.5 };
+
+    // New source/target positions
+    s.sourcePos.set(-6 + Math.random() * 2, (Math.random() - 0.5) * 4, 0);
+    s.targetPos.set(4 + Math.random() * 2, (Math.random() - 0.5) * 4, 0);
+    s.sourceDir = new THREE.Vector2(1, (Math.random() - 0.5) * 0.8).normalize();
+    s.hitTarget = false; s.movesThisRound = 0;
+
+    if (s.sourceMesh) s.sourceMesh.position.copy(s.sourcePos);
+    if (s.targetMesh) s.targetMesh.position.copy(s.targetPos);
   }, []);
 
   const startLoop = useCallback(() => {
-    const canvas = canvasRef.current; if (!canvas) return;
-    const ctx = canvas.getContext('2d'); if (!ctx) return;
+    if (!mountRef.current) return;
     const s = stateRef.current;
-    const W = canvas.width, H = canvas.height;
     s.running = true; s.timeLeft = DURATION;
     s.sig = { puzzlesSolved: 0, movesUsed: 0, perfectSolves: 0, maxStreak: 0, streakCurrent: 0, score: 0 };
-    s.level = generateLevel(W, H, 0);
-    s.mirrors = s.level.mirrors.map(m => ({ ...m }));
-    s.hitTarget = false; s.movesThisRound = 0; s.frame = 0; s.floats = []; s.scorePop = 0;
+    s.hitFlash = 0; s.frame = 0; s.levelNum = 0; s.dragging = null;
     setScoreDisplay(0); setTimeLeft(DURATION); setPhase('playing');
-    timerRef.current = setInterval(() => { s.timeLeft--; setTimeLeft(s.timeLeft); if (s.timeLeft <= 0) { sfx.fail(); endGame(); } }, 1000);
 
+    const W = window.innerWidth, H = window.innerHeight;
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(W, H);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setClearColor(0x030812);
+    mountRef.current.innerHTML = '';
+    mountRef.current.appendChild(renderer.domElement);
+    s.renderer = renderer;
+
+    const scene = new THREE.Scene();
+    s.scene = scene;
+    const camera = new THREE.PerspectiveCamera(65, W / H, 0.1, 200);
+    camera.position.set(0, 0, 15);
+    s.camera = camera;
+
+    // Lights
+    scene.add(new THREE.AmbientLight(0x0a0a2a, 4));
+    const redLight = new THREE.PointLight(0xef4444, 2, 20);
+    redLight.position.set(0, 0, 8);
+    scene.add(redLight);
+
+    // Grid background
+    const gridHelper = new THREE.GridHelper(30, 20, 0x1e1b4b, 0x0f0e2a);
+    gridHelper.rotation.x = Math.PI / 2;
+    gridHelper.position.z = -0.5;
+    scene.add(gridHelper);
+
+    // Source emitter
+    const srcGeo = new THREE.SphereGeometry(0.4, 12, 12);
+    const srcMat = new THREE.MeshPhongMaterial({ color: 0xef4444, emissive: 0x7f1d1d, shininess: 100 });
+    const srcMesh = new THREE.Mesh(srcGeo, srcMat);
+    scene.add(srcMesh);
+    s.sourceMesh = srcMesh;
+
+    // Target
+    const tgtGeo = new THREE.TorusGeometry(0.7, 0.15, 8, 24);
+    const tgtMat = new THREE.MeshPhongMaterial({ color: 0xdc2626, emissive: 0x7f1d1d });
+    const tgtMesh = new THREE.Mesh(tgtGeo, tgtMat);
+    scene.add(tgtMesh);
+    s.targetMesh = tgtMesh;
+
+    // Laser line
+    const laserGeo = new THREE.BufferGeometry();
+    laserGeo.setFromPoints([new THREE.Vector3(0, 0, 0)]);
+    const laserMat = new THREE.LineBasicMaterial({ color: 0xff2222, linewidth: 2 });
+    const laserLine = new THREE.Line(laserGeo, laserMat);
+    scene.add(laserLine);
+    s.laserLine = laserLine;
+
+    generateLevel(scene, 0);
+
+    timerRef.current = setInterval(() => {
+      s.timeLeft--; setTimeLeft(s.timeLeft);
+      if (s.timeLeft <= 0) { sfx.fail(); endGame(); }
+    }, 1000);
+
+    const handleResize = () => {
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+    };
+    window.addEventListener('resize', handleResize);
+
+    let t = 0;
     const loop = () => {
-      if (!s.running) return;
-      ctx.clearRect(0, 0, W, H);
+      if (!s.running) { renderer.dispose(); return; }
+      t += 0.016;
       s.frame++;
-      // Background: dark spy room
-      ctx.fillStyle = '#030812'; ctx.fillRect(0, 0, W, H);
-      ctx.strokeStyle = 'rgba(220,38,38,0.05)'; ctx.lineWidth = 1;
-      for (let gx = 0; gx < W; gx += 40) { ctx.beginPath(); ctx.moveTo(gx, 0); ctx.lineTo(gx, H); ctx.stroke(); }
-      for (let gy = 0; gy < H; gy += 40) { ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(W, gy); ctx.stroke(); }
 
-      const lvl = s.level;
-      const rayPts = castRay(lvl.sourceX, lvl.sourceY, Math.cos(lvl.sourceAngle), Math.sin(lvl.sourceAngle), s.mirrors, W, H);
-      const lastPt = rayPts[rayPts.length - 1];
-      const hitDist = Math.hypot(lastPt.x - lvl.targetX, lastPt.y - lvl.targetY);
-      const isHitting = hitDist < lvl.targetR + 8;
+      // Process pointer input
+      if (s.pendingPointer) {
+        const pp = s.pendingPointer;
+        s.raycaster.setFromCamera(new THREE.Vector2(pp.x, pp.y), camera);
+
+        if (pp.type === 'down') {
+          const mirrorMeshes = s.mirrors.map(m => m.mesh);
+          const hits = s.raycaster.intersectObjects(mirrorMeshes);
+          if (hits.length > 0) {
+            const hitMesh = hits[0].object as THREE.Mesh;
+            const m = s.mirrors.find(m => m.mesh === hitMesh);
+            if (m) {
+              s.dragging = { id: m.id, offX: 0, offY: 0 };
+              (hitMesh.material as THREE.MeshPhongMaterial).emissive.setHex(0x1e3a5f);
+            }
+          }
+        } else if (pp.type === 'move' && s.dragging !== null) {
+          const plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
+          const target = new THREE.Vector3();
+          s.raycaster.ray.intersectPlane(plane, target);
+          const m = s.mirrors.find(m => m.id === s.dragging!.id);
+          if (m) {
+            m.mesh.position.x = target.x;
+            m.mesh.position.y = target.y;
+            m.angle += 0.04;
+            m.mesh.rotation.z = m.angle;
+            s.sig.movesUsed++; s.movesThisRound++;
+            s.hitTarget = false;
+          }
+        } else if (pp.type === 'up') {
+          if (s.dragging) {
+            const m = s.mirrors.find(m => m.id === s.dragging!.id);
+            if (m) (m.mesh.material as THREE.MeshPhongMaterial).emissive.setHex(0x0c4a6e);
+          }
+          s.dragging = null;
+        }
+        s.pendingPointer = null;
+      }
+
+      // Cast laser ray
+      const pts: THREE.Vector3[] = [s.sourcePos.clone()];
+      let cx = s.sourcePos.x, cy = s.sourcePos.y;
+      let dx = s.sourceDir.x, dy = s.sourceDir.y;
+
+      for (let bounce = 0; bounce < 8; bounce++) {
+        let tMin = 999, hitMirror: MirrorObj | null = null;
+
+        for (const m of s.mirrors) {
+          const mx = m.mesh.position.x, my = m.mesh.position.y;
+          const len = 1.25;
+          const m1x = mx - Math.cos(m.angle) * len, m1y = my - Math.sin(m.angle) * len;
+          const m2x = mx + Math.cos(m.angle) * len, m2y = my + Math.sin(m.angle) * len;
+
+          const denom = (m2x - m1x) * dy - (m2y - m1y) * dx;
+          if (Math.abs(denom) < 0.0001) continue;
+          const t1 = ((cx - m1x) * dy - (cy - m1y) * dx) / denom;
+          const t2 = ((cx - m1x) * (m2y - m1y) - (cy - m1y) * (m2x - m1x)) / denom;
+          if (t1 >= 0 && t1 <= 1 && t2 > 0.01 && t2 < tMin) { tMin = t2; hitMirror = m; }
+        }
+
+        // Wall bounds
+        const walls = [
+          dx > 0 ? (16 - cx) / dx : 999,
+          dx < 0 ? (-16 - cx) / dx : 999,
+          dy > 0 ? (10 - cy) / dy : 999,
+          dy < 0 ? (-10 - cy) / dy : 999,
+        ];
+        const wallT = Math.min(...walls.filter(v => v > 0.01));
+
+        if (hitMirror && tMin < wallT) {
+          cx += dx * tMin; cy += dy * tMin;
+          pts.push(new THREE.Vector3(cx, cy, 0));
+          const ref = reflectDir(dx, dy, hitMirror.angle);
+          dx = ref[0]; dy = ref[1];
+        } else {
+          cx += dx * wallT; cy += dy * wallT;
+          pts.push(new THREE.Vector3(cx, cy, 0));
+          break;
+        }
+      }
+
+      // Update laser line
+      if (s.laserLine) {
+        s.laserLine.geometry.setFromPoints(pts);
+        s.laserLine.geometry.needsUpdate = true;
+      }
+
+      // Check if hitting target
+      const lastPt = pts[pts.length - 1];
+      const hitDist = lastPt.distanceTo(s.targetPos);
+      const isHitting = hitDist < 1.0;
 
       if (isHitting && !s.hitTarget) {
         s.hitTarget = true;
@@ -157,162 +294,101 @@ export default function LaserGuide() {
         s.sig.streakCurrent++;
         if (s.sig.streakCurrent > s.sig.maxStreak) s.sig.maxStreak = s.sig.streakCurrent;
         const mult = s.sig.streakCurrent >= 3 ? 2 : 1;
-        const pts = (isPerfect ? 5 : 3) * mult;
-        s.sig.score += pts;
-        s.scorePop = Date.now() + 400;
+        const pts2 = (isPerfect ? 5 : 3) * mult;
+        s.sig.score += pts2;
+        s.hitFlash = 30;
         setScoreDisplay(s.sig.score);
         sfx.success(); hapticScore();
-        s.hitFlash = 40;
-        s.floats.push({ x: W/2, y: H*0.3, text: isPerfect ? `+${pts} EFFICIENT! ✨` : `+${pts} Hit!`, alpha: 1, vy: -2, color: '#fbbf24' });
-        setTimeout(() => {
-          if (s.running) {
-            s.level = generateLevel(W, H, s.sig.puzzlesSolved);
-            s.mirrors = s.level.mirrors.map(m => ({ ...m }));
-            s.hitTarget = false; s.movesThisRound = 0;
-          }
-        }, 800);
+        s.levelNum++;
+        setTimeout(() => { if (s.running && s.scene) generateLevel(s.scene, s.levelNum); }, 800);
       }
 
-      // Draw laser beam
-      ctx.save();
-      ctx.strokeStyle = isHitting ? '#ff4444' : '#dc2626';
-      ctx.lineWidth = isHitting ? 3 : 2;
-      ctx.shadowBlur = isHitting ? 20 : 10;
-      ctx.shadowColor = '#ef4444';
-      ctx.beginPath();
-      ctx.moveTo(rayPts[0].x, rayPts[0].y);
-      for (let i = 1; i < rayPts.length; i++) ctx.lineTo(rayPts[i].x, rayPts[i].y);
-      ctx.stroke();
-      // Laser dots
-      rayPts.forEach(pt => {
-        ctx.fillStyle = '#fbbf24';
-        ctx.beginPath(); ctx.arc(pt.x, pt.y, 4, 0, Math.PI*2); ctx.fill();
-      });
-      ctx.restore();
+      // Laser color & glow
+      const laserColor = isHitting ? 0xff4444 : 0xdc2626;
+      (s.laserLine?.material as THREE.LineBasicMaterial).color.setHex(laserColor);
 
-      // Source
-      ctx.save();
-      ctx.shadowBlur = 14; ctx.shadowColor = '#ef4444';
-      ctx.fillStyle = '#ef4444';
-      ctx.beginPath(); ctx.arc(lvl.sourceX, lvl.sourceY, 14, 0, Math.PI*2); ctx.fill();
-      ctx.fillStyle = '#fff'; ctx.font = '10px sans-serif'; ctx.textAlign = 'center';
-      ctx.fillText('⚡', lvl.sourceX, lvl.sourceY + 4);
-      ctx.restore();
+      // Target pulse
+      if (s.targetMesh) {
+        (s.targetMesh.material as THREE.MeshPhongMaterial).color.setHex(isHitting ? 0xfbbf24 : 0xdc2626);
+        s.targetMesh.rotation.z += 0.03;
+        const tScale = 1 + Math.sin(t * 4) * 0.05;
+        s.targetMesh.scale.setScalar(tScale);
+      }
 
-      // Target
-      const tPulse = 1 + Math.sin(s.frame * 0.08) * 0.1;
-      ctx.save();
-      ctx.shadowBlur = isHitting ? 30 : 10;
-      ctx.shadowColor = isHitting ? '#fbbf24' : '#dc2626';
-      ctx.strokeStyle = isHitting ? '#fbbf24' : '#dc2626';
-      ctx.lineWidth = 3;
-      ctx.beginPath(); ctx.arc(lvl.targetX, lvl.targetY, lvl.targetR * tPulse, 0, Math.PI*2); ctx.stroke();
-      ctx.fillStyle = (isHitting ? '#fbbf24' : '#dc2626') + '33';
-      ctx.beginPath(); ctx.arc(lvl.targetX, lvl.targetY, lvl.targetR * tPulse, 0, Math.PI*2); ctx.fill();
-      ctx.restore();
+      // Source pulse
+      if (s.sourceMesh) {
+        const sScale = 1 + Math.sin(t * 6) * 0.1;
+        s.sourceMesh.scale.setScalar(sScale);
+      }
 
-      // Mirrors
-      const MIRROR_LEN = 40;
-      s.mirrors.forEach(m => {
-        ctx.save();
-        ctx.translate(m.x, m.y);
-        ctx.rotate(m.angle);
-        ctx.shadowBlur = m.dragging ? 20 : 8;
-        ctx.shadowColor = '#38bdf8';
-        ctx.strokeStyle = m.dragging ? '#67e8f9' : '#38bdf8';
-        ctx.lineWidth = m.dragging ? 6 : 4;
-        ctx.beginPath();
-        ctx.moveTo(-MIRROR_LEN, 0); ctx.lineTo(MIRROR_LEN, 0);
-        ctx.stroke();
-        // Handle
-        ctx.fillStyle = '#60a5fa';
-        ctx.beginPath(); ctx.arc(0, 0, 8, 0, Math.PI*2); ctx.fill();
-        ctx.restore();
-      });
-
+      // Hit flash
       if (s.hitFlash > 0) {
-        ctx.fillStyle = `rgba(251,191,36,${s.hitFlash/40*0.2})`; ctx.fillRect(0,0,W,H); s.hitFlash--;
+        redLight.intensity = 2 + (s.hitFlash / 30) * 4;
+        s.hitFlash--;
+      } else {
+        redLight.intensity = 2;
       }
-      if (s.scorePop > Date.now()) {
-        const t = (s.scorePop - Date.now()) / 400;
-        ctx.save(); ctx.globalAlpha = t; ctx.font = `bold ${Math.round(38*(1+(1-t)*0.3))}px sans-serif`;
-        ctx.fillStyle = '#fbbf24'; ctx.textAlign = 'center'; ctx.fillText(`${s.sig.score}`, W/2, 90); ctx.restore();
-      }
-      s.floats = s.floats.filter(f => f.alpha > 0.02);
-      s.floats.forEach(f => {
-        ctx.save(); ctx.globalAlpha = f.alpha; ctx.fillStyle = f.color; ctx.font = 'bold 22px sans-serif'; ctx.textAlign = 'center';
-        ctx.fillText(f.text, f.x, f.y); ctx.restore();
-        f.y += f.vy; f.alpha *= 0.96;
-      });
+
+      renderer.render(scene, camera);
       animRef.current = requestAnimationFrame(loop);
     };
     animRef.current = requestAnimationFrame(loop);
+
+    return () => {
+      s.running = false;
+      window.removeEventListener('resize', handleResize);
+      renderer.dispose();
+    };
   }, [endGame, generateLevel]);
 
-  useEffect(() => {
-    const canvas = canvasRef.current; if (!canvas) return;
-    const resize = () => { canvas.width = canvas.offsetWidth; canvas.height = canvas.offsetHeight; };
-    resize(); window.addEventListener('resize', resize);
-    const onPointerDown = (e: PointerEvent) => {
-      if (phase !== 'playing') return;
-      const s = stateRef.current;
-      const rect = canvas.getBoundingClientRect();
-      const px = (e.clientX - rect.left) * (canvas.width / rect.width);
-      const py = (e.clientY - rect.top) * (canvas.height / rect.height);
-      for (const m of s.mirrors) {
-        if (Math.hypot(m.x - px, m.y - py) < 30) {
-          m.dragging = true; s.draggingMirror = m.id;
-          s.dragOffX = px - m.x; s.dragOffY = py - m.y;
-          break;
-        }
-      }
-    };
-    const onPointerMove = (e: PointerEvent) => {
-      if (phase !== 'playing') return;
-      const s = stateRef.current;
-      if (s.draggingMirror === null) return;
-      const rect = canvas.getBoundingClientRect();
-      const px = (e.clientX - rect.left) * (canvas.width / rect.width);
-      const py = (e.clientY - rect.top) * (canvas.height / rect.height);
-      const m = s.mirrors.find(m => m.id === s.draggingMirror);
-      if (m) {
-        m.x = px - s.dragOffX; m.y = py - s.dragOffY;
-        m.angle += 0.03; // rotate on drag
-        s.sig.movesUsed++; s.movesThisRound++;
-        s.hitTarget = false;
-      }
-    };
-    const onPointerUp = () => {
-      const s = stateRef.current;
-      s.mirrors.forEach(m => m.dragging = false);
-      s.draggingMirror = null;
-    };
-    canvas.addEventListener('pointerdown', onPointerDown);
-    canvas.addEventListener('pointermove', onPointerMove);
-    canvas.addEventListener('pointerup', onPointerUp);
-    return () => {
-      window.removeEventListener('resize', resize);
-      canvas.removeEventListener('pointerdown', onPointerDown);
-      canvas.removeEventListener('pointermove', onPointerMove);
-      canvas.removeEventListener('pointerup', onPointerUp);
-    };
-  }, [phase]);
+  const toNDC = useCallback((clientX: number, clientY: number): THREE.Vector2 => {
+    const s = stateRef.current;
+    if (!s.renderer) return new THREE.Vector2();
+    const rect = s.renderer.domElement.getBoundingClientRect();
+    return new THREE.Vector2(
+      ((clientX - rect.left) / rect.width) * 2 - 1,
+      -((clientY - rect.top) / rect.height) * 2 + 1,
+    );
+  }, []);
 
-  useEffect(() => () => { cancelAnimationFrame(animRef.current); if (timerRef.current) clearInterval(timerRef.current); }, []);
-  const handleStart = useCallback(async (name: string, avatar: string) => { playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar); await initAudio(); setPhase('countdown'); }, []);
+  useEffect(() => {
+    const el = mountRef.current; if (!el) return;
+    const onDown = (e: PointerEvent) => { if (phase !== 'playing') return; const p = toNDC(e.clientX, e.clientY); stateRef.current.pendingPointer = { x: p.x, y: p.y, type: 'down' }; };
+    const onMove = (e: PointerEvent) => { if (phase !== 'playing') return; const p = toNDC(e.clientX, e.clientY); stateRef.current.pendingPointer = { x: p.x, y: p.y, type: 'move' }; };
+    const onUp = (e: PointerEvent) => { if (phase !== 'playing') return; const p = toNDC(e.clientX, e.clientY); stateRef.current.pendingPointer = { x: p.x, y: p.y, type: 'up' }; };
+    el.addEventListener('pointerdown', onDown);
+    el.addEventListener('pointermove', onMove);
+    el.addEventListener('pointerup', onUp);
+    return () => { el.removeEventListener('pointerdown', onDown); el.removeEventListener('pointermove', onMove); el.removeEventListener('pointerup', onUp); };
+  }, [phase, toNDC]);
+
+  useEffect(() => () => {
+    cancelAnimationFrame(animRef.current);
+    if (timerRef.current) clearInterval(timerRef.current);
+    stateRef.current.renderer?.dispose();
+  }, []);
+
+  const handleStart = useCallback(async (name: string, avatar: string) => {
+    playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar);
+    await initAudio(); setPhase('countdown');
+  }, []);
   const handlePlayAgain = useCallback(() => { setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null); }, []);
 
   return (
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
-      {phase === 'start' && <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description="Drag mirrors to reflect the laser beam into the target!" ctaLabel="Reflect! 🔴" accentColor={theme.colors.accent ?? ACCENT} onStart={handleStart} />}
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}
+      background="linear-gradient(180deg,#030812 0%,#050a1a 100%)">
+      {phase === 'start' && <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description="Drag mirrors to reflect the 3D laser beam into the target!" ctaLabel="Reflect! 🔴" accentColor={theme.colors.accent ?? ACCENT} onStart={handleStart} />}
       {phase === 'countdown' && <Countdown onComplete={startLoop} accentColor={theme.colors.accent ?? ACCENT} />}
-      {(phase === 'playing' || phase === 'countdown') && (
-        <><canvas ref={canvasRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none' }} role="img" aria-label="Laser reflection puzzle game canvas" />
-        {phase === 'playing' && <GameHUD accentColor={theme.colors.accent ?? ACCENT} items={[{ label: 'TIME', value: timeLeft, danger: timeLeft <= 10 }, { label: 'SCORE', value: scoreDisplay }]} />}</>
-      )}
+      <div ref={mountRef} style={{ position: 'absolute', inset: 0, display: phase === 'playing' ? 'block' : 'none', touchAction: 'none' }} />
+      {phase === 'playing' && <GameHUD accentColor={theme.colors.accent ?? ACCENT} items={[{ label: 'TIME', value: timeLeft, danger: timeLeft <= 10 }, { label: 'SCORE', value: scoreDisplay }]} />}
       {phase === 'done' && finalSig && (
         <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI} score={String(finalSig.score)} personality={getPersonality(finalSig)}
-          insights={[{ label: 'Puzzles Solved', value: String(finalSig.puzzlesSolved), color: ACCENT }, { label: 'Efficient Solves', value: String(finalSig.perfectSolves), color: '#fbbf24' }, { label: 'Best Streak', value: `×${finalSig.maxStreak}`, color: '#4ade80' }, { label: 'Mirror Moves', value: String(finalSig.movesUsed), color: '#06b6d4' }]}
+          insights={[
+            { label: 'Puzzles Solved', value: String(finalSig.puzzlesSolved), color: ACCENT },
+            { label: 'Efficient Solves', value: String(finalSig.perfectSolves), color: '#fbbf24' },
+            { label: 'Best Streak', value: `×${finalSig.maxStreak}`, color: '#4ade80' },
+            { label: 'Mirror Moves', value: String(finalSig.movesUsed), color: '#06b6d4' },
+          ]}
           accentColor={theme.colors.accent ?? ACCENT} onPlayAgain={handlePlayAgain} didWin={finalSig.puzzlesSolved >= 3} />
       )}
     </GameShell>

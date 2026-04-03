@@ -1,5 +1,10 @@
 'use client';
+/**
+ * SPIRAL THROW — 3D Version
+ * 3D football field. Tilt to aim, tap to throw at receiver's route.
+ */
 import { useEffect, useRef, useState, useCallback } from 'react';
+import * as THREE from 'three';
 import GameShell from '@/components/GameShell';
 import GameHUD from '@/components/GameHUD';
 import GameStartScreen from '@/components/GameStartScreen';
@@ -12,560 +17,426 @@ import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
 import { createTiltController } from '@/lib/tilt';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
-import { Particle, spawnBurst, updateAndDrawParticles } from '@/lib/particles';
-import { ShakeState, triggerShake, applyShake } from '@/lib/screenShake';
 import { motion, AnimatePresence } from 'framer-motion';
 import ScorePopEffect, { useScorePop } from '@/components/ScorePopEffect';
 import StreakBadge from '@/components/StreakBadge';
-import { CATEGORY_THEMES } from '@/lib/theme';
-import SwipeInstructions from '@/components/SwipeInstructions';
 
-const CATEGORY_ACCENT = CATEGORY_THEMES.sports.primaryAccent;
-
-const ACCENT = '#b45309';
 const GAME_ID = 'spiral-throw';
-const PB_KEY       = 'pb_spiral-throw';
+const PB_KEY = 'pb_spiral-throw';
+const ACCENT = '#b45309';
 const DURATION = 45;
+const GAME_EMOJI = '🏈';
+const GAME_TITLE = 'Spiral Throw';
 
 type Route = 'curl' | 'out' | 'post' | 'go';
-interface FloatText { x: number; y: number; text: string; color: string; alpha: number; vy: number; }
-interface Signals {
-  attempts: number; completions: number; interceptions: number; score: number;
-  leadPasses: number; deepThrows: number; fastDecisions: number;
-  catchStreak: number; streakMax: number;
-}
+interface Signals { attempts: number; completions: number; interceptions: number; score: number; leadPasses: number; deepThrows: number; fastDecisions: number; catchStreak: number; streakMax: number; }
 type Phase = 'start' | 'countdown' | 'playing' | 'done';
 
 function getPersonality(sig: Signals): string {
   const total = sig.attempts || 1;
   const compRate = sig.completions / total;
   const leadRate = sig.leadPasses / total;
-  const depthRate = Math.min(1.0, sig.deepThrows / total);
   if (compRate > 0.7 && leadRate > 0.65) return '🔭 Visionary';
-  if (depthRate > 0.5) return '🚀 Trailblazer';
-  if (depthRate <= 0.3 && compRate > 0.75) return '⚡ Optimizer';
+  if (Math.min(1.0, sig.deepThrows / total) > 0.5) return '🚀 Trailblazer';
   if (sig.streakMax >= 4) return '🔥 Energizer';
   return '🧭 Explorer';
 }
 
 const ROUTES: Route[] = ['curl', 'out', 'post', 'go'];
 
-function generateRoute(route: Route, startX: number, startY: number, fieldH: number): { x: number; y: number }[] {
-  const pts: { x: number; y: number }[] = [];
+function makeRoutePoints(route: Route): THREE.Vector3[] {
+  const pts: THREE.Vector3[] = [];
   switch (route) {
-    case 'go':
-      for (let i = 0; i <= 8; i++) pts.push({ x: startX, y: startY - fieldH * 0.7 * i / 8 });
-      break;
+    case 'go': for (let i = 0; i <= 8; i++) pts.push(new THREE.Vector3(0, 0, -i * 1.5)); break;
     case 'curl':
-      for (let i = 0; i <= 5; i++) pts.push({ x: startX, y: startY - fieldH * 0.25 * i / 5 });
-      // curl back
-      for (let i = 1; i <= 3; i++) pts.push({ x: startX + 30*i, y: startY - fieldH * 0.25 });
+      for (let i = 0; i <= 4; i++) pts.push(new THREE.Vector3(0, 0, -i * 1.2));
+      for (let i = 0; i <= 3; i++) pts.push(new THREE.Vector3(i * 0.7, 0, -4.8));
       break;
     case 'out':
-      for (let i = 0; i <= 5; i++) pts.push({ x: startX, y: startY - fieldH * 0.2 * i / 5 });
-      for (let i = 1; i <= 4; i++) pts.push({ x: startX - 40*i, y: startY - fieldH * 0.2 });
+      for (let i = 0; i <= 4; i++) pts.push(new THREE.Vector3(0, 0, -i * 1.2));
+      for (let i = 0; i <= 4; i++) pts.push(new THREE.Vector3(i * 1.0, 0, -4.8 - i * 0.3));
       break;
     case 'post':
-      for (let i = 0; i <= 5; i++) pts.push({ x: startX, y: startY - fieldH * 0.3 * i / 5 });
-      for (let i = 1; i <= 4; i++) pts.push({ x: startX + 30*i, y: startY - fieldH * 0.3 - 25*i });
+      for (let i = 0; i <= 4; i++) pts.push(new THREE.Vector3(0, 0, -i * 1.2));
+      for (let i = 0; i <= 4; i++) pts.push(new THREE.Vector3(i * 0.8, 0, -4.8 - i * 0.8));
       break;
   }
   return pts;
 }
 
-export default function SpiralThrow() {
+export default function SpiralThrowGame() {
   const theme = useBrandTheme();
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const stopMusicRef = useRef<(() => void) | null>(null);
+  const mountRef = useRef<HTMLDivElement>(null);
   const animRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const stopMusicRef = useRef<(() => void) | null>(null);
   const tiltRef = useRef<ReturnType<typeof createTiltController> | null>(null);
-  const [phase, setPhase] = useState<Phase>('start');
-  const [showInstructions, setShowInstructions] = useState(true);
-  const [timeLeft, setTimeLeft] = useState(DURATION);
-  const [scoreDisplay, setScoreDisplay] = useState(0);
-  const [streakDisplay, setStreakDisplay] = useState(0);
-  const [finalSig, setFinalSig] = useState<Signals | null>(null);
-  const [playerName, setPlayerName]   = useState('');
-  const [playerAvatar, setPlayerAvatar] = useState('🎮');
-  const { pops, triggerPop } = useScorePop();
-  const [streak, setStreak] = useState(0);
-  const [isNewBest, setIsNewBest] = useState(false);
-  const prevScoreRef = useRef(0);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => {
-    const numScore = typeof scoreDisplay === 'number' ? scoreDisplay : 0;
-    if (numScore > prevScoreRef.current) {
-      triggerPop(`+${numScore - prevScoreRef.current}`, window.innerWidth / 2, 200);
-      hapticScore();
-      playScoreHit('default', numScore - prevScoreRef.current);
-      setStreak(Math.floor(numScore / 5));
-    }
-    prevScoreRef.current = numScore;
-  }, [scoreDisplay]); // triggerPop is stable
-  const playerSessionRef              = useRef<PlayerSession | null>(null);
+  const touchRef = useRef(false);
+  const endCalledRef = useRef(false);
 
   const stateRef = useRef({
+    renderer: null as THREE.WebGLRenderer | null,
+    scene: null as THREE.Scene | null,
+    camera: null as THREE.PerspectiveCamera | null,
+    ballMesh: null as THREE.Mesh | null,
+    receiverMesh: null as THREE.Mesh | null,
+    receiverGroup: null as THREE.Group | null,
+    routeLine: null as THREE.Line | null,
+    ballLight: null as THREE.PointLight | null,
+    fieldGroup: null as THREE.Group | null,
     running: false, timeLeft: DURATION,
-    // Ball
-    ballX: 0, ballY: 0, ballVX: 0, ballVY: 0, ballInFlight: false, ballAngle: 0,
-    ballRadius: 12,
-    // Receiver
-    recX: 0, recY: 0, recRoute: [] as { x:number;y:number }[], recRouteIdx: 0,
-    recSnapped: false, recCaught: false, recTrail: [] as { x:number;y:number }[],
-    // State
-    gamePhase: 'pre-snap' as 'pre-snap' | 'running' | 'ball-in-flight' | 'result',
-    currentRoute: 'go' as Route, snapTime: 0, throwTime: 0,
-    // Swipe
-    swipeStartX: 0, swipeStartY: 0, swipeStartTime: 0, isSwiping: false,
-    // Float texts
-    floats: [] as FloatText[],
-    sig: { attempts:0, completions:0, interceptions:0, score:0,
-           leadPasses:0, deepThrows:0, fastDecisions:0, catchStreak:0, streakMax:0 } as Signals,
-    currentThrowIsDeep: false,
-    stars: [] as { x:number;y:number;alpha:number;vy:number }[],
-    particles: [] as Particle[],
-    shake: { intensity: 0, duration: 0 } as ShakeState,
+    sig: { attempts: 0, completions: 0, interceptions: 0, score: 0, leadPasses: 0, deepThrows: 0, fastDecisions: 0, catchStreak: 0, streakMax: 0 } as Signals,
+    route: 'go' as Route,
+    routePoints: [] as THREE.Vector3[],
+    receiverT: 0, receiverSpeed: 0.015,
+    ballInFlight: false, ballPos: new THREE.Vector3(), ballVel: new THREE.Vector3(),
+    tiltX: 0, targetAimX: 0,
+    routePhase: 'run' as 'run' | 'wait',
+    decisionTimer: 0,
+    throwWindowStart: 0,
+    flashTimer: 0, flashColor: 0xffffff,
+    gameStartMs: 0,
   });
 
+  const [phase, setPhase] = useState<Phase>('start');
+  const [timeLeft, setTimeLeft] = useState(DURATION);
+  const [scoreDisplay, setScoreDisplay] = useState(0);
+  const [finalSig, setFinalSig] = useState<Signals | null>(null);
+  const [isNewBest, setIsNewBest] = useState(false);
+  const [streak, setStreak] = useState(0);
+  const { pops, triggerPop } = useScorePop();
+  const prevScoreRef = useRef(0);
+  const playerSessionRef = useRef<PlayerSession | null>(null);
+
+  useEffect(() => {
+    if (scoreDisplay > prevScoreRef.current) triggerPop(`+${scoreDisplay - prevScoreRef.current}`, window.innerWidth / 2, 200);
+    prevScoreRef.current = scoreDisplay;
+  }, [scoreDisplay, triggerPop]);
+
   const endGame = useCallback(() => {
+    if (endCalledRef.current) return;
+    endCalledRef.current = true;
     const s = stateRef.current;
     s.running = false;
     cancelAnimationFrame(animRef.current);
-    if (timerRef.current) clearInterval(timerRef.current);
-    tiltRef.current?.stop();
-    if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
-    const finalSigSnap = { ...s.sig };
-    setFinalSig(finalSigSnap);
-    // PB check
-    const prevPB = localStorage.getItem(PB_KEY);
-    const prevPBScore = prevPB ? parseInt(prevPB, 10) : 0;
-    if (finalSigSnap.score > prevPBScore) {
-      localStorage.setItem(PB_KEY, String(finalSigSnap.score));
-      setIsNewBest(true);
-    }
-    setPhase('done');
-    postWebhook(theme, GAME_ID, {
-      score: `${finalSigSnap.score} pts`,
-      personality: getPersonality(finalSigSnap),
-      signals: { completions: finalSigSnap.completions, attempts: finalSigSnap.attempts, streakMax: finalSigSnap.streakMax },
-    }, playerSessionRef.current);
-  }, [theme]);
+    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+    stopMusicRef.current?.(); tiltRef.current?.stop();
+    if (s.renderer) { s.renderer.dispose(); s.renderer = null; }
+    playVictoryFanfare(); hapticVictory();
+    try { const pb = parseInt(localStorage.getItem(PB_KEY) || '0', 10); if (s.sig.score > pb) { localStorage.setItem(PB_KEY, String(s.sig.score)); setIsNewBest(true); } } catch { /* ignore */ }
+    setFinalSig({ ...s.sig }); setPhase('done');
+  }, []);
 
-  const setupNewPlay = useCallback(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
+  const startNewPlay = useCallback(() => {
     const s = stateRef.current;
-    const W = window.innerWidth, H = window.innerHeight;
-    s.recX = W / 2 + (Math.random() - 0.5) * W * 0.2;
-    s.recY = H * 0.65;
-    s.currentRoute = ROUTES[Math.floor(Math.random() * ROUTES.length)];
-    s.recRoute = generateRoute(s.currentRoute, s.recX, s.recY, H * 0.8);
-    s.recRouteIdx = 0;
-    s.recSnapped = false; s.recCaught = false;
-    s.ballX = W / 2; s.ballY = H * 0.82;
-    s.ballInFlight = false; s.ballAngle = 0;
-    s.gamePhase = 'pre-snap'; s.recTrail = [];
-    s.isSwiping = false;
+    s.route = ROUTES[Math.floor(Math.random() * ROUTES.length)];
+    s.routePoints = makeRoutePoints(s.route);
+    s.receiverT = 0; s.receiverSpeed = 0.01 + s.sig.completions * 0.001;
+    s.ballInFlight = false; s.routePhase = 'run';
+    s.decisionTimer = 0; s.throwWindowStart = 0;
+    if (s.receiverGroup) s.receiverGroup.position.set(0, 0.5, -1);
+    if (s.ballMesh) { s.ballMesh.position.set(0, 0.3, 3); s.ballMesh.visible = true; }
+    // Update route line
+    if (s.scene) {
+      if (s.routeLine) s.scene.remove(s.routeLine);
+      const routeGeo = new THREE.BufferGeometry().setFromPoints(s.routePoints.map(p => p.clone().add(new THREE.Vector3(0, 0.5, -1))));
+      const routeLine = new THREE.Line(routeGeo, new THREE.LineBasicMaterial({ color: 0xfbbf24, transparent: true, opacity: 0.5 }));
+      s.scene.add(routeLine);
+      s.routeLine = routeLine;
+    }
   }, []);
 
   const startLoop = useCallback(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
     const s = stateRef.current;
-    const W = window.innerWidth, H = window.innerHeight;
-
+    endCalledRef.current = false;
     s.running = true; s.timeLeft = DURATION;
-    s.sig = { attempts:0, completions:0, interceptions:0, score:0,
-               leadPasses:0, deepThrows:0, fastDecisions:0, catchStreak:0, streakMax:0 };
-    s.currentThrowIsDeep = false;
-    s.floats = []; s.stars = [];
-    s.particles = []; s.shake = { intensity: 0, duration: 0 };
-    setupNewPlay();
-    setPhase('playing'); setTimeLeft(DURATION); setScoreDisplay(0); setStreakDisplay(0);
-    stopMusicRef.current = startMusic('drive');
+    s.sig = { attempts: 0, completions: 0, interceptions: 0, score: 0, leadPasses: 0, deepThrows: 0, fastDecisions: 0, catchStreak: 0, streakMax: 0 };
+    s.tiltX = 0; s.targetAimX = 0;
+    s.gameStartMs = Date.now();
+    setScoreDisplay(0); setTimeLeft(DURATION); setStreak(0);
+    stopMusicRef.current = startMusic('sports');
 
-    // Cache gradients outside rAF loop
-    const bgGrad = ctx.createRadialGradient(W * 0.5, H * 0.5, 0, W * 0.5, H * 0.6, Math.max(W, H) * 0.9);
-    bgGrad.addColorStop(0,   '#0e200a');
-    bgGrad.addColorStop(0.5, '#091505');
-    bgGrad.addColorStop(1,   '#040a02');
-    const vigGrad = ctx.createRadialGradient(W * 0.5, H * 0.5, H * 0.2, W * 0.5, H * 0.5, H * 0.85);
-    vigGrad.addColorStop(0, 'rgba(0,0,0,0)');
-    vigGrad.addColorStop(1, 'rgba(0,0,0,0.45)');
+    const W = window.innerWidth, H = window.innerHeight;
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(W, H);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setClearColor(0x0a1a0a);
+    if (mountRef.current) { mountRef.current.innerHTML = ''; mountRef.current.appendChild(renderer.domElement); }
+    s.renderer = renderer;
+
+    const scene = new THREE.Scene();
+    scene.fog = new THREE.Fog(0x0a1a0a, 20, 50);
+    s.scene = scene;
+    const camera = new THREE.PerspectiveCamera(65, W / H, 0.1, 100);
+    camera.position.set(0, 3, 7);
+    camera.lookAt(0, 0, -3);
+    s.camera = camera;
+
+    scene.add(new THREE.AmbientLight(0x0a1a0a, 4));
+    const stadiumLight = new THREE.PointLight(0xffffff, 3, 40);
+    stadiumLight.position.set(0, 12, 0);
+    scene.add(stadiumLight);
+    const endZoneLight = new THREE.PointLight(0xb45309, 2, 20);
+    endZoneLight.position.set(0, 6, -15);
+    scene.add(endZoneLight);
+    const ballLight = new THREE.PointLight(0xfbbf24, 0, 8);
+    scene.add(ballLight);
+    s.ballLight = ballLight;
+
+    // Football field
+    const fieldGroup = new THREE.Group();
+    const fieldGeo = new THREE.PlaneGeometry(10, 40);
+    const fieldMat = new THREE.MeshStandardMaterial({ color: 0x1a4d1a, roughness: 0.9 });
+    const field = new THREE.Mesh(fieldGeo, fieldMat);
+    field.rotation.x = -Math.PI / 2;
+    field.position.set(0, 0, -15);
+    fieldGroup.add(field);
+    // Yard lines
+    for (let yl = 0; yl <= 5; yl++) {
+      const yardLine = new THREE.Mesh(new THREE.PlaneGeometry(10, 0.08), new THREE.MeshStandardMaterial({ color: 0xffffff, transparent: true, opacity: 0.4 }));
+      yardLine.rotation.x = -Math.PI / 2;
+      yardLine.position.set(0, 0.01, -yl * 6 - 3);
+      fieldGroup.add(yardLine);
+    }
+    // End zone
+    const endZone = new THREE.Mesh(new THREE.PlaneGeometry(10, 6), new THREE.MeshStandardMaterial({ color: 0x2d3a0a, roughness: 0.9 }));
+    endZone.rotation.x = -Math.PI / 2;
+    endZone.position.set(0, 0.01, -32);
+    fieldGroup.add(endZone);
+    // Goal posts
+    const postMat = new THREE.MeshStandardMaterial({ color: 0xfbbf24, emissive: 0xfbbf24, emissiveIntensity: 0.4 });
+    const postGroup = new THREE.Group();
+    postGroup.add(Object.assign(new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 6, 6), postMat), { position: new THREE.Vector3(0, 3, -35) }));
+    postGroup.add(Object.assign(new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 2.5, 6), postMat), { position: new THREE.Vector3(-1.25, 6, -35), rotation: new THREE.Euler(0, 0, Math.PI/2) }));
+    postGroup.add(Object.assign(new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 2.5, 6), postMat), { position: new THREE.Vector3(1.25, 6, -35), rotation: new THREE.Euler(0, 0, Math.PI/2) }));
+    fieldGroup.add(postGroup);
+    scene.add(fieldGroup);
+    s.fieldGroup = fieldGroup;
+
+    // Ball
+    const ballGeo = new THREE.SphereGeometry(0.2, 12, 8);
+    ballGeo.scale(0.7, 1, 0.7);
+    const ballMat = new THREE.MeshStandardMaterial({ color: 0x8B4513, roughness: 0.6 });
+    const ballMesh = new THREE.Mesh(ballGeo, ballMat);
+    ballMesh.position.set(0, 0.3, 3);
+    scene.add(ballMesh);
+    s.ballMesh = ballMesh;
+
+    // Receiver
+    const receiverGroup = new THREE.Group();
+    const body = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.7, 8), new THREE.MeshStandardMaterial({ color: 0xb45309 }));
+    body.position.y = 0.35;
+    receiverGroup.add(body);
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.18, 8, 8), new THREE.MeshStandardMaterial({ color: 0xfde68a }));
+    head.position.y = 0.9;
+    receiverGroup.add(head);
+    receiverGroup.position.set(0, 0, -1);
+    scene.add(receiverGroup);
+    s.receiverGroup = receiverGroup;
+    s.receiverMesh = body;
+
+    const handleResize = () => {
+      const w = window.innerWidth, h = window.innerHeight;
+      renderer.setSize(w, h); camera.aspect = w / h; camera.updateProjectionMatrix();
+    };
+    window.addEventListener('resize', handleResize);
+    (s as any)._cleanup = () => window.removeEventListener('resize', handleResize);
 
     timerRef.current = setInterval(() => {
-      s.timeLeft--;
-      setTimeLeft(s.timeLeft);
-      if (s.timeLeft === 15) increaseMusicTempo(120); // ramp for final stretch
-      if (s.timeLeft === 10) sfx.warning(); // 10s warning
-      if (s.timeLeft <= 5 && s.timeLeft > 0) sfx.tick(); // urgency cue
-      if (s.timeLeft <= 0) { sfx.success(); haptic([30, 50, 100]); endGame(); } // timer end = completed session
+      s.timeLeft--; setTimeLeft(s.timeLeft);
+      sfx.tick();
+      if (s.timeLeft === 10) sfx.warning();
+      if (s.timeLeft <= 0) endGame();
     }, 1000);
+
+    startNewPlay();
+
+    const GRAVITY = -0.012;
 
     const loop = () => {
       if (!s.running) return;
-      ctx.save();
-      applyShake(ctx, s.shake);
-      // Football field — night stadium, rich deep grass (cached gradient)
-      ctx.fillStyle = bgGrad;
-      ctx.fillRect(0, 0, W, H);
+      const t = Date.now() * 0.001;
 
-      // Vignette (cached gradient)
-      ctx.fillStyle = vigGrad;
-      ctx.fillRect(0, 0, W, H);
-
-      // Yard lines
-      ctx.strokeStyle = 'rgba(255,255,255,0.12)'; ctx.lineWidth = 1;
-      for (let i = 1; i < 8; i++) {
-        const y = H * i / 8;
-        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
-      }
-      // Sidelines
-      ctx.strokeStyle = 'rgba(255,255,255,0.3)'; ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.moveTo(W*0.05, 0); ctx.lineTo(W*0.05, H); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(W*0.95, 0); ctx.lineTo(W*0.95, H); ctx.stroke();
-
-      // Route preview (dotted)
-      if (s.gamePhase === 'pre-snap' && s.recRoute.length > 0) {
-        ctx.save(); ctx.strokeStyle = 'rgba(255,220,0,0.4)'; ctx.lineWidth = 2;
-        ctx.setLineDash([6,4]);
-        ctx.beginPath(); ctx.moveTo(s.recRoute[0].x, s.recRoute[0].y);
-        s.recRoute.forEach(p => ctx.lineTo(p.x, p.y)); ctx.stroke();
-        ctx.setLineDash([]);
-        ctx.restore();
-      }
-
-      // Receiver trail
-      s.recTrail.push({ x: s.recX, y: s.recY });
-      if (s.recTrail.length > 6) s.recTrail.shift();
-      s.recTrail.forEach((p, i) => {
-        ctx.save(); ctx.globalAlpha = (i / 6) * 0.4;
-        ctx.fillStyle = '#fbbf24'; ctx.beginPath();
-        ctx.arc(p.x, p.y, 6, 0, Math.PI*2); ctx.fill(); ctx.restore();
-      });
-
-      // Receiver
-      ctx.save(); ctx.shadowBlur = 10; ctx.shadowColor = '#fbbf24';
-      ctx.fillStyle = '#fbbf24'; ctx.beginPath();
-      ctx.arc(s.recX, s.recY, 10, 0, Math.PI*2); ctx.fill(); ctx.restore();
-
-      // Receiver movement along route
-      if (s.recSnapped && !s.recCaught && s.recRouteIdx < s.recRoute.length - 1) {
-        const target = s.recRoute[Math.min(s.recRouteIdx + 1, s.recRoute.length - 1)];
-        const dx = target.x - s.recX, dy = target.y - s.recY;
-        const d = Math.sqrt(dx*dx+dy*dy);
-        if (d < 4) { s.recRouteIdx++; }
-        else {
-          const elapsedTime = DURATION - s.timeLeft;
-          const receiverSpeed = 3.5 + (1.5 * (elapsedTime / DURATION));
-          s.recX += dx/d*receiverSpeed; s.recY += dy/d*receiverSpeed;
+      // Move receiver along route
+      if (!s.ballInFlight && s.routePhase === 'run') {
+        s.receiverT = Math.min(1, s.receiverT + s.receiverSpeed);
+        if (s.routePoints.length >= 2) {
+          const idx = Math.floor(s.receiverT * (s.routePoints.length - 1));
+          const nextIdx = Math.min(s.routePoints.length - 1, idx + 1);
+          const alpha = s.receiverT * (s.routePoints.length - 1) - idx;
+          const pos = s.routePoints[idx].clone().lerp(s.routePoints[nextIdx], alpha).add(new THREE.Vector3(0, 0.5, -1));
+          receiverGroup.position.lerp(pos, 0.15);
+          if (s.receiverT >= 1) { s.routePhase = 'wait'; }
         }
       }
 
       // Ball flight
       if (s.ballInFlight) {
-        s.ballAngle += 0.15;
-        s.ballX += s.ballVX; s.ballY += s.ballVY;
+        s.ballPos.add(s.ballVel);
+        s.ballVel.y += GRAVITY;
+        ballMesh.position.copy(s.ballPos);
+        ballMesh.rotation.x += 0.15;
+        ballLight.position.copy(s.ballPos);
+        ballLight.intensity = 3;
         // Check catch
-        const dx = s.ballX - s.recX, dy = s.ballY - s.recY;
-        const dist = Math.sqrt(dx*dx+dy*dy);
-        if (dist < 28) {
-          // Determine lead/lag
-          const isLead = s.recRouteIdx < s.recRoute.length - 2;
-          s.sig.attempts++;
-          if (isLead) s.sig.leadPasses++;
-          // deepThrows counted at result time
-          if (s.currentThrowIsDeep) { s.sig.deepThrows++; s.currentThrowIsDeep = false; }
-          const decisionTime = Date.now() - s.snapTime;
-          if (decisionTime < 2500) s.sig.fastDecisions++;
-
-          s.sig.completions++;
-          s.sig.score += 7;
-          s.sig.catchStreak++;
+        const distToReceiver = s.ballPos.distanceTo(receiverGroup.position);
+        if (distToReceiver < 0.8) {
+          // Caught!
+          const throwDist = Math.abs(s.ballPos.z - 3);
+          s.sig.completions++; s.sig.catchStreak++;
           if (s.sig.catchStreak > s.sig.streakMax) s.sig.streakMax = s.sig.catchStreak;
-          setScoreDisplay(s.sig.score);
-          setStreakDisplay(s.sig.catchStreak);
-          // Streak≥3 celebration: delay sfx.success so it doesn't stack with sfx.collect
-          if (s.sig.catchStreak >= 3) setTimeout(() => sfx.success(), 100);
-          sfx.collect(); haptic([60,30,60]);
-          s.floats.push({ x: s.recX, y: s.recY - 20, text:'+7', color:'#fbbf24', alpha:1, vy:-2 });
-          spawnBurst(s.particles, s.recX, s.recY, '#fbbf24', 22, 7);
-          // Stars
-          for (let i = 0; i < 8; i++) {
-            s.stars.push({ x: s.recX + (Math.random()-0.5)*40, y: s.recY + (Math.random()-0.5)*40,
-                           alpha: 1, vy: -2 - Math.random()*2 });
-          }
-          s.recCaught = true; s.ballInFlight = false;
-          setTimeout(() => setupNewPlay(), 500);
-        }
-        // Incomplete — all four screen edges (fixed P1: was missing bottom edge)
-        if (s.ballY < -50 || s.ballX < -50 || s.ballX > window.innerWidth + 50 || s.ballY > window.innerHeight + 50) {
-          // Interception if ball goes backward (below receiver position = behind the play)
-          const isInterception = s.ballY > s.recY + 30;
-          s.sig.attempts++;
-          // deepThrows counted at result time
-          if (s.currentThrowIsDeep) { s.sig.deepThrows++; s.currentThrowIsDeep = false; }
-          s.sig.catchStreak = 0;
-          setStreakDisplay(0);
-          if (isInterception) {
-            s.sig.interceptions++;
-            s.sig.score -= 3;
-            setScoreDisplay(s.sig.score); // update HUD after score drop (fixed P2)
-            sfx.fail(); haptic([300]);
-            triggerShake(s.shake, 7, 10);
-            spawnBurst(s.particles, s.ballX > 0 && s.ballX < window.innerWidth ? s.ballX : W/2,
-                       s.ballY > 0 && s.ballY < window.innerHeight ? s.ballY : H/2, '#ef4444', 14, 5);
-            s.floats.push({ x: s.ballX, y: s.ballY, text:'-3', color:'#ef4444', alpha:1, vy:-1.5 });
-          } else {
-            sfx.collision();
-            triggerShake(s.shake, 4, 6);
-          }
+          if (throwDist > 8) s.sig.deepThrows++;
+          const pts = 2 + Math.floor(s.sig.catchStreak / 3);
+          s.sig.score += pts; setScoreDisplay(s.sig.score); setStreak(s.sig.catchStreak);
+          sfx.success(); hapticScore();
+          s.flashTimer = 20; s.flashColor = 0x22c55e;
           s.ballInFlight = false;
-          setTimeout(() => setupNewPlay(), 500);
+          setTimeout(() => startNewPlay(), 600);
         }
+        // Miss
+        if (s.ballPos.y < -1 || s.ballPos.z < -40) {
+          s.ballInFlight = false; s.sig.interceptions++; s.sig.catchStreak = 0; setStreak(0);
+          sfx.collision(); hapticFail();
+          s.flashTimer = 20; s.flashColor = 0xef4444;
+          ballLight.intensity = 0;
+          ballMesh.visible = false;
+          setTimeout(() => startNewPlay(), 600);
+        }
+      } else {
+        ballMesh.rotation.z = Math.sin(t * 2) * 0.1;
       }
 
-      // Draw ball (football oval)
-      if (!s.recCaught || s.ballInFlight) {
-        ctx.save(); ctx.translate(s.ballX, s.ballY); ctx.rotate(s.ballAngle);
-        ctx.fillStyle = '#8b4513'; ctx.beginPath();
-        ctx.ellipse(0, 0, s.ballRadius, s.ballRadius * 0.55, 0, 0, Math.PI*2); ctx.fill();
-        ctx.strokeStyle = '#fff'; ctx.lineWidth = 1;
-        ctx.beginPath(); ctx.moveTo(-s.ballRadius*0.6, 0); ctx.lineTo(s.ballRadius*0.6, 0); ctx.stroke();
-        ctx.restore();
+      // Aim indicator
+      s.targetAimX += (s.tiltX * 3 - s.targetAimX) * 0.1;
+
+      // Flash effect
+      if (s.flashTimer > 0) {
+        s.flashTimer--;
+        renderer.setClearColor(new THREE.Color(s.flashColor).lerp(new THREE.Color(0x0a1a0a), 1 - s.flashTimer / 20));
+      } else {
+        renderer.setClearColor(0x0a1a0a);
       }
 
-      // Swipe aim indicator
-      if (s.isSwiping && !s.ballInFlight) {
-        ctx.save(); ctx.strokeStyle = 'rgba(255,255,255,0.3)'; ctx.lineWidth = 2; ctx.setLineDash([6,4]);
-        ctx.beginPath(); ctx.moveTo(s.ballX, s.ballY);
-        ctx.lineTo(s.ballX + (s.ballX - s.swipeStartX)*0.5, s.ballY + (s.ballY - s.swipeStartY)*0.5);
-        ctx.stroke(); ctx.setLineDash([]); ctx.restore();
-      }
+      // Receiver glow when in throw window
+      const recMat = body.material as THREE.MeshStandardMaterial;
+      const inWindow = !s.ballInFlight && (s.routePhase === 'wait' || s.receiverT > 0.6);
+      recMat.emissive.setHex(inWindow ? 0xfbbf24 : 0x000000);
+      recMat.emissiveIntensity = inWindow ? 0.5 + Math.sin(t * 4) * 0.2 : 0;
 
-      // Stars
-      s.stars = s.stars.filter(st => st.alpha > 0.05);
-      s.stars.forEach(st => {
-        ctx.save(); ctx.globalAlpha = st.alpha; ctx.fillStyle = '#fbbf24';
-        ctx.font = '16px sans-serif'; ctx.textAlign = 'center'; ctx.fillText('★', st.x, st.y);
-        ctx.restore(); st.y += st.vy; st.alpha *= 0.93;
-      });
-
-      // Float texts
-      s.floats = s.floats.filter(f => f.alpha > 0.02);
-      s.floats.forEach(f => {
-        ctx.save(); ctx.globalAlpha = f.alpha; ctx.fillStyle = f.color;
-        ctx.font = 'bold 26px sans-serif'; ctx.textAlign = 'center'; ctx.fillText(f.text, f.x, f.y);
-        ctx.restore(); f.y += f.vy; f.alpha *= 0.97;
-      });
-
-      // Snap prompt
-      if (s.gamePhase === 'pre-snap') {
-        ctx.fillStyle = 'rgba(255,255,255,0.7)'; ctx.font = 'bold 16px sans-serif';
-        ctx.textAlign = 'center'; ctx.fillText('TAP to snap, then SWIPE to throw', W/2, H*0.9);
-      }
-
-      // Particles layer (outside shake transform for visual stability)
-      ctx.restore();
-      updateAndDrawParticles(ctx, s.particles);
-      // HUD drawn by DOM overlay GameHUD component
-
+      renderer.render(scene, camera);
       animRef.current = requestAnimationFrame(loop);
     };
     animRef.current = requestAnimationFrame(loop);
-  }, [endGame, setupNewPlay]);
 
-  const handleTouchStart = useCallback((e: React.TouchEvent) => {
-    const s = stateRef.current;
-    if (!s.running) return;
-    e.preventDefault();
-    const t = e.touches[0];
-    s.swipeStartX = t.clientX; s.swipeStartY = t.clientY; s.swipeStartTime = Date.now();
-    s.isSwiping = true;
-    if (s.gamePhase === 'pre-snap') {
-      s.gamePhase = 'running';
-      s.recSnapped = true;
-      s.snapTime = Date.now();
-      sfx.click();
-    }
-  }, []);
-
-  const handleTouchEnd = useCallback((e: React.TouchEvent) => {
-    const s = stateRef.current;
-    if (!s.running || !s.isSwiping || s.ballInFlight) { s.isSwiping = false; return; }
-    if (s.gamePhase !== 'running') { s.isSwiping = false; return; }
-    s.isSwiping = false;
-    const t = e.changedTouches[0];
-    const dx = t.clientX - s.swipeStartX;
-    const dy = t.clientY - s.swipeStartY;
-    const dist = Math.sqrt(dx*dx+dy*dy);
-    if (dist < 15) return;
-    const tiltY = tiltRef.current?.getValues().y ?? 0;
-    const power = 8 + Math.abs(tiltY) * 4;
-    s.ballVX = (dx / dist) * power;
-    s.ballVY = (dy / dist) * power;
-    s.ballInFlight = true;
-    s.gamePhase = 'ball-in-flight';
-    s.throwTime = Date.now();
-    // deepThrows: flag at throw time, count when result is determined
-    s.currentThrowIsDeep = s.ballVY < -6;
-    sfx.click();
-  }, []);
-
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const dpr = window.devicePixelRatio || 1;
-    canvas.width  = window.innerWidth  * dpr;
-    canvas.height = window.innerHeight * dpr;
-    canvas.style.width  = window.innerWidth  + 'px';
-    canvas.style.height = window.innerHeight + 'px';
-    const ctx2 = canvas.getContext('2d');
-    if (ctx2) ctx2.setTransform(dpr, 0, 0, dpr, 0, 0);
-    const onResize = () => {
-      const d = window.devicePixelRatio || 1;
-      canvas.width  = window.innerWidth  * d;
-      canvas.height = window.innerHeight * d;
-      canvas.style.width  = window.innerWidth  + 'px';
-      canvas.style.height = window.innerHeight + 'px';
-      const c2 = canvas.getContext('2d');
-      if (c2) c2.setTransform(d, 0, 0, d, 0, 0);
+    // Throw on tap
+    const onTap = (e: PointerEvent) => {
+      const s2 = stateRef.current;
+      if (!s2.running || s2.ballInFlight) return;
+      s2.sig.attempts++;
+      const aimX = (e.clientX / window.innerWidth - 0.5) * 6;
+      const receiverPos = receiverGroup.position.clone();
+      const ballStart = new THREE.Vector3(0, 0.5, 3);
+      const dir = receiverPos.clone().sub(ballStart);
+      const lead = dir.clone().normalize().multiplyScalar(dir.length() * 0.3);
+      const aimOffset = new THREE.Vector3(aimX * 0.3, 0, 0);
+      const target = receiverPos.clone().add(lead).add(aimOffset);
+      const travelFrames = 25 + Math.abs(target.z - ballStart.z) * 1.5;
+      const vel = target.clone().sub(ballStart).divideScalar(travelFrames);
+      vel.y = Math.max(0.08, -GRAVITY * travelFrames / 2 + 0.05);
+      s2.ballPos.copy(ballStart);
+      s2.ballVel.copy(vel);
+      s2.ballInFlight = true;
+      ballMesh.visible = true;
+      const elapsed = Date.now() - s2.gameStartMs;
+      if (elapsed < 2000) s2.sig.fastDecisions++;
+      const isLead = target.z < receiverPos.z;
+      if (isLead) s2.sig.leadPasses++;
+      sfx.collect(); haptic([30]);
     };
-    const onForceEnd = () => { if (stateRef.current.running) endGame(); };
-    window.addEventListener('resize', onResize);
-    window.addEventListener('game:force-end', onForceEnd);
-    return () => {
-      window.removeEventListener('resize', onResize);
-      window.removeEventListener('game:force-end', onForceEnd);
-      cancelAnimationFrame(animRef.current);
-      if (timerRef.current) clearInterval(timerRef.current);
-      tiltRef.current?.stop();
-      if (stopMusicRef.current) stopMusicRef.current();
-    };
-  }, [endGame]);
+    if (mountRef.current) mountRef.current.addEventListener('pointerdown', onTap);
+    (s as any)._inputCleanup = () => mountRef.current?.removeEventListener('pointerdown', onTap);
+  }, [endGame, startNewPlay]);
+
+  useEffect(() => () => {
+    cancelAnimationFrame(animRef.current);
+    if (timerRef.current) clearInterval(timerRef.current);
+    stopMusicRef.current?.(); tiltRef.current?.stop();
+    const s = stateRef.current;
+    if (s.renderer) s.renderer.dispose();
+    (s as any)._cleanup?.(); (s as any)._inputCleanup?.();
+  }, []);
 
   const handleStart = useCallback(async (name: string, avatar: string) => {
-    setPlayerName(name);
-    setPlayerAvatar(avatar);
     playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar);
-    await initAudio(); sfx.click();
-    const ctrl = createTiltController(() => {}, { sensitivity: 1.0, smoothing: 0.45, deadzone: 3 });
-    tiltRef.current = ctrl;
-    await ctrl.start();
+    initAudio();
+    const ctrl = createTiltController(x => { stateRef.current.tiltX = x; }, { sensitivity: 1.0, smoothing: 0.4, deadzone: 2, clamp: 20 });
+    const granted = await ctrl.start();
+    if (granted) { tiltRef.current = ctrl; touchRef.current = false; }
+    else { ctrl.stop(); touchRef.current = true; }
     setPhase('countdown');
   }, []);
 
-  const handlePlayAgain = useCallback(() => {
-    if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
-    stateRef.current.running = false;
-    cancelAnimationFrame(animRef.current);
-    if (timerRef.current) clearInterval(timerRef.current);
-    tiltRef.current?.stop();
-    setStreakDisplay(0);
-    setPhase('start');
-  
-    setIsNewBest(false);
-    setStreak(0);
+  const handlePlayAgain = useCallback(async () => {
+    tiltRef.current?.stop(); tiltRef.current = null;
+    endCalledRef.current = false;
+    setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null); setIsNewBest(false); setStreak(0);
     prevScoreRef.current = 0;
+    setPhase('countdown');
   }, []);
 
-  const sig = finalSig;
-  const compRate = sig ? Math.round(sig.completions / Math.max(1, sig.attempts) * 100) : 0;
+  const accent = theme.colors.accent ?? ACCENT;
 
   return (
-    <>
-      {phase === 'start' && showInstructions && (
-        <SwipeInstructions
-          gameId="spiral-throw"
-          steps={[{ icon: "👆", title: "Swipe to throw", body: "Swipe up to launch the football in a spiral." }, { icon: "🏈", title: "Hit the target", body: "Aim for the moving receiver downfield." }, { icon: "🔥", title: "Build combos", body: "Consecutive completions multiply your score." }]}
-          onDone={() => setShowInstructions(false)}
-        />
-      )}
-    <GameShell title="Spiral Throw" emoji="🏈" accentColor={ACCENT} theme={theme}
-      background="linear-gradient(180deg, #3a8fd4 0%, #5aaae8 20%, #8dc8f0 40%, #b8def7 58%, #6db85e 62%, #3a9430 75%, #1e7018 90%, #0f5010 100%)">
-      <canvas
-        ref={canvasRef}
-        style={{ display: phase === 'playing' ? 'block' : 'none', position: 'absolute', top: 0, left: 0, touchAction: 'none' }}
-        onTouchStart={handleTouchStart}
-        onTouchEnd={handleTouchEnd}
-      />
-      {phase === 'playing' && (
-        <GameHUD
-          items={[
-            { label: 'SCORE', value: scoreDisplay,                               testId: 'score' },
-            { label: 'TIME',  value: `${timeLeft}s`, danger: timeLeft <= 10, testId: 'timer' },
-            { label: 'STREAK', value: streakDisplay },
-          ]}
-          accentColor={ACCENT}
-        />
-      )}
-      {phase === 'countdown' && <Countdown onComplete={startLoop} accentColor={ACCENT} />}
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accent}
+      background="linear-gradient(180deg, #0a1a0a 0%, #050f05 100%)">
       {phase === 'start' && (
-        <GameStartScreen
-          emoji="🏈"
-          title="Spiral Throw"
-          description="Tap to snap. Swipe to throw. Lead your receiver — anticipate where they'll be."
-          sensorNote="Touch + motion"
-          ctaLabel="Start Game →"
-          accentColor={ACCENT}
-          ctaTextColor="#000"
-          onStart={handleStart}
-          gradient="radial-gradient(ellipse 80% 70% at 50% 30%, #1a0e00 0%, #0e0700 55%, #060400 100%)"
-        />
+        <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE}
+          description="Watch the receiver run their route, then tap to throw! Time it right."
+          ctaLabel="Hike! 🏈" sensorNote="Tilt to adjust aim. Tap to throw."
+          accentColor={accent} ctaTextColor="#fff" onStart={handleStart} />
       )}
-            {/* New best banner */}
+      {phase === 'countdown' && <Countdown onComplete={() => { startLoop(); setPhase('playing'); }} accentColor={accent} />}
+      {(phase === 'playing' || phase === 'countdown') && (
+        <div ref={mountRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none' }} />
+      )}
+      {phase === 'playing' && (
+        <>
+          <GameHUD accentColor={accent} items={[
+            { label: 'TIME', value: timeLeft, danger: timeLeft <= 10 },
+            { label: 'SCORE', value: scoreDisplay },
+          ]} />
+          <ScorePopEffect pops={pops} accentColor={accent} />
+          <StreakBadge streak={streak} accentColor={accent} />
+        </>
+      )}
       <AnimatePresence>
-        {isNewBest && (
-          <motion.div
-            key="new-best"
-            initial={{ opacity: 0, y: -20, scale: 0.8 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -20 }}
-            transition={{ duration: 0.4, delay: 0.5 }}
-            style={{
-              position: 'fixed', top: '10%', left: '50%', transform: 'translateX(-50%)',
-              zIndex: 90, pointerEvents: 'none',
-              background: 'linear-gradient(135deg, #fbbf24, #f59e0b)',
-              borderRadius: 20, padding: '8px 20px', fontSize: 20,
-              fontWeight: 900, color: '#000', whiteSpace: 'nowrap',
-              boxShadow: '0 4px 20px rgba(251,191,36,0.5)',
-            }}
-          >
+        {isNewBest && phase === 'done' && (
+          <motion.div key="nb" initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
+            style={{ position: 'fixed', top: '10%', left: '50%', transform: 'translateX(-50%)', zIndex: 90, background: 'linear-gradient(135deg, #fbbf24, #f59e0b)', borderRadius: 20, padding: '8px 20px', fontSize: 20, fontWeight: 900, color: '#000', whiteSpace: 'nowrap' }}>
             🏆 New Best!
           </motion.div>
         )}
       </AnimatePresence>
-
-
-      {phase === 'done' && sig && (
-        <EndScreen
-          gameId={GAME_ID}
-          title={getPersonality(sig)}
-          emoji="🏈"
-          score={`${sig.score} pts`}
-          personality={getPersonality(sig)}
-          insights={[
-            { label: 'Completions', value: `${sig.completions}/${sig.attempts}`, color: ACCENT },
-            { label: 'Completion %', value: `${compRate}%`, color: '#4ade80' },
-            { label: 'Lead Passes', value: `${sig.leadPasses}`, color: '#fbbf24' },
-            { label: 'Best Streak', value: `${sig.streakMax}`, color: '#c084fc' },
-          ]}
-          accentColor={ACCENT}
-          ctaTextColor="#ffffff"
-          onPlayAgain={handlePlayAgain}
-          didWin={sig.completions > 5}
-        />
-      )}
-      {phase === 'playing' && (
+      {phase === 'done' && finalSig && (
         <>
-          <ScorePopEffect pops={pops} accentColor={CATEGORY_ACCENT} />
-          <StreakBadge streak={streakDisplay} accentColor={CATEGORY_ACCENT} />
+          <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI}
+            score={String(finalSig.score)} personality={getPersonality(finalSig)}
+            insights={[
+              { label: 'Completions', value: `${finalSig.completions}/${finalSig.attempts}`, color: '#4ade80' },
+              { label: 'Best Streak', value: `${finalSig.streakMax}x`, color: accent },
+              { label: 'Deep Throws', value: String(finalSig.deepThrows), color: '#fbbf24' },
+              { label: 'Lead Passes', value: String(finalSig.leadPasses), color: '#06b6d4' },
+            ]}
+            accentColor={accent} onPlayAgain={handlePlayAgain} didWin={finalSig.completions >= 8} />
+          <WebhookHelper theme={theme} sig={finalSig} personality={getPersonality(finalSig)} player={playerSessionRef.current} />
         </>
       )}
     </GameShell>
-    </>
   );
+}
+
+function WebhookHelper({ theme, sig, personality, player }: { theme: ReturnType<typeof useBrandTheme>; sig: Signals; personality: string; player: PlayerSession | null; }) {
+  const fired = useRef(false);
+  useEffect(() => { if (fired.current) return; fired.current = true; postWebhook(theme, GAME_ID, { personality, score: sig.score, completions: sig.completions, attempts: sig.attempts }, player); }, [theme, sig, personality, player]);
+  return null;
 }

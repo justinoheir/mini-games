@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
+import * as THREE from 'three';
 import GameShell from '@/components/GameShell';
 import GameHUD from '@/components/GameHUD';
 import GameStartScreen from '@/components/GameStartScreen';
@@ -18,15 +19,7 @@ const GAME_EMOJI = '🪃';
 const GAME_TITLE = 'Slingshot Smash';
 const GAME_TAGLINE = 'Stretch it. Aim it. Smash it.';
 
-interface Target { x: number; y: number; r: number; hp: number; maxHp: number; color: string; vx: number; vy: number; id: number; }
-interface Projectile { x: number; y: number; vx: number; vy: number; r: number; active: boolean; }
-
-interface Signals {
-  totalShots: number; hits: number; misses: number;
-  bullseyes: number; maxStreak: number; streakCurrent: number;
-  maxPower: number; score: number;
-}
-
+interface Signals { totalShots: number; hits: number; misses: number; bullseyes: number; maxStreak: number; streakCurrent: number; maxPower: number; score: number; }
 function getPersonality(sig: Signals): string {
   const acc = sig.totalShots > 0 ? sig.hits / sig.totalShots : 0;
   if (acc >= 0.8 && sig.bullseyes >= 3) return 'Sharpshooter 🎯';
@@ -35,32 +28,35 @@ function getPersonality(sig: Signals): string {
   if (acc >= 0.5) return 'Reliable Slinger 🪃';
   return 'Wild Shooter 🎪';
 }
-
 type Phase = 'start' | 'countdown' | 'playing' | 'done';
-
-interface GameState {
-  running: boolean; timeLeft: number; sig: Signals;
-  targets: Target[]; projectile: Projectile;
-  anchorX: number; anchorY: number;
-  pullX: number; pullY: number;
-  pulling: boolean; pointerId: number | null;
-  gravity: number; nextTargetId: number;
-  spawnTimer: number; accentColor: string;
-  floats: Array<{ x: number; y: number; text: string; alpha: number; vy: number; color: string }>;
-  scorePop: number;
-}
 
 export default function SlingshotSmash() {
   const theme = useBrandTheme();
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const mountRef = useRef<HTMLDivElement>(null);
   const animRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const stateRef = useRef<GameState>({
+
+  const stateRef = useRef({
+    renderer: null as THREE.WebGLRenderer | null,
+    scene: null as THREE.Scene | null,
+    camera: null as THREE.PerspectiveCamera | null,
+    ball: null as THREE.Mesh | null,
+    ballLight: null as THREE.PointLight | null,
+    targets: [] as { mesh: THREE.Mesh; light: THREE.PointLight; x: number; y: number; z: number; r: number; hp: number; maxHp: number; color: number; vx: number; vy: number; id: number }[],
+    rubberLeft: null as THREE.Line | null,
+    rubberRight: null as THREE.Line | null,
     running: false, timeLeft: DURATION,
-    sig: { totalShots: 0, hits: 0, misses: 0, bullseyes: 0, maxStreak: 0, streakCurrent: 0, maxPower: 0, score: 0 },
-    targets: [], projectile: { x: 0, y: 0, vx: 0, vy: 0, r: 14, active: false },
-    anchorX: 0, anchorY: 0, pullX: 0, pullY: 0, pulling: false, pointerId: null,
-    gravity: 0.4, nextTargetId: 0, spawnTimer: 0, accentColor: ACCENT, floats: [], scorePop: 0,
+    sig: { totalShots: 0, hits: 0, misses: 0, bullseyes: 0, maxStreak: 0, streakCurrent: 0, maxPower: 0, score: 0 } as Signals,
+    anchorX: 0, anchorY: -1.5, anchorZ: 0,
+    pullX: 0, pullY: 0, pullZ: 0,
+    pulling: false, pointerId: null as number | null,
+    ballX: 0, ballY: -1.2, ballZ: 0,
+    ballVX: 0, ballVY: 0, ballVZ: 0,
+    ballActive: false,
+    gravity: -0.008,
+    nextTargetId: 0, spawnTimer: 0,
+    particles: [] as { mesh: THREE.Mesh; vx: number; vy: number; vz: number; life: number }[],
+    forky: null as THREE.Group | null,
   });
 
   const [phase, setPhase] = useState<Phase>('start');
@@ -69,13 +65,12 @@ export default function SlingshotSmash() {
   const [finalSig, setFinalSig] = useState<Signals | null>(null);
   const playerSessionRef = useRef<PlayerSession | null>(null);
 
-  useEffect(() => { stateRef.current.accentColor = theme.colors.accent ?? ACCENT; }, [theme]);
-
   const endGame = useCallback(() => {
     const s = stateRef.current;
     s.running = false;
     cancelAnimationFrame(animRef.current);
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+    if (s.renderer) { s.renderer.dispose(); s.renderer = null; }
     const pb = parseInt(localStorage.getItem(`pb_${GAME_ID}`) ?? '0');
     if (s.sig.score > pb) localStorage.setItem(`pb_${GAME_ID}`, String(s.sig.score));
     setFinalSig({ ...s.sig });
@@ -83,352 +78,300 @@ export default function SlingshotSmash() {
     hapticVictory();
   }, []);
 
-  const spawnTarget = useCallback((W: number, H: number) => {
+  const spawnTarget = useCallback((scene: THREE.Scene) => {
     const s = stateRef.current;
-    const colors = ['#ef4444', '#f97316', '#fbbf24', '#22c55e', '#06b6d4'];
-    const r = 25 + Math.random() * 25;
-    s.targets.push({
-      id: s.nextTargetId++,
-      x: r + Math.random() * (W - r * 2),
-      y: H * 0.1 + Math.random() * H * 0.5,
-      r, hp: 2, maxHp: 2,
-      color: colors[Math.floor(Math.random() * colors.length)],
-      vx: (Math.random() - 0.5) * 2,
-      vy: (Math.random() - 0.5) * 1,
-    });
+    const colors = [0xef4444, 0xfbbf24, 0xa855f7, 0x22c55e, 0x06b6d4];
+    const color = colors[Math.floor(Math.random() * colors.length)];
+    const r = 0.2 + Math.random() * 0.3;
+    const geo = new THREE.IcosahedronGeometry(r, 1);
+    const mat = new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.5 });
+    const mesh = new THREE.Mesh(geo, mat);
+    const x = (Math.random() * 2 - 1) * 4;
+    const y = 0.5 + Math.random() * 2;
+    const z = -4 - Math.random() * 2;
+    mesh.position.set(x, y, z);
+    scene.add(mesh);
+    const light = new THREE.PointLight(color, 1.5, 4);
+    light.position.set(x, y, z);
+    scene.add(light);
+    s.targets.push({ mesh, light, x, y, z, r, hp: 1, maxHp: 1, color, vx: (Math.random() - 0.5) * 0.02, vy: 0, id: s.nextTargetId++ });
   }, []);
 
   const startLoop = useCallback(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
     const s = stateRef.current;
-    const W = canvas.width, H = canvas.height;
-
-    s.running = true;
-    s.timeLeft = DURATION;
+    s.running = true; s.timeLeft = DURATION;
     s.sig = { totalShots: 0, hits: 0, misses: 0, bullseyes: 0, maxStreak: 0, streakCurrent: 0, maxPower: 0, score: 0 };
-    s.targets = [];
-    s.projectile = { x: 0, y: 0, vx: 0, vy: 0, r: 14, active: false };
-    s.anchorX = W / 2;
-    s.anchorY = H * 0.82;
-    s.pullX = s.anchorX;
-    s.pullY = s.anchorY;
-    s.pulling = false;
-    s.floats = [];
-    s.scorePop = 0;
+    s.targets = []; s.nextTargetId = 0; s.spawnTimer = 0; s.particles = [];
+    s.ballActive = false; s.pulling = false; s.pointerId = null;
     setScoreDisplay(0); setTimeLeft(DURATION); setPhase('playing');
 
-    for (let i = 0; i < 3; i++) spawnTarget(W, H);
+    const W = window.innerWidth, H = window.innerHeight;
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(W, H);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setClearColor(0x0a0a1a);
+    if (mountRef.current) { mountRef.current.innerHTML = ''; mountRef.current.appendChild(renderer.domElement); }
+    s.renderer = renderer;
+
+    const scene = new THREE.Scene();
+    scene.fog = new THREE.Fog(0x0a0a1a, 20, 50);
+    s.scene = scene;
+    const camera = new THREE.PerspectiveCamera(65, W / H, 0.1, 100);
+    camera.position.set(0, 0.5, 5);
+    camera.lookAt(0, 0, -2);
+    s.camera = camera;
+
+    scene.add(new THREE.AmbientLight(0x0a0a1a, 3));
+    const mainLight = new THREE.PointLight(0xf97316, 2, 20);
+    mainLight.position.set(0, 5, 0);
+    scene.add(mainLight);
+    const ballLight = new THREE.PointLight(0xfbbf24, 0, 8);
+    scene.add(ballLight);
+    s.ballLight = ballLight;
+
+    // Stars
+    const sp = new Float32Array(400*3);
+    for (let i=0;i<400;i++){sp[i*3]=(Math.random()-.5)*50;sp[i*3+1]=(Math.random()-.5)*50;sp[i*3+2]=(Math.random()-.5)*50;}
+    const sg=new THREE.BufferGeometry();sg.setAttribute('position',new THREE.BufferAttribute(sp,3));
+    scene.add(new THREE.Points(sg,new THREE.PointsMaterial({color:0xffffff,size:0.05})));
+
+    // Slingshot Y-fork
+    const forky = new THREE.Group();
+    const forkMat = new THREE.MeshStandardMaterial({ color: 0x78350f, roughness: 0.7 });
+    // Handle
+    const handle = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.08, 1.2, 6), forkMat);
+    handle.position.y = -0.9;
+    forky.add(handle);
+    // Left prong
+    const lProng = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.8, 6), forkMat);
+    lProng.position.set(-0.35, -0.15, 0);
+    lProng.rotation.z = -0.35;
+    forky.add(lProng);
+    // Right prong
+    const rProng = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.8, 6), forkMat);
+    rProng.position.set(0.35, -0.15, 0);
+    rProng.rotation.z = 0.35;
+    forky.add(rProng);
+    forky.position.set(0, -1.5, 0);
+    scene.add(forky);
+    s.forky = forky;
+
+    // Rubber bands (lines from fork tips to ball)
+    const lBandGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(-0.25, -0.9, 0), new THREE.Vector3(0, -1.2, 0)]);
+    const rubberMat = new THREE.LineBasicMaterial({ color: 0xf59e0b, linewidth: 2 });
+    const rubberLeft = new THREE.Line(lBandGeo, rubberMat.clone());
+    scene.add(rubberLeft);
+    s.rubberLeft = rubberLeft;
+    const rBandGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0.25, -0.9, 0), new THREE.Vector3(0, -1.2, 0)]);
+    const rubberRight = new THREE.Line(rBandGeo, rubberMat.clone());
+    scene.add(rubberRight);
+    s.rubberRight = rubberRight;
+
+    // Ball
+    const ballGeo = new THREE.SphereGeometry(0.15, 12, 12);
+    const ballMat = new THREE.MeshStandardMaterial({ color: 0xf97316, roughness: 0.4, emissive: 0xf97316, emissiveIntensity: 0.2 });
+    const ball = new THREE.Mesh(ballGeo, ballMat);
+    ball.position.set(0, -1.2, 0);
+    scene.add(ball);
+    s.ball = ball;
+
+    // Spawn initial targets
+    for (let i = 0; i < 3; i++) spawnTarget(scene);
+
+    const handleResize = () => {
+      const w = window.innerWidth, h = window.innerHeight;
+      renderer.setSize(w, h); camera.aspect = w / h; camera.updateProjectionMatrix();
+    };
+    window.addEventListener('resize', handleResize);
+    (s as any)._cleanup = () => window.removeEventListener('resize', handleResize);
 
     timerRef.current = setInterval(() => {
-      s.timeLeft--;
-      setTimeLeft(s.timeLeft);
+      s.timeLeft--; setTimeLeft(s.timeLeft);
       if (s.timeLeft <= 0) { sfx.fail(); endGame(); }
     }, 1000);
 
-    const MAX_PULL = 100;
-
     const loop = () => {
       if (!s.running) return;
-      ctx.clearRect(0, 0, W, H);
+      const t = Date.now() * 0.001;
+      s.spawnTimer++;
+      if (s.spawnTimer % 80 === 0 && s.targets.length < 6) spawnTarget(scene);
 
-      // Background: golden savanna sky
-      const bg = ctx.createLinearGradient(0, 0, 0, H);
-      bg.addColorStop(0, '#1a0800');
-      bg.addColorStop(0.5, '#2d1200');
-      bg.addColorStop(1, '#0f0500');
-      ctx.fillStyle = bg;
-      ctx.fillRect(0, 0, W, H);
-
-      // Horizon glow
-      const horizon = ctx.createRadialGradient(W / 2, H * 0.8, 0, W / 2, H * 0.8, W * 0.8);
-      horizon.addColorStop(0, 'rgba(249,115,22,0.15)');
-      horizon.addColorStop(1, 'transparent');
-      ctx.fillStyle = horizon;
-      ctx.fillRect(0, 0, W, H);
-
-      // Stars
-      for (let i = 0; i < 40; i++) {
-        const sx = (i * 137) % W, sy = (i * 79) % (H * 0.6);
-        ctx.fillStyle = `rgba(255,255,255,${0.3 + (i % 5) * 0.1})`;
-        ctx.beginPath(); ctx.arc(sx, sy, 1.5, 0, Math.PI * 2); ctx.fill();
-      }
-
-      // Move targets
-      s.targets.forEach(t => {
-        t.x += t.vx; t.y += t.vy;
-        if (t.x - t.r < 0 || t.x + t.r > W) t.vx *= -1;
-        if (t.y - t.r < H * 0.05 || t.y + t.r > H * 0.65) t.vy *= -1;
-      });
-
-      // Spawn new targets if needed
-      if (s.targets.length < 4) {
-        s.spawnTimer++;
-        if (s.spawnTimer > 60) { spawnTarget(W, H); s.spawnTimer = 0; }
-      }
-
-      // Draw targets
-      s.targets.forEach(t => {
-        ctx.save();
-        ctx.shadowBlur = 14;
-        ctx.shadowColor = t.color;
-        // Concentric rings (bullseye)
-        for (let ring = 3; ring >= 1; ring--) {
-          const rf = (ring / 3) * t.r;
-          ctx.fillStyle = ring % 2 === 0 ? t.color + 'cc' : t.color + '44';
-          ctx.beginPath(); ctx.arc(t.x, t.y, rf, 0, Math.PI * 2); ctx.fill();
-        }
-        ctx.strokeStyle = t.color;
-        ctx.lineWidth = 2;
-        ctx.beginPath(); ctx.arc(t.x, t.y, t.r, 0, Math.PI * 2); ctx.stroke();
-        // HP dots
-        for (let h = 0; h < t.maxHp; h++) {
-          ctx.fillStyle = h < t.hp ? '#ffffff' : '#333';
-          ctx.beginPath(); ctx.arc(t.x - 6 + h * 12, t.y + t.r + 10, 5, 0, Math.PI * 2); ctx.fill();
-        }
-        ctx.restore();
-      });
-
-      // Y-shaped slingshot
-      ctx.save();
-      ctx.strokeStyle = '#8b4513';
-      ctx.lineWidth = 8;
-      ctx.lineCap = 'round';
-      const bx = s.anchorX;
-      const by = s.anchorY;
-      ctx.beginPath(); ctx.moveTo(bx - 30, by + 40); ctx.lineTo(bx, by); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(bx + 30, by + 40); ctx.lineTo(bx, by); ctx.stroke();
-      // Bands
-      if (!s.projectile.active) {
-        ctx.strokeStyle = '#fbbf24';
-        ctx.lineWidth = 3;
-        ctx.beginPath();
-        ctx.moveTo(bx - 30, by);
-        ctx.lineTo(s.pullX, s.pullY);
-        ctx.lineTo(bx + 30, by);
-        ctx.stroke();
-      }
-      ctx.restore();
-
-      // Pull indicator
-      if (s.pulling && !s.projectile.active) {
-        const dx = s.pullX - s.anchorX, dy = s.pullY - s.anchorY;
-        const pull = Math.min(Math.sqrt(dx * dx + dy * dy), MAX_PULL);
-        const pct = pull / MAX_PULL;
-        ctx.save();
-        ctx.strokeStyle = `rgba(255,${Math.round(255 * (1 - pct))},0,0.5)`;
-        ctx.lineWidth = 2;
-        ctx.setLineDash([4, 3]);
-        const launchVX = -(dx / MAX_PULL) * 22;
-        const launchVY = -(dy / MAX_PULL) * 22;
-        ctx.beginPath();
-        ctx.moveTo(s.anchorX, s.anchorY);
-        let tx = s.anchorX, ty = s.anchorY;
-        let tvx = launchVX, tvy = launchVY;
-        for (let i = 0; i < 15; i++) {
-          tx += tvx; ty += tvy; tvy += s.gravity;
-          ctx.lineTo(tx, ty);
-        }
-        ctx.stroke();
-        ctx.setLineDash([]);
-        ctx.restore();
-
-        // Projectile at pull pos
-        ctx.save();
-        ctx.shadowBlur = 10; ctx.shadowColor = ACCENT;
-        ctx.fillStyle = ACCENT;
-        ctx.beginPath(); ctx.arc(s.pullX, s.pullY, 14, 0, Math.PI * 2); ctx.fill();
-        ctx.restore();
-      }
-
-      // Projectile in flight
-      if (s.projectile.active) {
-        s.projectile.vx *= 0.995;
-        s.projectile.vy += s.gravity;
-        s.projectile.x += s.projectile.vx;
-        s.projectile.y += s.projectile.vy;
-
-        // Hit targets
-        let hit = false;
-        for (let i = s.targets.length - 1; i >= 0; i--) {
-          const t = s.targets[i];
-          const dist = Math.sqrt((s.projectile.x - t.x) ** 2 + (s.projectile.y - t.y) ** 2);
-          if (dist < t.r + s.projectile.r) {
-            hit = true;
-            t.hp--;
-            const isBullseye = dist < t.r * 0.4;
-            if (isBullseye) s.sig.bullseyes++;
-            s.sig.hits++;
-            s.sig.streakCurrent++;
+      // Ball physics
+      if (s.ballActive) {
+        s.ballX += s.ballVX; s.ballY += s.ballVY; s.ballZ += s.ballVZ;
+        s.ballVY += s.gravity;
+        ball.position.set(s.ballX, s.ballY, s.ballZ);
+        ballLight.position.set(s.ballX, s.ballY, s.ballZ);
+        ballLight.intensity = 2;
+        // Check hits
+        for (let ti = s.targets.length - 1; ti >= 0; ti--) {
+          const tgt = s.targets[ti];
+          const dx = s.ballX - tgt.x; const dy = s.ballY - tgt.y; const dz = s.ballZ - tgt.z;
+          const dist = Math.sqrt(dx*dx+dy*dy+dz*dz);
+          if (dist < tgt.r + 0.18) {
+            // Hit!
+            s.sig.hits++; s.sig.streakCurrent++;
             if (s.sig.streakCurrent > s.sig.maxStreak) s.sig.maxStreak = s.sig.streakCurrent;
-            const pts = isBullseye ? 3 : 1;
-            const mult = s.sig.streakCurrent >= 3 ? 2 : 1;
-            s.sig.score += pts * mult;
-            s.scorePop = Date.now() + 300;
-            setScoreDisplay(s.sig.score);
-            sfx.collect();
-            hapticScore();
-            if (isBullseye) { sfx.success(); }
-            s.floats.push({ x: t.x, y: t.y - 20, text: isBullseye ? `+${pts * mult} 🎯 BULL!` : `+${pts * mult}`, alpha: 1, vy: -2, color: isBullseye ? '#fbbf24' : '#4ade80' });
-            if (t.hp <= 0) s.targets.splice(i, 1);
-            s.projectile.active = false;
+            const isBullseye = dist < tgt.r * 0.4;
+            if (isBullseye) s.sig.bullseyes++;
+            const pts = isBullseye ? 3 : 1 + Math.floor(s.sig.streakCurrent / 3);
+            s.sig.score += pts; setScoreDisplay(s.sig.score);
+            sfx.success(); hapticScore();
+            // Burst particles
+            for (let pi = 0; pi < 10; pi++) {
+              const pGeo = new THREE.SphereGeometry(0.06, 4, 4);
+              const pMat = new THREE.MeshStandardMaterial({ color: tgt.color, transparent: true, opacity: 1 });
+              const pMesh = new THREE.Mesh(pGeo, pMat);
+              pMesh.position.copy(tgt.mesh.position);
+              scene.add(pMesh);
+              const angle = Math.random() * Math.PI * 2;
+              const elev = (Math.random() - 0.5) * Math.PI;
+              s.particles.push({ mesh: pMesh, vx: Math.cos(angle)*Math.cos(elev)*0.12, vy: Math.sin(elev)*0.12, vz: Math.sin(angle)*0.1, life: 25 });
+            }
+            // Remove target
+            scene.remove(tgt.mesh); scene.remove(tgt.light);
+            s.targets.splice(ti, 1);
+            // Reset ball
+            s.ballActive = false;
+            s.ballX = s.anchorX; s.ballY = s.anchorY - 0.3; s.ballZ = s.anchorZ;
+            ball.position.set(s.ballX, s.ballY, s.ballZ);
             break;
           }
         }
-        if (!hit && (s.projectile.y > H + 50 || s.projectile.x < -50 || s.projectile.x > W + 50)) {
-          s.sig.misses++;
-          s.sig.streakCurrent = 0;
-          s.projectile.active = false;
-          hapticFail();
-          s.floats.push({ x: W / 2, y: H * 0.7, text: 'Miss!', alpha: 1, vy: -1.5, color: '#ef4444' });
+        // Miss (out of range)
+        if (s.ballZ < -10 || Math.abs(s.ballX) > 8 || s.ballY < -4) {
+          s.ballActive = false; s.sig.misses++; s.sig.streakCurrent = 0;
+          sfx.collision(); hapticFail();
+          s.ballX = 0; s.ballY = -1.2; s.ballZ = 0;
+          ball.position.set(0, -1.2, 0);
         }
-
-        if (s.projectile.active) {
-          ctx.save();
-          ctx.shadowBlur = 14; ctx.shadowColor = ACCENT;
-          ctx.fillStyle = ACCENT;
-          ctx.beginPath(); ctx.arc(s.projectile.x, s.projectile.y, s.projectile.r, 0, Math.PI * 2); ctx.fill();
-          ctx.restore();
-        }
+        // Update rubber bands (retract during flight)
+        updateBands(lBandGeo, rBandGeo, ball.position, { x: -0.25, y: -0.9+s.forky!.position.y, z: 0 }, { x: 0.25, y: -0.9+s.forky!.position.y, z: 0 });
+      } else if (s.pulling) {
+        // Update ball to follow finger pull
+        ball.position.set(s.pullX * 0.5, s.anchorY - 0.3 - s.pullY * 0.2, s.pullZ * 0.1);
+        ballLight.position.copy(ball.position);
+        ballLight.intensity = 1;
+        updateBands(lBandGeo, rBandGeo, ball.position, { x: -0.25, y: -0.9+s.forky!.position.y, z: 0 }, { x: 0.25, y: -0.9+s.forky!.position.y, z: 0 });
+      } else {
+        // Idle: ball in cradle
+        ball.position.set(0, -1.2 + Math.sin(t * 2) * 0.03, 0);
+        ballLight.intensity = 0.3;
+        updateBands(lBandGeo, rBandGeo, ball.position, { x: -0.25, y: -0.9+s.forky!.position.y, z: 0 }, { x: 0.25, y: -0.9+s.forky!.position.y, z: 0 });
       }
 
-      // Score pop
-      if (s.scorePop > Date.now()) {
-        const t = (s.scorePop - Date.now()) / 300;
-        ctx.save(); ctx.globalAlpha = t;
-        ctx.font = `bold ${Math.round(40 * (1 + (1 - t) * 0.3))}px sans-serif`;
-        ctx.fillStyle = '#fbbf24'; ctx.textAlign = 'center';
-        ctx.fillText(`${s.sig.score}`, W / 2, 90); ctx.restore();
-      }
-
-      // Float texts
-      s.floats = s.floats.filter(f => f.alpha > 0.02);
-      s.floats.forEach(f => {
-        ctx.save(); ctx.globalAlpha = f.alpha;
-        ctx.fillStyle = f.color; ctx.font = 'bold 24px sans-serif'; ctx.textAlign = 'center';
-        ctx.fillText(f.text, f.x, f.y); ctx.restore();
-        f.y += f.vy; f.alpha *= 0.95;
+      // Targets float
+      s.targets.forEach(tgt => {
+        tgt.x += tgt.vx;
+        if (Math.abs(tgt.x) > 4.5) tgt.vx *= -1;
+        tgt.mesh.position.x = tgt.x;
+        tgt.light.position.x = tgt.x;
+        tgt.mesh.rotation.x = t * 0.5; tgt.mesh.rotation.y = t * 0.7;
       });
 
+      // Particles
+      for (let pi = s.particles.length - 1; pi >= 0; pi--) {
+        const p = s.particles[pi];
+        p.mesh.position.x += p.vx; p.mesh.position.y += p.vy; p.mesh.position.z += p.vz;
+        p.vy += s.gravity * 0.5; p.life--;
+        (p.mesh.material as THREE.MeshStandardMaterial).opacity = p.life / 25;
+        if (p.life <= 0) { scene.remove(p.mesh); s.particles.splice(pi, 1); }
+      }
+
+      renderer.render(scene, camera);
       animRef.current = requestAnimationFrame(loop);
     };
     animRef.current = requestAnimationFrame(loop);
+
+    function updateBands(lGeo: THREE.BufferGeometry, rGeo: THREE.BufferGeometry, ballPos: THREE.Vector3, lTip: {x:number;y:number;z:number}, rTip: {x:number;y:number;z:number}) {
+      const lPts = [new THREE.Vector3(lTip.x, lTip.y, lTip.z), ballPos.clone()];
+      const rPts = [new THREE.Vector3(rTip.x, rTip.y, rTip.z), ballPos.clone()];
+      lGeo.setFromPoints(lPts); rGeo.setFromPoints(rPts);
+    }
+
+    // Pointer drag
+    const onDown = (e: PointerEvent) => {
+      const s2 = stateRef.current;
+      if (!s2.running || s2.ballActive) return;
+      s2.pulling = true; s2.pointerId = e.pointerId;
+      s2.pullX = (e.clientX / window.innerWidth - 0.5) * 2;
+      s2.pullY = (e.clientY / window.innerHeight - 0.5) * 2;
+    };
+    const onMove = (e: PointerEvent) => {
+      const s2 = stateRef.current;
+      if (!s2.pulling || e.pointerId !== s2.pointerId) return;
+      s2.pullX = (e.clientX / window.innerWidth - 0.5) * 2;
+      s2.pullY = (e.clientY / window.innerHeight - 0.5) * 2;
+    };
+    const onUp = (e: PointerEvent) => {
+      const s2 = stateRef.current;
+      if (!s2.pulling || e.pointerId !== s2.pointerId) return;
+      s2.pulling = false; s2.pointerId = null;
+      // Launch
+      s2.sig.totalShots++;
+      const dx = s2.pullX * -2.5, dy = (s2.pullY * -1.5) + 1.5, dz = -4;
+      const power = Math.min(1, Math.sqrt(s2.pullX*s2.pullX + s2.pullY*s2.pullY));
+      if (s2.sig.maxPower < power * 30) s2.sig.maxPower = power * 30;
+      s2.ballVX = dx * 0.04; s2.ballVY = dy * 0.04; s2.ballVZ = dz * 0.04;
+      s2.ballX = 0; s2.ballY = -1.2; s2.ballZ = 0;
+      s2.ballActive = true;
+      sfx.collect(); hapticImpact?.();
+    };
+    if (mountRef.current) {
+      mountRef.current.addEventListener('pointerdown', onDown);
+      mountRef.current.addEventListener('pointermove', onMove);
+      mountRef.current.addEventListener('pointerup', onUp);
+    }
+    (s as any)._inputCleanup = () => {
+      mountRef.current?.removeEventListener('pointerdown', onDown);
+      mountRef.current?.removeEventListener('pointermove', onMove);
+      mountRef.current?.removeEventListener('pointerup', onUp);
+    };
   }, [endGame, spawnTarget]);
-
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const resize = () => { canvas.width = canvas.offsetWidth; canvas.height = canvas.offsetHeight; };
-    resize();
-    window.addEventListener('resize', resize);
-
-    const MAX_PULL = 100;
-
-    const onPointerDown = (e: PointerEvent) => {
-      if (phase !== 'playing') return;
-      const s = stateRef.current;
-      if (s.projectile.active || s.pulling) return;
-      const rect = canvas.getBoundingClientRect();
-      const px = (e.clientX - rect.left) * (canvas.width / rect.width);
-      const py = (e.clientY - rect.top) * (canvas.height / rect.height);
-      const dx = px - s.anchorX, dy = py - s.anchorY;
-      if (Math.sqrt(dx * dx + dy * dy) < 60) {
-        s.pulling = true;
-        s.pointerId = e.pointerId;
-        s.pullX = px; s.pullY = py;
-        canvas.setPointerCapture(e.pointerId);
-      }
-    };
-
-    const onPointerMove = (e: PointerEvent) => {
-      if (phase !== 'playing') return;
-      const s = stateRef.current;
-      if (!s.pulling || s.pointerId !== e.pointerId) return;
-      const rect = canvas.getBoundingClientRect();
-      let px = (e.clientX - rect.left) * (canvas.width / rect.width);
-      let py = (e.clientY - rect.top) * (canvas.height / rect.height);
-      const dx = px - s.anchorX, dy = py - s.anchorY;
-      const dist = Math.sqrt(dx * dx + dy * dy);
-      if (dist > MAX_PULL) { px = s.anchorX + dx / dist * MAX_PULL; py = s.anchorY + dy / dist * MAX_PULL; }
-      s.pullX = px; s.pullY = py;
-    };
-
-    const onPointerUp = (e: PointerEvent) => {
-      if (phase !== 'playing') return;
-      const s = stateRef.current;
-      if (!s.pulling || s.pointerId !== e.pointerId) return;
-      s.pulling = false;
-      s.pointerId = null;
-      const dx = s.pullX - s.anchorX, dy = s.pullY - s.anchorY;
-      const power = Math.min(Math.sqrt(dx * dx + dy * dy), MAX_PULL);
-      if (power > 10) {
-        s.projectile.x = s.anchorX; s.projectile.y = s.anchorY;
-        s.projectile.vx = -(dx / MAX_PULL) * 22;
-        s.projectile.vy = -(dy / MAX_PULL) * 22;
-        s.projectile.active = true;
-        s.sig.totalShots++;
-        if (power > s.sig.maxPower) s.sig.maxPower = power;
-        sfx.click();
-        hapticImpact();
-      }
-      s.pullX = s.anchorX; s.pullY = s.anchorY;
-    };
-
-    canvas.addEventListener('pointerdown', onPointerDown);
-    canvas.addEventListener('pointermove', onPointerMove);
-    canvas.addEventListener('pointerup', onPointerUp);
-    return () => {
-      window.removeEventListener('resize', resize);
-      canvas.removeEventListener('pointerdown', onPointerDown);
-      canvas.removeEventListener('pointermove', onPointerMove);
-      canvas.removeEventListener('pointerup', onPointerUp);
-    };
-  }, [phase]);
 
   useEffect(() => () => {
     cancelAnimationFrame(animRef.current);
     if (timerRef.current) clearInterval(timerRef.current);
+    const s = stateRef.current;
+    if (s.renderer) s.renderer.dispose();
+    (s as any)._cleanup?.(); (s as any)._inputCleanup?.();
   }, []);
 
-  const handleStart = useCallback(async (name: string, avatar: string) => {
-    playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar);
+  const handleStart = useCallback(async (n: string, a: string) => {
+    playerSessionRef.current = savePlayerSession(GAME_ID, n, a);
     await initAudio(); setPhase('countdown');
   }, []);
-  const handlePlayAgain = useCallback(() => {
-    setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null);
-  }, []);
+  const handlePlayAgain = useCallback(() => { setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null); }, []);
+
+  const accent = theme.colors.accent ?? ACCENT;
 
   return (
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accent}
+      background="linear-gradient(180deg, #0a0a1a 0%, #0a0500 100%)">
       {phase === 'start' && (
-        <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description={GAME_TAGLINE}
-          ctaLabel="Fire Away! 🪃" accentColor={theme.colors.accent ?? ACCENT} onStart={handleStart} />
+        <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description="Drag back the 3D slingshot and release to smash glowing targets!"
+          ctaLabel="Stretch & Smash! 🪃" accentColor={accent} onStart={handleStart} />
       )}
-      {phase === 'countdown' && <Countdown onComplete={startLoop} accentColor={theme.colors.accent ?? ACCENT} />}
+      {phase === 'countdown' && <Countdown onComplete={startLoop} accentColor={accent} />}
       {(phase === 'playing' || phase === 'countdown') && (
-        <>
-          <canvas ref={canvasRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none' }}
-            role="img" aria-label="Slingshot target game canvas" />
-          {phase === 'playing' && (
-            <GameHUD accentColor={theme.colors.accent ?? ACCENT} items={[
-              { label: 'TIME', value: timeLeft, danger: timeLeft <= 10 },
-              { label: 'SCORE', value: scoreDisplay },
-            ]} />
-          )}
-        </>
+        <div ref={mountRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none' }} />
+      )}
+      {phase === 'playing' && (
+        <GameHUD accentColor={accent} items={[
+          { label: 'TIME', value: timeLeft, danger: timeLeft <= 10 },
+          { label: 'SCORE', value: scoreDisplay },
+        ]} />
       )}
       {phase === 'done' && finalSig && (
         <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI}
           score={String(finalSig.score)} personality={getPersonality(finalSig)}
           insights={[
-            { label: 'Accuracy', value: `${finalSig.totalShots > 0 ? Math.round(finalSig.hits / finalSig.totalShots * 100) : 0}%`, color: ACCENT },
+            { label: 'Hits', value: String(finalSig.hits), color: accent },
             { label: 'Bullseyes', value: String(finalSig.bullseyes), color: '#fbbf24' },
-            { label: 'Best Streak', value: `×${finalSig.maxStreak}`, color: '#4ade80' },
-            { label: 'Max Power', value: `${Math.round(finalSig.maxPower)}`, color: '#ef4444' },
+            { label: 'Accuracy', value: finalSig.totalShots > 0 ? `${Math.round(finalSig.hits / finalSig.totalShots * 100)}%` : '—', color: '#4ade80' },
+            { label: 'Best Streak', value: `×${finalSig.maxStreak}`, color: '#06b6d4' },
           ]}
-          accentColor={theme.colors.accent ?? ACCENT} onPlayAgain={handlePlayAgain} didWin={finalSig.hits >= 5} />
+          accentColor={accent} onPlayAgain={handlePlayAgain} didWin={finalSig.hits >= 10} />
       )}
     </GameShell>
   );

@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
+import * as THREE from 'three';
 import GameShell from '@/components/GameShell';
 import GameHUD from '@/components/GameHUD';
 import GameStartScreen from '@/components/GameStartScreen';
@@ -10,358 +11,319 @@ import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
 
-const GAME_ID      = 'web-weave';
-const ACCENT       = '#64748b';
-const DURATION     = 60;
-const GAME_EMOJI   = '🕸️';
-const GAME_TITLE   = 'Web Weave';
+const GAME_ID = 'web-weave';
+const ACCENT = '#64748b';
+const DURATION = 60;
+const GAME_EMOJI = '🕸️';
+const GAME_TITLE = 'Web Weave';
 const GAME_TAGLINE = 'Drag between anchors to weave your web. Catch flies!';
 
-interface Anchor { x: number; y: number; id: number; }
-interface WebStrand { a: number; b: number; } // anchor ids
-interface Fly { x: number; y: number; vx: number; vy: number; id: number; caught: boolean; }
-
-interface Signals {
-  strandsWoven: number;
-  fliesCaught: number;
-  fliesEscaped: number;
-  longestChain: number;
-  score: number;
-  combo: number;
-  maxCombo: number;
-}
-
-interface GameState {
-  running: boolean;
-  timeLeft: number;
-  sig: Signals;
-  anchors: Anchor[];
-  strands: WebStrand[];
-  flies: Fly[];
-  dragging: boolean;
-  dragFromId: number;
-  dragX: number;
-  dragY: number;
-  flySpawnTimer: number;
-  accentColor: string;
-  nextFlyId: number;
-  chainLength: number;
-}
-
-type Phase = 'start' | 'countdown' | 'playing' | 'done';
-
+interface Signals { strandsWoven: number; fliesCaught: number; fliesEscaped: number; longestChain: number; score: number; combo: number; maxCombo: number; }
 function getPersonality(sig: Signals): string {
-  const catchRate = (sig.fliesCaught + sig.fliesEscaped) > 0
-    ? sig.fliesCaught / (sig.fliesCaught + sig.fliesEscaped) : 0;
-  if (sig.strandsWoven >= 20 && catchRate >= 0.6) return 'Master Weaver 🕷️';
-  if (catchRate >= 0.7) return 'Patient Hunter 🎯';
-  if (sig.strandsWoven >= 25) return 'Speed Spinner 💨';
-  if (sig.maxCombo >= 4) return 'Chain Catcher 🔗';
-  return 'Casual Spinner 🌀';
+  if (sig.fliesCaught >= 15 && sig.fliesEscaped === 0) return 'Master Weaver 🕷️';
+  if (sig.strandsWoven >= 20) return 'Web Architect 🕸️';
+  if (sig.maxCombo >= 5) return 'Fly Catcher 🪰';
+  if (sig.fliesCaught >= 8) return 'Spider Apprentice 🕷️';
+  return 'Learning to Weave 🧵';
 }
-
-function lineSegIntersects(ax: number, ay: number, bx: number, by: number,
-  cx: number, cy: number, dx: number, dy: number): {x:number;y:number} | null {
-  const dxAB = bx - ax, dyAB = by - ay;
-  const dxCD = dx - cx, dyCD = dy - cy;
-  const denom = dxAB * dyCD - dyAB * dxCD;
-  if (Math.abs(denom) < 0.001) return null;
-  const t = ((cx - ax) * dyCD - (cy - ay) * dxCD) / denom;
-  const u = ((cx - ax) * dyAB - (cy - ay) * dxAB) / denom;
-  if (t >= 0 && t <= 1 && u >= 0 && u <= 1) {
-    return { x: ax + t * dxAB, y: ay + t * dyAB };
-  }
+type Phase = 'start' | 'countdown' | 'playing' | 'done';
+function WebhookEmitter({ theme, sig, personality, player }: { theme: ReturnType<typeof useBrandTheme>; sig: Signals; personality: string; player: PlayerSession | null; }) {
+  const fired = useRef(false);
+  useEffect(() => { if (fired.current) return; fired.current = true; postWebhook(theme, GAME_ID, { personality, score: sig.score }, player); }, [theme, sig, personality, player]);
   return null;
 }
 
+interface Anchor3D { mesh: THREE.Mesh; x: number; y: number; id: number; }
+interface Strand3D { line: THREE.Line; a: number; b: number; }
+interface Fly3D { mesh: THREE.Mesh; x: number; y: number; vx: number; vy: number; id: number; caught: boolean; }
+
 export default function WebWeaveGame() {
   const theme = useBrandTheme();
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const animRef = useRef(0);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const mountRef = useRef<HTMLDivElement>(null);
   const stopMusicRef = useRef<(() => void) | null>(null);
-
-  const stateRef = useRef<GameState>({
-    running: false, timeLeft: DURATION,
-    sig: { strandsWoven: 0, fliesCaught: 0, fliesEscaped: 0, longestChain: 0, score: 0, combo: 0, maxCombo: 0 },
-    anchors: [], strands: [], flies: [],
+  const stateRef = useRef({
+    running: false, timeLeft: DURATION, animId: 0,
+    intervalId: null as ReturnType<typeof setInterval> | null,
+    renderer: null as THREE.WebGLRenderer | null,
+    scene: null as THREE.Scene | null,
+    sig: { strandsWoven: 0, fliesCaught: 0, fliesEscaped: 0, longestChain: 0, score: 0, combo: 0, maxCombo: 0 } as Signals,
+    anchors: [] as Anchor3D[],
+    strands: [] as Strand3D[],
+    flies: [] as Fly3D[],
     dragging: false, dragFromId: -1, dragX: 0, dragY: 0,
-    flySpawnTimer: 0, accentColor: ACCENT, nextFlyId: 0, chainLength: 0,
+    flySpawnTimer: 0, nextFlyId: 0, chainLength: 0, frame: 0,
+    dragLineMesh: null as THREE.Line | null,
   });
-
   const [phase, setPhase] = useState<Phase>('start');
   const [timeLeft, setTimeLeft] = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
   const [finalSig, setFinalSig] = useState<Signals | null>(null);
-  const [playerName, setPlayerName] = useState('');
-  const [playerAvatar, setPlayerAvatar] = useState('🕸️');
   const playerSessionRef = useRef<PlayerSession | null>(null);
 
-  useEffect(() => { stateRef.current.accentColor = theme.colors.accent ?? ACCENT; }, [theme]);
-
-  const spawnAnchors = useCallback((W: number, H: number) => {
-    const s = stateRef.current;
-    s.anchors = [];
-    const positions = [
-      [W * 0.5, H * 0.1], [W * 0.85, H * 0.3], [W * 0.75, H * 0.65],
-      [W * 0.5, H * 0.8], [W * 0.25, H * 0.65], [W * 0.15, H * 0.3],
-      [W * 0.5, H * 0.45], [W * 0.35, H * 0.25], [W * 0.65, H * 0.25],
-    ];
-    positions.forEach(([x, y], i) => s.anchors.push({ x, y, id: i }));
-  }, []);
-
   const endGame = useCallback(() => {
-    const s = stateRef.current;
-    s.running = false;
-    cancelAnimationFrame(animRef.current);
-    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+    const s = stateRef.current; s.running = false;
+    cancelAnimationFrame(s.animId);
+    if (s.intervalId) { clearInterval(s.intervalId); s.intervalId = null; }
     if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
-    setFinalSig({ ...s.sig });
-    setPhase('done');
+    if (s.renderer) { s.renderer.dispose(); s.renderer = null; }
+    setFinalSig({ ...s.sig }); setPhase('done');
   }, []);
 
   const startLoop = useCallback(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
     const s = stateRef.current;
-
-    s.running = true; s.timeLeft = DURATION;
+    s.running = true; s.timeLeft = DURATION; s.frame = 0;
     s.sig = { strandsWoven: 0, fliesCaught: 0, fliesEscaped: 0, longestChain: 0, score: 0, combo: 0, maxCombo: 0 };
-    s.strands = []; s.flies = []; s.dragging = false; s.flySpawnTimer = 0;
-    s.nextFlyId = 0; s.chainLength = 0;
-    spawnAnchors(canvas.width, canvas.height);
+    s.anchors = []; s.strands = []; s.flies = [];
+    s.dragging = false; s.dragFromId = -1; s.flySpawnTimer = 0; s.nextFlyId = 0;
     setScoreDisplay(0); setTimeLeft(DURATION); setPhase('playing');
-    stopMusicRef.current = startMusic('chill');
+    stopMusicRef.current = startMusic('ambient');
 
-    timerRef.current = setInterval(() => {
-      s.timeLeft--;
-      setTimeLeft(s.timeLeft);
-      if (s.timeLeft <= 0) { sfx.fail(); haptic([300]); endGame(); }
-    }, 1000);
+    const W = window.innerWidth, H = window.innerHeight;
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(W, H);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setClearColor(0x0a0a12);
+    if (mountRef.current) { mountRef.current.innerHTML = ''; mountRef.current.appendChild(renderer.domElement); }
+    s.renderer = renderer;
 
-    const loop = () => {
-      if (!s.running) return;
-      const W = canvas.width; const H = canvas.height;
+    const scene = new THREE.Scene();
+    s.scene = scene;
+    const camera = new THREE.PerspectiveCamera(65, W / H, 0.1, 100);
+    camera.position.set(0, 0, 14);
+    camera.lookAt(0, 0, 0);
 
-      ctx.fillStyle = '#0f172a';
-      ctx.fillRect(0, 0, W, H);
+    scene.add(new THREE.AmbientLight(0x111122, 2));
+    const pLight = new THREE.PointLight(0x64748b, 4, 25);
+    pLight.position.set(0, 5, 5);
+    scene.add(pLight);
+    const sLight = new THREE.PointLight(0x94a3b8, 2, 20);
+    sLight.position.set(-5, -3, 3);
+    scene.add(sLight);
 
-      // Spawn flies
-      s.flySpawnTimer++;
-      if (s.flySpawnTimer > 90) {
-        s.flySpawnTimer = 0;
-        const edge = Math.floor(Math.random() * 4);
-        let fx = 0, fy = 0;
-        if (edge === 0) { fx = Math.random() * W; fy = -10; }
-        else if (edge === 1) { fx = W + 10; fy = Math.random() * H; }
-        else if (edge === 2) { fx = Math.random() * W; fy = H + 10; }
-        else { fx = -10; fy = Math.random() * H; }
-        const cx = W / 2, cy = H / 2;
-        const dist = Math.hypot(cx - fx, cy - fy);
-        s.flies.push({ x: fx, y: fy, vx: (cx - fx) / dist * 1.5, vy: (cy - fy) / dist * 1.5,
-          id: s.nextFlyId++, caught: false });
-      }
-
-      // Draw web strands
-      ctx.strokeStyle = '#94a3b8';
-      ctx.lineWidth = 1.5;
-      ctx.shadowBlur = 6; ctx.shadowColor = '#64748b';
-      for (const strand of s.strands) {
-        const a = s.anchors.find(a => a.id === strand.a);
-        const b = s.anchors.find(b => b.id === strand.b);
-        if (!a || !b) continue;
-        ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
-      }
-      ctx.shadowBlur = 0;
-
-      // Drag line
-      if (s.dragging) {
-        const from = s.anchors.find(a => a.id === s.dragFromId);
-        if (from) {
-          ctx.save(); ctx.globalAlpha = 0.5; ctx.strokeStyle = ACCENT; ctx.lineWidth = 2;
-          ctx.setLineDash([5, 5]);
-          ctx.beginPath(); ctx.moveTo(from.x, from.y); ctx.lineTo(s.dragX, s.dragY); ctx.stroke();
-          ctx.setLineDash([]); ctx.restore();
-        }
-      }
-
-      // Move & check flies
-      s.flies = s.flies.filter(f => !f.caught && f.x > -20 && f.x < W + 20 && f.y > -20 && f.y < H + 20);
-      for (const fly of s.flies) {
-        fly.x += fly.vx; fly.y += fly.vy;
-        // Check if fly crosses a strand
-        for (const strand of s.strands) {
-          const a = s.anchors.find(a => a.id === strand.a);
-          const b = s.anchors.find(b => b.id === strand.b);
-          if (!a || !b) continue;
-          const hit = lineSegIntersects(fly.x - fly.vx, fly.y - fly.vy, fly.x, fly.y, a.x, a.y, b.x, b.y);
-          if (hit) {
-            fly.caught = true;
-            s.sig.fliesCaught++;
-            s.sig.combo++;
-            if (s.sig.combo > s.sig.maxCombo) s.sig.maxCombo = s.sig.combo;
-            const pts = s.sig.combo >= 3 ? 3 : 2;
-            s.sig.score += pts;
-            setScoreDisplay(s.sig.score);
-            sfx.collect(); haptic([30]);
-            break;
-          }
-        }
-        if (!fly.caught) {
-          ctx.save(); ctx.font = '14px sans-serif'; ctx.textAlign = 'center';
-          ctx.fillText('🪰', fly.x, fly.y); ctx.restore();
-        }
-      }
-
-      // Draw anchors
-      for (const anchor of s.anchors) {
-        ctx.save();
-        ctx.shadowBlur = 12; ctx.shadowColor = ACCENT;
-        ctx.fillStyle = ACCENT;
-        ctx.beginPath(); ctx.arc(anchor.x, anchor.y, 8, 0, Math.PI * 2); ctx.fill();
-        ctx.fillStyle = '#fff';
-        ctx.beginPath(); ctx.arc(anchor.x, anchor.y, 3, 0, Math.PI * 2); ctx.fill();
-        ctx.restore();
-      }
-
-      animRef.current = requestAnimationFrame(loop);
-    };
-    animRef.current = requestAnimationFrame(loop);
-  }, [endGame, spawnAnchors]);
-
-  const getAnchorAt = useCallback((x: number, y: number): number => {
-    const s = stateRef.current;
-    for (const a of s.anchors) {
-      if (Math.hypot(a.x - x, a.y - y) < 20) return a.id;
+    // Background spider web (static faint)
+    for (let r = 1; r <= 4; r++) {
+      const bg = new THREE.RingGeometry(r * 0.9, r * 0.9 + 0.02, 32);
+      const bm = new THREE.MeshBasicMaterial({ color: 0x334155, transparent: true, opacity: 0.2, side: THREE.DoubleSide });
+      scene.add(new THREE.Mesh(bg, bm));
     }
-    return -1;
-  }, []);
 
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const resize = () => {
-      canvas.width = canvas.offsetWidth; canvas.height = canvas.offsetHeight;
-      if (stateRef.current.running) spawnAnchors(canvas.width, canvas.height);
-    };
-    resize(); window.addEventListener('resize', resize);
+    // Anchor points (in a circle)
+    const anchorCount = 8;
+    const anchorRadius = 4.5;
+    for (let i = 0; i < anchorCount; i++) {
+      const angle = (i / anchorCount) * Math.PI * 2;
+      const ax = Math.cos(angle) * anchorRadius;
+      const ay = Math.sin(angle) * anchorRadius;
+      const geo = new THREE.SphereGeometry(0.2, 12, 12);
+      const mat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, emissive: 0x64748b, emissiveIntensity: 0.5, roughness: 0.4 });
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.position.set(ax, ay, 0);
+      scene.add(mesh);
+      s.anchors.push({ mesh, x: ax, y: ay, id: i });
+    }
 
-    const toCanvas = (clientX: number, clientY: number) => {
-      const rect = canvas.getBoundingClientRect();
-      return { x: (clientX - rect.left) * (canvas.width / rect.width),
-               y: (clientY - rect.top) * (canvas.height / rect.height) };
+    // Drag line
+    const dragGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, 0)]);
+    const dragLine = new THREE.Line(dragGeo, new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.5 }));
+    scene.add(dragLine);
+    s.dragLineMesh = dragLine;
+
+    const raycaster = new THREE.Raycaster();
+    const worldPos = (clientX: number, clientY: number) => {
+      const rect = renderer.domElement.getBoundingClientRect();
+      const nx = ((clientX - rect.left) / rect.width - 0.5) * 12;
+      const ny = -((clientY - rect.top) / rect.height - 0.5) * 9;
+      return { nx, ny };
     };
 
     const onDown = (e: PointerEvent) => {
-      const s = stateRef.current;
       if (!s.running) return;
-      const { x, y } = toCanvas(e.clientX, e.clientY);
-      const id = getAnchorAt(x, y);
-      if (id >= 0) { s.dragging = true; s.dragFromId = id; s.dragX = x; s.dragY = y; }
+      const { nx, ny } = worldPos(e.clientX, e.clientY);
+      let closest = -1, minDist = 1.0;
+      s.anchors.forEach(a => {
+        const d = Math.hypot(a.x - nx, a.y - ny);
+        if (d < minDist) { minDist = d; closest = a.id; }
+      });
+      if (closest >= 0) {
+        s.dragging = true; s.dragFromId = closest;
+        renderer.domElement.setPointerCapture(e.pointerId);
+      }
     };
     const onMove = (e: PointerEvent) => {
-      const s = stateRef.current;
-      if (!s.dragging) return;
-      const { x, y } = toCanvas(e.clientX, e.clientY);
-      s.dragX = x; s.dragY = y;
+      if (!s.running || !s.dragging) return;
+      const { nx, ny } = worldPos(e.clientX, e.clientY);
+      s.dragX = nx; s.dragY = ny;
     };
     const onUp = (e: PointerEvent) => {
-      const s = stateRef.current;
       if (!s.running || !s.dragging) return;
-      const { x, y } = toCanvas(e.clientX, e.clientY);
-      const toId = getAnchorAt(x, y);
-      if (toId >= 0 && toId !== s.dragFromId) {
-        const exists = s.strands.some(st => (st.a === s.dragFromId && st.b === toId) || (st.a === toId && st.b === s.dragFromId));
+      s.dragging = false;
+      const { nx, ny } = worldPos(e.clientX, e.clientY);
+      let closestId = -1, minDist = 1.0;
+      s.anchors.forEach(a => {
+        if (a.id === s.dragFromId) return;
+        const d = Math.hypot(a.x - nx, a.y - ny);
+        if (d < minDist) { minDist = d; closestId = a.id; }
+      });
+      if (closestId >= 0) {
+        // Check not already woven
+        const exists = s.strands.some(st => (st.a === s.dragFromId && st.b === closestId) || (st.a === closestId && st.b === s.dragFromId));
         if (!exists) {
-          s.strands.push({ a: s.dragFromId, b: toId });
-          s.sig.strandsWoven++;
-          sfx.collect(); haptic([20]);
+          const fromA = s.anchors.find(a => a.id === s.dragFromId)!;
+          const toA = s.anchors.find(a => a.id === closestId)!;
+          const geo = new THREE.BufferGeometry().setFromPoints([
+            new THREE.Vector3(fromA.x, fromA.y, 0),
+            new THREE.Vector3(toA.x, toA.y, 0)
+          ]);
+          const alpha = 0.4 + s.sig.strandsWoven * 0.02;
+          const line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: 0x94a3b8, transparent: true, opacity: Math.min(0.9, alpha) }));
+          scene.add(line);
+          s.strands.push({ line, a: s.dragFromId, b: closestId });
+          s.sig.strandsWoven++; s.chainLength++;
+          if (s.chainLength > s.sig.longestChain) s.sig.longestChain = s.chainLength;
+          s.sig.score++; setScoreDisplay(s.sig.score);
+          sfx.click(); haptic([20]);
+
+          // Highlight strand
+          (fromA.mesh.material as THREE.MeshStandardMaterial).emissiveIntensity = 1;
+          setTimeout(() => { (fromA.mesh.material as THREE.MeshStandardMaterial).emissiveIntensity = 0.5; }, 200);
         }
       }
-      s.dragging = false;
+    };
+    renderer.domElement.addEventListener('pointerdown', onDown);
+    renderer.domElement.addEventListener('pointermove', onMove);
+    renderer.domElement.addEventListener('pointerup', onUp);
+    renderer.domElement.addEventListener('pointercancel', onUp);
+
+    const spawnFly = () => {
+      const side = Math.random() > 0.5 ? 1 : -1;
+      const geo = new THREE.SphereGeometry(0.15, 8, 8);
+      const mat = new THREE.MeshStandardMaterial({ color: 0x374151, emissive: 0x6b7280, emissiveIntensity: 0.4 });
+      const mesh = new THREE.Mesh(geo, mat);
+      const fx = side * 7;
+      const fy = (Math.random() - 0.5) * 5;
+      mesh.position.set(fx, fy, 0);
+      scene.add(mesh);
+      s.flies.push({ mesh, x: fx, y: fy, vx: -side * (0.03 + Math.random() * 0.02), vy: (Math.random() - 0.5) * 0.02, id: s.nextFlyId++, caught: false });
     };
 
-    canvas.addEventListener('pointerdown', onDown);
-    canvas.addEventListener('pointermove', onMove);
-    canvas.addEventListener('pointerup', onUp);
-    return () => {
-      window.removeEventListener('resize', resize);
-      canvas.removeEventListener('pointerdown', onDown);
-      canvas.removeEventListener('pointermove', onMove);
-      canvas.removeEventListener('pointerup', onUp);
-    };
-  }, [getAnchorAt, spawnAnchors]);
+    s.intervalId = setInterval(() => {
+      s.timeLeft--; setTimeLeft(s.timeLeft);
+      if (s.timeLeft <= 0) { sfx.fail(); endGame(); }
+    }, 1000);
 
-  useEffect(() => {
-    return () => {
-      cancelAnimationFrame(animRef.current);
-      if (timerRef.current) clearInterval(timerRef.current);
-      if (stopMusicRef.current) stopMusicRef.current();
+    const checkFlyInWeb = (fx: number, fy: number): boolean => {
+      // Check if fly is inside any web strand polygon area (simplified: near strands)
+      for (const strand of s.strands) {
+        const a = s.anchors.find(an => an.id === strand.a)!;
+        const b = s.anchors.find(an => an.id === strand.b)!;
+        const dx = b.x - a.x, dy = b.y - a.y;
+        const len = Math.sqrt(dx * dx + dy * dy);
+        const t = Math.max(0, Math.min(1, ((fx - a.x) * dx + (fy - a.y) * dy) / (len * len)));
+        const cx = a.x + t * dx, cy = a.y + t * dy;
+        if (Math.hypot(fx - cx, fy - cy) < 0.5) return true;
+      }
+      return false;
     };
+
+    const loop = () => {
+      if (!s.running) return;
+      s.frame++;
+
+      // Drag line
+      if (s.dragging && s.dragLineMesh) {
+        const fromA = s.anchors.find(a => a.id === s.dragFromId);
+        if (fromA) {
+          s.dragLineMesh.geometry.setFromPoints([
+            new THREE.Vector3(fromA.x, fromA.y, 0.1),
+            new THREE.Vector3(s.dragX, s.dragY, 0.1)
+          ]);
+          (s.dragLineMesh.material as THREE.LineBasicMaterial).opacity = 0.7;
+        }
+      } else if (s.dragLineMesh) {
+        (s.dragLineMesh.material as THREE.LineBasicMaterial).opacity = 0;
+      }
+
+      // Spawn fly
+      s.flySpawnTimer++;
+      if (s.flySpawnTimer % 80 === 0) spawnFly();
+
+      // Move flies & check
+      for (let i = s.flies.length - 1; i >= 0; i--) {
+        const fly = s.flies[i];
+        if (fly.caught) { scene.remove(fly.mesh); s.flies.splice(i, 1); continue; }
+        fly.x += fly.vx; fly.y += fly.vy;
+        fly.mesh.position.set(fly.x, fly.y, 0.1);
+        fly.mesh.rotation.y += 0.1;
+
+        if (Math.abs(fly.x) > 7 || Math.abs(fly.y) > 6) {
+          scene.remove(fly.mesh); s.flies.splice(i, 1);
+          s.sig.fliesEscaped++; s.sig.combo = 0;
+          continue;
+        }
+
+        if (checkFlyInWeb(fly.x, fly.y)) {
+          fly.caught = true;
+          s.sig.fliesCaught++; s.sig.combo++;
+          if (s.sig.combo > s.sig.maxCombo) s.sig.maxCombo = s.sig.combo;
+          const pts = 2 * (s.sig.combo >= 3 ? 2 : 1);
+          s.sig.score += pts; setScoreDisplay(s.sig.score);
+          sfx.collect(); haptic([30]);
+          // Flash fly green
+          (fly.mesh.material as THREE.MeshStandardMaterial).color.setHex(0x4ade80);
+          (fly.mesh.material as THREE.MeshStandardMaterial).emissive.setHex(0x4ade80);
+          (fly.mesh.material as THREE.MeshStandardMaterial).emissiveIntensity = 1;
+        }
+      }
+
+      // Pulse anchors
+      s.anchors.forEach((a, i) => {
+        (a.mesh.material as THREE.MeshStandardMaterial).emissiveIntensity = 0.3 + Math.sin(s.frame * 0.06 + i * 0.8) * 0.2;
+      });
+
+      // Strand shimmer
+      s.strands.forEach((st, i) => {
+        (st.line.material as THREE.LineBasicMaterial).opacity = 0.4 + Math.sin(s.frame * 0.03 + i * 0.5) * 0.1;
+      });
+
+      pLight.intensity = 4 + Math.sin(s.frame * 0.06) * 0.5;
+
+      renderer.render(scene, camera);
+      s.animId = requestAnimationFrame(loop);
+    };
+    s.animId = requestAnimationFrame(loop);
+  }, [endGame]);
+
+  useEffect(() => () => {
+    const s = stateRef.current; s.running = false; cancelAnimationFrame(s.animId);
+    if (s.intervalId) clearInterval(s.intervalId);
+    if (stopMusicRef.current) stopMusicRef.current();
+    if (s.renderer) { s.renderer.dispose(); s.renderer = null; }
   }, []);
 
-  const handleStart = useCallback((name: string, avatar: string) => {
-    setPlayerName(name); setPlayerAvatar(avatar);
-    initAudio(); playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar);
-    setPhase('countdown');
+  const handleStart = useCallback(async (name: string, avatar: string) => {
+    playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar); await initAudio(); setPhase('countdown');
   }, []);
-  const handleCountdownDone = useCallback(() => { startLoop(); }, [startLoop]);
   const handlePlayAgain = useCallback(() => {
+    if (stateRef.current.renderer) { stateRef.current.renderer.dispose(); stateRef.current.renderer = null; }
+    if (mountRef.current) mountRef.current.innerHTML = '';
     setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null);
   }, []);
 
-  const buildInsights = (sig: Signals) => [
-    { label: 'Flies Caught',  value: `${sig.fliesCaught}`,  color: sig.fliesCaught >= 5 ? '#4ade80' : '#facc15' },
-    { label: 'Strands Woven', value: `${sig.strandsWoven}`, color: ACCENT },
-    { label: 'Best Combo',    value: `×${sig.maxCombo}`,     color: ACCENT },
-    { label: 'Escaped',       value: `${sig.fliesEscaped}`, color: 'var(--color-text)' },
-  ];
-
+  const accent = theme.colors.accent ?? ACCENT;
   return (
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
-      {phase === 'start' && (
-        <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description={GAME_TAGLINE}
-          ctaLabel="Spin the Web" accentColor={theme.colors.accent ?? ACCENT} onStart={handleStart} />
-      )}
-      {phase === 'countdown' && (
-        <Countdown onComplete={handleCountdownDone} accentColor={theme.colors.accent ?? ACCENT} />
-      )}
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accent}>
+      {phase === 'start' && <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description={GAME_TAGLINE} ctaLabel="Start Weaving 🕸️" accentColor={accent} onStart={handleStart} />}
+      {phase === 'countdown' && <Countdown onComplete={startLoop} accentColor={accent} />}
       {(phase === 'playing' || phase === 'countdown') && (
-        <>
-          <canvas ref={canvasRef} role="img" aria-label="Spider web weaving game"
-            style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none' }} />
-          {phase === 'playing' && (
-            <GameHUD accentColor={theme.colors.accent ?? ACCENT} items={[
-              { label: 'TIME', value: timeLeft, danger: timeLeft <= 5 },
-              { label: 'SCORE', value: scoreDisplay },
-            ]} />
-          )}
-        </>
+        <div ref={mountRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none' }} />
       )}
-      {phase === 'done' && finalSig && (
-        <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI}
-          score={String(finalSig.score)} personality={getPersonality(finalSig)}
-          insights={buildInsights(finalSig)} accentColor={theme.colors.accent ?? ACCENT}
-          onPlayAgain={handlePlayAgain} didWin={finalSig.fliesCaught >= 5} />
-      )}
-      {phase === 'done' && finalSig && (
-        <WebhookEmitter theme={theme} gameId={GAME_ID} sig={finalSig}
-          personality={getPersonality(finalSig)} player={playerSessionRef.current} />
-      )}
+      {phase === 'playing' && <GameHUD accentColor={accent} items={[{ label: 'TIME', value: timeLeft, danger: timeLeft <= 10 }, { label: 'SCORE', value: scoreDisplay }]} />}
+      {phase === 'done' && finalSig && <>
+        <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI} score={String(finalSig.score)} personality={getPersonality(finalSig)}
+          insights={[{ label: 'Strands Woven', value: String(finalSig.strandsWoven), color: accent }, { label: 'Flies Caught', value: String(finalSig.fliesCaught), color: '#4ade80' }, { label: 'Flies Escaped', value: String(finalSig.fliesEscaped), color: finalSig.fliesEscaped === 0 ? '#4ade80' : '#ef4444' }, { label: 'Best Combo', value: `×${finalSig.maxCombo}`, color: '#fbbf24' }]}
+          accentColor={accent} onPlayAgain={handlePlayAgain} didWin={finalSig.fliesCaught >= 8} />
+        <WebhookEmitter theme={theme} sig={finalSig} personality={getPersonality(finalSig)} player={playerSessionRef.current} />
+      </>}
     </GameShell>
   );
-}
-
-function WebhookEmitter({ theme, gameId, sig, personality, player }: {
-  theme: ReturnType<typeof useBrandTheme>; gameId: string; sig: Signals; personality: string; player: PlayerSession | null;
-}) {
-  const fired = useRef(false);
-  useEffect(() => {
-    if (fired.current) return; fired.current = true;
-    postWebhook(theme, gameId, { personality, score: sig.score, strandsWoven: sig.strandsWoven,
-      fliesCaught: sig.fliesCaught, fliesEscaped: sig.fliesEscaped, maxCombo: sig.maxCombo }, player);
-  }, [theme, gameId, sig, personality, player]);
-  return null;
 }

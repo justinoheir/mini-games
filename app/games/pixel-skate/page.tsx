@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
+import * as THREE from 'three';
 import GameShell from '@/components/GameShell';
 import GameHUD from '@/components/GameHUD';
 import GameStartScreen from '@/components/GameStartScreen';
@@ -17,344 +18,349 @@ const GAME_EMOJI = '🛹';
 const GAME_TITLE = 'Pixel Skate';
 const GAME_TAGLINE = 'Flick tricks. Stack the combo.';
 
-// Trick system: swipe direction → trick name
-type TrickInput = 'up'|'down'|'left'|'right';
-const TRICKS: Record<TrickInput,{name:string;pts:number}> = {
-  up:    {name:'Kickflip',pts:2},
-  down:  {name:'Grind',pts:3},
-  left:  {name:'Heelflip',pts:2},
-  right: {name:'360 Flip',pts:4},
+type TrickInput = 'up' | 'down' | 'left' | 'right';
+const TRICKS: Record<TrickInput, { name: string; pts: number }> = {
+  up: { name: 'Kickflip', pts: 2 }, down: { name: 'Grind', pts: 3 },
+  left: { name: 'Heelflip', pts: 2 }, right: { name: '360 Flip', pts: 4 },
 };
 
-interface Obstacle { x:number; type:'ramp'|'rail'|'gap'|'cone'; passed:boolean; }
-
-interface Signals {
-  tricksLanded: number;
-  crashes: number;
-  maxCombo: number;
-  comboCurrent: number;
-  totalPoints: number;
-  score: number;
-}
+interface Signals { tricksLanded: number; crashes: number; maxCombo: number; comboCurrent: number; totalPoints: number; score: number; }
+type Phase = 'start' | 'countdown' | 'playing' | 'done';
 
 function getPersonality(s: Signals): string {
-  if (s.tricksLanded>=20&&s.crashes===0) return 'Pro Skater 🏆';
-  if (s.maxCombo>=8)                     return 'Combo God 🔥';
-  if (s.crashes>=6)                      return 'Wipeout King 💥';
-  if (s.tricksLanded>=12)                return 'Street Shredder 🛹';
+  if (s.tricksLanded >= 20 && s.crashes === 0) return 'Pro Skater 🏆';
+  if (s.maxCombo >= 8) return 'Combo God 🔥';
+  if (s.crashes >= 6) return 'Wipeout King 💥';
+  if (s.tricksLanded >= 12) return 'Street Shredder 🛹';
   return 'Park Learner 🎿';
 }
 
-type Phase = 'start'|'countdown'|'playing'|'done';
-interface GS {
-  running:boolean; timeLeft:number; sig:Signals; frame:number; accentColor:string;
-  skaterX:number; skaterY:number; baseY:number;
-  jumping:boolean; jumpVY:number; onRail:boolean;
-  obstacles:Obstacle[]; obsTimer:number; speed:number;
-  scrollX:number;
-  trickDisplay:string; trickAlpha:number;
-  swipeStartX:number; swipeStartY:number; swipeStartTime:number; isSwiping:boolean;
-  particles:Array<{x:number;y:number;vx:number;vy:number;alpha:number;color:string}>;
-  crashed:boolean; crashTimer:number;
-}
+interface Obstacle3D { mesh: THREE.Mesh; type: string; passed: boolean; }
+interface Particle3D { mesh: THREE.Mesh; vx: number; vy: number; vz: number; life: number; }
 
 export default function PixelSkateGame() {
   const theme = useBrandTheme();
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const animRef   = useRef(0);
-  const timerRef  = useRef<ReturnType<typeof setInterval>|null>(null);
+  const mountRef = useRef<HTMLDivElement>(null);
+  const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
+  const sceneRef = useRef<THREE.Scene | null>(null);
+  const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
+  const animRef = useRef(0);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const skaterRef = useRef<THREE.Group | null>(null);
+  const obstaclesRef = useRef<Obstacle3D[]>([]);
+  const particlesRef = useRef<Particle3D[]>([]);
+  const trickTextRef = useRef<{ text: string; alpha: number } | null>(null);
+  const playerSessionRef = useRef<PlayerSession | null>(null);
 
-  const stateRef = useRef<GS>({
-    running:false,timeLeft:DURATION,
-    sig:{tricksLanded:0,crashes:0,maxCombo:0,comboCurrent:0,totalPoints:0,score:0},
-    frame:0,accentColor:ACCENT,
-    skaterX:0,skaterY:0,baseY:0,jumping:false,jumpVY:0,onRail:false,
-    obstacles:[],obsTimer:0,speed:4,scrollX:0,
-    trickDisplay:'',trickAlpha:0,
-    swipeStartX:0,swipeStartY:0,swipeStartTime:0,isSwiping:false,
-    particles:[],crashed:false,crashTimer:0,
+  const stateRef = useRef({
+    running: false, timeLeft: DURATION,
+    sig: { tricksLanded: 0, crashes: 0, maxCombo: 0, comboCurrent: 0, totalPoints: 0, score: 0 } as Signals,
+    skaterY: 0, baseY: -0.5, jumping: false, jumpVY: 0,
+    speed: 0.05, obsTimer: 0, crashed: false, crashTimer: 0, frame: 0,
+    swipeStartX: 0, swipeStartY: 0, swipeStartTime: 0, isSwiping: false,
+    accentColor: ACCENT,
   });
 
-  const [phase,setPhase]        = useState<Phase>('start');
-  const [timeLeft,setTimeLeft]  = useState(DURATION);
-  const [scoreDisplay,setScore] = useState(0);
-  const [finalSig,setFinalSig]  = useState<Signals|null>(null);
-  const playerSessionRef = useRef<PlayerSession|null>(null);
-  useEffect(()=>{ stateRef.current.accentColor=theme.colors.accent??ACCENT; },[theme]);
+  const [phase, setPhase] = useState<Phase>('start');
+  const [timeLeft, setTimeLeft] = useState(DURATION);
+  const [scoreDisplay, setScoreDisplay] = useState(0);
+  const [trickDisplay, setTrickDisplay] = useState('');
+  const [finalSig, setFinalSig] = useState<Signals | null>(null);
 
-  const endGame = useCallback(()=>{
-    const s=stateRef.current; s.running=false;
+  const endGame = useCallback(() => {
+    const s = stateRef.current; s.running = false;
     cancelAnimationFrame(animRef.current);
-    if(timerRef.current){ clearInterval(timerRef.current); timerRef.current=null; }
-    const pb=parseInt(localStorage.getItem('pb_'+GAME_ID)??"0");
-    if(s.sig.score>pb) localStorage.setItem('pb_'+GAME_ID,String(s.sig.score));
-    setFinalSig({...s.sig}); setPhase('done'); hapticVictory();
-  },[]);
+    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+    hapticVictory();
+    try { const pb = parseInt(localStorage.getItem(`pb_${GAME_ID}`) ?? '0'); if (s.sig.score > pb) localStorage.setItem(`pb_${GAME_ID}`, String(s.sig.score)); } catch { /**/ }
+    setFinalSig({ ...s.sig }); setPhase('done');
+  }, []);
 
-  const startLoop = useCallback(()=>{
-    const canvas=canvasRef.current; if(!canvas) return;
-    const ctx=canvas.getContext('2d'); if(!ctx) return;
-    const s=stateRef.current; const W=canvas.width,H=canvas.height;
-    s.running=true; s.timeLeft=DURATION; s.frame=0; s.speed=4;
-    s.sig={tricksLanded:0,crashes:0,maxCombo:0,comboCurrent:0,totalPoints:0,score:0};
-    s.baseY=H*0.65; s.skaterX=W*0.25; s.skaterY=s.baseY;
-    s.jumping=false; s.onRail=false; s.crashed=false;
-    s.obstacles=[]; s.obsTimer=0; s.scrollX=0; s.particles=[];
-    s.trickDisplay=''; s.trickAlpha=0;
-    setScore(0); setTimeLeft(DURATION); setPhase('playing');
+  const performTrick = useCallback((dir: TrickInput) => {
+    const s = stateRef.current;
+    if (!s.running || s.crashed) return;
+    const trick = TRICKS[dir];
+    if (!s.jumping) { s.jumping = true; s.jumpVY = dir === 'down' ? 0.12 : 0.15; }
+    s.sig.tricksLanded++; s.sig.comboCurrent++;
+    if (s.sig.comboCurrent > s.sig.maxCombo) s.sig.maxCombo = s.sig.comboCurrent;
+    const mult = Math.ceil(s.sig.comboCurrent / 3);
+    const pts = trick.pts * mult; s.sig.score += pts; s.sig.totalPoints += pts;
+    setScoreDisplay(s.sig.score);
+    setTrickDisplay(`${trick.name} +${pts}`);
+    setTimeout(() => setTrickDisplay(''), 900);
+    sfx.collect();
+    if (s.sig.comboCurrent >= 4) hapticCombo(s.sig.comboCurrent); else hapticScore();
+    // Spawn particles
+    for (let i = 0; i < 8; i++) {
+      const geo = new THREE.SphereGeometry(0.06, 6, 6);
+      const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: 0x10b981, emissive: 0x0a5a3a }));
+      mesh.position.set(-2, s.baseY + s.skaterY, 0);
+      sceneRef.current?.add(mesh);
+      particlesRef.current.push({ mesh, vx: (Math.random()-0.5)*0.1, vy: 0.05+Math.random()*0.08, vz: (Math.random()-0.5)*0.08, life: 1 });
+    }
+  }, []);
 
-    timerRef.current=setInterval(()=>{
-      s.timeLeft--; setTimeLeft(s.timeLeft);
-      if(s.timeLeft<=0){ sfx.fail(); endGame(); }
-      if(s.timeLeft===30||s.timeLeft===15) s.speed+=0.8;
-    },1000);
+  const makeObstacle = useCallback((type: string, scene: THREE.Scene, x: number): Obstacle3D => {
+    const s = stateRef.current;
+    let mesh: THREE.Mesh;
+    const mat = new THREE.MeshStandardMaterial({ color: 0xef4444, emissive: 0x5f1a1a, roughness: 0.6 });
+    switch (type) {
+      case 'cone':
+        mesh = new THREE.Mesh(new THREE.ConeGeometry(0.25, 0.6, 6), mat);
+        mesh.position.set(x, s.baseY + 0.3, 0); break;
+      case 'rail':
+        mesh = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.1, 0.1), new THREE.MeshStandardMaterial({ color: 0x94a3b8, emissive: 0x2a3a4a, metalness: 0.8 }));
+        mesh.position.set(x, s.baseY + 0.35, 0); break;
+      case 'ramp':
+        mesh = new THREE.Mesh(new THREE.CylinderGeometry(0.0, 0.4, 0.6, 4), mat);
+        mesh.position.set(x, s.baseY + 0.3, 0); break;
+      default:
+        mesh = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.5, 0.3), mat);
+        mesh.position.set(x, s.baseY + 0.25, 0);
+    }
+    scene.add(mesh);
+    return { mesh, type, passed: false };
+  }, []);
 
-    const PIXEL=4; // pixel art scale
-    function drawPixelSkater(ctx:CanvasRenderingContext2D,x:number,y:number,jumping:boolean,frame:number){
-      const tilt=jumping?-0.3:Math.sin(frame*0.3)*0.05;
-      ctx.save(); ctx.translate(x,y); ctx.rotate(tilt);
-      // Board
-      ctx.fillStyle='#10b981';
-      ctx.fillRect(-18,0,36,PIXEL*2);
-      // Wheels
-      ctx.fillStyle='#6b7280';
-      ctx.fillRect(-14,PIXEL*2,PIXEL*3,PIXEL*3);
-      ctx.fillRect(10,PIXEL*2,PIXEL*3,PIXEL*3);
-      // Body
-      ctx.fillStyle='#f97316';
-      ctx.fillRect(-6,-20,12,20);
-      // Head
-      ctx.fillStyle='#fbbf24';
-      ctx.fillRect(-7,-30,14,10);
-      // Helmet
-      ctx.fillStyle='#1d4ed8';
-      ctx.fillRect(-8,-34,16,8);
-      ctx.restore();
+  const startLoop = useCallback(() => {
+    const mount = mountRef.current; if (!mount) return;
+    const s = stateRef.current;
+    s.running = true; s.timeLeft = DURATION; s.frame = 0;
+    s.sig = { tricksLanded: 0, crashes: 0, maxCombo: 0, comboCurrent: 0, totalPoints: 0, score: 0 };
+    s.speed = 0.05; s.obsTimer = 0; s.skaterY = 0; s.jumping = false; s.crashed = false;
+    setScoreDisplay(0); setTimeLeft(DURATION); setPhase('playing');
+
+    const W = window.innerWidth, H = window.innerHeight;
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0a1218);
+    scene.fog = new THREE.Fog(0x0a1218, 15, 30);
+    sceneRef.current = scene;
+
+    const camera = new THREE.PerspectiveCamera(70, W / H, 0.1, 60);
+    camera.position.set(0, 2, 7);
+    camera.lookAt(0, 0, 0);
+    cameraRef.current = camera;
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(W, H);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.shadowMap.enabled = true;
+    mount.appendChild(renderer.domElement);
+    rendererRef.current = renderer;
+
+    scene.add(new THREE.AmbientLight(0x0a1a10, 2));
+    scene.add(Object.assign(new THREE.PointLight(0x10b981, 60, 20), { position: new THREE.Vector3(-2, 4, 6) }));
+    scene.add(Object.assign(new THREE.PointLight(0x6366f1, 40, 15), { position: new THREE.Vector3(3, 2, 5) }));
+
+    // Infinite ground strip
+    const groundMat = new THREE.MeshStandardMaterial({ color: 0x1a2830, roughness: 0.9 });
+    for (let i = 0; i < 4; i++) {
+      const g = new THREE.Mesh(new THREE.BoxGeometry(6, 0.1, 20), groundMat);
+      g.position.set(0, s.baseY - 0.05, -i * 20 + 10);
+      g.receiveShadow = true;
+      scene.add(g);
+    }
+    // Neon ground line
+    const lineGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(-10, s.baseY, 0), new THREE.Vector3(10, s.baseY, 0)]);
+    scene.add(new THREE.Line(lineGeo, new THREE.LineBasicMaterial({ color: 0x10b981 })));
+
+    // Skater group
+    const skater = new THREE.Group();
+    const board = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.08, 0.25), new THREE.MeshStandardMaterial({ color: 0x10b981, emissive: 0x0a5a3a }));
+    skater.add(board);
+    const body = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.5, 0.22), new THREE.MeshStandardMaterial({ color: 0xf97316, emissive: 0x4a2000 }));
+    body.position.y = 0.32;
+    skater.add(body);
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.15, 10, 10), new THREE.MeshStandardMaterial({ color: 0xfbbf24 }));
+    head.position.y = 0.65;
+    skater.add(head);
+    skater.position.set(-2, s.baseY, 0);
+    skater.castShadow = true;
+    scene.add(skater);
+    skaterRef.current = skater;
+
+    // Background buildings
+    for (let i = 0; i < 6; i++) {
+      const bh = 1.5 + Math.random() * 2;
+      const b = new THREE.Mesh(new THREE.BoxGeometry(0.8, bh, 0.5), new THREE.MeshStandardMaterial({ color: 0x0a1820 }));
+      b.position.set(-5 + i * 2.2, s.baseY + bh/2 - 0.05, -3);
+      scene.add(b);
     }
 
-    const loop=()=>{
-      if(!s.running) return; s.frame++;
-      const W=canvas.width,H=canvas.height;
-      s.scrollX+=s.speed;
+    const onDown = (e: PointerEvent) => {
+      if (!s.running) return;
+      s.isSwiping = true; s.swipeStartX = e.clientX; s.swipeStartY = e.clientY; s.swipeStartTime = Date.now();
+    };
+    const onUp = (e: PointerEvent) => {
+      if (!s.running || !s.isSwiping) return; s.isSwiping = false;
+      const dx = e.clientX - s.swipeStartX; const dy = e.clientY - s.swipeStartY;
+      const dist = Math.hypot(dx, dy);
+      if (dist < 20) return;
+      let dir: TrickInput;
+      if (Math.abs(dx) > Math.abs(dy)) dir = dx > 0 ? 'right' : 'left';
+      else dir = dy < 0 ? 'up' : 'down';
+      performTrick(dir);
+    };
+    renderer.domElement.addEventListener('pointerdown', onDown);
+    renderer.domElement.addEventListener('pointerup', onUp);
 
-      // Retro pixel background
-      ctx.fillStyle='#0f172a'; ctx.fillRect(0,0,W,H);
-      // Pixel grid overlay
-      ctx.fillStyle='rgba(30,60,30,0.3)';
-      for(let gx=0;gx<W;gx+=8) for(let gy=0;gy<H;gy+=8) if((gx+gy)%16===0) ctx.fillRect(gx,gy,4,4);
+    timerRef.current = setInterval(() => {
+      s.timeLeft--; setTimeLeft(s.timeLeft);
+      if (s.timeLeft === 30 || s.timeLeft === 15) s.speed += 0.015;
+      if (s.timeLeft <= 0) { sfx.fail(); endGame(); }
+    }, 1000);
 
-      // Scrolling background buildings
-      for(let i=0;i<6;i++){
-        const bx=((i*200-s.scrollX*0.3)%W+W)%W-50;
-        const bh=60+i*25;
-        ctx.fillStyle='#0a1830'; ctx.fillRect(bx,H*0.4-bh,50,bh);
-        // Windows
-        for(let wy=0;wy<bh;wy+=20) for(let wx=5;wx<45;wx+=15){
-          const on=Math.floor((s.scrollX/50+wx+wy)%3)===0;
-          ctx.fillStyle=on?'#fbbf2466':'#0f172a';
-          ctx.fillRect(bx+wx,H*0.4-bh+wy+5,8,8);
+    const loop = () => {
+      if (!s.running) return;
+      animRef.current = requestAnimationFrame(loop);
+      s.frame++;
+      const GRAVITY = 0.008;
+
+      if (!s.crashed) {
+        if (s.jumping) {
+          s.jumpVY -= GRAVITY; s.skaterY += s.jumpVY;
+          if (s.skaterY <= 0) { s.skaterY = 0; s.jumping = false; s.jumpVY = 0; }
         }
-      }
-
-      // Ground
-      ctx.fillStyle='#374151'; ctx.fillRect(0,s.baseY+5,W,H-s.baseY-5);
-      // Ground tiles (pixel art)
-      ctx.strokeStyle='#4b5563'; ctx.lineWidth=1;
-      for(let tx=(-s.scrollX%40+40)%40;tx<W;tx+=40) ctx.strokeRect(tx,s.baseY+5,40,H-s.baseY);
-      // Neon ground line
-      ctx.strokeStyle='#10b981'; ctx.lineWidth=2;
-      ctx.beginPath(); ctx.moveTo(0,s.baseY+4); ctx.lineTo(W,s.baseY+4); ctx.stroke();
-
-      // Physics
-      if(s.crashed){
-        s.crashTimer--; if(s.crashTimer<=0){ s.crashed=false; s.skaterY=s.baseY; }
-        s.skaterY=s.baseY;
       } else {
-        if(s.jumping){ s.jumpVY+=0.8; s.skaterY+=s.jumpVY; }
-        if(s.skaterY>=s.baseY){ s.skaterY=s.baseY; s.jumping=false; s.jumpVY=0; }
+        s.crashTimer--; if (s.crashTimer <= 0) { s.crashed = false; s.skaterY = 0; }
       }
 
-      // Spawn obstacles
+      if (skater) {
+        skater.position.y = s.baseY + s.skaterY;
+        skater.rotation.z = s.jumping ? -0.3 : Math.sin(s.frame * 0.2) * 0.03;
+        if (s.crashed) skater.rotation.z = Math.PI / 2;
+      }
+
+      // Obstacle spawning
       s.obsTimer++;
-      if(s.obsTimer>=70){
-        s.obsTimer=0;
-        const types:Obstacle['type'][]=['ramp','rail','gap','cone'];
-        const type=types[Math.floor(Math.random()*types.length)];
-        s.obstacles.push({x:W+30,type,passed:false});
+      if (s.obsTimer >= 80) {
+        s.obsTimer = 0;
+        const types = ['cone', 'rail', 'ramp', 'cone'];
+        const obs = makeObstacle(types[Math.floor(Math.random() * types.length)], scene, 6);
+        obstaclesRef.current.push(obs);
       }
 
-      // Update/draw obstacles
-      for(let i=s.obstacles.length-1;i>=0;i--){
-        const ob=s.obstacles[i]; ob.x-=s.speed;
-        if(ob.x<-60){ s.obstacles.splice(i,1); continue; }
-
-        // Draw obstacle
-        ctx.save(); ctx.shadowBlur=8; ctx.shadowColor='#ef4444';
-        switch(ob.type){
-          case 'ramp':
-            ctx.fillStyle='#78350f';
-            ctx.beginPath(); ctx.moveTo(ob.x,s.baseY+5); ctx.lineTo(ob.x+30,s.baseY+5);
-            ctx.lineTo(ob.x+30,s.baseY-25); ctx.closePath(); ctx.fill();
-            ctx.strokeStyle='#d97706'; ctx.lineWidth=2; ctx.stroke();
-            break;
-          case 'rail':
-            ctx.fillStyle='#94a3b8';
-            ctx.fillRect(ob.x,s.baseY-20,50,6);
-            ctx.fillRect(ob.x+5,s.baseY-20,4,20); ctx.fillRect(ob.x+41,s.baseY-20,4,20);
-            break;
-          case 'gap':
-            ctx.fillStyle='#0f172a';
-            ctx.fillRect(ob.x,s.baseY+4,40,H);
-            ctx.strokeStyle='#7c3aed'; ctx.lineWidth=2;
-            ctx.strokeRect(ob.x,s.baseY+4,40,20);
-            break;
-          case 'cone':
-            ctx.fillStyle='#f97316';
-            ctx.beginPath(); ctx.moveTo(ob.x+12,s.baseY-30); ctx.lineTo(ob.x,s.baseY+4); ctx.lineTo(ob.x+24,s.baseY+4); ctx.fill();
-            ctx.fillStyle='#fff'; ctx.fillRect(ob.x+4,s.baseY-10,16,4); ctx.fillRect(ob.x+4,s.baseY-20,16,4);
-            break;
-        }
-        ctx.restore();
-
-        // Collision detection
-        if(!ob.passed&&!s.crashed&&ob.x<s.skaterX+18&&ob.x+50>s.skaterX-18){
-          const grounded=Math.abs(s.skaterY-s.baseY)<2;
-          if(ob.type==='gap'&&grounded){
-            // Crash into gap
-            s.sig.crashes++; s.sig.comboCurrent=0; s.crashed=true; s.crashTimer=40;
+      // Move obstacles
+      for (let i = obstaclesRef.current.length - 1; i >= 0; i--) {
+        const obs = obstaclesRef.current[i];
+        obs.mesh.position.x -= s.speed * 60 * (1/60); // consistent
+        obs.mesh.position.x -= s.speed;
+        if (obs.mesh.position.x < -8) { scene.remove(obs.mesh); obstaclesRef.current.splice(i, 1); continue; }
+        // Collision
+        const dx = Math.abs(obs.mesh.position.x - (-2));
+        if (!obs.passed && !s.crashed && dx < 0.5) {
+          const onGround = Math.abs(s.skaterY) < 0.1;
+          if (obs.type !== 'rail' && onGround) {
+            s.sig.crashes++; s.sig.comboCurrent = 0;
+            s.crashed = true; s.crashTimer = 40;
             sfx.collision(); hapticFail();
-          } else if((ob.type==='ramp'||ob.type==='cone')&&grounded){
-            // Jump over ramp (award point) or crash into cone
-            if(ob.type==='cone'&&grounded){
-              s.sig.crashes++; s.sig.comboCurrent=0; s.crashed=true; s.crashTimer=30;
-              sfx.collision(); hapticFail();
-            } else { ob.passed=true; }
-          } else { ob.passed=true; }
-          if(!s.crashed) s.obstacles.splice(i,1);
+          } else {
+            obs.passed = true;
+          }
         }
       }
 
       // Particles
-      for(let i=s.particles.length-1;i>=0;i--){
-        const p=s.particles[i]; p.x+=p.vx; p.y+=p.vy; p.vy+=0.2; p.alpha*=0.9;
-        if(p.alpha<0.02){ s.particles.splice(i,1); continue; }
-        ctx.save(); ctx.globalAlpha=p.alpha; ctx.fillStyle=p.color;
-        ctx.fillRect(p.x-2,p.y-2,4,4); ctx.restore();
+      for (let i = particlesRef.current.length - 1; i >= 0; i--) {
+        const p = particlesRef.current[i];
+        p.mesh.position.x += p.vx; p.mesh.position.y += p.vy; p.mesh.position.z += p.vz;
+        p.vy -= 0.003; p.life -= 0.025;
+        (p.mesh.material as THREE.MeshStandardMaterial).opacity = p.life;
+        (p.mesh.material as THREE.MeshStandardMaterial).transparent = true;
+        if (p.life <= 0.05) { scene.remove(p.mesh); particlesRef.current.splice(i, 1); }
       }
 
-      // Draw skater
-      if(!s.crashed) drawPixelSkater(ctx,s.skaterX,s.skaterY,s.jumping,s.frame);
-      else {
-        // Crash animation
-        ctx.save(); ctx.translate(s.skaterX,s.skaterY); ctx.rotate(Math.PI/2);
-        drawPixelSkater(ctx,0,0,false,s.frame);
-        ctx.restore();
-      }
-
-      // Trick display
-      if(s.trickAlpha>0){
-        s.trickAlpha*=0.95;
-        ctx.save(); ctx.globalAlpha=s.trickAlpha;
-        ctx.fillStyle=ACCENT; ctx.font=`bold ${Math.round(W*0.06)}px sans-serif`;
-        ctx.textAlign='center'; ctx.shadowBlur=10; ctx.shadowColor=ACCENT;
-        ctx.fillText(s.trickDisplay,W/2,H*0.35); ctx.restore();
-      }
-
-      // Combo counter
-      if(s.sig.comboCurrent>=2){
-        ctx.fillStyle='#fbbf24'; ctx.font='bold 16px sans-serif'; ctx.textAlign='left';
-        ctx.fillText(`COMBO ×${s.sig.comboCurrent}`,10,70);
-      }
-
-      animRef.current=requestAnimationFrame(loop);
+      renderer.render(scene, camera);
     };
-    animRef.current=requestAnimationFrame(loop);
-  },[endGame]);
+    animRef.current = requestAnimationFrame(loop);
 
-  const performTrick = useCallback((dir:TrickInput)=>{
-    const s=stateRef.current; if(!s.running||s.crashed) return;
-    const trick=TRICKS[dir];
-    if(!s.jumping){ // must be in air for flip tricks, or grind on rail
-      if(dir==='down') {
-        // Grind: jump to start
-        if(!s.jumping){ s.jumping=true; s.jumpVY=-12; sfx.click(); return; }
+    return () => {
+      renderer.domElement.removeEventListener('pointerdown', onDown);
+      renderer.domElement.removeEventListener('pointerup', onUp);
+    };
+  }, [endGame, performTrick, makeObstacle]);
+
+  useEffect(() => {
+    const onResize = () => {
+      if (!cameraRef.current || !rendererRef.current) return;
+      const W = window.innerWidth, H = window.innerHeight;
+      cameraRef.current.aspect = W / H; cameraRef.current.updateProjectionMatrix();
+      rendererRef.current.setSize(W, H);
+    };
+    window.addEventListener('resize', onResize);
+    return () => {
+      window.removeEventListener('resize', onResize);
+      cancelAnimationFrame(animRef.current);
+      if (timerRef.current) clearInterval(timerRef.current);
+      if (rendererRef.current && mountRef.current) {
+        try { mountRef.current.removeChild(rendererRef.current.domElement); } catch { /**/ }
+        rendererRef.current.dispose();
       }
-      s.jumping=true; s.jumpVY=-14;
+    };
+  }, []);
+
+  const handleStart = useCallback((name: string, avatar: string) => {
+    playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar);
+    initAudio(); setPhase('countdown');
+  }, []);
+  const handleCountdownDone = useCallback(() => { startLoop(); }, [startLoop]);
+  const handlePlayAgain = useCallback(() => {
+    stateRef.current.running = false;
+    cancelAnimationFrame(animRef.current);
+    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+    if (rendererRef.current && mountRef.current) {
+      try { mountRef.current.removeChild(rendererRef.current.domElement); } catch { /**/ }
+      rendererRef.current.dispose(); rendererRef.current = null;
     }
-    // Land trick
-    s.sig.tricksLanded++; s.sig.comboCurrent++;
-    if(s.sig.comboCurrent>s.sig.maxCombo) s.sig.maxCombo=s.sig.comboCurrent;
-    const mult=Math.ceil(s.sig.comboCurrent/3);
-    const pts=trick.pts*mult; s.sig.score+=pts; s.sig.totalPoints+=pts;
-    s.trickDisplay=`${trick.name} +${pts}`; s.trickAlpha=1;
-    sfx.collect(); hapticScore();
-    if(s.sig.comboCurrent>=4) hapticCombo(s.sig.comboCurrent);
-    const canvas=canvasRef.current;
-    if(canvas) for(let p=0;p<8;p++) s.particles.push({
-      x:s.skaterX,y:s.skaterY, vx:(Math.random()-0.5)*10, vy:-4-Math.random()*4,
-      alpha:1, color:ACCENT
-    });
-    setScore(s.sig.score);
-  },[]);
+    obstaclesRef.current = []; particlesRef.current = [];
+    setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null); setTrickDisplay('');
+    setPhase('countdown');
+  }, []);
 
-  useEffect(()=>{
-    const canvas=canvasRef.current; if(!canvas) return;
-    const resize=()=>{ canvas.width=canvas.offsetWidth; canvas.height=canvas.offsetHeight; };
-    resize(); window.addEventListener('resize',resize);
-
-    const onPD=(e:PointerEvent)=>{
-      if(phase!=='playing') return;
-      stateRef.current.swipeStartX=e.clientX;
-      stateRef.current.swipeStartY=e.clientY;
-      stateRef.current.swipeStartTime=Date.now();
-      stateRef.current.isSwiping=true;
-    };
-    const onPU=(e:PointerEvent)=>{
-      if(phase!=='playing') return;
-      const s=stateRef.current; if(!s.isSwiping) return;
-      s.isSwiping=false;
-      const dx=e.clientX-s.swipeStartX, dy=e.clientY-s.swipeStartY;
-      const dist=Math.hypot(dx,dy);
-      if(dist<20) return; // tap, not swipe
-      let dir:TrickInput;
-      if(Math.abs(dx)>Math.abs(dy)) dir=dx>0?'right':'left';
-      else dir=dy<0?'up':'down';
-      performTrick(dir);
-    };
-    canvas.addEventListener('pointerdown',onPD);
-    canvas.addEventListener('pointerup',onPU);
-    return()=>{ window.removeEventListener('resize',resize);
-      canvas.removeEventListener('pointerdown',onPD); canvas.removeEventListener('pointerup',onPU); };
-  },[phase,performTrick]);
-
-  useEffect(()=>()=>{ cancelAnimationFrame(animRef.current); if(timerRef.current) clearInterval(timerRef.current); },[]);
-
-  const handleStart=useCallback(async(n:string,a:string)=>{
-    playerSessionRef.current=savePlayerSession(GAME_ID,n,a); await initAudio(); setPhase('countdown');
-  },[]);
-  const handlePlayAgain=useCallback(()=>{ setPhase('start'); setScore(0); setTimeLeft(DURATION); setFinalSig(null); },[]);
-
+  const accent = theme.colors.accent ?? ACCENT;
   return (
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent??ACCENT}>
-      {phase==='start'&&<GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description={GAME_TAGLINE}
-        ctaLabel="Drop In 🛹" accentColor={theme.colors.accent??ACCENT} onStart={handleStart}/>}
-      {phase==='countdown'&&<Countdown onComplete={startLoop} accentColor={theme.colors.accent??ACCENT}/>}
-      {(phase==='playing'||phase==='countdown')&&(
-        <><canvas ref={canvasRef} style={{position:'absolute',inset:0,width:'100%',height:'100%',touchAction:'none'}}
-            role="img" aria-label="Pixel skateboarding game canvas"/>
-          {phase==='playing'&&<GameHUD accentColor={theme.colors.accent??ACCENT}
-            items={[{label:'TIME',value:timeLeft,danger:timeLeft<=10},{label:'SCORE',value:scoreDisplay}]}/>}
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accent}
+      background="radial-gradient(ellipse at 50% 80%, rgba(16,185,129,0.1) 0%, transparent 60%), linear-gradient(180deg, #0a1218 0%, #060c10 100%)">
+      {phase === 'start' && (
+        <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description={GAME_TAGLINE}
+          ctaLabel="Drop In 🛹" accentColor={accent} onStart={handleStart} />
+      )}
+      {phase === 'countdown' && <Countdown onComplete={handleCountdownDone} accentColor={accent} />}
+      {(phase === 'playing' || phase === 'countdown') && (
+        <>
+          <div ref={mountRef} style={{ position: 'absolute', inset: 0, touchAction: 'none' }} />
+          {phase === 'playing' && (
+            <>
+              <GameHUD accentColor={accent} items={[
+                { label: 'TIME', value: timeLeft, danger: timeLeft <= 10, testId: 'timer' },
+                { label: 'SCORE', value: scoreDisplay, testId: 'score' },
+              ]} />
+              {trickDisplay && (
+                <div style={{ position: 'absolute', top: '35%', left: '50%', transform: 'translateX(-50%)',
+                  color: accent, fontSize: 'clamp(20px,5vw,32px)', fontWeight: 900, pointerEvents: 'none',
+                  textShadow: `0 0 20px ${accent}` }}>
+                  {trickDisplay}
+                </div>
+              )}
+              <div style={{ position: 'absolute', bottom: '8%', left: '50%', transform: 'translateX(-50%)',
+                color: 'rgba(255,255,255,0.35)', fontSize: 12, pointerEvents: 'none' }}>
+                ↑ Kickflip · ↓ Grind · ← Heelflip · → 360 Flip
+              </div>
+            </>
+          )}
         </>
       )}
-      {phase==='done'&&finalSig&&<EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI}
-        score={String(finalSig.score)} personality={getPersonality(finalSig)}
-        insights={[
-          {label:'Tricks',value:`${finalSig.tricksLanded}`,color:'#4ade80'},
-          {label:'Crashes',value:`${finalSig.crashes}`,color:finalSig.crashes===0?'#4ade80':'#ef4444'},
-          {label:'Max Combo',value:`×${finalSig.maxCombo}`,color:ACCENT},
-          {label:'Trick Points',value:`${finalSig.totalPoints}`,color:'#fbbf24'},
-        ]}
-        accentColor={theme.colors.accent??ACCENT} onPlayAgain={handlePlayAgain} didWin={finalSig.tricksLanded>=15}/>}
+      {phase === 'done' && finalSig && (
+        <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI}
+          score={String(finalSig.score)} personality={getPersonality(finalSig)}
+          insights={[
+            { label: 'Tricks', value: `${finalSig.tricksLanded}`, color: '#4ade80' },
+            { label: 'Crashes', value: `${finalSig.crashes}`, color: finalSig.crashes === 0 ? '#4ade80' : '#ef4444' },
+            { label: 'Max Combo', value: `×${finalSig.maxCombo}`, color: accent },
+            { label: 'Trick Points', value: `${finalSig.totalPoints}`, color: '#fbbf24' },
+          ]}
+          accentColor={accent} onPlayAgain={handlePlayAgain} didWin={finalSig.tricksLanded >= 15} />
+      )}
     </GameShell>
   );
 }

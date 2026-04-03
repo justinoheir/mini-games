@@ -1,5 +1,10 @@
 'use client';
+/**
+ * COSMIC CATCH — 3D: float through space and swipe glowing stars before they fade.
+ * Deep space environment with nebula clouds, planets in background, and 3D stars.
+ */
 import { useEffect, useRef, useState, useCallback } from 'react';
+import * as THREE from 'three';
 import GameShell from '@/components/GameShell';
 import GameHUD from '@/components/GameHUD';
 import GameStartScreen from '@/components/GameStartScreen';
@@ -18,297 +23,313 @@ const GAME_TITLE = 'Cosmic Catch';
 const GAME_TAGLINE = 'Swipe the stars before they fade.';
 
 type StarType = 'common'|'rare'|'super';
-const STAR_CONFIG: Record<StarType,{pts:number;color:string;r:number}> = {
-  common: {pts:1,color:'#a5b4fc',r:14},
-  rare:   {pts:3,color:'#fbbf24',r:20},
-  super:  {pts:5,color:'#f472b6',r:28},
+const STAR_CONFIG: Record<StarType,{pts:number;threeColor:number;r:number}> = {
+  common: {pts:1,threeColor:0xa5b4fc,r:0.25},
+  rare:   {pts:3,threeColor:0xfbbf24,r:0.38},
+  super:  {pts:5,threeColor:0xf472b6,r:0.55},
 };
+const STAR_TYPES: StarType[] = ['common','rare','super'];
 
-interface Star {
-  id:number; type:StarType; x:number; y:number;
-  vx:number; vy:number; alpha:number; lifespan:number; age:number;
-  caught:boolean; flashT:number;
-  twinkle:number; // phase offset
+interface Star3D {
+  id:number; type:StarType; mesh:THREE.Mesh; lifespan:number; age:number;
+  caught:boolean; flashT:number; vx:number; vy:number;
 }
 
 interface Signals {
-  starsCaught: number;
-  raresCaught: number;
-  supersCaught: number;
-  missed: number;
-  maxStreak: number;
-  streakCurrent: number;
-  score: number;
+  starsCaught:number; raresCaught:number; supersCaught:number;
+  missed:number; maxStreak:number; streakCurrent:number; score:number;
 }
 
-function getPersonality(s: Signals): string {
-  if (s.supersCaught>=3&&s.raresCaught>=5) return 'Cosmic Champion 🌌';
-  if (s.starsCaught>=20)                   return 'Star Collector ⭐';
-  if (s.missed>=10)                        return 'Too Slow! 🐢';
-  if (s.maxStreak>=8)                      return 'Constellation King 👑';
+function getPersonality(s:Signals):string {
+  if(s.supersCaught>=3&&s.raresCaught>=5) return 'Cosmic Champion 🌌';
+  if(s.starsCaught>=20)                   return 'Star Collector ⭐';
+  if(s.missed>=10)                        return 'Too Slow! 🐢';
+  if(s.maxStreak>=8)                      return 'Constellation King 👑';
   return 'Space Cadet 🚀';
 }
 
 type Phase = 'start'|'countdown'|'playing'|'done';
 interface GS {
-  running:boolean; timeLeft:number; sig:Signals; frame:number; accentColor:string;
-  stars:Star[]; nextId:number; spawnTimer:number;
-  swipeTrail:Array<{x:number;y:number;alpha:number}>;
-  lastSwipeX:number; lastSwipeY:number; swiping:boolean;
-  nebula:Array<{x:number;y:number;r:number;alpha:number;hue:number}>;
-  particles:Array<{x:number;y:number;vx:number;vy:number;alpha:number;color:string}>;
+  running:boolean;timeLeft:number;sig:Signals;
+  stars:Star3D[];nextId:number;spawnTimer:number;
+  accentColor:string;
 }
 
 export default function CosmicCatchGame() {
   const theme = useBrandTheme();
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const animRef   = useRef(0);
-  const timerRef  = useRef<ReturnType<typeof setInterval>|null>(null);
+  const accent = theme.colors.accent ?? ACCENT;
+
+  const mountRef    = useRef<HTMLDivElement>(null);
+  const rendererRef = useRef<THREE.WebGLRenderer|null>(null);
+  const sceneRef    = useRef<THREE.Scene|null>(null);
+  const cameraRef   = useRef<THREE.PerspectiveCamera|null>(null);
+  const rafRef      = useRef(0);
+  const timerRef    = useRef<ReturnType<typeof setInterval>|null>(null);
+  const playerSessionRef = useRef<PlayerSession|null>(null);
 
   const stateRef = useRef<GS>({
     running:false,timeLeft:DURATION,
     sig:{starsCaught:0,raresCaught:0,supersCaught:0,missed:0,maxStreak:0,streakCurrent:0,score:0},
-    frame:0,accentColor:ACCENT,
-    stars:[],nextId:0,spawnTimer:0,
-    swipeTrail:[],lastSwipeX:0,lastSwipeY:0,swiping:false,
-    nebula:[],particles:[],
+    stars:[],nextId:0,spawnTimer:0,accentColor:ACCENT,
   });
 
   const [phase,setPhase]        = useState<Phase>('start');
   const [timeLeft,setTimeLeft]  = useState(DURATION);
   const [scoreDisplay,setScore] = useState(0);
   const [finalSig,setFinalSig]  = useState<Signals|null>(null);
-  const playerSessionRef = useRef<PlayerSession|null>(null);
-  useEffect(()=>{ stateRef.current.accentColor=theme.colors.accent??ACCENT; },[theme]);
 
-  const endGame = useCallback(()=>{
-    const s=stateRef.current; s.running=false;
-    cancelAnimationFrame(animRef.current);
-    if(timerRef.current){ clearInterval(timerRef.current); timerRef.current=null; }
-    const pb=parseInt(localStorage.getItem('pb_'+GAME_ID)??"0");
-    if(s.sig.score>pb) localStorage.setItem('pb_'+GAME_ID,String(s.sig.score));
-    setFinalSig({...s.sig}); setPhase('done'); hapticVictory();
+  useEffect(()=>{stateRef.current.accentColor=accent;},[accent]);
+
+  // ── Three.js setup ──────────────────────────────────────────────────────
+  useEffect(()=>{
+    if(!mountRef.current)return;
+    const mount=mountRef.current;
+    const W=mount.clientWidth||window.innerWidth;const H=mount.clientHeight||window.innerHeight;
+
+    const renderer=new THREE.WebGLRenderer({antialias:true});
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio,2));
+    renderer.setSize(W,H);renderer.setClearColor(0x020612);
+    mount.appendChild(renderer.domElement);
+    rendererRef.current=renderer;
+
+    const scene=new THREE.Scene();
+    sceneRef.current=scene;
+
+    const camera=new THREE.PerspectiveCamera(70,W/H,0.1,100);
+    camera.position.set(0,0,8);
+    cameraRef.current=camera;
+
+    scene.add(new THREE.AmbientLight(0xffffff,0.3));
+    const pl=new THREE.PointLight(0x6366f1,4,20);
+    pl.position.set(0,3,5);scene.add(pl);
+    const pl2=new THREE.PointLight(0xf472b6,2,15);
+    pl2.position.set(-3,-2,3);scene.add(pl2);
+
+    // Background nebula spheres
+    const nebColors=[0x312e81,0x4c1d95,0x1e1b4b,0x0c4a6e];
+    for(let i=0;i<8;i++){
+      const geo=new THREE.SphereGeometry(1.5+Math.random()*2,16,16);
+      const mat=new THREE.MeshStandardMaterial({color:nebColors[i%nebColors.length],transparent:true,opacity:0.08+Math.random()*0.08,roughness:1});
+      const m=new THREE.Mesh(geo,mat);
+      m.position.set((Math.random()-0.5)*14,(Math.random()-0.5)*10,(Math.random()-0.5)*4-5);
+      scene.add(m);
+    }
+
+    // Background planets
+    const planetColors=[0x4338ca,0x7c3aed,0xbe185d];
+    for(let i=0;i<3;i++){
+      const geo=new THREE.SphereGeometry(0.6+Math.random()*0.5,20,20);
+      const mat=new THREE.MeshStandardMaterial({color:planetColors[i],metalness:0.2,roughness:0.6,emissive:planetColors[i],emissiveIntensity:0.2});
+      const m=new THREE.Mesh(geo,mat);
+      m.position.set(-4+i*4,(Math.random()-0.5)*3,-(Math.random()*3+2));
+      scene.add(m);
+    }
+
+    // Star field
+    const sgeo=new THREE.BufferGeometry();
+    const sp=new Float32Array(500*3);
+    for(let i=0;i<500;i++){sp[i*3]=(Math.random()-0.5)*24;sp[i*3+1]=(Math.random()-0.5)*24;sp[i*3+2]=(Math.random()-0.5)*8-5;}
+    sgeo.setAttribute('position',new THREE.BufferAttribute(sp,3));
+    scene.add(new THREE.Points(sgeo,new THREE.PointsMaterial({color:0xc7d2fe,size:0.06,sizeAttenuation:true})));
+
+    const onResize=()=>{
+      const W2=mount.clientWidth||window.innerWidth;const H2=mount.clientHeight||window.innerHeight;
+      renderer.setSize(W2,H2);camera.aspect=W2/H2;camera.updateProjectionMatrix();
+    };
+    window.addEventListener('resize',onResize);
+
+    let frame=0;
+    const render=()=>{
+      rafRef.current=requestAnimationFrame(render);
+      frame++;
+      const t=frame*0.016;
+      const s=stateRef.current;
+
+      // Update stars
+      const scene2=sceneRef.current;
+      if(scene2){
+        for(let i=s.stars.length-1;i>=0;i--){
+          const star=s.stars[i];
+          star.age++;
+          if(star.caught){
+            star.flashT++;
+            star.mesh.scale.setScalar(1+star.flashT*0.08);
+            (star.mesh.material as THREE.MeshStandardMaterial).opacity=1-star.flashT/15;
+            if(star.flashT>15){scene2.remove(star.mesh);s.stars.splice(i,1);}
+            continue;
+          }
+          // Float
+          star.mesh.position.x+=star.vx;
+          star.mesh.position.y+=star.vy;
+          star.mesh.rotation.y+=0.04;
+          star.mesh.rotation.x+=0.02;
+          // Fade
+          const life=star.age/star.lifespan;
+          const alpha=life<0.15?life/0.15:life>0.75?1-(life-0.75)/0.25:1;
+          (star.mesh.material as THREE.MeshStandardMaterial).opacity=alpha*0.9;
+          (star.mesh.material as THREE.MeshStandardMaterial).emissiveIntensity=0.5+Math.sin(t*4+i)*0.3;
+          if(star.age>=star.lifespan){
+            scene2.remove(star.mesh);s.stars.splice(i,1);
+            if(s.running){s.sig.missed++;s.sig.streakCurrent=0;}
+          }
+        }
+      }
+
+      // Camera drift
+      camera.position.x=Math.sin(t*0.18)*0.4;
+      camera.position.y=Math.cos(t*0.12)*0.25;
+      renderer.render(scene,camera);
+    };
+    render();
+
+    return()=>{
+      window.removeEventListener('resize',onResize);
+      cancelAnimationFrame(rafRef.current);
+      renderer.dispose();mount.removeChild(renderer.domElement);
+    };
   },[]);
 
-  const startLoop = useCallback(()=>{
-    const canvas=canvasRef.current; if(!canvas) return;
-    const ctx=canvas.getContext('2d'); if(!ctx) return;
-    const s=stateRef.current; const W=canvas.width,H=canvas.height;
-    s.running=true; s.timeLeft=DURATION; s.frame=0;
+  const endGame=useCallback(()=>{
+    const s=stateRef.current;s.running=false;
+    if(timerRef.current){clearInterval(timerRef.current);timerRef.current=null;}
+    const sig={...s.sig};
+    const pb=parseInt(localStorage.getItem(`pb_${GAME_ID}`)??'0');
+    if(sig.score>pb)localStorage.setItem(`pb_${GAME_ID}`,String(sig.score));
+    setFinalSig(sig);setPhase('done');hapticVictory();
+  },[]);
+
+  const spawnStar=useCallback(()=>{
+    const scene=sceneRef.current;if(!scene)return;
+    const s=stateRef.current;
+    const r=Math.random();
+    const type:StarType=r<0.6?'common':r<0.9?'rare':'super';
+    const cfg=STAR_CONFIG[type];
+    const geo=new THREE.SphereGeometry(cfg.r,14,14);
+    const mat=new THREE.MeshStandardMaterial({
+      color:cfg.threeColor,metalness:0.3,roughness:0.35,
+      emissive:cfg.threeColor,emissiveIntensity:0.6,
+      transparent:true,opacity:0.9,
+    });
+    const mesh=new THREE.Mesh(geo,mat);
+    mesh.position.set((Math.random()-0.5)*7,(Math.random()-0.5)*5,Math.random()*1.5);
+    mesh.userData.isStar=true;
+    scene.add(mesh);
+    s.stars.push({
+      id:s.nextId++,type,mesh,
+      lifespan:90+Math.floor(Math.random()*60),age:0,
+      caught:false,flashT:0,
+      vx:(Math.random()-0.5)*0.015,vy:(Math.random()-0.5)*0.015,
+    });
+  },[]);
+
+  const startLoop=useCallback(()=>{
+    const s=stateRef.current;
+    s.running=true;s.timeLeft=DURATION;
     s.sig={starsCaught:0,raresCaught:0,supersCaught:0,missed:0,maxStreak:0,streakCurrent:0,score:0};
-    s.stars=[]; s.nextId=0; s.spawnTimer=0; s.swipeTrail=[]; s.swiping=false;
-    s.particles=[];
-    s.nebula=Array.from({length:6},()=>({
-      x:Math.random()*W, y:Math.random()*H,
-      r:80+Math.random()*100, alpha:0.08+Math.random()*0.06,
-      hue:200+Math.random()*80
-    }));
-    setScore(0); setTimeLeft(DURATION); setPhase('playing');
+    s.stars=[];s.nextId=0;s.spawnTimer=0;
+    setScore(0);setTimeLeft(DURATION);setPhase('playing');
 
     timerRef.current=setInterval(()=>{
-      s.timeLeft--; setTimeLeft(s.timeLeft);
-      if(s.timeLeft<=0){ sfx.fail(); endGame(); }
+      const s2=stateRef.current;s2.timeLeft--;setTimeLeft(s2.timeLeft);
+      if(s2.timeLeft<=0){sfx.fail();endGame();}
     },1000);
 
-    const loop=()=>{
-      if(!s.running) return; s.frame++;
-      const W=canvas.width,H=canvas.height;
-
-      // Deep space background
-      ctx.fillStyle='#02040f'; ctx.fillRect(0,0,W,H);
-
-      // Nebula clouds
-      s.nebula.forEach(n=>{
-        n.x+=Math.sin(s.frame*0.004+n.hue)*0.2;
-        n.y+=Math.cos(s.frame*0.003+n.hue)*0.1;
-        const g=ctx.createRadialGradient(n.x,n.y,0,n.x,n.y,n.r);
-        g.addColorStop(0,`hsla(${n.hue},70%,30%,${n.alpha})`);
-        g.addColorStop(1,'transparent');
-        ctx.fillStyle=g; ctx.fillRect(n.x-n.r,n.y-n.r,n.r*2,n.r*2);
-      });
-
-      // Background stars (static)
-      for(let i=0;i<100;i++){
-        const bsx=((i*173+29)%W), bsy=((i*97+13)%H);
-        const ba=0.1+Math.sin(s.frame*0.03+i)*0.05;
-        ctx.fillStyle=`rgba(200,210,255,${ba})`; ctx.beginPath();
-        ctx.arc(bsx,bsy,0.7,0,Math.PI*2); ctx.fill();
-      }
-
-      // Spawn stars
-      s.spawnTimer++;
-      const spawnRate=s.sig.streakCurrent>=5?18:22;
-      if(s.spawnTimer>=spawnRate){
-        s.spawnTimer=0;
-        const roll=Math.random();
-        const type:StarType=roll<0.04?'super':roll<0.2?'rare':'common';
-        // Stars appear in patterns: spiral from center or crossing paths
-        const angle=Math.random()*Math.PI*2;
-        const dist=W*0.35+Math.random()*W*0.15;
-        const x=W/2+Math.cos(angle)*dist*(0.5+Math.random()*0.5);
-        const y=H/2+Math.sin(angle)*dist*(0.5+Math.random()*0.5);
-        // Move toward center slightly
-        const speed=0.4+Math.random()*0.6;
-        const vx=-Math.cos(angle)*speed*0.3+(Math.random()-0.5)*speed;
-        const vy=-Math.sin(angle)*speed*0.3+(Math.random()-0.5)*speed;
-        s.stars.push({id:s.nextId++,type,x:Math.max(30,Math.min(W-30,x)),y:Math.max(30,Math.min(H-30,y)),
-          vx,vy,alpha:0,lifespan:180+Math.random()*120,age:0,caught:false,flashT:0,
-          twinkle:Math.random()*Math.PI*2});
-      }
-
-      // Update swipe trail
-      for(let i=s.swipeTrail.length-1;i>=0;i--){
-        const t=s.swipeTrail[i]; t.alpha*=0.85;
-        if(t.alpha<0.02) s.swipeTrail.splice(i,1);
-      }
-
-      // Draw swipe trail
-      if(s.swipeTrail.length>1){
-        ctx.save(); ctx.strokeStyle=ACCENT; ctx.lineWidth=3; ctx.lineCap='round';
-        ctx.beginPath(); s.swipeTrail.forEach((t,i)=>{
-          ctx.globalAlpha=t.alpha; i===0?ctx.moveTo(t.x,t.y):ctx.lineTo(t.x,t.y);
-        }); ctx.stroke(); ctx.restore();
-      }
-
-      // Update and draw stars
-      for(let i=s.stars.length-1;i>=0;i--){
-        const st=s.stars[i];
-        if(st.caught){ st.flashT++; if(st.flashT>18) s.stars.splice(i,1); continue; }
-        st.age++; st.x+=st.vx; st.y+=st.vy;
-        // Fade in and out
-        st.alpha=Math.min(1,st.age/30)*Math.max(0,1-(st.age-st.lifespan+30)/30);
-        if(st.age>st.lifespan){ s.sig.missed++; s.sig.streakCurrent=0; s.stars.splice(i,1); continue; }
-
-        const cfg=STAR_CONFIG[st.type];
-        const twinkleA=st.alpha*(0.7+Math.sin(s.frame*0.15+st.twinkle)*0.3);
-
-        ctx.save(); ctx.globalAlpha=st.caught?1-st.flashT/18:twinkleA;
-        ctx.shadowBlur=cfg.r*1.5; ctx.shadowColor=cfg.color;
-        // Draw 5-pointed star
-        ctx.fillStyle=cfg.color;
-        ctx.beginPath();
-        for(let k=0;k<10;k++){
-          const r=k%2===0?cfg.r:cfg.r*0.45;
-          const a=k*Math.PI/5-Math.PI/2;
-          k===0?ctx.moveTo(st.x+r*Math.cos(a),st.y+r*Math.sin(a)):
-                ctx.lineTo(st.x+r*Math.cos(a),st.y+r*Math.sin(a));
-        }
-        ctx.closePath(); ctx.fill();
-        ctx.restore();
-      }
-
-      // Particles
-      for(let i=s.particles.length-1;i>=0;i--){
-        const p=s.particles[i]; p.x+=p.vx; p.y+=p.vy; p.vy+=0.1; p.alpha*=0.9;
-        if(p.alpha<0.02){ s.particles.splice(i,1); continue; }
-        ctx.save(); ctx.globalAlpha=p.alpha; ctx.fillStyle=p.color;
-        ctx.beginPath(); ctx.arc(p.x,p.y,3,0,Math.PI*2); ctx.fill(); ctx.restore();
-      }
-
-      // Streak indicator
-      if(s.sig.streakCurrent>=3){
-        const a=0.6+Math.sin(s.frame*0.2)*0.4;
-        ctx.save(); ctx.globalAlpha=a; ctx.fillStyle='#fbbf24';
-        ctx.font='bold 14px sans-serif'; ctx.textAlign='center';
-        ctx.fillText(`STREAK ×${s.sig.streakCurrent}! ⭐`,W/2,H-20); ctx.restore();
-      }
-
-      animRef.current=requestAnimationFrame(loop);
+    // Spawn loop
+    let spawnF=0;
+    const spawnLoop=()=>{
+      if(!stateRef.current.running)return;
+      spawnF++;
+      if(spawnF%50===0)spawnStar();
+      requestAnimationFrame(spawnLoop);
     };
-    animRef.current=requestAnimationFrame(loop);
-  },[endGame]);
+    spawnLoop();
+  },[endGame,spawnStar]);
 
-  const catchAtPoint = useCallback((x:number,y:number)=>{
-    const s=stateRef.current; if(!s.running) return;
-    for(const st of s.stars){
-      if(st.caught) continue;
-      const cfg=STAR_CONFIG[st.type];
-      if(Math.hypot(x-st.x,y-st.y)<=cfg.r+8){
-        st.caught=true;
-        s.sig.starsCaught++; s.sig.streakCurrent++;
-        if(st.type==='rare') s.sig.raresCaught++;
-        if(st.type==='super') s.sig.supersCaught++;
-        if(s.sig.streakCurrent>s.sig.maxStreak) s.sig.maxStreak=s.sig.streakCurrent;
-        const mult=s.sig.streakCurrent>=4?2:1;
-        const pts=cfg.pts*mult; s.sig.score+=pts;
-        setScore(s.sig.score);
-        if(st.type==='super'){ sfx.success(); hapticCombo(5); }
-        else if(st.type==='rare'){ sfx.collect(); hapticCombo(3); }
-        else { sfx.click(); hapticScore(); }
-        for(let p=0;p<8;p++) s.particles.push({
-          x:st.x,y:st.y, vx:(Math.random()-0.5)*10, vy:(Math.random()-0.5)*10,
-          alpha:1, color:cfg.color
-        });
-      }
-    }
-  },[]);
-
+  // Swipe/tap to catch stars
   useEffect(()=>{
-    const canvas=canvasRef.current; if(!canvas) return;
-    const resize=()=>{ canvas.width=canvas.offsetWidth; canvas.height=canvas.offsetHeight; };
-    resize(); window.addEventListener('resize',resize);
+    const mount=mountRef.current;if(!mount)return;
+    let swipeStartX=0,swipeStartY=0;
 
-    const getXY=(e:PointerEvent)=>{
-      const rect=canvas.getBoundingClientRect();
-      return {x:(e.clientX-rect.left)*(canvas.width/rect.width),y:(e.clientY-rect.top)*(canvas.height/rect.height)};
+    const catchAt=(cx:number,cy:number)=>{
+      const s=stateRef.current;if(!s.running)return;
+      const renderer=rendererRef.current;const camera=cameraRef.current;const scene=sceneRef.current;
+      if(!renderer||!camera||!scene)return;
+      const rect=mount.getBoundingClientRect();
+      const x=((cx-rect.left)/rect.width)*2-1;
+      const y=-((cy-rect.top)/rect.height)*2+1;
+      const raycaster=new THREE.Raycaster();
+      raycaster.params.Points={threshold:0.5};
+      raycaster.setFromCamera(new THREE.Vector2(x,y),camera);
+      const meshes=s.stars.filter(st=>!st.caught).map(st=>st.mesh);
+      const hits=raycaster.intersectObjects(meshes);
+      if(hits.length>0){
+        const hitMesh=hits[0].object as THREE.Mesh;
+        const star=s.stars.find(st=>st.mesh===hitMesh);
+        if(star&&!star.caught){
+          star.caught=true;
+          s.sig.starsCaught++;
+          if(star.type==='rare')s.sig.raresCaught++;
+          if(star.type==='super')s.sig.supersCaught++;
+          s.sig.streakCurrent++;
+          if(s.sig.streakCurrent>s.sig.maxStreak)s.sig.maxStreak=s.sig.streakCurrent;
+          const mult=s.sig.streakCurrent>=5?2:1;
+          const pts=STAR_CONFIG[star.type].pts*mult;
+          s.sig.score+=pts;setScore(s.sig.score);
+          sfx.collect();if(star.type==='super')hapticCombo();else hapticScore();
+          const mat=hitMesh.material as THREE.MeshStandardMaterial;
+          mat.emissive.setHex(0xffffff);mat.emissiveIntensity=3;
+          mat.transparent=true;
+        }
+      }
     };
 
-    const onPD=(e:PointerEvent)=>{
-      if(phase!=='playing') return;
-      const s=stateRef.current; const {x,y}=getXY(e);
-      s.swiping=true; s.lastSwipeX=x; s.lastSwipeY=y;
-      s.swipeTrail.push({x,y,alpha:0.8});
-      catchAtPoint(x,y);
+    const onPointerDown=(e:PointerEvent)=>{
+      if(phase!=='playing')return;
+      swipeStartX=e.clientX;swipeStartY=e.clientY;
+      catchAt(e.clientX,e.clientY);
     };
-    const onPM=(e:PointerEvent)=>{
-      if(phase!=='playing'||!(e.buttons>0)) return;
-      const s=stateRef.current; const {x,y}=getXY(e);
-      s.swipeTrail.push({x,y,alpha:0.8});
-      if(s.swipeTrail.length>20) s.swipeTrail.shift();
-      // Catch along swipe path
-      const dx=x-s.lastSwipeX, dy=y-s.lastSwipeY;
-      const steps=Math.ceil(Math.hypot(dx,dy)/12)+1;
-      for(let t=0;t<=steps;t++) catchAtPoint(s.lastSwipeX+dx*(t/steps),s.lastSwipeY+dy*(t/steps));
-      s.lastSwipeX=x; s.lastSwipeY=y;
+    const onPointerMove=(e:PointerEvent)=>{
+      if(phase!=='playing'||!(e.buttons&1))return;
+      catchAt(e.clientX,e.clientY);
     };
-    const onPU=()=>{ stateRef.current.swiping=false; };
 
-    canvas.addEventListener('pointerdown',onPD);
-    canvas.addEventListener('pointermove',onPM);
-    canvas.addEventListener('pointerup',onPU);
-    return()=>{ window.removeEventListener('resize',resize);
-      canvas.removeEventListener('pointerdown',onPD); canvas.removeEventListener('pointermove',onPM);
-      canvas.removeEventListener('pointerup',onPU); };
-  },[phase,catchAtPoint]);
+    mount.addEventListener('pointerdown',onPointerDown);
+    mount.addEventListener('pointermove',onPointerMove);
+    return()=>{
+      mount.removeEventListener('pointerdown',onPointerDown);
+      mount.removeEventListener('pointermove',onPointerMove);
+    };
+  },[phase]);
 
-  useEffect(()=>()=>{ cancelAnimationFrame(animRef.current); if(timerRef.current) clearInterval(timerRef.current); },[]);
+  useEffect(()=>()=>{cancelAnimationFrame(rafRef.current);if(timerRef.current)clearInterval(timerRef.current);},[]);
 
-  const handleStart=useCallback(async(n:string,a:string)=>{
-    playerSessionRef.current=savePlayerSession(GAME_ID,n,a); await initAudio(); setPhase('countdown');
+  const handleStart=useCallback((name:string,avatar:string)=>{
+    playerSessionRef.current=savePlayerSession(GAME_ID,name,avatar);initAudio();setPhase('countdown');
   },[]);
-  const handlePlayAgain=useCallback(()=>{ setPhase('start'); setScore(0); setTimeLeft(DURATION); setFinalSig(null); },[]);
+  const handleCountdownDone=useCallback(()=>{startLoop();},[startLoop]);
+  const handlePlayAgain=useCallback(()=>{setPhase('start');setScore(0);setTimeLeft(DURATION);setFinalSig(null);},[]);
 
-  return (
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent??ACCENT}>
-      {phase==='start'&&<GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description={GAME_TAGLINE}
-        ctaLabel="Launch Into Space 🚀" accentColor={theme.colors.accent??ACCENT} onStart={handleStart}/>}
-      {phase==='countdown'&&<Countdown onComplete={startLoop} accentColor={theme.colors.accent??ACCENT}/>}
+  return(
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accent}>
+      {phase==='start'&&<GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description={GAME_TAGLINE} ctaLabel="Launch! 🚀" accentColor={accent} onStart={handleStart}/>}
+      {phase==='countdown'&&<Countdown onComplete={handleCountdownDone} accentColor={accent}/>}
       {(phase==='playing'||phase==='countdown')&&(
-        <><canvas ref={canvasRef} style={{position:'absolute',inset:0,width:'100%',height:'100%',touchAction:'none'}}
-            role="img" aria-label="Cosmic star catching canvas"/>
-          {phase==='playing'&&<GameHUD accentColor={theme.colors.accent??ACCENT}
-            items={[{label:'TIME',value:timeLeft,danger:timeLeft<=10},{label:'SCORE',value:scoreDisplay}]}/>}
+        <>
+          <div ref={mountRef} style={{position:'absolute',inset:0,width:'100%',height:'100%',touchAction:'none'}}/>
+          {phase==='playing'&&<GameHUD accentColor={accent} items={[{label:'TIME',value:timeLeft,danger:timeLeft<=5},{label:'SCORE',value:scoreDisplay}]}/>}
         </>
       )}
-      {phase==='done'&&finalSig&&<EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI}
-        score={String(finalSig.score)} personality={getPersonality(finalSig)}
-        insights={[
-          {label:'Stars Caught',value:`${finalSig.starsCaught}`,color:'#a5b4fc'},
-          {label:'Rare ⭐',value:`${finalSig.raresCaught}`,color:'#fbbf24'},
-          {label:'Super 🌟',value:`${finalSig.supersCaught}`,color:'#f472b6'},
-          {label:'Best Streak',value:`×${finalSig.maxStreak}`,color:ACCENT},
-        ]}
-        accentColor={theme.colors.accent??ACCENT} onPlayAgain={handlePlayAgain} didWin={finalSig.starsCaught>=15}/>}
+      {phase==='done'&&finalSig&&(
+        <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI}
+          score={String(finalSig.score)} personality={getPersonality(finalSig)}
+          insights={[
+            {label:'Stars Caught',value:String(finalSig.starsCaught),color:finalSig.starsCaught>=15?'#4ade80':'#facc15'},
+            {label:'Supers',value:String(finalSig.supersCaught),color:'#f472b6'},
+            {label:'Max Streak',value:`×${finalSig.maxStreak}`,color:'#fbbf24'},
+            {label:'Missed',value:String(finalSig.missed),color:finalSig.missed<=3?'#4ade80':'#ef4444'},
+          ]}
+          accentColor={accent} onPlayAgain={handlePlayAgain} didWin={finalSig.starsCaught>=10}/>
+      )}
     </GameShell>
   );
 }
