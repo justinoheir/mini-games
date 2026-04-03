@@ -1,6 +1,6 @@
 'use client';
 /**
- * LASER GUIDE — 3D laser beams bouncing through space with draggable mirrors.
+ * LASER GUIDE â€” 3D laser beams bouncing through space with draggable mirrors.
  */
 import { useEffect, useRef, useState, useCallback } from 'react';
 import * as THREE from 'three';
@@ -17,7 +17,7 @@ import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
 const GAME_ID = 'laser-guide';
 const ACCENT = '#dc2626';
 const DURATION = 45;
-const GAME_EMOJI = '🔴';
+const GAME_EMOJI = 'ðŸ”´';
 const GAME_TITLE = 'Laser Guide';
 const GAME_TAGLINE = 'Reflect the beam. Hit the target.';
 
@@ -25,11 +25,11 @@ interface MirrorObj { mesh: THREE.Mesh; id: number; angle: number; }
 interface Signals { puzzlesSolved: number; movesUsed: number; perfectSolves: number; maxStreak: number; streakCurrent: number; score: number; }
 
 function getPersonality(sig: Signals): string {
-  if (sig.perfectSolves >= 3 && sig.maxStreak >= 3) return 'Laser Wizard 🔴';
-  if (sig.puzzlesSolved >= 5) return 'Optics Expert 🔬';
-  if (sig.maxStreak >= 3) return 'Reflective Thinker 🪞';
-  if (sig.puzzlesSolved >= 2) return 'Getting in Focus 🎯';
-  return 'Learning to Reflect 💡';
+  if (sig.perfectSolves >= 3 && sig.maxStreak >= 3) return 'Laser Wizard ðŸ”´';
+  if (sig.puzzlesSolved >= 5) return 'Optics Expert ðŸ”¬';
+  if (sig.maxStreak >= 3) return 'Reflective Thinker ðŸªž';
+  if (sig.puzzlesSolved >= 2) return 'Getting in Focus ðŸŽ¯';
+  return 'Learning to Reflect ðŸ’¡';
 }
 
 type Phase = 'start' | 'countdown' | 'playing' | 'done';
@@ -298,7 +298,7 @@ export default function LaserGuideGame() {
       // Update laser line
       if (s.laserLine) {
         s.laserLine.geometry.setFromPoints(pts);
-        // geometry is rebuilt via setFromPoints � no needsUpdate needed
+        // geometry is rebuilt via setFromPoints — no needsUpdate needed
       }
 
       // Check if hitting target
@@ -397,7 +397,7 @@ export default function LaserGuideGame() {
   return (
     <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}
       background="linear-gradient(180deg,#030812 0%,#050a1a 100%)">
-      {phase === 'start' && <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description="Drag mirrors to reflect the 3D laser beam into the target!" ctaLabel="Reflect! 🔴" accentColor={theme.colors.accent ?? ACCENT} onStart={handleStart} />}
+      {phase === 'start' && <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description="Drag mirrors to reflect the 3D laser beam into the target!" ctaLabel="Reflect! ðŸ”´" accentColor={theme.colors.accent ?? ACCENT} onStart={handleStart} />}
       {phase === 'countdown' && <Countdown onComplete={startLoop} accentColor={theme.colors.accent ?? ACCENT} />}
       <div ref={mountRef} style={{ position: 'absolute', inset: 0, display: phase === 'playing' ? 'block' : 'none', touchAction: 'none' }} />
       {phase === 'playing' && <GameHUD accentColor={theme.colors.accent ?? ACCENT} items={[{ label: 'TIME', value: timeLeft, danger: timeLeft <= 10 }, { label: 'SCORE', value: scoreDisplay }]} />}
@@ -406,7 +406,7 @@ export default function LaserGuideGame() {
           insights={[
             { label: 'Puzzles Solved', value: String(finalSig.puzzlesSolved), color: ACCENT },
             { label: 'Efficient Solves', value: String(finalSig.perfectSolves), color: '#fbbf24' },
-            { label: 'Best Streak', value: `×${finalSig.maxStreak}`, color: '#4ade80' },
+            { label: 'Best Streak', value: `Ã—${finalSig.maxStreak}`, color: '#4ade80' },
             { label: 'Mirror Moves', value: String(finalSig.movesUsed), color: '#06b6d4' },
           ]}
           accentColor={theme.colors.accent ?? ACCENT} onPlayAgain={handlePlayAgain} didWin={finalSig.puzzlesSolved >= 3} />
