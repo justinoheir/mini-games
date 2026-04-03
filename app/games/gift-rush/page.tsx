@@ -316,7 +316,7 @@ export default function GiftRushGame() {
     ];
   };
 
-  const cardVariants = {
+  const cardVariants: import("framer-motion").Variants = {
     entering: { x: 0, y: -30, rotate: 0, opacity: 0, scale: 0.85 },
     idle: { x: cardDx, y: 0, rotate: cardDx * 0.04, opacity: 1, scale: 1, transition: { type: 'spring', stiffness: 300, damping: 25 } },
     'exiting-right': { x: 400, y: -30, rotate: 20, opacity: 0, transition: { duration: 0.32 } },

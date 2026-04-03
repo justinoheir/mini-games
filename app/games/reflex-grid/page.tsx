@@ -153,7 +153,7 @@ export default function ReflexGridGame() {
         const tileMat = new THREE.MeshStandardMaterial({ color: 0x1a0000, emissive: 0xef4444, emissiveIntensity: 0, roughness: 0.4, metalness: 0.5 });
         const tile = new THREE.Mesh(tileGeo, tileMat);
         tile.position.set(c * SPACING - offset, -(r * SPACING - offset), 0);
-        tile.userData = { col, row: r, active: false };
+        tile.userData = { col: c, row: r, active: false };
         scene.add(tile);
         cellMeshesRef.current[r][c] = tile;
       }

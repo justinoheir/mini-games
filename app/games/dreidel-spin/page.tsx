@@ -222,7 +222,7 @@ export default function DreidelSpinGame() {
       }
 
       // Target ring pulse
-      const r=scene.children.find(c=>c.geometry instanceof THREE.TorusGeometry) as THREE.Mesh;
+      const r=scene.children.find(c=>(c as THREE.Mesh).geometry instanceof THREE.TorusGeometry) as THREE.Mesh;
       if(r)(r.material as THREE.MeshStandardMaterial).emissiveIntensity=0.6+Math.sin(t*3)*0.4;
 
       renderer.render(scene,camera);

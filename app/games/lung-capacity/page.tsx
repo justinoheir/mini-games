@@ -187,7 +187,7 @@ export default function LungCapacityGame() {
 
       // Get microphone volume
       if (analyserRef.current && s.analyserBuf) {
-        analyserRef.current.getByteFrequencyData(s.analyserBuf);
+        analyserRef.current.getByteFrequencyData(s.analyserBuf as Uint8Array<ArrayBuffer>);
         let sum = 0;
         for (let i = 0; i < s.analyserBuf.length; i++) sum += s.analyserBuf[i];
         const vol = sum / s.analyserBuf.length / 255;

@@ -100,7 +100,7 @@ export default function LanternFloatGame() {
     lanterns: [] as FloatingLantern[],
     currentLantern: null as FloatingLantern | null,
     holding: false, holdStart: 0, currentFill: 0,
-    stars: [] as THREE.Points,
+    stars: null as THREE.Points | null,
     particles: [] as { mesh: THREE.Mesh; vx: number; vy: number; vz: number; life: number }[],
     scene: null as THREE.Scene | null,
     renderer: null as THREE.WebGLRenderer | null,

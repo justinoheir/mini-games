@@ -169,7 +169,7 @@ export default function GameDiscusSpin() {
               sfx.success();hapticScore();
             } else {sfx.collision();hapticFail();s.sig.streakCurrent=0;}
             hapticImpact();
-            const discMat2=disc.children[0].material as THREE.MeshStandardMaterial;
+            const discMat2=(disc.children[0] as THREE.Mesh).material as THREE.MeshStandardMaterial;
             discMat2.emissive.setHex(pts>=5?0xfbbf24:pts>0?0x22c55e:0xef4444);
             discMat2.emissiveIntensity=2;
             setTimeout(()=>{discMat2.emissive.setHex(0x10b981);discMat2.emissiveIntensity=0.3;disc.position.set(-2.5,0.5,3);},700);
@@ -178,7 +178,7 @@ export default function GameDiscusSpin() {
           // Idle spin/wobble showing charge
           disc.position.set(-2.5+Math.sin(t*0.8)*0.08,0.5+Math.sin(t*1.5)*0.04,3);
           disc.rotation.y+=0.02+s.chargeLevel*0.15;
-          const dMat=disc.children[0].material as THREE.MeshStandardMaterial;
+          const dMat=(disc.children[0] as THREE.Mesh).material as THREE.MeshStandardMaterial;
           dMat.emissiveIntensity=0.3+s.chargeLevel*0.8;
         }
       }

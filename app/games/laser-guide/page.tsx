@@ -278,7 +278,7 @@ export default function LaserGuideGame() {
       // Update laser line
       if (s.laserLine) {
         s.laserLine.geometry.setFromPoints(pts);
-        s.laserLine.geometry.needsUpdate = true;
+        // geometry is rebuilt via setFromPoints — no needsUpdate needed
       }
 
       // Check if hitting target

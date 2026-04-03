@@ -146,7 +146,7 @@ export default function GearGrindGame() {
       scene.add(gLight);
 
       const gear: Gear3D = {
-        mesh: gearGroup.children[0] as THREE.Mesh, teeth: [],
+        mesh: gearGroup.children[0] as THREE.Mesh, teeth: [], light: gLight,
         x: gx, y: gy, r, speed: 0.02, color,
         id: s.nextId++, slotId: shuffledOrder[i], placed: false,
         order: shuffledOrder[i],

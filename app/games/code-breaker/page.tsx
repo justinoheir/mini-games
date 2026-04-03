@@ -346,7 +346,7 @@ export default function CodeBreakerGame() {
         if (digit !== undefined) {
           handleDigitTap(digit);
           // Flash the tile
-          const mat = hits[0].object.material as THREE.MeshStandardMaterial;
+          const mat = (hits[0].object as THREE.Mesh).material as THREE.MeshStandardMaterial;
           mat.emissiveIntensity = 2;
           setTimeout(() => { mat.emissiveIntensity = 0.2; }, 200);
         }

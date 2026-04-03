@@ -265,7 +265,7 @@ export default function HumMazeGame() {
       // Pitch detection
       if (now - s.lastDetectTs >= 50 && analyserRef.current && s.pitchBuf && audioCtxRef.current) {
         s.lastDetectTs = now;
-        analyserRef.current.getFloatTimeDomainData(s.pitchBuf);
+        analyserRef.current.getFloatTimeDomainData(s.pitchBuf as Float32Array<ArrayBuffer>);
         s.pitch = autoCorrelate(s.pitchBuf, audioCtxRef.current.sampleRate);
         if (s.pitch > 0) { s.pitchSum += s.pitch; s.pitchCount++; }
       }

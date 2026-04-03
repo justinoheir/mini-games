@@ -186,14 +186,14 @@ export default function PatternPredict() {
         const pts = Math.max(1, 5 - Math.floor(rt / 1500)) * (s.sig.streakCurrent >= 3 ? 2 : 1);
         s.sig.score += pts; setScoreDisplay(s.sig.score);
         s.sig.level = Math.min(7, s.sig.level + 1);
-        (hits[0].object.material as THREE.MeshStandardMaterial).emissive.set(0x4ade80);
-        (hits[0].object.material as THREE.MeshStandardMaterial).emissiveIntensity = 3;
+        ((hits[0].object as THREE.Mesh).material as THREE.MeshStandardMaterial).emissive.set(0x4ade80);
+        ((hits[0].object as THREE.Mesh).material as THREE.MeshStandardMaterial).emissiveIntensity = 3;
         sfx.collect(); hapticScore();
       } else {
         s.sig.wrong++; s.sig.streakCurrent = 0;
         s.sig.level = Math.max(1, s.sig.level - 1);
-        (hits[0].object.material as THREE.MeshStandardMaterial).emissive.set(0xef4444);
-        (hits[0].object.material as THREE.MeshStandardMaterial).emissiveIntensity = 3;
+        ((hits[0].object as THREE.Mesh).material as THREE.MeshStandardMaterial).emissive.set(0xef4444);
+        ((hits[0].object as THREE.Mesh).material as THREE.MeshStandardMaterial).emissiveIntensity = 3;
         sfx.collision(); hapticFail();
       }
       setTimeout(() => { if (s.running) buildQuestion(); }, 600);

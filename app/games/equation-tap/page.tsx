@@ -286,7 +286,7 @@ export default function EquationTapGame() {
       } else {
         s.sig.streakCurrent = 0;
         mat.emissive.set(0xef4444);
-        setTimeout(() => { mat.emissive.set(new THREE.Color(tile.material as THREE.MeshStandardMaterial).color ?? 0); mat.emissiveIntensity = 0.2; }, 400);
+        setTimeout(() => { mat.emissive.set((tile.material as THREE.MeshStandardMaterial).color); mat.emissiveIntensity = 0.2; }, 400);
         // Show correct
         const correctTile = t.answerTiles.find(tl => tl.userData.correct);
         if (correctTile) (correctTile.material as THREE.MeshStandardMaterial).emissiveIntensity = 1.0;

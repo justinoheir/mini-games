@@ -70,7 +70,7 @@ export default function RhythmRepeatGame() {
     pattern: [] as Beat[],
     playerTaps: [] as number[],
     inputStartMs: 0, showBeatIdx: -1, activeBeat: false, activeBeatTimer: 0,
-    level: 1, resultTimer: 0, success: false,
+    level: 1, sequenceLen: 3, resultTimer: 0, success: false,
     drumPulse: 0, drumFlash: 0,
     particles: [] as { mesh: THREE.Mesh; vx: number; vy: number; vz: number; life: number }[],
   });

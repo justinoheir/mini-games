@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
+import * as THREE from 'three';
 import GameShell from '@/components/GameShell';
 import GameHUD from '@/components/GameHUD';
 import GameStartScreen from '@/components/GameStartScreen';
@@ -16,7 +17,6 @@ const DURATION = 45;
 const GAME_EMOJI = '⚾';
 const GAME_TITLE = 'Baseball Swing';
 const GAME_TAGLINE = 'Time your swing. Hit it out of the park!';
-const BG_COLOR = '#0d0a04';
 const MUSIC_PAT: import('@/lib/audio').MusicPattern = 'sports';
 const PB_KEY = 'mg_pb_baseball-swing';
 
@@ -33,80 +33,321 @@ function getPersonality(sig: Signals): string {
   return '🏟️ Solid Contact';
 }
 type Phase = 'start' | 'countdown' | 'playing' | 'done';
-function WebhookEmitter({ theme, sig, personality, player }: { theme: ReturnType<typeof useBrandTheme>; sig: Signals; personality: string; player: PlayerSession | null; }) {
-  const fired = useRef(false);
-  useEffect(() => { if (fired.current) return; fired.current = true; postWebhook(theme, GAME_ID, { personality, score: sig.score }, player); }, [theme, sig, personality, player]);
-  return null;
-}
 
 type PitchType = 'fastball' | 'curveball' | 'slider';
 interface Pitch {
-  t: number; // 0→1 progress
-  speed: number;
-  type: PitchType;
-  startX: number; endX: number;
-  startY: number; endY: number;
-  curve: number; // extra curve offset
+  t: number; speed: number; type: PitchType;
+  startX: number; endX: number; curve: number;
+}
+
+interface GS {
+  running: boolean; timeLeft: number; sig: Signals;
+  renderer: THREE.WebGLRenderer | null;
+  scene: THREE.Scene | null;
+  camera: THREE.PerspectiveCamera | null;
+  animId: number;
+  ball: THREE.Mesh | null;
+  ballTrail: THREE.Mesh[];
+  bat: THREE.Group | null;
+  pitchState: 'idle' | 'incoming' | 'hit' | 'miss';
+  pitch: Pitch | null;
+  strikes: number;
+  batSwinging: boolean; batAngle: number; batT: number;
+  hitType: '' | 'homer' | 'hit';
+  popText: string; popAlpha: number;
+  hitAnim: number;
+  lastTs: number;
+  frame: number;
+  pitchLabel: string;
+  intervalId: ReturnType<typeof setInterval> | null;
+  stopMusic: (() => void) | null;
+  strikeZoneMesh: THREE.Mesh | null;
+  particles: Array<{ mesh: THREE.Mesh; vx: number; vy: number; vz: number; life: number }>;
+  textSprites: Array<{ sprite: THREE.Sprite; life: number; vy: number }>;
 }
 
 export default function BaseballSwingGame() {
   const theme = useBrandTheme();
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const animRef = useRef(0);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const stopMusicRef = useRef<(() => void) | null>(null);
+  const mountRef = useRef<HTMLDivElement>(null);
   const swipeStartRef = useRef<{ x: number; y: number; t: number } | null>(null);
-  const stateRef = useRef({
+  const stateRef = useRef<GS>({
     running: false, timeLeft: DURATION,
-    sig: { score: 0, hits: 0, attempts: 0, reactionTimes: [] as number[], maxStreak: 0, streakCurrent: 0 },
-    pitch: null as Pitch | null,
-    pitchState: 'idle' as 'idle' | 'incoming' | 'hit' | 'miss' | 'swingEarly',
-    strikes: 0,
-    batAngle: 0, batSwinging: false, batT: 0,
-    hitType: '' as '' | 'homer' | 'hit' | 'foul',
-    popText: '', popAlpha: 0, popX: 0, popY: 0,
-    ballTrail: [] as { x: number; y: number; r: number }[],
-    lastTs: 0, hitAnim: 0,
-    pitchLabel: '',
+    sig: { score: 0, hits: 0, attempts: 0, reactionTimes: [], maxStreak: 0, streakCurrent: 0 },
+    renderer: null, scene: null, camera: null, animId: 0,
+    ball: null, ballTrail: [], bat: null,
+    pitchState: 'idle', pitch: null, strikes: 0,
+    batSwinging: false, batAngle: 0, batT: 0,
+    hitType: '', popText: '', popAlpha: 0,
+    hitAnim: 0, lastTs: 0, frame: 0, pitchLabel: '',
+    intervalId: null, stopMusic: null, strikeZoneMesh: null,
+    particles: [], textSprites: [],
   });
+
   const [phase, setPhase] = useState<Phase>('start');
   const [timeLeft, setTimeLeft] = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
   const [finalSig, setFinalSig] = useState<Signals | null>(null);
   const playerSessionRef = useRef<PlayerSession | null>(null);
 
+  const endGame = useCallback(() => {
+    const s = stateRef.current;
+    s.running = false;
+    cancelAnimationFrame(s.animId);
+    if (s.intervalId) { clearInterval(s.intervalId); s.intervalId = null; }
+    if (s.stopMusic) { s.stopMusic(); s.stopMusic = null; }
+    if (s.renderer) { s.renderer.dispose(); s.renderer = null; }
+    if (mountRef.current) mountRef.current.innerHTML = '';
+    setFinalSig({ ...s.sig });
+    setPhase('done');
+  }, []);
+
   const newPitch = useCallback(() => {
     const s = stateRef.current;
+    if (!s.ball || !s.scene) return;
     const types: PitchType[] = ['fastball', 'curveball', 'slider'];
     const type = types[Math.floor(Math.random() * (s.sig.hits < 3 ? 1 : 3))];
     const speedBase = 0.006 + Math.min(s.sig.hits * 0.0003, 0.005);
     s.pitch = {
       t: 0, type,
       speed: speedBase + (type === 'fastball' ? 0.002 : 0),
-      startX: 0.5, startY: 0.18,
-      endX: 0.5 + (type === 'slider' ? 0.12 : type === 'curveball' ? -0.1 : 0) + (Math.random() - 0.5) * 0.06,
-      endY: 0.68,
-      curve: type === 'curveball' ? 0.12 : type === 'slider' ? 0.08 : 0,
+      startX: 0,
+      endX: (type === 'slider' ? 1.2 : type === 'curveball' ? -1.0 : 0) + (Math.random() - 0.5) * 0.4,
+      curve: type === 'curveball' ? 1.5 : type === 'slider' ? 1.0 : 0,
     };
     s.pitchLabel = type.charAt(0).toUpperCase() + type.slice(1);
     s.pitchState = 'incoming';
     s.sig.attempts++;
+    // Reset ball position to pitcher's mound
+    s.ball.position.set(s.pitch.startX, 2.5, -25);
+    s.ball.visible = true;
+    s.ball.scale.setScalar(0.15);
   }, []);
+
+  const startLoop = useCallback(() => {
+    const mount = mountRef.current;
+    if (!mount) return;
+    const s = stateRef.current;
+    const W = mount.clientWidth || window.innerWidth;
+    const H = mount.clientHeight || window.innerHeight;
+
+    s.running = true; s.timeLeft = DURATION;
+    s.sig = { score: 0, hits: 0, attempts: 0, reactionTimes: [], maxStreak: 0, streakCurrent: 0 };
+    s.frame = 0; s.strikes = 0; s.particles = []; s.textSprites = [];
+    setScoreDisplay(0); setTimeLeft(DURATION); setPhase('playing');
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(W, H);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.shadowMap.enabled = true;
+    renderer.setClearColor(0x0d0a04);
+    mount.innerHTML = '';
+    mount.appendChild(renderer.domElement);
+    s.renderer = renderer;
+
+    const scene = new THREE.Scene();
+    scene.fog = new THREE.FogExp2(0x0d1a08, 0.015);
+    s.scene = scene;
+
+    const camera = new THREE.PerspectiveCamera(60, W / H, 0.1, 100);
+    camera.position.set(0, 1.5, 8);
+    camera.lookAt(0, 1.5, 0);
+    s.camera = camera;
+
+    // Lighting
+    scene.add(new THREE.AmbientLight(0x334422, 1.5));
+    const sunLight = new THREE.DirectionalLight(0xffffff, 2);
+    sunLight.position.set(5, 15, 5);
+    sunLight.castShadow = true;
+    scene.add(sunLight);
+    const stadiumLight1 = new THREE.PointLight(0xffeebb, 2, 40);
+    stadiumLight1.position.set(-8, 12, 0);
+    scene.add(stadiumLight1);
+    const stadiumLight2 = new THREE.PointLight(0xffeebb, 2, 40);
+    stadiumLight2.position.set(8, 12, 0);
+    scene.add(stadiumLight2);
+    const rimLight = new THREE.PointLight(0x44aaff, 0.8, 30);
+    rimLight.position.set(0, 8, -10);
+    scene.add(rimLight);
+
+    // Field ground
+    const fieldGeo = new THREE.PlaneGeometry(40, 60);
+    const fieldMat = new THREE.MeshStandardMaterial({ color: 0x1a4a0a, roughness: 0.9 });
+    const field = new THREE.Mesh(fieldGeo, fieldMat);
+    field.rotation.x = -Math.PI / 2;
+    field.receiveShadow = true;
+    scene.add(field);
+
+    // Infield dirt
+    const dirtGeo = new THREE.CylinderGeometry(6, 6, 0.02, 32);
+    const dirtMat = new THREE.MeshStandardMaterial({ color: 0x8b6340, roughness: 0.9 });
+    const dirt = new THREE.Mesh(dirtGeo, dirtMat);
+    dirt.position.set(0, 0.01, 0);
+    scene.add(dirt);
+
+    // Pitcher's mound
+    const moundGeo = new THREE.CylinderGeometry(1, 1.3, 0.25, 16);
+    const moundMat = new THREE.MeshStandardMaterial({ color: 0xa07040, roughness: 0.9 });
+    const mound = new THREE.Mesh(moundGeo, moundMat);
+    mound.position.set(0, 0.1, -18);
+    scene.add(mound);
+
+    // Home plate
+    const plateGeo = new THREE.BoxGeometry(0.5, 0.02, 0.4);
+    const plateMat = new THREE.MeshStandardMaterial({ color: 0xeeeeee });
+    const plate = new THREE.Mesh(plateGeo, plateMat);
+    plate.position.set(0, 0.01, 6.5);
+    scene.add(plate);
+
+    // Strike zone (translucent)
+    const szGeo = new THREE.BoxGeometry(0.8, 1.2, 0.05);
+    const szMat = new THREE.MeshBasicMaterial({ color: 0xfbbf24, transparent: true, opacity: 0.15, side: THREE.DoubleSide });
+    const strikeZone = new THREE.Mesh(szGeo, szMat);
+    strikeZone.position.set(0, 1.4, 6.3);
+    scene.add(strikeZone);
+    s.strikeZoneMesh = strikeZone;
+    // Strike zone wireframe
+    const szEdge = new THREE.EdgesGeometry(szGeo);
+    const szLine = new THREE.LineSegments(szEdge, new THREE.LineBasicMaterial({ color: 0xfbbf24, transparent: true, opacity: 0.5 }));
+    szLine.position.copy(strikeZone.position);
+    scene.add(szLine);
+
+    // Baseball
+    const ballGeo = new THREE.SphereGeometry(0.15, 16, 16);
+    const ballMat = new THREE.MeshStandardMaterial({ color: 0xf5f5f0, roughness: 0.6, metalness: 0 });
+    const ball = new THREE.Mesh(ballGeo, ballMat);
+    ball.position.set(0, 2.5, -25);
+    ball.visible = false;
+    ball.castShadow = true;
+    scene.add(ball);
+    s.ball = ball;
+
+    // Bat group
+    const bat = new THREE.Group();
+    const handleGeo = new THREE.CylinderGeometry(0.04, 0.04, 1.0, 8);
+    const handleMat = new THREE.MeshStandardMaterial({ color: 0x92400e, roughness: 0.7 });
+    const handle = new THREE.Mesh(handleGeo, handleMat);
+    handle.position.y = 0.5;
+    bat.add(handle);
+    const barrelGeo = new THREE.CylinderGeometry(0.12, 0.06, 0.6, 12);
+    const barrelMat = new THREE.MeshStandardMaterial({ color: 0xd97706, roughness: 0.5, metalness: 0.1 });
+    const barrel = new THREE.Mesh(barrelGeo, barrelMat);
+    barrel.position.y = 1.1;
+    bat.add(barrel);
+    bat.position.set(0.6, 0.8, 6);
+    bat.rotation.z = -0.3;
+    scene.add(bat);
+    s.bat = bat;
+
+    // Ball trail meshes
+    s.ballTrail = [];
+    for (let i = 0; i < 8; i++) {
+      const tGeo = new THREE.SphereGeometry(0.08, 8, 8);
+      const tMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0 });
+      const tMesh = new THREE.Mesh(tGeo, tMat);
+      scene.add(tMesh);
+      s.ballTrail.push(tMesh);
+    }
+
+    // Resize handler
+    const onResize = () => {
+      const W2 = mount.clientWidth || window.innerWidth;
+      const H2 = mount.clientHeight || window.innerHeight;
+      renderer.setSize(W2, H2);
+      camera.aspect = W2 / H2;
+      camera.updateProjectionMatrix();
+    };
+    window.addEventListener('resize', onResize);
+    (s as unknown as { _resizeCleanup: () => void })._resizeCleanup = () => window.removeEventListener('resize', onResize);
+
+    s.stopMusic = startMusic(MUSIC_PAT);
+    s.intervalId = setInterval(() => {
+      s.timeLeft--; setTimeLeft(s.timeLeft);
+      if (s.timeLeft <= 0) { sfx.fail(); haptic([100]); endGame(); }
+    }, 1000);
+
+    setTimeout(() => newPitch(), 800);
+
+    const loop = (ts: number) => {
+      if (!s.running) return;
+      const dt = s.lastTs ? Math.min((ts - s.lastTs) / 16.67, 3) : 1;
+      s.lastTs = ts; s.frame++;
+
+      // Animate pitch
+      if (s.pitch && s.pitchState === 'incoming' && s.ball) {
+        s.pitch.t += s.pitch.speed * dt;
+        if (s.pitch.t > 1) {
+          // Ball passed — auto strike
+          sfx.nearMiss(); haptic([20, 30, 20]);
+          s.pitchState = 'miss'; s.strikes++;
+          s.sig.streakCurrent = 0;
+          s.ball.visible = false;
+          setTimeout(() => { s.pitchState = 'idle'; s.pitch = null; if (s.running) setTimeout(() => newPitch(), 600); }, 500);
+        } else {
+          const t = s.pitch.t;
+          const cpX = s.pitch.curve * Math.sin(t * Math.PI) * 0.5;
+          const ballX = s.pitch.startX * (1 - t) + s.pitch.endX * t + cpX;
+          const ballZ = -25 + t * 32;
+          const ballY = 2.5 - t * 1.2 + Math.sin(t * Math.PI) * 0.3;
+          s.ball.position.set(ballX, ballY, ballZ);
+          s.ball.scale.setScalar(0.15 + t * 0.6);
+          s.ball.rotation.x += 0.15 * dt;
+          // Trail
+          for (let i = s.ballTrail.length - 1; i > 0; i--) {
+            s.ballTrail[i].position.copy(s.ballTrail[i - 1].position);
+            (s.ballTrail[i].material as THREE.MeshBasicMaterial).opacity = (1 - i / s.ballTrail.length) * 0.35 * t;
+          }
+          s.ballTrail[0].position.copy(s.ball.position);
+          // Pulse strike zone when ball approaching
+          if (t > 0.7) {
+            const pulse = 0.1 + 0.1 * Math.sin(ts / 80);
+            (s.strikeZoneMesh!.material as THREE.MeshBasicMaterial).opacity = pulse + 0.1;
+          }
+        }
+      }
+
+      // Bat swing animation
+      if (s.batSwinging && s.bat) {
+        s.batT += 0.08 * dt;
+        const swingAngle = Math.sin(s.batT * Math.PI) * 2.2;
+        s.bat.rotation.z = -0.3 - swingAngle;
+        if (s.batT >= 1) { s.batSwinging = false; s.bat.rotation.z = -0.3; }
+      }
+
+      // Particles
+      s.particles = s.particles.filter(p => {
+        p.mesh.position.x += p.vx * dt;
+        p.mesh.position.y += p.vy * dt;
+        p.mesh.position.z += p.vz * dt;
+        p.vy -= 0.02 * dt;
+        p.life -= dt;
+        (p.mesh.material as THREE.MeshStandardMaterial).opacity = Math.max(0, p.life / 30);
+        if (p.life <= 0) { scene.remove(p.mesh); return false; }
+        return true;
+      });
+
+      // Text sprites
+      s.textSprites = s.textSprites.filter(ts2 => {
+        ts2.sprite.position.y += ts2.vy * dt;
+        ts2.life -= dt;
+        ts2.sprite.material.opacity = Math.max(0, ts2.life / 60);
+        if (ts2.life <= 0) { scene.remove(ts2.sprite); return false; }
+        return true;
+      });
+
+      renderer.render(scene, camera);
+      s.animId = requestAnimationFrame(loop);
+    };
+    s.animId = requestAnimationFrame(loop);
+  }, [endGame, newPitch]);
 
   const doSwing = useCallback((swipeVelX: number) => {
     const s = stateRef.current;
     if (!s.running || s.pitchState !== 'incoming' || !s.pitch) return;
     if (s.batSwinging) return;
-    const c = canvasRef.current; if (!c) return;
-    const H = c.height;
-
-    // Check if ball is in strike zone (by Y progress)
-    const ballT = s.pitch.t;
-    const perfect = ballT >= 0.72 && ballT <= 0.88;
-    const ok = ballT >= 0.62 && ballT <= 0.92;
-
+    const t = s.pitch.t;
+    const perfect = t >= 0.72 && t <= 0.88;
+    const ok = t >= 0.62 && t <= 0.92;
     s.batSwinging = true; s.batT = 0;
-    s.batAngle = swipeVelX * 0.5;
     s.sig.reactionTimes.push(Date.now());
 
     if (perfect) {
@@ -116,8 +357,18 @@ export default function BaseballSwingGame() {
       if (s.sig.streakCurrent > s.sig.maxStreak) s.sig.maxStreak = s.sig.streakCurrent;
       const pts = s.sig.streakCurrent >= 3 ? 4 : 3;
       s.sig.score += pts; setScoreDisplay(s.sig.score);
-      s.popText = `HOME RUN! +${pts} 🏆`; s.popAlpha = 1; s.popX = c.width / 2; s.popY = H * 0.4;
-      s.hitAnim = 1;
+      // Spawn burst particles
+      if (s.ball && s.scene) {
+        for (let i = 0; i < 12; i++) {
+          const pGeo = new THREE.SphereGeometry(0.07, 6, 6);
+          const pMat = new THREE.MeshStandardMaterial({ color: 0xfbbf24, emissive: 0xfbbf24, emissiveIntensity: 1, transparent: true, opacity: 1 });
+          const pMesh = new THREE.Mesh(pGeo, pMat);
+          pMesh.position.copy(s.ball.position);
+          s.scene.add(pMesh);
+          const angle = (i / 12) * Math.PI * 2;
+          s.particles.push({ mesh: pMesh, vx: Math.cos(angle) * 0.25 + swipeVelX * 0.1, vy: 0.2 + Math.random() * 0.2, vz: -0.1 - Math.random() * 0.2, life: 30 });
+        }
+      }
     } else if (ok) {
       s.hitType = 'hit'; s.pitchState = 'hit';
       sfx.collect(); haptic([30]);
@@ -125,219 +376,45 @@ export default function BaseballSwingGame() {
       if (s.sig.streakCurrent > s.sig.maxStreak) s.sig.maxStreak = s.sig.streakCurrent;
       const pts = s.sig.streakCurrent >= 3 ? 2 : 1;
       s.sig.score += pts; setScoreDisplay(s.sig.score);
-      s.popText = s.sig.streakCurrent >= 3 ? `COMBO HIT! +${pts}` : `HIT! +${pts}`;
-      s.popAlpha = 1; s.popX = c.width / 2; s.popY = H * 0.5;
     } else {
-      // Too early or too late
-      s.hitType = ''; s.pitchState = ballT < 0.55 ? 'swingEarly' : 'miss';
+      s.hitType = ''; s.pitchState = t < 0.55 ? 'miss' : 'miss';
       sfx.nearMiss(); haptic([20, 30, 20]);
       s.sig.streakCurrent = 0; s.strikes++;
-      s.popText = ballT < 0.55 ? 'TOO EARLY! ⚡' : 'STRIKE! 💨';
-      s.popAlpha = 1; s.popX = c.width / 2; s.popY = H * 0.55;
     }
 
+    if (s.ball) s.ball.visible = false;
     setTimeout(() => {
-      s.batSwinging = false; s.batAngle = 0; s.batT = 0;
+      s.batSwinging = false;
       s.pitchState = 'idle'; s.pitch = null; s.hitType = '';
       if (s.running) setTimeout(() => newPitch(), 500);
     }, 700);
   }, [newPitch]);
 
-  const endGame = useCallback(() => {
-    const s = stateRef.current; s.running = false;
-    cancelAnimationFrame(animRef.current);
-    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
-    if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
-    setFinalSig({ ...s.sig }); setPhase('done');
-  }, []);
-
-  const startLoop = useCallback(() => {
-    const c = canvasRef.current; if (!c) return;
-    const ctx = c.getContext('2d'); if (!ctx) return;
-    const s = stateRef.current;
-    s.running = true; s.timeLeft = DURATION; s.strikes = 0; s.pitch = null;
-    s.sig = { score: 0, hits: 0, attempts: 0, reactionTimes: [], maxStreak: 0, streakCurrent: 0 };
-    setScoreDisplay(0); setTimeLeft(DURATION); setPhase('playing');
-    stopMusicRef.current = startMusic(MUSIC_PAT);
-    timerRef.current = setInterval(() => {
-      s.timeLeft--; setTimeLeft(s.timeLeft);
-      if (s.timeLeft <= 0) { sfx.fail(); haptic([100]); endGame(); }
-    }, 1000);
-    setTimeout(() => newPitch(), 800);
-
-    const loop = (ts: number) => {
-      if (!s.running) return;
-      const dt = s.lastTs ? Math.min((ts - s.lastTs) / 16.67, 3) : 1;
-      s.lastTs = ts;
-      const W = c.width, H = c.height;
-      ctx.clearRect(0, 0, W, H);
-
-      // Stadium background
-      ctx.fillStyle = BG_COLOR; ctx.fillRect(0, 0, W, H);
-      // Outfield gradient
-      const fieldGrad = ctx.createRadialGradient(W / 2, H * 0.5, 10, W / 2, H * 0.5, W * 0.8);
-      fieldGrad.addColorStop(0, '#1a3a0d'); fieldGrad.addColorStop(1, '#0d1e08');
-      ctx.fillStyle = fieldGrad; ctx.fillRect(0, H * 0.1, W, H * 0.9);
-      // Infield dirt circle
-      ctx.fillStyle = '#8b6340aa';
-      ctx.beginPath(); ctx.ellipse(W / 2, H * 0.72, W * 0.3, H * 0.22, 0, 0, Math.PI * 2); ctx.fill();
-      // Pitcher's mound
-      ctx.fillStyle = '#a07040'; ctx.beginPath(); ctx.ellipse(W / 2, H * 0.2, 18, 8, 0, 0, Math.PI * 2); ctx.fill();
-
-      // Strike zone indicator
-      const szX = W * 0.38, szY = H * 0.6, szW = W * 0.24, szH = H * 0.12;
-      ctx.strokeStyle = 'rgba(251,191,36,0.4)'; ctx.lineWidth = 1.5; ctx.setLineDash([4, 4]);
-      ctx.strokeRect(szX, szY, szW, szH); ctx.setLineDash([]);
-      ctx.fillStyle = 'rgba(251,191,36,0.06)'; ctx.fillRect(szX, szY, szW, szH);
-
-      // Pitch type label
-      if (s.pitchState === 'incoming' && s.pitch && s.pitch.t < 0.3) {
-        ctx.fillStyle = '#fbbf2488'; ctx.font = 'bold 14px monospace'; ctx.textAlign = 'center';
-        ctx.fillText(s.pitchLabel.toUpperCase(), W / 2, H * 0.14);
-      }
-
-      // Update & draw ball
-      if (s.pitch && (s.pitchState === 'incoming')) {
-        s.pitch.t += s.pitch.speed * dt;
-        if (s.pitch.t > 1) {
-          // Ball passed - auto miss
-          sfx.nearMiss(); haptic([20, 30, 20]);
-          s.pitchState = 'miss'; s.strikes++;
-          s.sig.streakCurrent = 0;
-          s.popText = 'CALLED STRIKE!'; s.popAlpha = 1; s.popX = W / 2; s.popY = H * 0.55;
-          setTimeout(() => { s.pitchState = 'idle'; s.pitch = null; if (s.running) setTimeout(() => newPitch(), 600); }, 700);
-        }
-
-        const t = s.pitch.t;
-        // Quadratic bezier with curve
-        const cpX = (s.pitch.startX + s.pitch.endX) / 2 + s.pitch.curve;
-        const cpY = (s.pitch.startY + s.pitch.endY) / 2;
-        const bx = ((1 - t) * (1 - t) * s.pitch.startX + 2 * (1 - t) * t * cpX + t * t * s.pitch.endX) * W;
-        const by = ((1 - t) * (1 - t) * s.pitch.startY + 2 * (1 - t) * t * cpY + t * t * s.pitch.endY) * H;
-        const ballR = 5 + t * 16; // grows as it approaches
-
-        // Trail
-        s.ballTrail.unshift({ x: bx, y: by, r: ballR });
-        if (s.ballTrail.length > 8) s.ballTrail.pop();
-        s.ballTrail.forEach((p, i) => {
-          ctx.globalAlpha = 0.3 * (1 - i / 9);
-          ctx.fillStyle = '#f5f5f5';
-          ctx.beginPath(); ctx.arc(p.x, p.y, p.r * 0.6, 0, Math.PI * 2); ctx.fill();
-        });
-        ctx.globalAlpha = 1;
-
-        // Baseball
-        ctx.fillStyle = '#f5f5f0';
-        ctx.beginPath(); ctx.arc(bx, by, ballR, 0, Math.PI * 2); ctx.fill();
-        // Stitches
-        if (ballR > 10) {
-          ctx.strokeStyle = '#cc0000'; ctx.lineWidth = 1.2;
-          ctx.beginPath(); ctx.arc(bx, by, ballR * 0.55, 0.2, 1.1); ctx.stroke();
-          ctx.beginPath(); ctx.arc(bx, by, ballR * 0.55, Math.PI + 0.2, Math.PI + 1.1); ctx.stroke();
-        }
-
-        // "SWING!" prompt when in zone
-        if (t >= 0.62 && t <= 0.88) {
-          const pulse = 0.5 + 0.5 * Math.sin(ts / 80);
-          ctx.fillStyle = `rgba(251,191,36,${pulse})`;
-          ctx.font = 'bold 28px sans-serif'; ctx.textAlign = 'center';
-          ctx.fillText('SWING!', W / 2, H * 0.53);
-        }
-      }
-
-      // Draw bat
-      const batX = W * 0.5, batY = H * 0.73;
-      ctx.save();
-      ctx.translate(batX, batY);
-      if (s.batSwinging) {
-        s.batT += 0.08 * dt;
-        const swingAngle = Math.sin(s.batT * Math.PI) * (Math.PI * 0.8);
-        ctx.rotate(-Math.PI * 0.5 + swingAngle);
-      } else {
-        ctx.rotate(Math.PI * 0.35);
-      }
-      // Bat shape
-      ctx.fillStyle = '#92400e'; // handle
-      ctx.fillRect(-5, -70, 10, 70);
-      ctx.fillStyle = '#d97706'; // barrel
-      ctx.beginPath(); ctx.ellipse(0, -70, 16, 10, 0, 0, Math.PI * 2); ctx.fill();
-      ctx.restore();
-
-      // Batter silhouette
-      ctx.fillStyle = '#1f2937'; ctx.beginPath(); ctx.arc(batX - 28, batY - 52, 20, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = '#111827'; ctx.fillRect(batX - 38, batY - 32, 22, 36);
-
-      // Hit animation
-      if (s.hitAnim > 0) {
-        s.hitAnim -= 0.04 * dt;
-        const starCount = 8;
-        for (let i = 0; i < starCount; i++) {
-          const a = (i / starCount) * Math.PI * 2;
-          const r = (1 - s.hitAnim) * W * 0.35;
-          const sx = W / 2 + Math.cos(a) * r;
-          const sy = H * 0.5 + Math.sin(a) * r;
-          ctx.fillStyle = `rgba(251,191,36,${s.hitAnim})`;
-          ctx.font = '22px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-          ctx.fillText('⭐', sx, sy);
-        }
-      }
-
-      // Strike count
-      ctx.fillStyle = '#64748b'; ctx.font = '13px monospace'; ctx.textAlign = 'left';
-      ctx.fillText(`STRIKES: ${s.strikes}`, 12, 80);
-
-      // Streak
-      if (s.sig.streakCurrent >= 3) {
-        ctx.fillStyle = '#f59e0b'; ctx.font = 'bold 14px sans-serif'; ctx.textAlign = 'right';
-        ctx.fillText(`🔥 x${s.sig.streakCurrent}`, W - 12, 80);
-      }
-
-      // Pop text
-      if (s.popAlpha > 0) {
-        s.popAlpha -= 0.02 * dt; s.popY -= 0.4 * dt;
-        ctx.globalAlpha = Math.max(0, s.popAlpha);
-        ctx.fillStyle = s.popText.includes('HOME RUN') ? '#f59e0b' : s.popText.includes('STRIKE') || s.popText.includes('EARLY') ? '#ef4444' : ACCENT;
-        ctx.font = `bold ${s.popText.includes('HOME RUN') ? 26 : 20}px sans-serif`;
-        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-        ctx.fillText(s.popText, s.popX, s.popY); ctx.globalAlpha = 1;
-      }
-
-      // Timer pulse
-      if (s.timeLeft <= 5) {
-        const pulse = 0.5 + 0.5 * Math.sin(ts / 120);
-        ctx.fillStyle = `rgba(239,68,68,${pulse * 0.18})`; ctx.fillRect(0, 0, W, H);
-      }
-
-      animRef.current = requestAnimationFrame(loop);
-    };
-    animRef.current = requestAnimationFrame(loop);
-  }, [endGame, newPitch]);
-
   useEffect(() => {
-    const c = canvasRef.current; if (!c) return;
-    const resize = () => { c.width = c.offsetWidth; c.height = c.offsetHeight; };
-    resize(); window.addEventListener('resize', resize);
+    const mount = mountRef.current;
+    if (!mount) return;
     const onDown = (e: PointerEvent) => {
-      const rect = c.getBoundingClientRect();
-      swipeStartRef.current = { x: e.clientX - rect.left, y: e.clientY - rect.top, t: Date.now() };
+      swipeStartRef.current = { x: e.clientX, y: e.clientY, t: Date.now() };
     };
     const onUp = (e: PointerEvent) => {
-      if (!swipeStartRef.current) return;
-      const rect = c.getBoundingClientRect();
-      const dx = (e.clientX - rect.left) - swipeStartRef.current.x;
+      if (!swipeStartRef.current || phase !== 'playing') return;
+      const dx = e.clientX - swipeStartRef.current.x;
       const dt = Date.now() - swipeStartRef.current.t;
       swipeStartRef.current = null;
       if (Math.abs(dx) > 20 || dt < 200) doSwing(dx / Math.max(dt, 50));
     };
-    c.addEventListener('pointerdown', onDown);
-    c.addEventListener('pointerup', onUp);
-    return () => { window.removeEventListener('resize', resize); c.removeEventListener('pointerdown', onDown); c.removeEventListener('pointerup', onUp); };
-  }, [doSwing]);
+    mount.addEventListener('pointerdown', onDown);
+    mount.addEventListener('pointerup', onUp);
+    return () => { mount.removeEventListener('pointerdown', onDown); mount.removeEventListener('pointerup', onUp); };
+  }, [phase, doSwing]);
 
   useEffect(() => () => {
-    cancelAnimationFrame(animRef.current);
-    if (timerRef.current) clearInterval(timerRef.current);
-    if (stopMusicRef.current) stopMusicRef.current();
+    const s = stateRef.current;
+    cancelAnimationFrame(s.animId);
+    if (s.intervalId) clearInterval(s.intervalId);
+    if (s.stopMusic) s.stopMusic();
+    if (s.renderer) s.renderer.dispose();
+    (s as unknown as { _resizeCleanup?: () => void })._resizeCleanup?.();
   }, []);
 
   const handleStart = useCallback((name: string, avatar: string) => {
@@ -360,17 +437,42 @@ export default function BaseballSwingGame() {
 
   return (
     <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
-      {phase === 'start' && <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description={GAME_TAGLINE} ctaLabel="Batter Up!" accentColor={theme.colors.accent ?? ACCENT} onStart={handleStart} />}
+      {phase === 'start' && (
+        <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description={GAME_TAGLINE}
+          ctaLabel="Batter Up!" accentColor={theme.colors.accent ?? ACCENT} onStart={handleStart} />
+      )}
       {phase === 'countdown' && <Countdown onComplete={handleCountdownDone} accentColor={theme.colors.accent ?? ACCENT} />}
-      {(phase === 'playing' || phase === 'countdown') && <>
-        <canvas ref={canvasRef} aria-label="Baseball Swing game canvas" role="img"
-          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none' }} />
-        {phase === 'playing' && <GameHUD accentColor={theme.colors.accent ?? ACCENT} items={[{ label: 'TIME', value: timeLeft, danger: timeLeft <= 5 }, { label: 'SCORE', value: scoreDisplay }]} />}
-      </>}
-      {phase === 'done' && finalSig && <>
-        <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI} score={String(finalSig.score)} personality={getPersonality(finalSig)} insights={buildInsights(finalSig)} accentColor={theme.colors.accent ?? ACCENT} onPlayAgain={handlePlayAgain} didWin={finalSig.score >= 6} />
-        <WebhookEmitter theme={theme} sig={finalSig} personality={getPersonality(finalSig)} player={playerSessionRef.current} />
-      </>}
+      {(phase === 'playing' || phase === 'countdown') && (
+        <>
+          <div ref={mountRef} style={{ position: 'absolute', inset: 0, touchAction: 'none' }} />
+          {phase === 'playing' && (
+            <GameHUD accentColor={theme.colors.accent ?? ACCENT} items={[
+              { label: 'TIME', value: timeLeft, danger: timeLeft <= 5 },
+              { label: 'SCORE', value: scoreDisplay },
+            ]} />
+          )}
+        </>
+      )}
+      {phase === 'done' && finalSig && (
+        <>
+          <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI}
+            score={String(finalSig.score)} personality={getPersonality(finalSig)}
+            insights={buildInsights(finalSig)} accentColor={theme.colors.accent ?? ACCENT}
+            onPlayAgain={handlePlayAgain} didWin={finalSig.score >= 6} />
+          <WebhookEmitter theme={theme} sig={finalSig} personality={getPersonality(finalSig)} player={playerSessionRef.current} />
+        </>
+      )}
     </GameShell>
   );
+}
+
+function WebhookEmitter({ theme, sig, personality, player }: {
+  theme: ReturnType<typeof useBrandTheme>; sig: Signals; personality: string; player: PlayerSession | null;
+}) {
+  const fired = useRef(false);
+  useEffect(() => {
+    if (fired.current) return; fired.current = true;
+    postWebhook(theme, GAME_ID, { personality, score: sig.score }, player);
+  }, [theme, sig, personality, player]);
+  return null;
 }

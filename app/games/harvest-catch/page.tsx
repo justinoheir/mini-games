@@ -214,7 +214,7 @@ export default function HarvestCatch() {
               pMesh.position.set(item.x, CATCH_Y, 0);
               scene.add(pMesh);
               const angle = (p / 6) * Math.PI * 2;
-              particles.push({ mesh: pMesh, vx: Math.cos(angle)*0.06, vy: Math.abs(Math.sin(angle))*0.08+0.04, vz: 0, life: 1, color: ACCENT });
+              particles.push({ mesh: pMesh, vx: Math.cos(angle)*0.06, vy: Math.abs(Math.sin(angle))*0.08+0.04, vz: 0, life: 1, color: 0xfbbf24 });
             }
           } else {
             s.sig.score += item.points;

@@ -225,7 +225,7 @@ export default function FireworkLaunchGame() {
       scene.add(b);
     }
 
-    const obj = { renderer, scene, camera, rockets: [], explosions: [], stars, animId: 0, autoDetonateRef: null };
+    const obj = { renderer, scene, camera, rockets: [] as Rocket3D[], explosions: [] as Explosion3D[], stars, animId: 0, autoDetonateRef: null };
     threeRef.current = obj;
 
     timerRef.current = setInterval(() => {
@@ -312,8 +312,7 @@ export default function FireworkLaunchGame() {
           const rocket = t.rockets[0];
           if (rocket.phase === 'rising' || rocket.phase === 'peaked') {
             if (t.autoDetonateRef) clearTimeout(t.autoDetonateRef);
-            rocket.phase = 'exploded';
-            explodeRocket(rocket, rocket.phase === 'peaked');
+            const wasPeaked = rocket.phase === 'peaked'; rocket.phase = 'exploded'; explodeRocket(rocket, wasPeaked);
           }
         }
       }

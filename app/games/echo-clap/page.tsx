@@ -135,7 +135,7 @@ export default function EchoClapGame() {
     // Clap visual ripple
     const t = threeRef.current;
     if (t) {
-      t.clapRipples.push({ mesh: new THREE.Mesh(new THREE.RingGeometry(0.5, 0.6, 32), new THREE.MeshBasicMaterial({ color: ACCENT, transparent: true, opacity: 0.9, side: THREE.DoubleSide })), scale: 0.5, alpha: 0.9, color: ACCENT });
+      t.clapRipples.push({ mesh: new THREE.Mesh(new THREE.RingGeometry(0.5, 0.6, 32), new THREE.MeshBasicMaterial({ color: new THREE.Color(ACCENT).getHex(), transparent: true, opacity: 0.9, side: THREE.DoubleSide })), scale: 0.5, alpha: 0.9, color: 0x00e5ff });
       const lastRipple = t.clapRipples[t.clapRipples.length - 1];
       t.scene.add(lastRipple.mesh);
       t.clapLight.intensity = 3;
@@ -261,7 +261,7 @@ export default function EchoClapGame() {
       // Check mic volume
       if (micRef.current) {
         const { analyser, data } = micRef.current;
-        analyser.getByteTimeDomainData(data);
+        analyser.getByteTimeDomainData(data as Uint8Array<ArrayBuffer>);
         let rms = 0;
         for (let i = 0; i < data.length; i++) { const v = (data[i] - 128) / 128; rms += v * v; }
         rms = Math.sqrt(rms / data.length);

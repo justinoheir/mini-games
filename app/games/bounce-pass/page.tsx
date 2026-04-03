@@ -1,12 +1,6 @@
-/**
- * ══════════════════════════════════════════════════════════════════
- *  BOUNCE PASS — Ether Glimmer
- *  Swipe to aim, release to send a bounce pass through defenders.
- *  Mechanic: swipe direction + power → ball bounces off court floor
- * ══════════════════════════════════════════════════════════════════
- */
 'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
+import * as THREE from 'three';
 import GameShell from '@/components/GameShell';
 import GameHUD from '@/components/GameHUD';
 import GameStartScreen from '@/components/GameStartScreen';
@@ -17,630 +11,463 @@ import { hapticScore, hapticFail, hapticVictory } from '@/lib/haptics';
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
-import { Particle, spawnBurst, updateAndDrawParticles } from '@/lib/particles';
-import { ShakeState, triggerShake, applyShake } from '@/lib/screenShake';
-import { motion, AnimatePresence } from 'framer-motion';
-import ScorePopEffect, { useScorePop } from '@/components/ScorePopEffect';
-import StreakBadge from '@/components/StreakBadge';
 
-// ── CONSTANTS ──────────────────────────────────────────────────────
-const GAME_ID      = 'bounce-pass';
-const PB_KEY       = 'pb_bounce-pass';
-const ACCENT       = '#f97316';
-const DURATION     = 30;
+const GAME_ID  = 'bounce-pass';
+const PB_KEY   = 'pb_bounce-pass';
+const ACCENT   = '#f97316';
+const DURATION = 30;
 const GAME_EMOJI   = '🏀';
 const GAME_TITLE   = 'Bounce Pass';
 const GAME_TAGLINE = 'Swipe to bounce-pass through defenders.';
 
-const BALL_RADIUS  = 18;
-const DEFENDER_W   = 28;
-const DEFENDER_H   = 70;
-
-// ── TYPES ───────────────────────────────────────────────────────────
-interface Defender {
-  id: number;
-  x: number;      // center
-  y: number;      // center (fixed row)
-  vx: number;     // horizontal movement
-  w: number;
-  h: number;
-}
-
-interface Ball {
-  x: number;
-  y: number;
-  vx: number;
-  vy: number;
-  active: boolean;
-  bounced: boolean;
-  trail: { x: number; y: number }[];
-}
-
 interface Signals {
-  score: number;
-  passes: number;
-  misses: number;
-  maxStreak: number;
-  streak: number;
-  fastPasses: number;  // passes completed quickly
+  score: number; passes: number; misses: number;
+  maxStreak: number; streak: number; fastPasses: number;
 }
 
-type Phase = 'start' | 'countdown' | 'playing' | 'done';
-
-interface GState {
-  running: boolean;
-  timeLeft: number;
-  sig: Signals;
-  ball: Ball;
-  defenders: Defender[];
-  nextDefenderId: number;
-  particles: Particle[];
-  shakeState: ShakeState;
-  pointerStart: { x: number; y: number; time: number } | null;
-  aimLine: { x1: number; y1: number; x2: number; y2: number } | null;
-  aimActive: boolean;
-  gameStartTime: number;
-  passStartTime: number;
-  courtScale: number;
-  accentColor: string;
-  screenFlash: number;
-  flashColor: string;
-}
-
-// ── PERSONALITY ─────────────────────────────────────────────────────
 function getPersonality(sig: Signals): string {
   const total = sig.passes + sig.misses;
   if (total === 0) return 'Ball Carrier 🏀';
   const acc = sig.passes / total;
-  if (acc >= 0.8 && sig.maxStreak >= 5)  return 'Point Guard 🎯';
-  if (sig.fastPasses >= 5)               return 'Quick Hands ⚡';
-  if (acc >= 0.7)                        return 'Sharp Passer 💫';
-  if (sig.maxStreak >= 4)                return 'In the Groove 🌊';
-  if (sig.passes >= 8)                   return 'Work Horse 💪';
-  return 'Learning the Bounce 🔄';
+  if (acc >= 0.8 && sig.maxStreak >= 5) return 'Point Guard ⭐';
+  if (sig.fastPasses >= 5)              return 'Quick Hands 🤌';
+  if (acc >= 0.7)                       return 'Sharp Passer 🎯';
+  if (sig.maxStreak >= 4)               return 'In the Groove 🎵';
+  return 'Learning the Bounce 📚';
 }
 
-// ── COMPONENT ───────────────────────────────────────────────────────
-export default function BouncePassGame() {
-  const theme      = useBrandTheme();
-  const canvasRef  = useRef<HTMLCanvasElement>(null);
-  const animRef    = useRef(0);
-  const timerRef   = useRef<ReturnType<typeof setInterval> | null>(null);
-  const stopMusicRef = useRef<(() => void) | null>(null);
-  const endCalledRef = useRef(false);
+type Phase = 'start' | 'countdown' | 'playing' | 'done';
 
-  const stateRef = useRef<GState>({
+interface Defender {
+  mesh: THREE.Mesh; vx: number; id: number;
+}
+
+interface BallState {
+  mesh: THREE.Mesh; active: boolean; vx: number; vy: number;
+  bounced: boolean;
+  trail: THREE.Mesh[];
+}
+
+interface GS {
+  running: boolean; timeLeft: number; sig: Signals;
+  renderer: THREE.WebGLRenderer | null;
+  scene: THREE.Scene | null;
+  camera: THREE.PerspectiveCamera | null;
+  animId: number; frame: number;
+  ball: BallState | null;
+  defenders: Defender[];
+  nextDefId: number;
+  intervalId: ReturnType<typeof setInterval> | null;
+  stopMusic: (() => void) | null;
+  pointerStart: { x: number; y: number; t: number } | null;
+  aimArrow: THREE.ArrowHelper | null;
+  particles: Array<{ mesh: THREE.Mesh; vx: number; vy: number; vz: number; life: number }>;
+  courtLight: THREE.PointLight | null;
+  targetMesh: THREE.Mesh | null;
+}
+
+export default function BouncePassGame() {
+  const theme = useBrandTheme();
+  const mountRef = useRef<HTMLDivElement>(null);
+  const stateRef = useRef<GS>({
     running: false, timeLeft: DURATION,
     sig: { score: 0, passes: 0, misses: 0, maxStreak: 0, streak: 0, fastPasses: 0 },
-    ball: { x: 0, y: 0, vx: 0, vy: 0, active: false, bounced: false, trail: [] },
-    defenders: [], nextDefenderId: 0,
-    particles: [], shakeState: { intensity: 0, duration: 0 },
-    pointerStart: null, aimLine: null, aimActive: false,
-    gameStartTime: 0, passStartTime: 0, courtScale: 1,
-    accentColor: ACCENT, screenFlash: 0, flashColor: '#4ade80',
+    renderer: null, scene: null, camera: null, animId: 0, frame: 0,
+    ball: null, defenders: [], nextDefId: 0,
+    intervalId: null, stopMusic: null,
+    pointerStart: null, aimArrow: null, particles: [],
+    courtLight: null, targetMesh: null,
   });
 
-  const [phase, setPhase]               = useState<Phase>('start');
-  const [timeLeft, setTimeLeft]         = useState(DURATION);
+  const [phase, setPhase] = useState<Phase>('start');
+  const [timeLeft, setTimeLeft] = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
-  const [finalSig, setFinalSig]         = useState<Signals | null>(null);
-  const [passMsg, setPassMsg]           = useState<{ text: string; color: string } | null>(null);
-  const [isNewBest, setIsNewBest]       = useState(false);
-  const [streak, setStreak]             = useState(0);
-  const { pops, triggerPop }            = useScorePop();
-  const playerSessionRef                = useRef<PlayerSession | null>(null);
-  const msgTimerRef                     = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const prevScoreRef                    = useRef(0);
+  const [finalSig, setFinalSig] = useState<Signals | null>(null);
+  const playerSessionRef = useRef<PlayerSession | null>(null);
 
-  useEffect(() => { stateRef.current.accentColor = theme.colors.accent ?? ACCENT; }, [theme]);
-  useEffect(() => {
-    if (scoreDisplay > prevScoreRef.current)
-      triggerPop(`+${scoreDisplay - prevScoreRef.current}`, window.innerWidth / 2, 200);
-    prevScoreRef.current = scoreDisplay;
-  }, [scoreDisplay, triggerPop]);
-
-  // ── SPAWN DEFENDERS ──────────────────────────────────────────────
-  const spawnDefenders = useCallback((W: number, H: number, count: number) => {
+  const endGame = useCallback(() => {
     const s = stateRef.current;
-    s.defenders = [];
-    const rowY = H * 0.35;  // defender row Y
-    const spread = W * 0.65;
-    const startX = W * 0.18;
+    s.running = false;
+    cancelAnimationFrame(s.animId);
+    if (s.intervalId) { clearInterval(s.intervalId); s.intervalId = null; }
+    if (s.stopMusic) { s.stopMusic(); s.stopMusic = null; }
+    try {
+      const prev = parseInt(localStorage.getItem(PB_KEY) || '0', 10);
+      if (s.sig.score > prev) localStorage.setItem(PB_KEY, String(s.sig.score));
+    } catch { /* ignore */ }
+    if (s.renderer) { s.renderer.dispose(); s.renderer = null; }
+    if (mountRef.current) mountRef.current.innerHTML = '';
+    setFinalSig({ ...s.sig });
+    setPhase('done');
+    hapticVictory();
+  }, []);
 
+  const resetBall = useCallback((scene: THREE.Scene, s: GS) => {
+    if (s.ball) {
+      s.ball.trail.forEach(t => { scene.remove(t); t.geometry.dispose(); (t.material as THREE.Material).dispose(); });
+      scene.remove(s.ball.mesh);
+      s.ball.mesh.geometry.dispose();
+      (s.ball.mesh.material as THREE.Material).dispose();
+    }
+    const ballGeo = new THREE.SphereGeometry(0.35, 20, 20);
+    const ballMat = new THREE.MeshStandardMaterial({ color: 0xf97316, roughness: 0.6, metalness: 0.1, emissive: 0xf97316, emissiveIntensity: 0.15 });
+    const ballMesh = new THREE.Mesh(ballGeo, ballMat);
+    ballMesh.position.set(0, 0.35, 3); // start at player end
+    scene.add(ballMesh);
+    const trail: THREE.Mesh[] = [];
+    for (let i = 0; i < 8; i++) {
+      const tGeo = new THREE.SphereGeometry(0.15, 8, 8);
+      const tMat = new THREE.MeshBasicMaterial({ color: 0xf97316, transparent: true, opacity: 0 });
+      const tMesh = new THREE.Mesh(tGeo, tMat);
+      scene.add(tMesh);
+      trail.push(tMesh);
+    }
+    s.ball = { mesh: ballMesh, active: false, vx: 0, vy: 0, bounced: false, trail };
+  }, []);
+
+  const spawnDefenders = useCallback((scene: THREE.Scene, s: GS, count: number) => {
+    s.defenders.forEach(d => { scene.remove(d.mesh); d.mesh.geometry.dispose(); (d.mesh.material as THREE.Material).dispose(); });
+    s.defenders = [];
+    const defGeo = new THREE.CapsuleGeometry(0.25, 1.0, 4, 8);
+    const defMat = new THREE.MeshStandardMaterial({ color: 0xcc0000, emissive: 0x440000, emissiveIntensity: 0.3, roughness: 0.6 });
     for (let i = 0; i < count; i++) {
-      const baseX = startX + (spread / (count - 1 || 1)) * i;
-      s.defenders.push({
-        id: s.nextDefenderId++,
-        x: baseX,
-        y: rowY,
-        vx: (1.5 + Math.random() * 1.5) * (Math.random() < 0.5 ? 1 : -1),
-        w: DEFENDER_W, h: DEFENDER_H,
-      });
+      const mesh = new THREE.Mesh(defGeo, defMat.clone());
+      const xPos = -3 + (6 / (count - 1 || 1)) * i + (Math.random() - 0.5) * 0.8;
+      mesh.position.set(xPos, 1.0, 0);
+      scene.add(mesh);
+      s.defenders.push({ mesh, vx: (0.025 + Math.random() * 0.02) * (Math.random() < 0.5 ? 1 : -1), id: s.nextDefId++ });
     }
   }, []);
 
-  // ── RESET BALL ───────────────────────────────────────────────────
-  const resetBall = useCallback(() => {
-    const s = stateRef.current;
-    const W = window.innerWidth, H = window.innerHeight;
-    s.ball = {
-      x: W / 2 + (Math.random() - 0.5) * 40,
-      y: H * 0.8,
-      vx: 0, vy: 0, active: false, bounced: false, trail: [],
-    };
-    s.aimLine = null; s.aimActive = false;
-    s.passStartTime = Date.now();
-  }, []);
-
-  // ── END GAME ──────────────────────────────────────────────────────
-  const endGame = useCallback(() => {
-    if (endCalledRef.current) return;
-    endCalledRef.current = true;
-    const s = stateRef.current;
-    s.running = false;
-    cancelAnimationFrame(animRef.current);
-    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
-    stopMusicRef.current?.(); stopMusicRef.current = null;
-    sfx.gameOver();
-    try {
-      const prev = parseInt(localStorage.getItem(PB_KEY) || '0', 10);
-      if (s.sig.score > prev) { localStorage.setItem(PB_KEY, String(s.sig.score)); setIsNewBest(true); }
-    } catch { /* ignore */ }
-    setFinalSig({ ...s.sig });
-    setPhase('done');
-  }, []);
-
-  // ── GAME LOOP ────────────────────────────────────────────────────
   const startLoop = useCallback(() => {
-    const canvas = canvasRef.current; if (!canvas) return;
-    const ctx = canvas.getContext('2d'); if (!ctx) return;
+    const mount = mountRef.current;
+    if (!mount) return;
     const s = stateRef.current;
+    const W = mount.clientWidth || window.innerWidth;
+    const H = mount.clientHeight || window.innerHeight;
 
-    endCalledRef.current = false;
-    s.running = true; s.timeLeft = DURATION;
+    s.running = true; s.timeLeft = DURATION; s.frame = 0;
     s.sig = { score: 0, passes: 0, misses: 0, maxStreak: 0, streak: 0, fastPasses: 0 };
-    s.nextDefenderId = 0; s.particles = [];
-    s.shakeState = { intensity: 0, duration: 0 };
-    s.screenFlash = 0; s.gameStartTime = Date.now();
-    setScoreDisplay(0); setTimeLeft(DURATION); setStreak(0);
+    s.particles = [];
+    setScoreDisplay(0); setTimeLeft(DURATION); setPhase('playing');
 
-    const W = window.innerWidth, H = window.innerHeight;
-    spawnDefenders(W, H, 2);
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(W, H);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.shadowMap.enabled = true;
+    renderer.setClearColor(0x0a0a1a);
+    mount.innerHTML = '';
+    mount.appendChild(renderer.domElement);
+    s.renderer = renderer;
 
-    s.ball = { x: W / 2, y: H * 0.8, vx: 0, vy: 0, active: false, bounced: false, trail: [] };
-    s.passStartTime = Date.now();
+    const scene = new THREE.Scene();
+    s.scene = scene;
 
-    stopMusicRef.current = startMusic('sports');
+    const camera = new THREE.PerspectiveCamera(55, W / H, 0.1, 50);
+    camera.position.set(0, 5, 9);
+    camera.lookAt(0, 0, 0);
+    s.camera = camera;
 
-    timerRef.current = setInterval(() => {
-      s.timeLeft--;
-      setTimeLeft(s.timeLeft);
-      sfx.tick();
-      if (s.timeLeft === 20) spawnDefenders(window.innerWidth, window.innerHeight, 3);
-      if (s.timeLeft === 10) { sfx.warning(); spawnDefenders(window.innerWidth, window.innerHeight, 3); }
-      if (s.timeLeft <= 0) endGame();
+    // Lighting
+    scene.add(new THREE.AmbientLight(0x334466, 2));
+    const courtLight = new THREE.PointLight(0xffeedd, 2.5, 20);
+    courtLight.position.set(0, 8, 0);
+    scene.add(courtLight);
+    s.courtLight = courtLight;
+    const rimLight1 = new THREE.PointLight(0xff6600, 1.2, 15);
+    rimLight1.position.set(-6, 4, -3);
+    scene.add(rimLight1);
+    const rimLight2 = new THREE.PointLight(0x0066ff, 0.8, 15);
+    rimLight2.position.set(6, 4, 3);
+    scene.add(rimLight2);
+
+    // Court floor
+    const floorGeo = new THREE.PlaneGeometry(10, 12);
+    const floorMat = new THREE.MeshStandardMaterial({ color: 0x7b4f1e, roughness: 0.8 });
+    const floor = new THREE.Mesh(floorGeo, floorMat);
+    floor.rotation.x = -Math.PI / 2;
+    floor.receiveShadow = true;
+    scene.add(floor);
+
+    // Court lines
+    const lineMat = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.3 });
+    const centerLine = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(-5, 0.01, 0), new THREE.Vector3(5, 0.01, 0)]);
+    scene.add(new THREE.Line(centerLine, lineMat));
+    const circle = new THREE.CircleGeometry(1.5, 32);
+    const circleEdge = new THREE.EdgesGeometry(circle);
+    const circleLines = new THREE.LineSegments(circleEdge, lineMat);
+    circleLines.rotation.x = -Math.PI / 2; circleLines.position.y = 0.01;
+    scene.add(circleLines);
+
+    // Target hoop on far end
+    const hoopGeo = new THREE.TorusGeometry(0.45, 0.04, 8, 24);
+    const hoopMat = new THREE.MeshStandardMaterial({ color: 0xf97316, emissive: 0xf97316, emissiveIntensity: 0.5, metalness: 0.8 });
+    const hoop = new THREE.Mesh(hoopGeo, hoopMat);
+    hoop.position.set(0, 0.8, -5);
+    hoop.rotation.x = -0.3;
+    scene.add(hoop);
+    s.targetMesh = hoop;
+    // Backboard
+    const bbGeo = new THREE.BoxGeometry(1.5, 1, 0.06);
+    const bbMat = new THREE.MeshStandardMaterial({ color: 0xdddddd, transparent: true, opacity: 0.4 });
+    const bb = new THREE.Mesh(bbGeo, bbMat);
+    bb.position.set(0, 1.5, -5.2);
+    scene.add(bb);
+
+    // Resize handler
+    const onResize = () => {
+      const W2 = mount.clientWidth || window.innerWidth;
+      const H2 = mount.clientHeight || window.innerHeight;
+      renderer.setSize(W2, H2);
+      camera.aspect = W2 / H2;
+      camera.updateProjectionMatrix();
+    };
+    window.addEventListener('resize', onResize);
+    (s as unknown as { _resizeCleanup: () => void })._resizeCleanup = () => window.removeEventListener('resize', onResize);
+
+    resetBall(scene, s);
+    spawnDefenders(scene, s, 2);
+
+    s.stopMusic = startMusic('sports' as import('@/lib/audio').MusicPattern);
+    s.intervalId = setInterval(() => {
+      s.timeLeft--; setTimeLeft(s.timeLeft);
+      if (s.timeLeft <= 0) { sfx.fail(); haptic([300]); endGame(); }
     }, 1000);
 
     const loop = () => {
       if (!s.running) return;
-      const W2 = window.innerWidth, H2 = window.innerHeight;
-      const now = Date.now();
-      const elapsed = (now - s.gameStartTime) / 1000;
-      const groundY  = H2 * 0.78;  // bounce floor
-      const targetY  = H2 * 0.12;  // target receiver area
-      const defRowY  = H2 * 0.35;
+      s.frame++;
 
-      ctx.save();
-      applyShake(ctx, s.shakeState);
+      // Court light pulse
+      if (s.courtLight) s.courtLight.intensity = 2.3 + Math.sin(s.frame * 0.05) * 0.3;
 
-      // Court background
-      const bg = ctx.createLinearGradient(0, 0, 0, H2);
-      bg.addColorStop(0, '#1c1917');
-      bg.addColorStop(1, '#292524');
-      ctx.fillStyle = bg;
-      ctx.fillRect(0, 0, W2, H2);
+      // Hoop pulse
+      if (s.targetMesh) s.targetMesh.rotation.y += 0.01;
 
-      // Court lines
-      ctx.strokeStyle = 'rgba(255,255,255,0.12)';
-      ctx.lineWidth = 2;
-      // Center line
-      ctx.beginPath(); ctx.moveTo(0, H2 / 2); ctx.lineTo(W2, H2 / 2); ctx.stroke();
-      // Three-point arc (partial)
-      ctx.beginPath(); ctx.arc(W2 / 2, H2 * 0.85, H2 * 0.28, Math.PI, 0); ctx.stroke();
-      // Lane
-      ctx.strokeRect(W2 * 0.3, H2 * 0.65, W2 * 0.4, H2 * 0.22);
+      // Move defenders
+      s.defenders.forEach(d => {
+        d.mesh.position.x += d.vx;
+        if (d.mesh.position.x > 4) { d.mesh.position.x = 4; d.vx = -Math.abs(d.vx); }
+        if (d.mesh.position.x < -4) { d.mesh.position.x = -4; d.vx = Math.abs(d.vx); }
+      });
 
-      // Floor (court surface)
-      ctx.fillStyle = '#7c2d12';
-      ctx.fillRect(0, groundY, W2, H2 - groundY);
-      ctx.strokeStyle = 'rgba(255,255,255,0.1)';
-      ctx.lineWidth = 3;
-      ctx.beginPath(); ctx.moveTo(0, groundY); ctx.lineTo(W2, groundY); ctx.stroke();
-
-      // Target zone (receive area)
-      const targetGrad = ctx.createLinearGradient(0, targetY - 20, 0, targetY + 20);
-      targetGrad.addColorStop(0, 'rgba(74,222,128,0)');
-      targetGrad.addColorStop(0.5, 'rgba(74,222,128,0.2)');
-      targetGrad.addColorStop(1, 'rgba(74,222,128,0)');
-      ctx.fillStyle = targetGrad;
-      ctx.fillRect(W2 * 0.1, targetY - 20, W2 * 0.8, 40);
-      ctx.strokeStyle = 'rgba(74,222,128,0.4)';
-      ctx.lineWidth = 2;
-      ctx.setLineDash([8, 5]);
-      ctx.beginPath(); ctx.moveTo(W2 * 0.1, targetY); ctx.lineTo(W2 * 0.9, targetY); ctx.stroke();
-      ctx.setLineDash([]);
-
-      // Aim line preview (while holding)
-      if (s.aimActive && s.aimLine && !s.ball.active) {
-        const { x1, y1, x2, y2 } = s.aimLine;
-        const vx = (x2 - x1) * 0.15;
-        const vy = (y2 - y1) * 0.15;
-        // Draw dotted trajectory (simple parabola preview)
-        ctx.save();
-        ctx.setLineDash([4, 6]);
-        ctx.strokeStyle = 'rgba(249,115,22,0.5)';
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        // Simulate a few points
-        let px = s.ball.x, py = s.ball.y;
-        let pvx = vx, pvy = vy;
-        let bounced = false;
-        ctx.moveTo(px, py);
-        for (let step = 0; step < 30; step++) {
-          px += pvx; py += pvy; pvy += 0.4;
-          if (py >= groundY && !bounced) { pvy = -pvy * 0.75; bounced = true; }
-          ctx.lineTo(px, py);
-          if (py > H2 + 20) break;
-        }
-        ctx.stroke();
-        ctx.setLineDash([]);
-        ctx.restore();
-      }
-
-      // Defenders
-      const defSpeed = 1.5 + Math.min(3, elapsed * 0.08);
-      for (const def of s.defenders) {
-        def.x += def.vx * defSpeed;
-        if (def.x < def.w / 2 + W2 * 0.05) { def.x = def.w / 2 + W2 * 0.05; def.vx = Math.abs(def.vx); }
-        if (def.x > W2 - def.w / 2 - W2 * 0.05) { def.x = W2 - def.w / 2 - W2 * 0.05; def.vx = -Math.abs(def.vx); }
-
-        ctx.save();
-        ctx.shadowBlur = 10; ctx.shadowColor = '#ef4444';
-        // Body
-        ctx.fillStyle = '#dc2626';
-        ctx.fillRect(def.x - def.w / 2, def.y - def.h / 2, def.w, def.h * 0.7);
-        // Head
-        ctx.beginPath(); ctx.arc(def.x, def.y - def.h / 2 - 12, 12, 0, Math.PI * 2);
-        ctx.fillStyle = '#fca5a5'; ctx.fill();
-        // Arms raised (blocking)
-        ctx.strokeStyle = '#dc2626'; ctx.lineWidth = 5;
-        ctx.beginPath(); ctx.moveTo(def.x, def.y - def.h * 0.25);
-        ctx.lineTo(def.x - 24, def.y - def.h * 0.5); ctx.stroke();
-        ctx.beginPath(); ctx.moveTo(def.x, def.y - def.h * 0.25);
-        ctx.lineTo(def.x + 24, def.y - def.h * 0.5); ctx.stroke();
-        ctx.restore();
-      }
-
-      // Ball physics
-      if (s.ball.active) {
-        s.ball.vy += 0.45; // gravity
-        s.ball.vx *= 0.995; // air drag
-        s.ball.x += s.ball.vx;
-        s.ball.y += s.ball.vy;
-
-        // Trail
-        s.ball.trail.push({ x: s.ball.x, y: s.ball.y });
-        if (s.ball.trail.length > 12) s.ball.trail.shift();
+      // Update ball physics
+      if (s.ball && s.ball.active) {
+        const ball = s.ball;
+        ball.mesh.position.x += ball.vx;
+        ball.mesh.position.z += ball.vy;
+        ball.mesh.rotation.x += ball.vx * 0.3;
 
         // Bounce off floor
-        if (s.ball.y >= groundY - BALL_RADIUS && !s.ball.bounced) {
-          s.ball.y = groundY - BALL_RADIUS;
-          s.ball.vy = -Math.abs(s.ball.vy) * 0.72;
-          s.ball.bounced = true;
-          sfx.nearMiss(); haptic([20]);
-          spawnBurst(s.particles, s.ball.x, s.ball.y, '#fbbf24', 8, 3);
-        }
-
-        // Check collision with defenders
-        let hitDefender = false;
-        for (const def of s.defenders) {
-          const inX = s.ball.x > def.x - def.w / 2 - BALL_RADIUS && s.ball.x < def.x + def.w / 2 + BALL_RADIUS;
-          const inY = s.ball.y > def.y - def.h / 2 - BALL_RADIUS && s.ball.y < def.y + def.h * 0.25 + BALL_RADIUS;
-          if (inX && inY) {
-            hitDefender = true; break;
+        if (!ball.bounced && ball.mesh.position.z <= 0 && ball.mesh.position.y <= 0.4) {
+          ball.bounced = true;
+          ball.mesh.position.y = 0.4;
+          sfx.collision();
+          haptic([20]);
+          // Bounce particles
+          for (let i = 0; i < 6; i++) {
+            const pGeo = new THREE.SphereGeometry(0.07, 6, 6);
+            const pMat = new THREE.MeshStandardMaterial({ color: 0xf97316, emissive: 0xf97316, emissiveIntensity: 0.8, transparent: true, opacity: 1 });
+            const pMesh = new THREE.Mesh(pGeo, pMat);
+            pMesh.position.copy(ball.mesh.position);
+            scene.add(pMesh);
+            const angle = (i / 6) * Math.PI * 2;
+            s.particles.push({ mesh: pMesh, vx: Math.cos(angle) * 0.08, vy: 0.12, vz: 0, life: 20 });
           }
         }
 
-        if (hitDefender) {
-          // Blocked
-          s.sig.misses++;
-          s.sig.streak = 0; setStreak(0);
-          triggerShake(s.shakeState, 6, 8);
-          s.screenFlash = 0.6; s.flashColor = '#ef4444';
-          sfx.collision(); hapticFail();
-          setPassMsg({ text: '🛡️ Blocked!', color: '#fca5a5' });
-          if (msgTimerRef.current) clearTimeout(msgTimerRef.current);
-          msgTimerRef.current = setTimeout(() => setPassMsg(null), 900);
-          s.ball.active = false;
-          setTimeout(() => resetBall(), 600);
-        } else if (s.ball.bounced && s.ball.y <= targetY + 30 && s.ball.y >= targetY - 50) {
-          // Successful pass through!
-          const passTime = (Date.now() - s.passStartTime) / 1000;
+        // Arc - simulate bounce
+        const normalizedZ = (ball.mesh.position.z - 3) / -8; // 0=start, 1=target
+        if (!ball.bounced) {
+          ball.mesh.position.y = 0.35 + Math.sin(normalizedZ * Math.PI * 0.5) * 1.2;
+        } else {
+          ball.mesh.position.y = 0.35 + Math.sin(Math.max(0, (normalizedZ - 0.5) * Math.PI)) * 0.8;
+        }
+
+        // Trail
+        for (let i = ball.trail.length - 1; i > 0; i--) {
+          ball.trail[i].position.copy(ball.trail[i - 1].position);
+          (ball.trail[i].material as THREE.MeshBasicMaterial).opacity = (1 - i / ball.trail.length) * 0.4;
+        }
+        ball.trail[0].position.copy(ball.mesh.position);
+
+        // Check collision with defenders
+        let blocked = false;
+        for (const d of s.defenders) {
+          const dx = Math.abs(ball.mesh.position.x - d.mesh.position.x);
+          const dz = Math.abs(ball.mesh.position.z - d.mesh.position.z);
+          if (dx < 0.6 && dz < 0.8) { blocked = true; break; }
+        }
+
+        if (blocked) {
+          ball.active = false;
+          sfx.nearMiss(); hapticFail();
+          s.sig.misses++; s.sig.streak = 0;
+          setTimeout(() => { if (s.running) { resetBall(scene, s); spawnDefenders(scene, s, Math.min(4, 2 + Math.floor(s.sig.passes / 4))); } }, 600);
+          return;
+        }
+
+        // Ball reached target area
+        if (ball.mesh.position.z <= -4.5) {
+          ball.active = false;
+          const passTime = Date.now();
+          const isFast = passTime > 0;
           s.sig.passes++;
           s.sig.streak++;
           if (s.sig.streak > s.sig.maxStreak) s.sig.maxStreak = s.sig.streak;
-          if (passTime < 2.5) s.sig.fastPasses++;
-          const pts = 1 + Math.floor(s.sig.streak / 3) + (passTime < 2 ? 1 : 0);
-          s.sig.score += pts;
-          setScoreDisplay(s.sig.score);
-          setStreak(s.sig.streak);
-          s.screenFlash = 0.5; s.flashColor = '#4ade80';
-          spawnBurst(s.particles, s.ball.x, s.ball.y, '#4ade80', 18, 5);
-          sfx.collect(); hapticScore();
-          const msg = s.sig.streak >= 3 ? `🔥 ${s.sig.streak}x Streak!` : '✓ Nice Pass!';
-          setPassMsg({ text: msg, color: '#86efac' });
-          if (msgTimerRef.current) clearTimeout(msgTimerRef.current);
-          msgTimerRef.current = setTimeout(() => setPassMsg(null), 900);
-          s.ball.active = false;
-          setTimeout(() => resetBall(), 500);
-        } else if (s.ball.y < -BALL_RADIUS - 20 || s.ball.x < -BALL_RADIUS - 20 || s.ball.x > window.innerWidth + BALL_RADIUS + 20) {
-          // Out of bounds
-          s.sig.misses++;
-          s.sig.streak = 0; setStreak(0);
-          sfx.nearMiss(); haptic([30, 20, 30]);
-          setPassMsg({ text: '📤 Out of bounds', color: '#fca5a5' });
-          if (msgTimerRef.current) clearTimeout(msgTimerRef.current);
-          msgTimerRef.current = setTimeout(() => setPassMsg(null), 900);
-          s.ball.active = false;
-          setTimeout(() => resetBall(), 500);
+          const pts = s.sig.streak >= 3 ? 3 : s.sig.streak >= 2 ? 2 : 1;
+          s.sig.score += pts; setScoreDisplay(s.sig.score);
+          sfx.success(); hapticScore();
+          // Burst at hoop
+          for (let i = 0; i < 10; i++) {
+            const pGeo = new THREE.SphereGeometry(0.06, 6, 6);
+            const pMat = new THREE.MeshStandardMaterial({ color: 0xfbbf24, emissive: 0xfbbf24, emissiveIntensity: 1, transparent: true, opacity: 1 });
+            const pMesh = new THREE.Mesh(pGeo, pMat);
+            pMesh.position.set(0, 1, -5);
+            scene.add(pMesh);
+            const angle = (i / 10) * Math.PI * 2;
+            s.particles.push({ mesh: pMesh, vx: Math.cos(angle) * 0.12, vy: 0.15 + Math.random() * 0.1, vz: Math.sin(angle) * 0.1, life: 25 });
+          }
+          setTimeout(() => { if (s.running) { resetBall(scene, s); spawnDefenders(scene, s, Math.min(5, 2 + Math.floor(s.sig.passes / 3))); } }, 500);
         }
       }
 
-      // Draw ball trail
-      for (let ti = 0; ti < s.ball.trail.length; ti++) {
-        const tp = s.ball.trail[ti];
-        ctx.globalAlpha = (ti / s.ball.trail.length) * 0.4;
-        ctx.fillStyle = s.accentColor;
-        ctx.beginPath();
-        ctx.arc(tp.x, tp.y, BALL_RADIUS * (0.3 + ti / s.ball.trail.length * 0.7), 0, Math.PI * 2);
-        ctx.fill();
-      }
-      ctx.globalAlpha = 1;
-
-      // Draw ball
-      if (s.ball.active || !s.ball.active) {
-        ctx.save();
-        ctx.shadowBlur = 20; ctx.shadowColor = s.accentColor;
-        const ballGrad = ctx.createRadialGradient(s.ball.x - 5, s.ball.y - 5, 2, s.ball.x, s.ball.y, BALL_RADIUS);
-        ballGrad.addColorStop(0, '#fdba74');
-        ballGrad.addColorStop(0.6, '#f97316');
-        ballGrad.addColorStop(1, '#c2410c');
-        ctx.fillStyle = ballGrad;
-        ctx.beginPath(); ctx.arc(s.ball.x, s.ball.y, BALL_RADIUS, 0, Math.PI * 2); ctx.fill();
-        // Basketball lines
-        ctx.strokeStyle = 'rgba(0,0,0,0.3)'; ctx.lineWidth = 1.5;
-        ctx.beginPath(); ctx.moveTo(s.ball.x - BALL_RADIUS, s.ball.y);
-        ctx.lineTo(s.ball.x + BALL_RADIUS, s.ball.y); ctx.stroke();
-        ctx.beginPath(); ctx.moveTo(s.ball.x, s.ball.y - BALL_RADIUS);
-        ctx.lineTo(s.ball.x, s.ball.y + BALL_RADIUS); ctx.stroke();
-        ctx.restore();
-      }
-
       // Particles
-      if (s.particles.length > 0) updateAndDrawParticles(ctx, s.particles);
+      s.particles = s.particles.filter(p => {
+        p.mesh.position.x += p.vx;
+        p.mesh.position.y += p.vy;
+        p.mesh.position.z += p.vz;
+        p.vy -= 0.008;
+        p.life--;
+        (p.mesh.material as THREE.MeshStandardMaterial).opacity = Math.max(0, p.life / 25);
+        if (p.life <= 0) { scene.remove(p.mesh); return false; }
+        return true;
+      });
 
-      // Screen flash
-      if (s.screenFlash > 0) {
-        ctx.fillStyle = `${s.flashColor}${Math.round(s.screenFlash * 35).toString(16).padStart(2, '0')}`;
-        ctx.fillRect(0, 0, W2, H2);
-        s.screenFlash = Math.max(0, s.screenFlash - 0.07);
-      }
-
-      // Swipe hint
-      if (!s.ball.active) {
-        ctx.save();
-        ctx.globalAlpha = 0.4 + Math.sin(now * 0.003) * 0.2;
-        ctx.fillStyle = '#fff';
-        ctx.font = 'bold 13px sans-serif';
-        ctx.textAlign = 'center';
-        ctx.fillText('↑ Swipe up to pass', W2 / 2, H2 * 0.88);
-        ctx.restore();
-      }
-
-      ctx.restore(); // shake
-
-      animRef.current = requestAnimationFrame(loop);
+      renderer.render(scene, camera);
+      s.animId = requestAnimationFrame(loop);
     };
+    s.animId = requestAnimationFrame(loop);
+  }, [endGame, resetBall, spawnDefenders]);
 
-    animRef.current = requestAnimationFrame(loop);
-  }, [endGame, resetBall, spawnDefenders, triggerPop]);
+  const doSwipe = useCallback((dx: number, dy: number) => {
+    const s = stateRef.current;
+    if (!s.running || !s.ball || s.ball.active) return;
+    const speed = Math.min(0.25, Math.sqrt(dx * dx + dy * dy) / 200);
+    s.ball.active = true;
+    s.ball.vx = (dx / 300) * 0.15;
+    s.ball.vy = -0.12 - speed * 0.3;
+    s.ball.bounced = false;
+    sfx.collect();
+    haptic([20]);
+    if (s.aimArrow && s.scene) {
+      s.scene.remove(s.aimArrow);
+      s.aimArrow = null;
+    }
+  }, []);
 
-  // ── INPUT ────────────────────────────────────────────────────────
   useEffect(() => {
-    const canvas = canvasRef.current; if (!canvas) return;
-    const resize = () => {
-      const dpr = window.devicePixelRatio || 1;
-      canvas.style.width = window.innerWidth + 'px';
-      canvas.style.height = window.innerHeight + 'px';
-      canvas.width  = window.innerWidth * dpr;
-      canvas.height = window.innerHeight * dpr;
-      const ctx2 = canvas.getContext('2d');
-      if (ctx2) ctx2.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const mount = mountRef.current;
+    if (!mount) return;
+    const s = stateRef.current;
+    const onDown = (e: PointerEvent) => {
+      s.pointerStart = { x: e.clientX, y: e.clientY, t: Date.now() };
     };
-    resize();
-    window.addEventListener('resize', resize);
-
-    const onPointerDown = (e: PointerEvent) => {
-      const s = stateRef.current;
-      if (!s.running || s.ball.active) return;
-      s.pointerStart = { x: e.clientX, y: e.clientY, time: Date.now() };
-      s.aimActive = true;
-      s.aimLine = { x1: e.clientX, y1: e.clientY, x2: e.clientX, y2: e.clientY };
-    };
-    const onPointerMove = (e: PointerEvent) => {
-      const s = stateRef.current;
-      if (!s.aimActive || !s.aimLine) return;
-      s.aimLine.x2 = e.clientX; s.aimLine.y2 = e.clientY;
-    };
-    const onPointerUp = (e: PointerEvent) => {
-      const s = stateRef.current;
-      if (!s.running || !s.pointerStart) { s.aimActive = false; return; }
+    const onMove = (e: PointerEvent) => {
+      if (!s.pointerStart || phase !== 'playing') return;
       const dx = e.clientX - s.pointerStart.x;
       const dy = e.clientY - s.pointerStart.y;
-      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (Math.abs(dx) > 10 || Math.abs(dy) > 10) {
+        if (s.aimArrow && s.scene) s.scene.remove(s.aimArrow);
+        if (s.scene && s.ball) {
+          const dir = new THREE.Vector3(dx / 100, 0, -1).normalize();
+          const arrow = new THREE.ArrowHelper(dir, s.ball.mesh.position.clone().setY(0.5), 2, 0xf97316, 0.3, 0.2);
+          s.scene.add(arrow); s.aimArrow = arrow;
+        }
+      }
+    };
+    const onUp = (e: PointerEvent) => {
+      if (!s.pointerStart || phase !== 'playing') return;
+      const dx = e.clientX - s.pointerStart.x;
+      const dy = e.clientY - s.pointerStart.y;
+      const dt = Date.now() - s.pointerStart.t;
       s.pointerStart = null;
-      s.aimActive = false; s.aimLine = null;
-
-      if (dist < 20) return; // too short
-
-      // Launch ball with swipe vector (invert Y so swipe up = ball goes up)
-      const power = Math.min(dist / 6, 14);
-      const nx = dx / dist, ny = dy / dist;
-      s.ball.vx = nx * power * 0.85;
-      s.ball.vy = ny * power * 1.1;
-      s.ball.active = true; s.ball.bounced = false; s.ball.trail = [];
+      if (Math.abs(dy) > 20 || dt < 300) doSwipe(dx, dy);
     };
-
-    canvas.addEventListener('pointerdown', onPointerDown);
-    canvas.addEventListener('pointermove', onPointerMove);
-    canvas.addEventListener('pointerup', onPointerUp);
-    window.addEventListener('pointerup', onPointerUp);
+    mount.addEventListener('pointerdown', onDown);
+    mount.addEventListener('pointermove', onMove);
+    mount.addEventListener('pointerup', onUp);
     return () => {
-      window.removeEventListener('resize', resize);
-      canvas.removeEventListener('pointerdown', onPointerDown);
-      canvas.removeEventListener('pointermove', onPointerMove);
-      canvas.removeEventListener('pointerup', onPointerUp);
-      window.removeEventListener('pointerup', onPointerUp);
+      mount.removeEventListener('pointerdown', onDown);
+      mount.removeEventListener('pointermove', onMove);
+      mount.removeEventListener('pointerup', onUp);
     };
-  }, []);
+  }, [phase, doSwipe]);
 
   useEffect(() => () => {
-    cancelAnimationFrame(animRef.current);
-    if (timerRef.current) clearInterval(timerRef.current);
-    stopMusicRef.current?.();
-    if (msgTimerRef.current) clearTimeout(msgTimerRef.current);
+    const s = stateRef.current;
+    cancelAnimationFrame(s.animId);
+    if (s.intervalId) clearInterval(s.intervalId);
+    if (s.stopMusic) s.stopMusic();
+    if (s.renderer) s.renderer.dispose();
+    (s as unknown as { _resizeCleanup?: () => void })._resizeCleanup?.();
   }, []);
 
-  const handleStart = useCallback(async (name: string, avatar: string) => {
-    playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar);
-    initAudio();
-    setPhase('countdown');
+  const handleStart = useCallback((name: string, avatar: string) => {
+    initAudio(); playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar); setPhase('countdown');
   }, []);
+  const handleCountdownDone = useCallback(() => { startLoop(); }, [startLoop]);
+  const handlePlayAgain = useCallback(() => { setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null); }, []);
 
-  const handleCountdownDone = useCallback(() => {
-    startLoop();
-    setPhase('playing');
-  }, [startLoop]);
-
-  const handlePlayAgain = useCallback(() => {
-    endCalledRef.current = false;
-    setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null); setIsNewBest(false); setStreak(0);
-    prevScoreRef.current = 0;
-    setPhase('countdown');
-  }, []);
-
-  const buildInsights = (sig: Signals) => [
-    { label: 'Passes Made', value: `${sig.passes}`,          color: '#4ade80' },
-    { label: 'Blocked',     value: `${sig.misses}`,          color: sig.misses === 0 ? '#4ade80' : '#ef4444' },
-    { label: 'Quick Passes', value: `${sig.fastPasses}`,     color: '#fbbf24' },
-    { label: 'Best Streak', value: `${sig.maxStreak}x`,      color: theme.colors.accent ?? ACCENT },
-  ];
+  const buildInsights = (sig: Signals) => {
+    const total = sig.passes + sig.misses;
+    const acc = total > 0 ? Math.round(sig.passes / total * 100) : 0;
+    return [
+      { label: 'Accuracy', value: `${acc}%`, color: acc >= 70 ? '#4ade80' : '#facc15' },
+      { label: 'Passes', value: String(sig.passes), color: ACCENT },
+      { label: 'Best Streak', value: `×${sig.maxStreak}`, color: ACCENT },
+      { label: 'Score', value: String(sig.score), color: 'var(--color-text)' },
+    ];
+  };
 
   return (
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}
-      background="linear-gradient(180deg, #1c1917 0%, #292524 100%)">
-
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
       {phase === 'start' && (
-        <GameStartScreen
-          emoji={GAME_EMOJI} title={GAME_TITLE} description={GAME_TAGLINE}
-          ctaLabel="Take the Court →"
-          sensorNote="Swipe upward on the ball to throw a bounce pass. Find the gaps between defenders."
-          accentColor={theme.colors.accent ?? ACCENT}
-          ctaTextColor="#000"
-          onStart={handleStart}
-          gradient="radial-gradient(ellipse 80% 70% at 50% 30%, #2c1810 0%, #1a0e08 60%, #0d0603 100%)"
-        />
+        <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description={GAME_TAGLINE}
+          ctaLabel="Take the Court" accentColor={theme.colors.accent ?? ACCENT} onStart={handleStart} />
       )}
-
-      {phase === 'countdown' && (
-        <Countdown onComplete={handleCountdownDone} accentColor={theme.colors.accent ?? ACCENT} />
-      )}
-
+      {phase === 'countdown' && <Countdown onComplete={handleCountdownDone} accentColor={theme.colors.accent ?? ACCENT} />}
       {(phase === 'playing' || phase === 'countdown') && (
         <>
-          <canvas ref={canvasRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none' }} />
+          <div ref={mountRef} style={{ position: 'absolute', inset: 0, touchAction: 'none' }} />
           {phase === 'playing' && (
             <GameHUD accentColor={theme.colors.accent ?? ACCENT} items={[
-              { label: 'TIME',  value: timeLeft,     danger: timeLeft <= 5, testId: 'timer' },
-              { label: 'SCORE', value: scoreDisplay, testId: 'score' },
+              { label: 'TIME',  value: timeLeft,    danger: timeLeft <= 10 },
+              { label: 'SCORE', value: scoreDisplay },
             ]} />
           )}
         </>
       )}
-
-      <AnimatePresence>
-        {passMsg && phase === 'playing' && (
-          <motion.div key="pmsg"
-            initial={{ opacity: 0, y: 10, scale: 0.8 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -20 }}
-            transition={{ duration: 0.2 }}
-            style={{
-              position: 'fixed', top: '25%', left: '50%', transform: 'translateX(-50%)',
-              zIndex: 80, pointerEvents: 'none', fontSize: 24, fontWeight: 900,
-              color: passMsg.color, textShadow: `0 0 14px ${passMsg.color}88`, whiteSpace: 'nowrap',
-            }}>
-            {passMsg.text}
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {isNewBest && phase === 'done' && (
-          <motion.div key="nb" initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
-            style={{ position: 'fixed', top: '10%', left: '50%', transform: 'translateX(-50%)', zIndex: 90,
-              background: 'linear-gradient(135deg, #fbbf24, #f59e0b)', borderRadius: 20, padding: '8px 20px',
-              fontSize: 20, fontWeight: 900, color: '#000', whiteSpace: 'nowrap' }}>
-            🏆 New Best!
-          </motion.div>
-        )}
-      </AnimatePresence>
-
       {phase === 'done' && finalSig && (
-        <EndScreen
-          gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI}
-          score={String(finalSig.score)} personality={getPersonality(finalSig)}
-          insights={buildInsights(finalSig)} accentColor={theme.colors.accent ?? ACCENT}
-          onPlayAgain={handlePlayAgain} didWin={finalSig.passes >= 8}
-        />
-      )}
-
-      {phase === 'done' && finalSig && (
-        <WebhookEmitter theme={theme} sig={finalSig} personality={getPersonality(finalSig)} player={playerSessionRef.current} />
-      )}
-
-      {phase === 'playing' && (
         <>
-          <ScorePopEffect pops={pops} accentColor={theme.colors.accent ?? ACCENT} />
-          <StreakBadge streak={streak} accentColor={theme.colors.accent ?? ACCENT} />
+          <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI}
+            score={String(finalSig.score)} personality={getPersonality(finalSig)}
+            insights={buildInsights(finalSig)} accentColor={theme.colors.accent ?? ACCENT}
+            onPlayAgain={handlePlayAgain} didWin={finalSig.passes >= 5} />
+          <WebhookEmitter theme={theme} sig={finalSig} personality={getPersonality(finalSig)} player={playerSessionRef.current} />
         </>
       )}
     </GameShell>
   );
 }
 
-// ── WEBHOOK EMITTER ─────────────────────────────────────────────────
 function WebhookEmitter({ theme, sig, personality, player }: {
-  theme: ReturnType<typeof useBrandTheme>;
-  sig: Signals; personality: string; player: PlayerSession | null;
+  theme: ReturnType<typeof useBrandTheme>; sig: Signals; personality: string; player: PlayerSession | null;
 }) {
   const fired = useRef(false);
   useEffect(() => {
     if (fired.current) return; fired.current = true;
-    postWebhook(theme, GAME_ID, {
-      personality, score: sig.score, passes: sig.passes,
-      fastPasses: sig.fastPasses, maxStreak: sig.maxStreak,
-    }, player);
+    postWebhook(theme, GAME_ID, { personality, score: sig.score, passes: sig.passes, misses: sig.misses, maxStreak: sig.maxStreak }, player);
   }, [theme, sig, personality, player]);
   return null;
 }

@@ -246,7 +246,7 @@ export default function SingAlongGame() {
 
       // Detect pitch
       if (s.analyser && s.pitchBuf) {
-        s.analyser.getFloatTimeDomainData(s.pitchBuf);
+        s.analyser.getFloatTimeDomainData(s.pitchBuf as Float32Array<ArrayBuffer>);
         s.currentPitch = autoCorrelate(s.pitchBuf, s.audioCtx?.sampleRate ?? 44100);
       }
 

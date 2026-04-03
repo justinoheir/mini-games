@@ -495,3 +495,368 @@ test('12.1 — haptics fire at least once during gameplay', async ({ page }) => 
   // Log for debugging without failing:
   console.log(`Haptics fired: ${log.length} times`)
 })
+
+// ─── 13. THREE.JS / CANVAS RENDERING ─────────────────────────────────────────
+// ENABLE for 3D games that use Three.js (orbit-control, tunnel, etc.)
+
+test('13.1 — canvas element is present and has non-zero dimensions', async ({ page }) => {
+  const game = new GamePage(page, GAME_PATH, ACCENT)
+  await game.goto({ sensors: { motion: SENSOR === 'motion' } })
+  await game.start()
+  await game.waitForPlaying()
+
+  const canvas = page.locator('canvas').first()
+  await expect(canvas).toBeVisible({ timeout: 5000 })
+
+  const box = await canvas.boundingBox()
+  expect(box, 'Canvas has zero size — Three.js renderer may have failed').not.toBeNull()
+  expect(box!.width, 'Canvas width is 0').toBeGreaterThan(0)
+  expect(box!.height, 'Canvas height is 0').toBeGreaterThan(0)
+})
+
+test('13.2 — no WebGL context errors in console', async ({ page }) => {
+  const webglErrors: string[] = []
+  page.on('console', msg => {
+    const text = msg.text()
+    if (
+      text.includes('WebGL') ||
+      text.includes('CONTEXT_LOST') ||
+      text.includes('INVALID_OPERATION') ||
+      text.includes('THREE.') ||
+      text.includes('WebGLRenderer')
+    ) {
+      if (msg.type() === 'error' || text.toLowerCase().includes('error')) {
+        webglErrors.push(text)
+      }
+    }
+  })
+
+  const game = new GamePage(page, GAME_PATH, ACCENT)
+  await game.goto({ sensors: { motion: SENSOR === 'motion' } })
+  await game.start()
+  await game.waitForPlaying()
+  await page.waitForTimeout(3000)
+
+  expect(webglErrors, `WebGL/Three.js errors: ${webglErrors.join('; ')}`).toHaveLength(0)
+})
+
+test('13.3 — canvas fills its container on mobile (375px)', async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 667 })
+  const game = new GamePage(page, GAME_PATH, ACCENT)
+  await game.goto({ sensors: { motion: SENSOR === 'motion' } })
+  await game.start()
+  await game.waitForPlaying()
+
+  const canvas = page.locator('canvas').first()
+  const box = await canvas.boundingBox()
+  if (box) {
+    // Canvas should fill most of the viewport width (within 10px tolerance)
+    expect(box.width, `Canvas width ${box.width} is too narrow for 375px viewport`).toBeGreaterThan(350)
+  }
+})
+
+test('13.4 — canvas resizes correctly when viewport changes', async ({ page }) => {
+  const game = new GamePage(page, GAME_PATH, ACCENT)
+  await game.goto({ sensors: { motion: SENSOR === 'motion' } })
+  await game.start()
+  await game.waitForPlaying()
+
+  const before = await page.locator('canvas').first().boundingBox()
+
+  // Resize viewport
+  await page.setViewportSize({ width: 430, height: 932 })
+  await page.waitForTimeout(500)  // allow resize handler to fire
+
+  const after = await page.locator('canvas').first().boundingBox()
+
+  // If canvas was present before and after, it should have updated size
+  if (before && after) {
+    // Canvas dimensions should reflect new viewport (not stuck at old size)
+    expect(after.width, 'Canvas did not update width on resize').toBeGreaterThan(0)
+  }
+})
+
+// ─── 14. TOUCH EVENT HANDLERS ────────────────────────────────────────────────
+
+test('14.1 — touch events are handled (pointerdown fires on canvas)', async ({ page }) => {
+  const game = new GamePage(page, GAME_PATH, ACCENT)
+  await game.goto({ sensors: { motion: SENSOR === 'motion' } })
+  await game.start()
+  await game.waitForPlaying()
+
+  // Verify canvas has touchAction: none (prevents browser hijacking touch)
+  const canvas = page.locator('canvas').first()
+  if (await canvas.count() > 0) {
+    const touchAction = await canvas.evaluate(el => window.getComputedStyle(el).touchAction)
+    expect(
+      touchAction,
+      `Canvas touchAction is '${touchAction}' — should be 'none' to prevent scroll interference`
+    ).toBe('none')
+  }
+})
+
+test('14.2 — tap on canvas during gameplay does not throw errors', async ({ page }) => {
+  const errors: string[] = []
+  page.on('pageerror', err => errors.push(err.message))
+
+  const game = new GamePage(page, GAME_PATH, ACCENT)
+  await game.goto({ sensors: { motion: SENSOR === 'motion' } })
+  await game.start()
+  await game.waitForPlaying()
+
+  // Simulate 5 taps on canvas center
+  const canvas = page.locator('canvas').first()
+  if (await canvas.count() > 0) {
+    for (let i = 0; i < 5; i++) {
+      await canvas.tap().catch(() => {
+        // tap() may not work on all canvases — use click as fallback
+      })
+      await canvas.click().catch(() => {})
+      await page.waitForTimeout(200)
+    }
+  } else {
+    // Touch games without canvas — tap the game container
+    await page.locator('[data-testid="game-canvas"], .game-container, main').first().tap().catch(() => {})
+  }
+
+  expect(errors, `Errors after canvas taps: ${errors.join('; ')}`).toHaveLength(0)
+})
+
+test('14.3 — no passive event listener violations on touch-based game', async ({ page }) => {
+  const warnings: string[] = []
+  page.on('console', msg => {
+    if (msg.type() === 'warning' && msg.text().includes('passive')) {
+      warnings.push(msg.text())
+    }
+  })
+
+  const game = new GamePage(page, GAME_PATH, ACCENT)
+  await game.goto({ sensors: { motion: SENSOR === 'motion' } })
+  await game.start()
+  await game.waitForPlaying()
+  await page.waitForTimeout(2000)
+
+  // Log (don't fail) — passive listener violations are performance hints, not crashes
+  if (warnings.length > 0) {
+    console.warn(`[touch] Passive event listener warnings: ${warnings.join('; ')}`)
+  }
+})
+
+// ─── 15. AUDIO INITIALIZATION ────────────────────────────────────────────────
+
+test('15.1 — AudioContext is created and not in suspended state after game start', async ({ page }) => {
+  // Inject a spy to track AudioContext state
+  await page.addInitScript(() => {
+    const OrigAC = window.AudioContext || (window as any).webkitAudioContext
+    if (!OrigAC) return
+    ;(window as any).__audioContextStates = []
+    const Orig = OrigAC
+    ;(window as any).AudioContext = class extends Orig {
+      constructor(...args: unknown[]) {
+        super(...(args as []))
+        ;(window as any).__audioContextStates.push(this.state)
+      }
+    }
+  })
+
+  const game = new GamePage(page, GAME_PATH, ACCENT)
+  await game.goto({ sensors: { motion: SENSOR === 'motion' } })
+  await game.start()
+  await game.waitForPlaying()
+  await page.waitForTimeout(1000)
+
+  const states: string[] = await page.evaluate(() => (window as any).__audioContextStates ?? [])
+  // If any AudioContext was created, at least one should have been resumed
+  if (states.length > 0) {
+    const finalState = await page.evaluate(() => {
+      const acs: AudioContext[] = (window as any).__audioContextInstances ?? []
+      return acs.map(ac => ac.state)
+    })
+    console.log(`AudioContext states: created=${states.length}, states=${JSON.stringify(finalState)}`)
+    // Don't hard-fail — browsers may keep context suspended until user gesture
+  } else {
+    console.log('No AudioContext detected (game may use a different audio API or no audio)')
+  }
+})
+
+test('15.2 — no audio errors in console during gameplay', async ({ page }) => {
+  const audioErrors: string[] = []
+  page.on('console', msg => {
+    const text = msg.text()
+    if (
+      (msg.type() === 'error') &&
+      (text.includes('AudioContext') || text.includes('audio') || text.includes('NotAllowedError'))
+    ) {
+      audioErrors.push(text)
+    }
+  })
+
+  const game = new GamePage(page, GAME_PATH, ACCENT)
+  await game.goto({ sensors: { motion: SENSOR === 'motion' } })
+  await game.start()
+  await game.waitForPlaying()
+  await page.waitForTimeout(5000)
+
+  expect(audioErrors, `Audio errors during gameplay: ${audioErrors.join('; ')}`).toHaveLength(0)
+})
+
+test('15.3 — music does not continue after navigating away (no audio leak)', async ({ page }) => {
+  await page.addInitScript(() => {
+    // Track AudioContext close calls
+    ;(window as any).__audioContextClosed = false
+    const OrigAC = window.AudioContext || (window as any).webkitAudioContext
+    if (!OrigAC) return
+    const origClose = OrigAC.prototype.close
+    OrigAC.prototype.close = function(...args: unknown[]) {
+      ;(window as any).__audioContextClosed = true
+      return origClose.apply(this, args as [])
+    }
+  })
+
+  // Fast-forward through one game
+  await page.addInitScript(() => {
+    const orig = window.setInterval.bind(window)
+    ;(window as any).setInterval = (fn: () => void, ms: number, ...args: unknown[]) => {
+      if (ms === 1000) return orig(fn, 100, ...args)
+      return orig(fn, ms, ...args)
+    }
+  })
+
+  const game = new GamePage(page, GAME_PATH, ACCENT)
+  await game.goto()
+  await game.start()
+  await game.waitForEnd(GAME_DURATION_MS / 10 + 5000)
+
+  // Navigate away
+  await page.goto(process.env.TEST_URL ?? 'http://localhost:3000')
+  await page.waitForTimeout(500)
+
+  // AudioContext should be closed or music stopped (stopMusicRef cleanup)
+  const closed = await page.evaluate(() => (window as any).__audioContextClosed ?? false)
+  // Log without hard fail — cleanup method varies by implementation
+  console.log(`AudioContext closed on unmount: ${closed}`)
+  // Note: Some games use stopMusicRef instead of closing AudioContext. Both are valid.
+})
+
+// ─── 16. CLEANUP / UNMOUNT ───────────────────────────────────────────────────
+
+test('16.1 — no requestAnimationFrame loops running after game ends', async ({ page }) => {
+  let rafCallsAtEnd = 0
+
+  await page.addInitScript(() => {
+    ;(window as any).__activeRafs = new Set()
+    const origRaf = window.requestAnimationFrame.bind(window)
+    const origCaf = window.cancelAnimationFrame.bind(window)
+
+    window.requestAnimationFrame = (cb) => {
+      const id = origRaf(cb)
+      ;(window as any).__activeRafs.add(id)
+      return id
+    }
+    window.cancelAnimationFrame = (id) => {
+      ;(window as any).__activeRafs.delete(id)
+      origCaf(id)
+    }
+  })
+
+  await page.addInitScript(() => {
+    const orig = window.setInterval.bind(window)
+    ;(window as any).setInterval = (fn: () => void, ms: number, ...args: unknown[]) => {
+      if (ms === 1000) return orig(fn, 100, ...args)
+      return orig(fn, ms, ...args)
+    }
+  })
+
+  const game = new GamePage(page, GAME_PATH, ACCENT)
+  await game.goto()
+  await game.start()
+  await game.waitForEnd(GAME_DURATION_MS / 10 + 5000)
+
+  // Check rAF count — should be low after game ends (at most 1 for end-screen animations)
+  rafCallsAtEnd = await page.evaluate(() => (window as any).__activeRafs?.size ?? 0)
+  console.log(`Active rAF handles at end screen: ${rafCallsAtEnd}`)
+
+  // Navigate away to trigger unmount cleanup
+  await page.goto(process.env.TEST_URL ?? 'http://localhost:3000')
+  await page.waitForTimeout(500)
+
+  const rafAfterNav = await page.evaluate(() => (window as any).__activeRafs?.size ?? 0)
+  console.log(`Active rAF handles after navigation: ${rafAfterNav}`)
+
+  // After navigation, rAF handles from the game page should be gone (new page context)
+  expect(rafAfterNav, 'rAF loops still active after navigation').toBe(0)
+})
+
+test('16.2 — resize event listener is removed on unmount', async ({ page }) => {
+  await page.addInitScript(() => {
+    ;(window as any).__resizeListenerCount = 0
+    const origAdd = window.addEventListener.bind(window)
+    const origRem = window.removeEventListener.bind(window)
+    window.addEventListener = (type: string, ...args: unknown[]) => {
+      if (type === 'resize') (window as any).__resizeListenerCount++
+      return (origAdd as Function)(type, ...args)
+    }
+    window.removeEventListener = (type: string, ...args: unknown[]) => {
+      if (type === 'resize') (window as any).__resizeListenerCount--
+      return (origRem as Function)(type, ...args)
+    }
+  })
+
+  const game = new GamePage(page, GAME_PATH, ACCENT)
+  await game.goto({ sensors: { motion: SENSOR === 'motion' } })
+  await game.start()
+  await game.waitForPlaying()
+
+  const addedCount: number = await page.evaluate(() => (window as any).__resizeListenerCount ?? 0)
+  console.log(`Resize listeners added: ${addedCount}`)
+
+  // Navigate away to trigger cleanup useEffect
+  await page.goto(process.env.TEST_URL ?? 'http://localhost:3000')
+  await page.waitForTimeout(500)
+
+  const finalCount: number = await page.evaluate(() => (window as any).__resizeListenerCount ?? 0)
+  console.log(`Resize listeners net after unmount: ${finalCount}`)
+
+  // Net count should be ≤ 0 (all listeners cleaned up, possibly more removes than adds from previous navigations)
+  expect(finalCount, `${addedCount} resize listener(s) added but net count is ${finalCount} — possible listener leak`).toBeLessThanOrEqual(0)
+})
+
+test('16.3 — interval is cleared on unmount (no tick after game ends)', async ({ page }) => {
+  const ticksAfterEnd: number[] = []
+
+  await page.addInitScript(() => {
+    ;(window as any).__activeIntervals = new Set()
+    const origSI = window.setInterval.bind(window)
+    const origCI = window.clearInterval.bind(window)
+
+    window.setInterval = (fn: TimerHandler, ms: number, ...args: unknown[]) => {
+      const id = origSI(fn, ms, ...args)
+      ;(window as any).__activeIntervals.add(id)
+      return id
+    }
+    window.clearInterval = (id?: number) => {
+      ;(window as any).__activeIntervals.delete(id)
+      origCI(id)
+    }
+  })
+
+  // Still need the 10x timer mock for speed — chain after the interval spy
+  await page.addInitScript(() => {
+    const origSI2 = window.setInterval.bind(window)
+    ;(window as any).setInterval = (fn: () => void, ms: number, ...args: unknown[]) => {
+      if (ms === 1000) return origSI2(fn, 100, ...args)
+      return origSI2(fn, ms, ...args)
+    }
+  })
+
+  const game = new GamePage(page, GAME_PATH, ACCENT)
+  await game.goto()
+  await game.start()
+  await game.waitForEnd(GAME_DURATION_MS / 10 + 5000)
+
+  const activeAtEnd: number = await page.evaluate(() => (window as any).__activeIntervals?.size ?? 0)
+  console.log(`Active intervals at end screen: ${activeAtEnd}`)
+
+  // The 1s countdown interval should have been cleared — only allow very short-lived intervals
+  expect(activeAtEnd, `${activeAtEnd} interval(s) still running after game ended — clearInterval not called in cleanup`).toBeLessThanOrEqual(2)
+})

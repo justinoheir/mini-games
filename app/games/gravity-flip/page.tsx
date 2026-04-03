@@ -119,7 +119,7 @@ export default function GravityFlipGame() {
     ball.position.set(-0.6, 0, 0);
     scene.add(ball);
 
-    const obstacles: typeof threeRef.current extends { obstacles: infer T } ? T : never = [];
+    const obstacles: Array<{ top: THREE.Mesh; bot: THREE.Mesh; z: number; topY: number; botY: number; passed: boolean }> = [];
     const trail: Array<{ mesh: THREE.Mesh; alpha: number }> = [];
 
     const obj = { renderer, scene, camera, ball, ballLight, wallTop, wallBot, obstacles, trail, animId: 0 };
