@@ -1,11 +1,10 @@
 'use client';
 /**
- * DREIDEL SPIN
- * Real mechanic: Swipe up to spin the dreidel. The dreidel rotates and decelerates.
- * Hold/press tap to brake. Land on the highlighted target symbol to score.
- * Each round, a new target symbol is shown.
+ * DREIDEL SPIN — 3D: swipe up to spin a real 3D dreidel, brake to land on target symbol.
+ * Blue and silver festival environment with glowing Hebrew symbols.
  */
 import { useEffect, useRef, useState, useCallback } from 'react';
+import * as THREE from 'three';
 import GameShell from '@/components/GameShell';
 import GameHUD from '@/components/GameHUD';
 import GameStartScreen from '@/components/GameStartScreen';
@@ -25,446 +24,330 @@ const GAME_TITLE = 'Dreidel Spin';
 const GAME_TAGLINE = 'Spin it. Brake it. Land on the symbol.';
 const PB_KEY = 'mg_pb_dreidel-spin';
 
-// Dreidel symbols: Nun (נ), Gimel (ג), Hey (ה), Shin (ש)
-const SYMBOLS = ['נ', 'ג', 'ה', 'ש'];
-const SYMBOL_NAMES = ['Nun', 'Gimel', 'Hey', 'Shin'];
+const SYMBOLS = ['נ','ג','ה','ש'];
+const SYMBOL_NAMES = ['Nun','Gimel','Hey','Shin'];
 const NUM_SYMBOLS = 4;
-// Each symbol occupies a quarter turn (90° = π/2)
-const SECTOR_ANGLE = (Math.PI * 2) / NUM_SYMBOLS;
+const SECTOR_ANGLE = (Math.PI*2)/NUM_SYMBOLS;
 
-interface Signals { score: number; hits: number; attempts: number; maxStreak: number; streakCurrent: number; avgAccuracy: number; }
-
-function getPersonality(sig: Signals): string {
-  const acc = sig.attempts > 0 ? sig.hits / sig.attempts : 0;
-  if (acc >= 0.8 && sig.score >= 5) return 'Dreidel Master 🌟';
-  if (acc >= 0.65) return 'Precision Spinner 🎯';
-  if (sig.maxStreak >= 3) return 'Lucky Streak 🍀';
-  if (sig.attempts >= 5) return 'Determined Player 💪';
+interface Signals {
+  score:number; hits:number; attempts:number; maxStreak:number; streakCurrent:number; avgAccuracy:number;
+}
+function getPersonality(sig:Signals):string {
+  const acc=sig.attempts>0?sig.hits/sig.attempts:0;
+  if(acc>=0.8&&sig.score>=5) return 'Dreidel Master 🌟';
+  if(acc>=0.65) return 'Precision Spinner 🎯';
+  if(sig.maxStreak>=3) return 'Lucky Streak 🍀';
+  if(sig.attempts>=5) return 'Determined Player 💪';
   return 'Learning to Spin 🌀';
 }
 
-type Phase = 'start' | 'countdown' | 'playing' | 'done';
-type SpinState = 'idle' | 'spinning' | 'braking' | 'stopped';
-
-function WebhookEmitter({ theme, sig, personality, player }: { theme: ReturnType<typeof useBrandTheme>; sig: Signals; personality: string; player: PlayerSession | null; }) {
-  const fired = useRef(false);
-  useEffect(() => { if (fired.current) return; fired.current = true; postWebhook(theme, GAME_ID, { personality, score: sig.score }, player); }, [theme, sig, personality, player]);
-  return null;
-}
+type Phase='start'|'countdown'|'playing'|'done';
+type SpinState='idle'|'spinning'|'braking'|'stopped';
 
 export default function DreidelSpinGame() {
   const theme = useBrandTheme();
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const animRef = useRef(0);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const stopMusicRef = useRef<(() => void) | null>(null);
-
-  const stateRef = useRef({
-    running: false,
-    timeLeft: DURATION,
-    sig: { score: 0, hits: 0, attempts: 0, maxStreak: 0, streakCurrent: 0, avgAccuracy: 0 } as Signals,
-    // Dreidel rotation
-    angle: 0,           // current rotation angle (radians)
-    angularVel: 0,      // radians per frame
-    spinState: 'idle' as SpinState,
-    // Swipe detection
-    swipeStartY: 0,
-    swipeStartTime: 0,
-    isSwiping: false,
-    // Braking
-    isBraking: false,
-    // Target
-    targetSymbolIdx: 0,
-    // Round result
-    resultCorrect: false,
-    resultFlash: 0,
-    // Visual
-    accentColor: ACCENT,
-    wobble: 0,            // wobble amplitude when spinning
-    tilt: 0,              // tilt angle when spinning (visual flair)
-    accuracyDiffs: [] as number[],
-  });
-
-  const [phase, setPhase] = useState<Phase>('start');
-  const [timeLeft, setTimeLeft] = useState(DURATION);
-  const [scoreDisplay, setScoreDisplay] = useState(0);
-  const [streakDisplay, setStreakDisplay] = useState(0);
-  const [finalSig, setFinalSig] = useState<Signals | null>(null);
-  const [spinStateDisplay, setSpinStateDisplay] = useState<SpinState>('idle');
-  const [resultMsg, setResultMsg] = useState<string | null>(null);
-  const [targetDisplay, setTargetDisplay] = useState(0);
-  const playerSessionRef = useRef<PlayerSession | null>(null);
-
-  useEffect(() => { stateRef.current.accentColor = theme.colors.accent ?? ACCENT; }, [theme]);
-
-  /** Return the symbol index that the top of the dreidel is pointing at */
-  const getTopSymbol = useCallback((angle: number): number => {
-    // Normalize angle to 0..2π
-    const norm = ((angle % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
-    // Top is at angle 0; each symbol occupies SECTOR_ANGLE
-    return Math.floor(norm / SECTOR_ANGLE) % NUM_SYMBOLS;
-  }, []);
-
-  const endGame = useCallback(() => {
-    const s = stateRef.current;
-    if (!s.running) return;
-    s.running = false;
-    cancelAnimationFrame(animRef.current);
-    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
-    if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
-    sfx.gameOver(); haptic([100]);
-    const sig = s.sig;
-    sig.avgAccuracy = s.accuracyDiffs.length > 0
-      ? Math.round(s.accuracyDiffs.reduce((a, b) => a + b, 0) / s.accuracyDiffs.length)
-      : 0;
-    try {
-      const pb = parseInt(localStorage.getItem(PB_KEY) ?? '0', 10);
-      if (sig.score > pb) localStorage.setItem(PB_KEY, String(sig.score));
-    } catch { /* noop */ }
-    setFinalSig({ ...sig });
-    setPhase('done');
-  }, []);
-
-  /** Called when dreidel stops — check if landed on target */
-  const checkLanding = useCallback(() => {
-    const s = stateRef.current;
-    if (!s.running) return;
-    const landed = getTopSymbol(s.angle);
-    s.sig.attempts++;
-    // Accuracy: how close to center of target sector?
-    const targetAngle = s.targetSymbolIdx * SECTOR_ANGLE;
-    const norm = ((s.angle % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
-    const diff = Math.abs(norm - (targetAngle + SECTOR_ANGLE / 2));
-    const accuracyDiff = Math.round(Math.min(diff, Math.PI * 2 - diff) / SECTOR_ANGLE * 100);
-    s.accuracyDiffs.push(accuracyDiff);
-
-    const correct = landed === s.targetSymbolIdx;
-    s.resultCorrect = correct;
-    s.resultFlash = Date.now() + 800;
-
-    if (correct) {
-      s.sig.hits++;
-      s.sig.streakCurrent++;
-      if (s.sig.streakCurrent > s.sig.maxStreak) s.sig.maxStreak = s.sig.streakCurrent;
-      const bonus = s.sig.streakCurrent >= 3 ? 2 : 1;
-      s.sig.score += bonus;
-      setScoreDisplay(s.sig.score);
-      setStreakDisplay(s.sig.streakCurrent);
-      sfx.collect(); haptic([30]);
-      setResultMsg(`✅ ${SYMBOL_NAMES[landed]}! +${bonus}`);
-    } else {
-      s.sig.streakCurrent = 0;
-      setStreakDisplay(0);
-      sfx.nearMiss(); haptic([20, 30, 20]);
-      setResultMsg(`❌ Got ${SYMBOL_NAMES[landed]}, needed ${SYMBOL_NAMES[s.targetSymbolIdx]}`);
-    }
-    setTimeout(() => {
-      setResultMsg(null);
-      if (s.running) {
-        // New target
-        s.targetSymbolIdx = (s.targetSymbolIdx + 1 + Math.floor(Math.random() * 3)) % NUM_SYMBOLS;
-        setTargetDisplay(s.targetSymbolIdx);
-        s.spinState = 'idle';
-        setSpinStateDisplay('idle');
-      }
-    }, 1500);
-  }, [getTopSymbol]);
-
-  const startLoop = useCallback(() => {
-    const canvas = canvasRef.current; if (!canvas) return;
-    const ctx = canvas.getContext('2d'); if (!ctx) return;
-    const W = window.innerWidth, H = window.innerHeight;
-    const s = stateRef.current;
-    s.running = true;
-    s.timeLeft = DURATION;
-    s.sig = { score: 0, hits: 0, attempts: 0, maxStreak: 0, streakCurrent: 0, avgAccuracy: 0 };
-    s.angle = 0; s.angularVel = 0; s.spinState = 'idle';
-    s.isBraking = false; s.wobble = 0; s.tilt = 0;
-    s.targetSymbolIdx = Math.floor(Math.random() * NUM_SYMBOLS);
-    s.accuracyDiffs = [];
-    setScoreDisplay(0); setStreakDisplay(0); setTimeLeft(DURATION);
-    setSpinStateDisplay('idle');
-    setTargetDisplay(s.targetSymbolIdx);
-    setPhase('playing');
-    stopMusicRef.current = startMusic('ambient');
-
-    timerRef.current = setInterval(() => {
-      s.timeLeft--;
-      setTimeLeft(s.timeLeft);
-      if (s.timeLeft === 10) { sfx.warning(); haptic([50, 30, 50]); }
-      else if (s.timeLeft > 0) sfx.tick();
-      if (s.timeLeft <= 0) endGame();
-    }, 1000);
-
-    const cx = W / 2, cy = H * 0.43;
-    const size = Math.min(W, H) * 0.22;
-
-    const drawDreidel = (angle: number, wobble: number) => {
-      ctx.save();
-      ctx.translate(cx + wobble * Math.sin(Date.now() * 0.018), cy);
-      ctx.rotate(angle);
-      const accent = s.accentColor;
-
-      // Body (diamond/rhombus shape)
-      const topY = -size * 1.2;
-      const midY = size * 0.3;
-      const botY = size * 1.2;
-      const halfW = size * 0.6;
-
-      // Draw 4 faces as sectors
-      for (let i = 0; i < NUM_SYMBOLS; i++) {
-        const faceAngle = i * SECTOR_ANGLE;
-        const isTarget = i === s.targetSymbolIdx;
-        ctx.save();
-        ctx.rotate(faceAngle);
-        // Face gradient
-        const faceGrad = ctx.createLinearGradient(0, topY, 0, botY);
-        const baseCol = isTarget ? '#1e3a8a' : '#1e293b';
-        const lightCol = isTarget ? '#3b82f6' : '#334155';
-        faceGrad.addColorStop(0, lightCol); faceGrad.addColorStop(1, baseCol);
-        ctx.fillStyle = faceGrad;
-        ctx.beginPath();
-        ctx.moveTo(0, topY);
-        ctx.lineTo(halfW * Math.cos(SECTOR_ANGLE * 0.5) * 0.9, midY * 0.6);
-        ctx.lineTo(halfW * Math.cos(SECTOR_ANGLE * 0.5) * 0.6, midY);
-        ctx.lineTo(0, botY * 0.2);
-        ctx.closePath(); ctx.fill();
-        // Face border
-        ctx.strokeStyle = isTarget ? accent : 'rgba(148,163,184,0.3)'; ctx.lineWidth = 1.5;
-        ctx.stroke();
-        // Symbol text
-        ctx.fillStyle = isTarget ? '#ffffff' : 'rgba(255,255,255,0.7)';
-        ctx.font = `bold ${Math.round(size * 0.38)}px serif`;
-        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-        ctx.fillText(SYMBOLS[i], size * 0.15, midY * 0.3 - size * 0.1);
-        ctx.restore();
-      }
-
-      // Center shine
-      const shine = ctx.createRadialGradient(0, topY * 0.6, 0, 0, topY * 0.3, size * 0.5);
-      shine.addColorStop(0, 'rgba(255,255,255,0.3)'); shine.addColorStop(1, 'rgba(255,255,255,0)');
-      ctx.fillStyle = shine;
-      ctx.beginPath(); ctx.arc(0, topY * 0.4, size * 0.5, 0, Math.PI * 2); ctx.fill();
-
-      // Spindle top
-      ctx.fillStyle = '#94a3b8'; ctx.shadowBlur = 6; ctx.shadowColor = '#94a3b8';
-      ctx.beginPath(); ctx.arc(0, topY, size * 0.1, 0, Math.PI * 2); ctx.fill();
-      // Spindle bottom tip
-      ctx.beginPath(); ctx.moveTo(-size * 0.08, botY * 0.2); ctx.lineTo(size * 0.08, botY * 0.2);
-      ctx.lineTo(0, botY); ctx.closePath(); ctx.fill();
-      ctx.restore();
-    };
-
-    const drawPointer = () => {
-      // Arrow pointer at top showing target sector
-      ctx.save();
-      ctx.fillStyle = ACCENT; ctx.shadowBlur = 12; ctx.shadowColor = ACCENT;
-      const py = cy - size * 1.45;
-      ctx.beginPath(); ctx.moveTo(cx, py + 14); ctx.lineTo(cx - 8, py); ctx.lineTo(cx + 8, py);
-      ctx.closePath(); ctx.fill();
-      ctx.restore();
-    };
-
-    const loop = () => {
-      if (!s.running) return;
-      const now = Date.now();
-      const accent = s.accentColor;
-      ctx.clearRect(0, 0, W, H);
-
-      // Background
-      const bg = ctx.createLinearGradient(0, 0, 0, H);
-      bg.addColorStop(0, '#0c1428'); bg.addColorStop(1, '#060c1a');
-      ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
-      // Star of David subtly in background
-      ctx.save(); ctx.globalAlpha = 0.04; ctx.strokeStyle = '#60a5fa'; ctx.lineWidth = 2;
-      ctx.translate(W / 2, H / 2);
-      for (let i = 0; i < 2; i++) {
-        ctx.beginPath();
-        for (let j = 0; j < 3; j++) {
-          const a = (j * 2 * Math.PI / 3) + (i * Math.PI / 3);
-          const r = Math.min(W, H) * 0.4;
-          if (j === 0) ctx.moveTo(Math.cos(a) * r, Math.sin(a) * r);
-          else ctx.lineTo(Math.cos(a) * r, Math.sin(a) * r);
-        }
-        ctx.closePath(); ctx.stroke();
-      }
-      ctx.restore();
-
-      // Result flash
-      if (now < s.resultFlash) {
-        const p = Math.max(0, 1 - (now - (s.resultFlash - 800)) / 800);
-        const col = s.resultCorrect ? '74,222,128' : '239,68,68';
-        ctx.fillStyle = `rgba(${col},${p * 0.18})`; ctx.fillRect(0, 0, W, H);
-      }
-
-      // Spinning physics
-      if (s.spinState === 'spinning') {
-        const drag = s.isBraking ? 0.88 : 0.992;
-        s.angularVel *= drag;
-        s.angle += s.angularVel;
-        s.wobble = Math.abs(s.angularVel) * 3;
-        if (Math.abs(s.angularVel) < 0.01) {
-          s.spinState = 'stopped';
-          s.angularVel = 0;
-          s.isBraking = false;
-          s.wobble = 0;
-          setSpinStateDisplay('stopped');
-          sfx.nearMiss();
-          checkLanding();
-        } else if (s.isBraking) {
-          setSpinStateDisplay('braking');
-        }
-      }
-
-      // Draw shadow
-      ctx.save();
-      const shadow = ctx.createRadialGradient(cx, cy + size * 1.4, 0, cx, cy + size * 1.4, size * 0.8);
-      shadow.addColorStop(0, 'rgba(0,0,0,0.5)'); shadow.addColorStop(1, 'rgba(0,0,0,0)');
-      ctx.fillStyle = shadow;
-      ctx.beginPath(); ctx.ellipse(cx, cy + size * 1.35, size * 0.55 + s.wobble * 0.5, size * 0.12, 0, 0, Math.PI * 2); ctx.fill();
-      ctx.restore();
-
-      drawDreidel(s.angle, s.wobble);
-      drawPointer();
-
-      // Target indicator UI (below dreidel)
-      const targetY = cy + size * 1.65;
-      ctx.save();
-      ctx.fillStyle = 'rgba(255,255,255,0.5)';
-      ctx.font = `500 15px "Space Grotesk", sans-serif`;
-      ctx.textAlign = 'center'; ctx.textBaseline = 'top';
-      ctx.fillText('Land on:', cx, targetY);
-      ctx.fillStyle = accent; ctx.font = `bold 32px serif`;
-      ctx.shadowBlur = 12; ctx.shadowColor = accent;
-      ctx.fillText(SYMBOLS[s.targetSymbolIdx], cx, targetY + 22);
-      ctx.fillStyle = 'rgba(255,255,255,0.4)';
-      ctx.font = `400 13px "Space Grotesk", sans-serif`;
-      ctx.shadowBlur = 0;
-      ctx.fillText(SYMBOL_NAMES[s.targetSymbolIdx], cx, targetY + 60);
-      ctx.restore();
-
-      // Instruction
-      const instrY = H - 90;
-      ctx.fillStyle = 'rgba(255,255,255,0.4)';
-      ctx.font = `400 14px "Space Grotesk", sans-serif`;
-      ctx.textAlign = 'center'; ctx.textBaseline = 'top';
-      if (s.spinState === 'idle') ctx.fillText('Swipe UP to spin', W / 2, instrY);
-      else if (s.spinState === 'spinning') ctx.fillText('Hold tap to brake', W / 2, instrY);
-      else if (s.spinState === 'stopped') ctx.fillText('Checking...', W / 2, instrY);
-
-      animRef.current = requestAnimationFrame(loop);
-    };
-    animRef.current = requestAnimationFrame(loop);
-  }, [endGame, checkLanding]);
-
-  useEffect(() => {
-    const canvas = canvasRef.current; if (!canvas) return;
-    const dpr = window.devicePixelRatio || 1;
-    const resize = () => {
-      canvas.width = window.innerWidth * dpr; canvas.height = window.innerHeight * dpr;
-      canvas.style.width = window.innerWidth + 'px'; canvas.style.height = window.innerHeight + 'px';
-      const ctx = canvas.getContext('2d'); if (ctx) ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    };
-    resize();
-    window.addEventListener('resize', resize);
-
-    let touchStartY = 0, touchStartTime = 0;
-
-    const onDown = (e: PointerEvent) => {
-      const s = stateRef.current; if (!s.running) return;
-      touchStartY = e.clientY; touchStartTime = Date.now();
-      if (s.spinState === 'spinning') {
-        s.isBraking = true;
-        setSpinStateDisplay('braking');
-      }
-    };
-    const onUp = (e: PointerEvent) => {
-      const s = stateRef.current; if (!s.running) return;
-      s.isBraking = false;
-      const dy = touchStartY - e.clientY;
-      const dt = Date.now() - touchStartTime;
-      if (s.spinState === 'idle' && dy > 30) {
-        // Swipe up = spin
-        const speed = Math.min(0.4, Math.max(0.08, dy / (dt * 0.8)));
-        s.angularVel = speed;
-        s.spinState = 'spinning';
-        setSpinStateDisplay('spinning');
-        sfx.collect();
-        haptic([20]);
-      }
-    };
-
-    canvas.addEventListener('pointerdown', onDown);
-    canvas.addEventListener('pointerup', onUp);
-    canvas.addEventListener('pointercancel', onUp);
-
-    return () => {
-      window.removeEventListener('resize', resize);
-      canvas.removeEventListener('pointerdown', onDown);
-      canvas.removeEventListener('pointerup', onUp);
-      canvas.removeEventListener('pointercancel', onUp);
-    };
-  }, []);
-
-  useEffect(() => () => {
-    cancelAnimationFrame(animRef.current);
-    if (timerRef.current) clearInterval(timerRef.current);
-    if (stopMusicRef.current) stopMusicRef.current();
-  }, []);
-
-  const handleStart = useCallback(async (name: string, avatar: string) => {
-    playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar);
-    await initAudio();
-    setPhase('countdown');
-  }, []);
-  const handlePlayAgain = useCallback(() => {
-    setPhase('start'); setScoreDisplay(0); setStreakDisplay(0); setTimeLeft(DURATION); setFinalSig(null);
-  }, []);
-
   const accent = theme.colors.accent ?? ACCENT;
 
-  return (
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accent}
-      background="linear-gradient(180deg, #0c1428 0%, #060c1a 100%)">
-      {phase === 'start' && (
-        <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description={GAME_TAGLINE}
-          ctaLabel="Start Spinning →" accentColor={accent} onStart={handleStart}
-          gradient="radial-gradient(ellipse 80% 70% at 50% 30%, #0c1428 0%, #04080f 100%)" />
-      )}
-      {phase === 'countdown' && <Countdown onComplete={() => startLoop()} accentColor={accent} />}
-      {(phase === 'playing' || phase === 'countdown') && (
-        <canvas ref={canvasRef} role="img" aria-label="Dreidel Spin game canvas"
-          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none' }} />
-      )}
-      {phase === 'playing' && (
-        <GameHUD accentColor={accent} items={[
-          { label: 'TIME', value: `${timeLeft}s`, danger: timeLeft <= 10, testId: 'timer' },
-          { label: 'SCORE', value: scoreDisplay, testId: 'score' },
-          { label: 'STREAK', value: streakDisplay, testId: 'streak' },
-        ]} />
-      )}
-      <AnimatePresence>
-        {resultMsg && (
-          <motion.div key="result" initial={{ opacity: 0, scale: 0.6 }} animate={{ opacity: 1, scale: 1.1 }} exit={{ opacity: 0, y: -30 }} transition={{ duration: 0.4 }}
-            style={{ position: 'fixed', top: '18%', left: '50%', transform: 'translateX(-50%)', zIndex: 80, pointerEvents: 'none', fontSize: resultMsg.startsWith('✅') ? 36 : 24, fontWeight: 900, color: resultMsg.startsWith('✅') ? '#4ade80' : '#ef4444', textShadow: '0 0 16px currentColor', whiteSpace: 'nowrap', textAlign: 'center' }}>
-            {resultMsg}
-          </motion.div>
-        )}
-      </AnimatePresence>
-      {phase === 'done' && finalSig && (
+  const mountRef     = useRef<HTMLDivElement>(null);
+  const rendererRef  = useRef<THREE.WebGLRenderer|null>(null);
+  const sceneRef     = useRef<THREE.Scene|null>(null);
+  const cameraRef    = useRef<THREE.PerspectiveCamera|null>(null);
+  const rafRef       = useRef(0);
+  const timerRef     = useRef<ReturnType<typeof setInterval>|null>(null);
+  const stopMusicRef = useRef<(()=>void)|null>(null);
+  const dreidelRef   = useRef<THREE.Group|null>(null);
+  const playerSessionRef = useRef<PlayerSession|null>(null);
+
+  const stateRef = useRef({
+    running:false, timeLeft:DURATION,
+    sig:{score:0,hits:0,attempts:0,maxStreak:0,streakCurrent:0,avgAccuracy:0} as Signals,
+    angle:0, angularVel:0, spinState:'idle' as SpinState,
+    swipeStartY:0, swipeStartTime:0, isSwiping:false, isBraking:false,
+    targetSymbolIdx:0, resultCorrect:false, resultFlash:0,
+    accentColor:ACCENT, wobble:0, tilt:0, accuracyDiffs:[] as number[],
+  });
+
+  const [phase,setPhase]           = useState<Phase>('start');
+  const [timeLeft,setTimeLeft]      = useState(DURATION);
+  const [scoreDisplay,setScore]     = useState(0);
+  const [finalSig,setFinalSig]      = useState<Signals|null>(null);
+  const [spinStateDisplay,setSpinSt]= useState<SpinState>('idle');
+  const [resultMsg,setResultMsg]    = useState<string|null>(null);
+  const [targetDisplay,setTargetD]  = useState(0);
+  const [streakDisplay,setStreak]   = useState(0);
+
+  useEffect(()=>{stateRef.current.accentColor=accent;},[accent]);
+
+  const getTopSymbolIdx=useCallback(()=>{
+    const s=stateRef.current;
+    const norm=((s.angle%(Math.PI*2))+(Math.PI*2))%(Math.PI*2);
+    return Math.round(norm/SECTOR_ANGLE)%NUM_SYMBOLS;
+  },[]);
+
+  // ── Three.js setup ──────────────────────────────────────────────────────
+  useEffect(()=>{
+    if(!mountRef.current)return;
+    const mount=mountRef.current;
+    const W=mount.clientWidth||window.innerWidth;const H=mount.clientHeight||window.innerHeight;
+
+    const renderer=new THREE.WebGLRenderer({antialias:true});
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio,2));
+    renderer.setSize(W,H);renderer.setClearColor(0x020714);
+    mount.appendChild(renderer.domElement);
+    rendererRef.current=renderer;
+
+    const scene=new THREE.Scene();
+    sceneRef.current=scene;
+
+    const camera=new THREE.PerspectiveCamera(65,W/H,0.1,50);
+    camera.position.set(0,2,7);camera.lookAt(0,0,0);
+    cameraRef.current=camera;
+
+    scene.add(new THREE.AmbientLight(0xffffff,0.3));
+    const pl=new THREE.PointLight(0x60a5fa,4,20);pl.position.set(0,4,5);scene.add(pl);
+    const pl2=new THREE.PointLight(0xfbbf24,2,10);pl2.position.set(-3,0,3);scene.add(pl2);
+
+    // Background stars
+    const sg=new THREE.BufferGeometry();const sp=new Float32Array(300*3);
+    for(let i=0;i<300;i++){sp[i*3]=(Math.random()-0.5)*20;sp[i*3+1]=(Math.random()-0.5)*20;sp[i*3+2]=(Math.random()-0.5)*6-5;}
+    sg.setAttribute('position',new THREE.BufferAttribute(sp,3));
+    scene.add(new THREE.Points(sg,new THREE.PointsMaterial({color:0x93c5fd,size:0.05,sizeAttenuation:true,transparent:true,opacity:0.7})));
+
+    // Menorah-like background structure
+    for(let i=0;i<9;i++){
+      const geo=new THREE.CylinderGeometry(0.04,0.04,0.5+Math.random()*0.5,6);
+      const mat=new THREE.MeshStandardMaterial({color:0xfbbf24,metalness:0.7,roughness:0.3,emissive:0xf59e0b,emissiveIntensity:0.3});
+      const m=new THREE.Mesh(geo,mat);
+      m.position.set(-3.2+i*0.8,-1.5,-3);scene.add(m);
+      // Flame
+      const fGeo=new THREE.ConeGeometry(0.05,0.2,6);
+      const fMat=new THREE.MeshStandardMaterial({color:0xfbbf24,emissive:0xf59e0b,emissiveIntensity:2,transparent:true,opacity:0.9});
+      const fl=new THREE.Mesh(fGeo,fMat);fl.position.set(-3.2+i*0.8,-1.0,-3);scene.add(fl);
+    }
+
+    // Table
+    const tableGeo=new THREE.BoxGeometry(8,0.1,4);
+    const tableMat=new THREE.MeshStandardMaterial({color:0x0a1428,metalness:0.3,roughness:0.8});
+    const table=new THREE.Mesh(tableGeo,tableMat);table.position.y=-1;scene.add(table);
+
+    // Dreidel group
+    const dreidel=new THREE.Group();
+
+    // Body (tapered square prism → classic dreidel shape)
+    const bodyGeo=new THREE.CylinderGeometry(0.45,0.6,1.2,4);
+    const bodyMat=new THREE.MeshStandardMaterial({color:0x1e3a8a,metalness:0.4,roughness:0.4,emissive:0x1d4ed8,emissiveIntensity:0.3});
+    dreidel.add(new THREE.Mesh(bodyGeo,bodyMat));
+
+    // Pointed bottom
+    const tipGeo=new THREE.ConeGeometry(0.15,0.7,6);
+    const tipMat=new THREE.MeshStandardMaterial({color:0xfbbf24,metalness:0.6,roughness:0.3,emissive:0xf59e0b,emissiveIntensity:0.4});
+    const tip=new THREE.Mesh(tipGeo,tipMat);tip.rotation.z=Math.PI;tip.position.y=-0.9;dreidel.add(tip);
+
+    // Handle on top
+    const handleGeo=new THREE.CylinderGeometry(0.1,0.1,0.7,8);
+    const handleMat=new THREE.MeshStandardMaterial({color:0xdbeafe,metalness:0.5,roughness:0.4});
+    const handle=new THREE.Mesh(handleGeo,handleMat);handle.position.y=0.95;dreidel.add(handle);
+
+    // Symbol faces (simple planes with glowing emissive)
+    const faceColors=[0x60a5fa,0xfbbf24,0x34d399,0xf472b6];
+    for(let i=0;i<4;i++){
+      const fGeo=new THREE.PlaneGeometry(0.55,0.7);
+      const fMat=new THREE.MeshStandardMaterial({color:faceColors[i],emissive:faceColors[i],emissiveIntensity:0.8,transparent:true,opacity:0.9,side:THREE.FrontSide});
+      const face=new THREE.Mesh(fGeo,fMat);
+      face.rotation.y=(i/4)*Math.PI*2;face.position.set(Math.sin((i/4)*Math.PI*2)*0.51,0,Math.cos((i/4)*Math.PI*2)*0.51);
+      dreidel.add(face);
+    }
+
+    dreidel.position.y=0.1;
+    scene.add(dreidel);dreidelRef.current=dreidel;
+
+    // Target indicator ring on table
+    const targetRingGeo=new THREE.TorusGeometry(0.7,0.04,6,24);
+    const targetRingMat=new THREE.MeshStandardMaterial({color:0x60a5fa,emissive:0x60a5fa,emissiveIntensity:1,transparent:true,opacity:0.6});
+    const targetRing=new THREE.Mesh(targetRingGeo,targetRingMat);
+    targetRing.rotation.x=Math.PI/2;targetRing.position.y=-0.94;scene.add(targetRing);
+
+    const onResize=()=>{
+      const W2=mount.clientWidth||window.innerWidth;const H2=mount.clientHeight||window.innerHeight;
+      renderer.setSize(W2,H2);camera.aspect=W2/H2;camera.updateProjectionMatrix();
+    };
+    window.addEventListener('resize',onResize);
+
+    let frame=0;
+    const render=()=>{
+      rafRef.current=requestAnimationFrame(render);
+      frame++;
+      const t=frame*0.016;
+      const s=stateRef.current;
+
+      // Rotate dreidel
+      if(s.spinState==='spinning'){
+        s.angularVel*=0.998;
+        if(s.isBraking)s.angularVel*=0.92;
+        s.angle+=s.angularVel;
+        if(Math.abs(s.angularVel)<0.008){
+          s.spinState='stopped';setSpinSt('stopped');
+          // Score
+          const landed=getTopSymbolIdx();
+          const correct=landed===s.targetSymbolIdx;
+          s.sig.attempts++;
+          if(correct){
+            s.sig.hits++;s.sig.streakCurrent++;
+            if(s.sig.streakCurrent>s.sig.maxStreak)s.sig.maxStreak=s.sig.streakCurrent;
+            s.sig.score++;setScore(s.sig.score);setStreak(s.sig.streakCurrent);
+            sfx.success();haptic([30,20,60]);setResultMsg('✨ CORRECT!');
+          } else {
+            s.sig.streakCurrent=0;sfx.collision();haptic([50]);setStreak(0);
+            setResultMsg(`× Landed: ${SYMBOL_NAMES[landed]}`);
+          }
+          setTimeout(()=>{
+            setResultMsg(null);s.spinState='idle';setSpinSt('idle');
+            s.isBraking=false;
+            // New target
+            s.targetSymbolIdx=Math.floor(Math.random()*NUM_SYMBOLS);
+            setTargetD(s.targetSymbolIdx);
+          },1200);
+        }
+        s.wobble=Math.abs(s.angularVel)*0.12;
+      } else if(s.spinState==='idle'){
+        s.wobble=Math.sin(t*1.5)*0.02;
+      }
+
+      // Apply rotation to 3D dreidel
+      if(dreidelRef.current){
+        dreidelRef.current.rotation.y=s.angle;
+        dreidelRef.current.rotation.x=s.wobble*Math.cos(t*3);
+        dreidelRef.current.rotation.z=s.wobble*Math.sin(t*2.5);
+        dreidelRef.current.position.y=0.1+Math.abs(s.wobble)*0.2;
+      }
+
+      // Target ring pulse
+      const r=scene.children.find(c=>c.geometry instanceof THREE.TorusGeometry) as THREE.Mesh;
+      if(r)(r.material as THREE.MeshStandardMaterial).emissiveIntensity=0.6+Math.sin(t*3)*0.4;
+
+      renderer.render(scene,camera);
+    };
+    render();
+
+    return()=>{
+      window.removeEventListener('resize',onResize);
+      cancelAnimationFrame(rafRef.current);
+      renderer.dispose();mount.removeChild(renderer.domElement);
+    };
+  },[getTopSymbolIdx]);
+
+  const endGame=useCallback(()=>{
+    const s=stateRef.current;s.running=false;
+    if(timerRef.current){clearInterval(timerRef.current);timerRef.current=null;}
+    if(stopMusicRef.current){stopMusicRef.current();stopMusicRef.current=null;}
+    const acc=s.sig.attempts>0?s.sig.hits/s.sig.attempts:0;
+    s.sig.avgAccuracy=acc;
+    const sig={...s.sig};
+    const pb=parseInt(localStorage.getItem(PB_KEY)??'0');
+    if(sig.score>pb)localStorage.setItem(PB_KEY,String(sig.score));
+    setFinalSig(sig);setPhase('done');
+  },[]);
+
+  const startLoop=useCallback(()=>{
+    const s=stateRef.current;
+    s.running=true;s.timeLeft=DURATION;
+    s.sig={score:0,hits:0,attempts:0,maxStreak:0,streakCurrent:0,avgAccuracy:0};
+    s.angle=0;s.angularVel=0;s.spinState='idle';s.isBraking=false;
+    s.targetSymbolIdx=Math.floor(Math.random()*NUM_SYMBOLS);
+    setScore(0);setTimeLeft(DURATION);setStreak(0);setTargetD(s.targetSymbolIdx);setSpinSt('idle');setPhase('playing');
+    stopMusicRef.current=startMusic('chill');
+
+    timerRef.current=setInterval(()=>{
+      const s2=stateRef.current;s2.timeLeft--;setTimeLeft(s2.timeLeft);
+      if(s2.timeLeft<=10&&s2.timeLeft>0)sfx.tick();
+      if(s2.timeLeft<=0)endGame();
+    },1000);
+  },[endGame]);
+
+  // Swipe + brake input
+  useEffect(()=>{
+    const mount=mountRef.current;if(!mount)return;
+    const onDown=(e:PointerEvent)=>{
+      const s=stateRef.current;if(!s.running)return;
+      s.swipeStartY=e.clientY;s.swipeStartTime=Date.now();s.isSwiping=true;
+      if(s.spinState==='spinning')s.isBraking=true;
+    };
+    const onUp=(e:PointerEvent)=>{
+      const s=stateRef.current;if(!s.running)return;
+      s.isBraking=false;
+      if(s.isSwiping&&s.spinState==='idle'){
+        const dy=s.swipeStartY-e.clientY;const dt=Math.max(Date.now()-s.swipeStartTime,50);
+        if(dy>30){
+          const vel=Math.min(Math.abs(dy)/dt*0.3,0.4);
+          s.angularVel=vel*(Math.random()<0.5?1:-1);
+          s.spinState='spinning';setSpinSt('spinning');
+          sfx.whoosh();haptic([15]);
+        }
+      }
+      s.isSwiping=false;
+    };
+    mount.addEventListener('pointerdown',onDown);mount.addEventListener('pointerup',onUp);
+    return()=>{mount.removeEventListener('pointerdown',onDown);mount.removeEventListener('pointerup',onUp);};
+  },[phase]);
+
+  useEffect(()=>()=>{cancelAnimationFrame(rafRef.current);if(timerRef.current)clearInterval(timerRef.current);if(stopMusicRef.current)stopMusicRef.current();},[]);
+  const handleStart=useCallback(async(name:string,avatar:string)=>{playerSessionRef.current=savePlayerSession(GAME_ID,name,avatar);await initAudio();setPhase('countdown');},[]);
+  const handleCountdownDone=useCallback(()=>{startLoop();},[startLoop]);
+  const handlePlayAgain=useCallback(()=>{setPhase('start');setScore(0);setTimeLeft(DURATION);setFinalSig(null);},[]);
+
+  const tc=SYMBOLS[targetDisplay]||'נ';
+  const tcName=SYMBOL_NAMES[targetDisplay]||'Nun';
+
+  return(
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accent}>
+      {phase==='start'&&<GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description={GAME_TAGLINE} ctaLabel="Spin! 🌀" accentColor={accent} onStart={handleStart}/>}
+      {phase==='countdown'&&<Countdown onComplete={handleCountdownDone} accentColor={accent}/>}
+      {(phase==='playing'||phase==='countdown')&&(
         <>
-          <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI}
-            score={String(finalSig.score)} personality={getPersonality(finalSig)}
-            insights={[
-              { label: 'Landed Correctly', value: `${finalSig.hits} / ${finalSig.attempts}`, color: accent },
-              { label: 'Accuracy', value: finalSig.attempts > 0 ? `${Math.round(finalSig.hits / finalSig.attempts * 100)}%` : '—', color: '#4ade80' },
-              { label: 'Best Streak', value: `${finalSig.maxStreak}x`, color: '#fbbf24' },
-              { label: 'Score', value: String(finalSig.score), color: accent },
-            ]}
-            accentColor={accent} onPlayAgain={handlePlayAgain} didWin={finalSig.hits >= 3} finalScore={finalSig.score} />
-          <WebhookEmitter theme={theme} sig={finalSig} personality={getPersonality(finalSig)} player={playerSessionRef.current} />
+          <div ref={mountRef} style={{position:'absolute',inset:0,width:'100%',height:'100%',touchAction:'none'}}/>
+          {phase==='playing'&&(
+            <>
+              <GameHUD accentColor={accent} items={[{label:'TIME',value:timeLeft,danger:timeLeft<=10},{label:'SCORE',value:scoreDisplay}]}/>
+              {/* Target display */}
+              <div style={{position:'absolute',top:80,left:'50%',transform:'translateX(-50%)',display:'flex',flexDirection:'column',alignItems:'center',gap:4,pointerEvents:'none'}}>
+                <div style={{fontSize:11,color:'rgba(255,255,255,0.5)',fontWeight:600,letterSpacing:'0.15em'}}>LAND ON</div>
+                <div style={{width:56,height:56,borderRadius:12,background:`rgba(96,165,250,0.15)`,border:`2px solid ${accent}`,display:'flex',alignItems:'center',justifyContent:'center',fontSize:28,fontWeight:900,color:accent,boxShadow:`0 0 16px ${accent}66`}}>
+                  {tc}
+                </div>
+                <div style={{fontSize:13,color:accent,fontWeight:700}}>{tcName}</div>
+              </div>
+              {/* Spin state hint */}
+              <div style={{position:'absolute',bottom:60,left:'50%',transform:'translateX(-50%)',fontSize:13,color:'rgba(255,255,255,0.5)',fontWeight:600,letterSpacing:'0.08em',textAlign:'center',pointerEvents:'none'}}>
+                {spinStateDisplay==='idle'?'SWIPE UP TO SPIN':spinStateDisplay==='spinning'?'TAP TO BRAKE':'...'}
+              </div>
+              {/* Streak */}
+              {streakDisplay>=2&&<div style={{position:'absolute',top:'20%',right:20,fontSize:20,fontWeight:900,color:'#fbbf24',pointerEvents:'none'}}>🔥×{streakDisplay}</div>}
+              {/* Result flash */}
+              <AnimatePresence>
+                {resultMsg&&<motion.div key="res" initial={{opacity:0,scale:0.7}} animate={{opacity:1,scale:1}} exit={{opacity:0,scale:0.8}} style={{position:'absolute',top:'38%',left:'50%',transform:'translateX(-50%)',fontSize:24,fontWeight:900,color:resultMsg.startsWith('✨')?'#4ade80':'#ef4444',textShadow:`0 0 20px currentColor`,pointerEvents:'none'}}>{resultMsg}</motion.div>}
+              </AnimatePresence>
+            </>
+          )}
         </>
       )}
+      {phase==='done'&&finalSig&&(
+        <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI}
+          score={String(finalSig.score)} personality={getPersonality(finalSig)}
+          insights={[
+            {label:'Hits',value:`${finalSig.hits}/${finalSig.attempts}`,color:finalSig.hits/Math.max(finalSig.attempts,1)>=0.6?'#4ade80':'#facc15'},
+            {label:'Accuracy',value:`${Math.round(finalSig.avgAccuracy*100)}%`,color:accent},
+            {label:'Best Streak',value:`×${finalSig.maxStreak}`,color:'#fbbf24'},
+            {label:'Score',value:String(finalSig.score),color:'var(--color-text)'},
+          ]}
+          accentColor={accent} onPlayAgain={handlePlayAgain} didWin={finalSig.score>=5}/>
+      )}
+      {phase==='done'&&finalSig&&<WebhookEmitter theme={theme} sig={finalSig} personality={getPersonality(finalSig)} player={playerSessionRef.current}/>}
     </GameShell>
   );
+}
+
+function WebhookEmitter({theme,sig,personality,player}:{theme:ReturnType<typeof useBrandTheme>;sig:Signals;personality:string;player:PlayerSession|null;}){
+  const fired=useRef(false);
+  useEffect(()=>{if(fired.current)return;fired.current=true;postWebhook(theme,GAME_ID,{personality,score:sig.score},player);},[theme,sig,personality,player]);
+  return null;
 }
