@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
+import * as THREE from 'three';
 import GameShell from '@/components/GameShell';
 import GameHUD from '@/components/GameHUD';
 import GameStartScreen from '@/components/GameStartScreen';
@@ -10,274 +11,316 @@ import { hapticScore, hapticFail, hapticVictory, hapticCombo } from '@/lib/hapti
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
 
-const GAME_ID    = 'basket-weave';
-const ACCENT     = '#d97706';
-const DURATION   = 60;
+const GAME_ID = 'basket-weave';
+const ACCENT = '#d97706';
+const DURATION = 60;
 const GAME_EMOJI = '🧺';
 const GAME_TITLE = 'Basket Weave';
-const GAME_TAGLINE = 'Over. Under. Don\'t drop a strand.';
+const GAME_TAGLINE = "Over. Under. Don't drop a strand.";
 
-// The weave pattern: alternate L/R taps in rhythm
-// Strand = horizontal reed that must be tapped from left or right zone
-
-type Side = 'left'|'right';
-
+type Side = 'left' | 'right';
 interface Strand {
-  y: number;
-  side: Side;      // correct next tap side
-  tapped: boolean;
-  wrong: boolean;
-  alpha: number;
+  side: Side; z: number; tapped: boolean; wrong: boolean; mesh: THREE.Mesh | null; alpha: number;
 }
-
 interface Signals {
-  correctWeaves: number;
-  mistakes: number;
-  maxStreak: number;
-  streakCurrent: number;
-  basketProgress: number; // 0-100
-  score: number;
+  correctWeaves: number; mistakes: number; maxStreak: number;
+  streakCurrent: number; basketProgress: number; score: number;
 }
-
 function getPersonality(s: Signals): string {
-  if (s.basketProgress>=90&&s.mistakes===0) return 'Master Weaver 🏆';
-  if (s.correctWeaves>=30)                  return 'Reed Whisperer 🌾';
-  if (s.mistakes>=10)                       return 'Tangled Fingers 🪢';
-  if (s.maxStreak>=12)                      return 'Rhythm Weaver 🎵';
+  if (s.basketProgress >= 90 && s.mistakes === 0) return 'Master Weaver 🏆';
+  if (s.correctWeaves >= 30) return 'Reed Whisperer 🌾';
+  if (s.mistakes >= 10) return 'Tangled Fingers 🪢';
+  if (s.maxStreak >= 12) return 'Rhythm Weaver 🎵';
   return 'Apprentice Weaver 🧵';
 }
+type Phase = 'start' | 'countdown' | 'playing' | 'done';
 
-type Phase = 'start'|'countdown'|'playing'|'done';
 interface GS {
-  running:boolean; timeLeft:number; sig:Signals; frame:number; accentColor:string;
-  strands:Strand[]; nextSide:Side; spawnTimer:number; scrollY:number;
-  weaveGrid:boolean[][]; gridW:number; gridH:number;
-  tapFeedback:Array<{x:number;y:number;ok:boolean;alpha:number}>;
+  running: boolean; timeLeft: number; sig: Signals;
+  renderer: THREE.WebGLRenderer | null; scene: THREE.Scene | null;
+  camera: THREE.PerspectiveCamera | null; animId: number;
+  strands: Strand[]; basketMesh: THREE.Group | null;
+  nextSide: Side; frame: number;
+  intervalId: ReturnType<typeof setInterval> | null;
+  resizeCleanup: (() => void) | null;
 }
+
+const STRAND_COLORS = [0xd97706, 0xa16207, 0xf59e0b, 0x92400e, 0xd97706, 0xb45309];
 
 export default function BasketWeaveGame() {
   const theme = useBrandTheme();
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const animRef   = useRef(0);
-  const timerRef  = useRef<ReturnType<typeof setInterval>|null>(null);
-
+  const mountRef = useRef<HTMLDivElement>(null);
   const stateRef = useRef<GS>({
-    running:false,timeLeft:DURATION,
-    sig:{correctWeaves:0,mistakes:0,maxStreak:0,streakCurrent:0,basketProgress:0,score:0},
-    frame:0,accentColor:ACCENT,
-    strands:[],nextSide:'left',spawnTimer:0,scrollY:0,
-    weaveGrid:Array.from({length:20},()=>Array(10).fill(false)),
-    gridW:10,gridH:20,tapFeedback:[],
+    running: false, timeLeft: DURATION,
+    sig: { correctWeaves: 0, mistakes: 0, maxStreak: 0, streakCurrent: 0, basketProgress: 0, score: 0 },
+    renderer: null, scene: null, camera: null, animId: 0,
+    strands: [], basketMesh: null, nextSide: 'left', frame: 0,
+    intervalId: null, resizeCleanup: null,
   });
+  const [phase, setPhase] = useState<Phase>('start');
+  const [timeLeft, setTimeLeft] = useState(DURATION);
+  const [scoreDisplay, setScoreDisplay] = useState(0);
+  const [finalSig, setFinalSig] = useState<Signals | null>(null);
+  const playerSessionRef = useRef<PlayerSession | null>(null);
 
-  const [phase,setPhase]        = useState<Phase>('start');
-  const [timeLeft,setTimeLeft]  = useState(DURATION);
-  const [scoreDisplay,setScore] = useState(0);
-  const [finalSig,setFinalSig]  = useState<Signals|null>(null);
-  const playerSessionRef = useRef<PlayerSession|null>(null);
-  useEffect(()=>{ stateRef.current.accentColor=theme.colors.accent??ACCENT; },[theme]);
+  const endGame = useCallback(() => {
+    const s = stateRef.current;
+    s.running = false;
+    cancelAnimationFrame(s.animId);
+    if (s.intervalId) { clearInterval(s.intervalId); s.intervalId = null; }
+    s.resizeCleanup?.();
+    if (s.renderer) { s.renderer.dispose(); s.renderer = null; }
+    if (mountRef.current) mountRef.current.innerHTML = '';
+    const pb = parseInt(localStorage.getItem(`pb_${GAME_ID}`) ?? '0');
+    if (s.sig.score > pb) localStorage.setItem(`pb_${GAME_ID}`, String(s.sig.score));
+    setFinalSig({ ...s.sig });
+    setPhase('done'); hapticVictory();
+  }, []);
 
-  const endGame = useCallback(()=>{
-    const s=stateRef.current; s.running=false;
-    cancelAnimationFrame(animRef.current);
-    if(timerRef.current){ clearInterval(timerRef.current); timerRef.current=null; }
-    const pb=parseInt(localStorage.getItem('pb_'+GAME_ID)??"0");
-    if(s.sig.score>pb) localStorage.setItem('pb_'+GAME_ID,String(s.sig.score));
-    s.sig.basketProgress=Math.min(100,Math.round(s.sig.correctWeaves/30*100));
-    setFinalSig({...s.sig}); setPhase('done'); hapticVictory();
-  },[]);
+  const spawnStrand = useCallback((scene: THREE.Scene, s: GS) => {
+    const side = s.nextSide;
+    s.nextSide = side === 'left' ? 'right' : 'left';
+    const colorHex = STRAND_COLORS[Math.floor(Math.random() * STRAND_COLORS.length)];
+    const mesh = new THREE.Mesh(
+      new THREE.BoxGeometry(6, 0.18, 0.18),
+      new THREE.MeshStandardMaterial({
+        color: colorHex, emissive: colorHex, emissiveIntensity: 0.2,
+        roughness: 0.5, metalness: 0.2
+      })
+    );
+    mesh.position.set(side === 'left' ? -8 : 8, (s.strands.length % 5 - 2) * 0.6, 0);
+    scene.add(mesh);
+    s.strands.push({ side, z: mesh.position.y, tapped: false, wrong: false, mesh, alpha: 1 });
+  }, []);
 
-  const startLoop = useCallback(()=>{
-    const canvas=canvasRef.current; if(!canvas) return;
-    const ctx=canvas.getContext('2d'); if(!ctx) return;
-    const s=stateRef.current; const W=canvas.width,H=canvas.height;
-    s.running=true; s.timeLeft=DURATION; s.frame=0; s.nextSide='left';
-    s.sig={correctWeaves:0,mistakes:0,maxStreak:0,streakCurrent:0,basketProgress:0,score:0};
-    s.strands=[]; s.spawnTimer=0; s.scrollY=0; s.tapFeedback=[];
-    setScore(0); setTimeLeft(DURATION); setPhase('playing');
+  const startLoop = useCallback(() => {
+    const mount = mountRef.current;
+    if (!mount) return;
+    const s = stateRef.current;
+    const W = window.innerWidth, H = window.innerHeight;
 
-    timerRef.current=setInterval(()=>{
+    s.running = true; s.timeLeft = DURATION; s.frame = 0;
+    s.sig = { correctWeaves: 0, mistakes: 0, maxStreak: 0, streakCurrent: 0, basketProgress: 0, score: 0 };
+    s.strands = []; s.nextSide = 'left';
+    setScoreDisplay(0); setTimeLeft(DURATION); setPhase('playing');
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(W, H);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setClearColor(0x1a0e05);
+    mount.innerHTML = '';
+    mount.appendChild(renderer.domElement);
+    s.renderer = renderer;
+
+    const scene = new THREE.Scene();
+    s.scene = scene;
+    const camera = new THREE.PerspectiveCamera(65, W / H, 0.1, 100);
+    camera.position.set(0, 0, 10);
+    s.camera = camera;
+
+    scene.add(new THREE.AmbientLight(0x553311, 3));
+    const warmLight = new THREE.PointLight(0xff8800, 2, 25);
+    warmLight.position.set(2, 3, 5);
+    scene.add(warmLight);
+    const fillLight = new THREE.PointLight(0xffaa44, 1, 20);
+    fillLight.position.set(-3, -2, 4);
+    scene.add(fillLight);
+
+    // Weave frame posts
+    [-3, 3].forEach(x => {
+      const post = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.1, 0.12, 6, 8),
+        new THREE.MeshStandardMaterial({ color: 0x5a3500, roughness: 0.9 })
+      );
+      post.position.set(x, 0, -0.2);
+      scene.add(post);
+    });
+
+    // Basket base (partial woven look)
+    const basketGroup = new THREE.Group();
+    for (let row = 0; row < 3; row++) {
+      for (let col = 0; col < 6; col++) {
+        const bar = new THREE.Mesh(
+          new THREE.BoxGeometry(1.1, 0.12, 0.12),
+          new THREE.MeshStandardMaterial({ color: row % 2 === 0 ? 0x92400e : 0xd97706 })
+        );
+        bar.position.set(col - 2.5, row * 0.25 - 2.5, 0);
+        basketGroup.add(bar);
+      }
+    }
+    basketGroup.position.z = -1;
+    scene.add(basketGroup);
+    s.basketMesh = basketGroup;
+
+    // Particles
+    const pPos = new Float32Array(100 * 3);
+    for (let i = 0; i < 100; i++) {
+      pPos[i * 3] = (Math.random() - 0.5) * 15;
+      pPos[i * 3 + 1] = (Math.random() - 0.5) * 10;
+      pPos[i * 3 + 2] = -5 - Math.random() * 5;
+    }
+    const pGeo = new THREE.BufferGeometry();
+    pGeo.setAttribute('position', new THREE.BufferAttribute(pPos, 3));
+    scene.add(new THREE.Points(pGeo, new THREE.PointsMaterial({ color: 0xd97706, size: 0.05, transparent: true, opacity: 0.3 })));
+
+    const handleResize = () => {
+      const w = window.innerWidth, h = window.innerHeight;
+      renderer.setSize(w, h); camera.aspect = w / h; camera.updateProjectionMatrix();
+    };
+    window.addEventListener('resize', handleResize);
+    s.resizeCleanup = () => window.removeEventListener('resize', handleResize);
+
+    // Spawn initial strands
+    for (let i = 0; i < 4; i++) spawnStrand(scene, s);
+
+    s.intervalId = setInterval(() => {
+      if (!s.running) return;
       s.timeLeft--; setTimeLeft(s.timeLeft);
-      if(s.timeLeft<=0){ sfx.fail(); endGame(); }
-    },1000);
+      if (s.timeLeft <= 0) { sfx.fail(); endGame(); }
+    }, 1000);
 
-    const STRAND_H=40;
-    const COLORS_L=['#d97706','#b45309','#92400e','#fbbf24','#a16207'];
-    const COLORS_R=['#78350f','#dc8a1e','#e6a623','#c87d18','#f0aa3a'];
+    const loop = () => {
+      if (!s.running) return;
+      s.frame++;
 
-    const loop=()=>{
-      if(!s.running) return; s.frame++;
-      const W=canvas.width,H=canvas.height;
-      const HIT_ZONE_H=80; // active strand zone from bottom
-      const WARP_W=W*0.1; // left/right tap zones
-
-      // Wicker/tan background
-      ctx.fillStyle='#2d1a00'; ctx.fillRect(0,0,W,H);
-      // Basket weave background texture
-      for(let gy=0;gy<H;gy+=20){
-        for(let gx=0;gx<W;gx+=20){
-          const c=(Math.floor(gy/20)+Math.floor(gx/20))%2===0?'#3d2a0a':'#2d1a00';
-          ctx.fillStyle=c; ctx.fillRect(gx,gy,20,20);
+      // Animate strands in from sides
+      for (const strand of s.strands) {
+        if (!strand.mesh) continue;
+        const targetX = 0;
+        if (strand.side === 'left' && strand.mesh.position.x < targetX) {
+          strand.mesh.position.x += 0.12;
+        } else if (strand.side === 'right' && strand.mesh.position.x > targetX) {
+          strand.mesh.position.x -= 0.12;
+        }
+        if (strand.wrong) {
+          const mat = strand.mesh.material as THREE.MeshStandardMaterial;
+          mat.emissive.setHex(0xff2200);
+          mat.emissiveIntensity = 0.5;
+          strand.alpha -= 0.03;
+          strand.mesh.material = mat;
+          if (strand.alpha <= 0) {
+            scene.remove(strand.mesh);
+            strand.mesh = null;
+          }
         }
       }
+      s.strands = s.strands.filter(st => st.mesh !== null);
 
-      // Left/Right tap zones
-      const leftActive=s.nextSide==='left';
-      ctx.save(); ctx.globalAlpha=0.3+Math.sin(s.frame*0.2)*0.1;
-      ctx.fillStyle=leftActive?'#d97706':'rgba(100,60,0,0.3)';
-      ctx.fillRect(0,H-HIT_ZONE_H,WARP_W*1.5,HIT_ZONE_H);
-      ctx.fillStyle=!leftActive?'#d97706':'rgba(100,60,0,0.3)';
-      ctx.fillRect(W-WARP_W*1.5,H-HIT_ZONE_H,WARP_W*1.5,HIT_ZONE_H);
-      ctx.restore();
-      // Zone labels
-      ctx.fillStyle='rgba(255,200,100,0.7)'; ctx.font='bold 14px sans-serif'; ctx.textAlign='center';
-      ctx.fillText(leftActive?'◀ HERE':'◀',WARP_W*0.75,H-30);
-      ctx.fillText(!leftActive?'HERE ▶':'▶',W-WARP_W*0.75,H-30);
-
-      // Spawn strands
-      s.spawnTimer++; s.scrollY+=0.5;
-      if(s.spawnTimer>=35){
-        s.spawnTimer=0;
-        const side:Side=s.nextSide; // alternating
-        s.strands.push({ y:-10, side, tapped:false, wrong:false, alpha:1 });
+      // Spawn new strand periodically
+      if (s.frame % 45 === 0 && s.strands.length < 6) {
+        spawnStrand(scene, s);
       }
 
-      // Update strands
-      for(let i=s.strands.length-1;i>=0;i--){
-        const st=s.strands[i]; st.y+=1.8;
-        if(st.y>H+10){ s.strands.splice(i,1); continue; }
-        if(!st.tapped&&!st.wrong&&st.y>H-HIT_ZONE_H&&st.y<H){
-          // Missed window passes
-        }
-        if(st.tapped||st.wrong){ st.alpha-=0.04; if(st.alpha<0) s.strands.splice(i,1); }
+      // Rotate basket slowly
+      if (s.basketMesh) {
+        s.basketMesh.rotation.y = Math.sin(s.frame * 0.01) * 0.1;
       }
 
-      // Draw strands (horizontal reeds)
-      s.strands.forEach((st,i)=>{
-        ctx.save(); ctx.globalAlpha=st.alpha;
-        const isLeft=st.side==='left';
-        const baseColor=isLeft?COLORS_L[i%COLORS_L.length]:COLORS_R[i%COLORS_R.length];
-        // Over/under weave pattern
-        const overUnder=i%2===0;
-        ctx.strokeStyle=baseColor; ctx.lineWidth=STRAND_H*0.6;
-        ctx.lineCap='round';
-        // Draw reed
-        ctx.beginPath();
-        if(overUnder){
-          ctx.moveTo(isLeft?-10:W+10,st.y);
-          ctx.lineTo(isLeft?W*0.6:W*0.4,st.y);
-        } else {
-          ctx.moveTo(isLeft?0:W,st.y);
-          ctx.lineTo(isLeft?W*0.4:W*0.6,st.y);
-        }
-        ctx.stroke();
-        // Highlight active strand
-        if(!st.tapped&&!st.wrong&&st.y>H-HIT_ZONE_H-20){
-          ctx.shadowBlur=15; ctx.shadowColor=ACCENT;
-          ctx.strokeStyle='#fbbf24'; ctx.lineWidth=2;
-          ctx.beginPath(); ctx.moveTo(0,st.y); ctx.lineTo(W,st.y); ctx.stroke();
-        }
-        ctx.restore();
-      });
-
-      // Tap feedback
-      for(let i=s.tapFeedback.length-1;i>=0;i--){
-        const f=s.tapFeedback[i]; f.alpha-=0.05;
-        if(f.alpha<=0){ s.tapFeedback.splice(i,1); continue; }
-        ctx.save(); ctx.globalAlpha=f.alpha;
-        ctx.fillStyle=f.ok?'#4ade80':'#ef4444';
-        ctx.font='bold 20px sans-serif'; ctx.textAlign='center';
-        ctx.fillText(f.ok?'✓':'✗',f.x,f.y); ctx.restore();
-      }
-
-      // Progress indicator
-      const prog=Math.min(1,s.sig.correctWeaves/30);
-      ctx.fillStyle='rgba(255,200,100,0.2)'; ctx.fillRect(0,H-4,W,4);
-      ctx.fillStyle=ACCENT; ctx.fillRect(0,H-4,W*prog,4);
-
-      animRef.current=requestAnimationFrame(loop);
+      renderer.render(scene, camera);
+      s.animId = requestAnimationFrame(loop);
     };
-    animRef.current=requestAnimationFrame(loop);
-  },[endGame]);
+    s.animId = requestAnimationFrame(loop);
+  }, [endGame, spawnStrand]);
 
-  const handleTap = useCallback((cx:number,_cy:number,canvas:HTMLCanvasElement)=>{
-    const s=stateRef.current; if(!s.running) return;
-    const W=canvas.width;
-    const side:Side=cx<W/2?'left':'right';
-    // Find the lowest strand in hit zone
-    const HIT_ZONE_H=80;
-    const H=canvas.height;
-    let best:typeof s.strands[0]|null=null;
-    for(const st of s.strands){
-      if(st.tapped||st.wrong) continue;
-      if(st.y>H-HIT_ZONE_H&&st.y<H){
-        if(!best||st.y>best.y) best=st;
+  useEffect(() => {
+    const mount = mountRef.current;
+    if (!mount) return;
+    const onPointerDown = (e: PointerEvent) => {
+      if (phase !== 'playing') return;
+      const s = stateRef.current;
+      const rect = mount.getBoundingClientRect();
+      const px = e.clientX - rect.left;
+      const side: Side = px < rect.width / 2 ? 'left' : 'right';
+      // Find the frontmost untapped strand
+      const frontStrand = s.strands.find(st => !st.tapped && !st.wrong);
+      if (!frontStrand) return;
+      if (frontStrand.side === side) {
+        frontStrand.tapped = true;
+        s.sig.correctWeaves++;
+        s.sig.streakCurrent++;
+        if (s.sig.streakCurrent > s.sig.maxStreak) s.sig.maxStreak = s.sig.streakCurrent;
+        const mult = s.sig.streakCurrent >= 5 ? 2 : 1;
+        s.sig.score += 2 * mult;
+        s.sig.basketProgress = Math.min(100, s.sig.basketProgress + 2);
+        setScoreDisplay(s.sig.score);
+        sfx.collect(); hapticScore();
+        if (s.sig.streakCurrent >= 3) hapticCombo(s.sig.streakCurrent);
+        if (frontStrand.mesh) {
+          const mat = frontStrand.mesh.material as THREE.MeshStandardMaterial;
+          mat.emissive.setHex(0x4ade80);
+          mat.emissiveIntensity = 0.6;
+          setTimeout(() => {
+            if (frontStrand.mesh) {
+              (frontStrand.mesh.material as THREE.MeshStandardMaterial).emissiveIntensity = 0.1;
+            }
+          }, 200);
+        }
+        // Remove this strand and spawn new one
+        setTimeout(() => {
+          if (!stateRef.current.running || !stateRef.current.scene) return;
+          if (frontStrand.mesh) {
+            stateRef.current.scene.remove(frontStrand.mesh);
+            frontStrand.mesh = null;
+          }
+          spawnStrand(stateRef.current.scene, stateRef.current);
+        }, 300);
+      } else {
+        frontStrand.wrong = true;
+        s.sig.mistakes++;
+        s.sig.streakCurrent = 0;
+        sfx.collision(); hapticFail();
       }
-    }
-    const feedX=side==='left'?W*0.15:W*0.85;
-    const feedY=H-50;
-    if(!best) return;
-    if(best.side===side){
-      best.tapped=true;
-      s.sig.correctWeaves++; s.sig.streakCurrent++;
-      if(s.sig.streakCurrent>s.sig.maxStreak) s.sig.maxStreak=s.sig.streakCurrent;
-      const pts=s.sig.streakCurrent>=4?2:1; s.sig.score+=pts;
-      sfx.collect(); hapticScore();
-      if(s.sig.streakCurrent>=4) hapticCombo(s.sig.streakCurrent);
-      s.nextSide=side==='left'?'right':'left';
-      setScore(s.sig.score);
-      s.tapFeedback.push({x:feedX,y:feedY,ok:true,alpha:1});
-    } else {
-      best.wrong=true; s.sig.mistakes++; s.sig.streakCurrent=0;
-      sfx.collision(); hapticFail();
-      s.tapFeedback.push({x:feedX,y:feedY,ok:false,alpha:1});
-    }
-  },[]);
-
-  useEffect(()=>{
-    const canvas=canvasRef.current; if(!canvas) return;
-    const resize=()=>{ canvas.width=canvas.offsetWidth; canvas.height=canvas.offsetHeight; };
-    resize(); window.addEventListener('resize',resize);
-
-    const onPD=(e:PointerEvent)=>{
-      if(phase!=='playing') return;
-      const rect=canvas.getBoundingClientRect();
-      const cx=(e.clientX-rect.left)*(canvas.width/rect.width);
-      const cy=(e.clientY-rect.top)*(canvas.height/rect.height);
-      handleTap(cx,cy,canvas);
     };
-    canvas.addEventListener('pointerdown',onPD);
-    return()=>{ window.removeEventListener('resize',resize); canvas.removeEventListener('pointerdown',onPD); };
-  },[phase,handleTap]);
+    mount.addEventListener('pointerdown', onPointerDown);
+    return () => mount.removeEventListener('pointerdown', onPointerDown);
+  }, [phase, spawnStrand]);
 
-  useEffect(()=>()=>{ cancelAnimationFrame(animRef.current); if(timerRef.current) clearInterval(timerRef.current); },[]);
+  useEffect(() => () => {
+    const s = stateRef.current;
+    s.running = false; cancelAnimationFrame(s.animId);
+    if (s.intervalId) clearInterval(s.intervalId);
+    s.resizeCleanup?.();
+    if (s.renderer) { s.renderer.dispose(); s.renderer = null; }
+  }, []);
 
-  const handleStart=useCallback(async(n:string,a:string)=>{
-    playerSessionRef.current=savePlayerSession(GAME_ID,n,a); await initAudio(); setPhase('countdown');
-  },[]);
-  const handlePlayAgain=useCallback(()=>{ setPhase('start'); setScore(0); setTimeLeft(DURATION); setFinalSig(null); },[]);
+  const handleStart = useCallback(async (name: string, avatar: string) => {
+    playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar);
+    await initAudio(); setPhase('countdown');
+  }, []);
+  const handlePlayAgain = useCallback(() => {
+    setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null);
+  }, []);
 
   return (
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent??ACCENT}>
-      {phase==='start'&&<GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description={GAME_TAGLINE}
-        ctaLabel="Start Weaving 🧺" accentColor={theme.colors.accent??ACCENT} onStart={handleStart}/>}
-      {phase==='countdown'&&<Countdown onComplete={startLoop} accentColor={theme.colors.accent??ACCENT}/>}
-      {(phase==='playing'||phase==='countdown')&&(
-        <><canvas ref={canvasRef} style={{position:'absolute',inset:0,width:'100%',height:'100%',touchAction:'none'}}
-            role="img" aria-label="Basket weaving game canvas"/>
-          {phase==='playing'&&<GameHUD accentColor={theme.colors.accent??ACCENT}
-            items={[{label:'TIME',value:timeLeft,danger:timeLeft<=10},{label:'SCORE',value:scoreDisplay}]}/>}
-        </>
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
+      {phase === 'start' && (
+        <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE}
+          description="Tap the side the strand comes from — Left or Right. Build the weave!"
+          ctaLabel="Weave! 🧺" accentColor={theme.colors.accent ?? ACCENT} onStart={handleStart} />
       )}
-      {phase==='done'&&finalSig&&<EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI}
-        score={String(finalSig.score)} personality={getPersonality(finalSig)}
-        insights={[
-          {label:'Correct Weaves',value:`${finalSig.correctWeaves}`,color:'#4ade80'},
-          {label:'Mistakes',value:`${finalSig.mistakes}`,color:finalSig.mistakes===0?'#4ade80':'#ef4444'},
-          {label:'Best Streak',value:`×${finalSig.maxStreak}`,color:ACCENT},
-          {label:'Basket',value:`${finalSig.basketProgress}%`,color:'#fbbf24'},
-        ]}
-        accentColor={theme.colors.accent??ACCENT} onPlayAgain={handlePlayAgain} didWin={finalSig.correctWeaves>=20}/>}
+      {phase === 'countdown' && <Countdown onComplete={startLoop} accentColor={theme.colors.accent ?? ACCENT} />}
+      <div ref={mountRef} style={{
+        position: 'absolute', inset: 0, width: '100%', height: '100%',
+        display: phase === 'playing' ? 'block' : 'none', touchAction: 'none',
+      }} />
+      {phase === 'playing' && (
+        <GameHUD accentColor={theme.colors.accent ?? ACCENT} items={[
+          { label: 'TIME', value: timeLeft, danger: timeLeft <= 10 },
+          { label: 'SCORE', value: scoreDisplay },
+        ]} />
+      )}
+      {phase === 'done' && finalSig && (
+        <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI}
+          score={String(finalSig.score)} personality={getPersonality(finalSig)}
+          insights={[
+            { label: 'Correct Weaves', value: String(finalSig.correctWeaves), color: ACCENT },
+            { label: 'Mistakes', value: String(finalSig.mistakes), color: '#ef4444' },
+            { label: 'Best Streak', value: `×${finalSig.maxStreak}`, color: '#fbbf24' },
+            { label: 'Progress', value: `${Math.round(finalSig.basketProgress)}%`, color: '#4ade80' },
+          ]}
+          accentColor={theme.colors.accent ?? ACCENT} onPlayAgain={handlePlayAgain}
+          didWin={finalSig.basketProgress >= 50} />
+      )}
     </GameShell>
   );
 }

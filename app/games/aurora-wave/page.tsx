@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
+import * as THREE from 'three';
 import GameShell from '@/components/GameShell';
 import GameHUD from '@/components/GameHUD';
 import GameStartScreen from '@/components/GameStartScreen';
@@ -10,48 +11,19 @@ import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
 
-const GAME_ID      = 'aurora-wave';
-const ACCENT       = '#34d399';
-const DURATION     = 60;
-const GAME_EMOJI   = '🌌';
-const GAME_TITLE   = 'Aurora Wave';
+const GAME_ID = 'aurora-wave';
+const ACCENT = '#34d399';
+const DURATION = 60;
+const GAME_EMOJI = '🌌';
+const GAME_TITLE = 'Aurora Wave';
 const GAME_TAGLINE = 'Breathe slowly to paint aurora waves. Erratic = broken!';
 const SMOOTH_THRESHOLD = 0.08;
 const ERRATIC_THRESHOLD = 0.18;
 
 interface Signals {
-  auroraSegments: number;
-  brokenWaves: number;
-  longestCalmBreath: number;
-  avgBreathVariance: number;
-  score: number;
-  maxColor: number;
+  auroraSegments: number; brokenWaves: number; longestCalmBreath: number;
+  avgBreathVariance: number; score: number; maxColor: number;
 }
-
-interface WavePoint { x: number; y: number; color: string; }
-interface AuroraWave { points: WavePoint[]; alpha: number; color: string; }
-
-interface GameState {
-  running: boolean;
-  timeLeft: number;
-  sig: Signals;
-  micLevel: number;
-  prevMicLevel: number;
-  wavePhase: number;
-  waveX: number;
-  calmStreak: number;
-  waves: AuroraWave[];
-  currentWave: AuroraWave | null;
-  colorHue: number;
-  breathVariances: number[];
-  accentColor: string;
-  breakFlash: number;
-  stars: Array<{x:number;y:number;brightness:number;twinkle:number}>;
-}
-
-const AURORA_COLORS = ['#34d399','#6ee7b7','#a7f3d0','#67e8f9','#a5f3fc','#c4b5fd','#f0abfc'];
-type Phase = 'start' | 'countdown' | 'playing' | 'done';
-
 function getPersonality(sig: Signals): string {
   if (sig.auroraSegments >= 40 && sig.brokenWaves <= 2) return 'Aurora Sage 🌟';
   if (sig.brokenWaves === 0 && sig.auroraSegments >= 20) return 'Serene Breather 🌿';
@@ -59,24 +31,40 @@ function getPersonality(sig: Signals): string {
   if (sig.longestCalmBreath >= 5) return 'Deep Calm 🧘';
   return 'Turbulent Spirit 🌪️';
 }
+type Phase = 'start' | 'countdown' | 'playing' | 'done';
+
+interface GS {
+  running: boolean; timeLeft: number; sig: Signals;
+  renderer: THREE.WebGLRenderer | null; scene: THREE.Scene | null;
+  camera: THREE.PerspectiveCamera | null; animId: number;
+  ribbonPoints: THREE.Vector3[]; ribbonLine: THREE.Line | null;
+  ribbonMat: THREE.LineBasicMaterial | null;
+  auroraParticles: THREE.Points | null; auroraGeo: THREE.BufferGeometry | null;
+  particlePositions: Float32Array | null;
+  colorHue: number; waveX: number; calmStreak: number;
+  micLevel: number; prevMicLevel: number; breathVariances: number[];
+  breakFlash: number; wavePhase: number;
+  micRef: { stream: MediaStream; analyser: AnalyserNode; data: Uint8Array } | null;
+  stopMusic: (() => void) | null;
+  intervalId: ReturnType<typeof setInterval> | null;
+  resizeCleanup: (() => void) | null;
+}
 
 export default function AuroraWaveGame() {
   const theme = useBrandTheme();
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const animRef = useRef(0);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const stopMusicRef = useRef<(() => void) | null>(null);
-  const micRef = useRef<{ stream: MediaStream; analyser: AnalyserNode; data: Uint8Array } | null>(null);
-
-  const stateRef = useRef<GameState>({
+  const mountRef = useRef<HTMLDivElement>(null);
+  const stateRef = useRef<GS>({
     running: false, timeLeft: DURATION,
     sig: { auroraSegments: 0, brokenWaves: 0, longestCalmBreath: 0, avgBreathVariance: 0, score: 0, maxColor: 0 },
-    micLevel: 0, prevMicLevel: 0, wavePhase: 0, waveX: 0, calmStreak: 0,
-    waves: [], currentWave: null, colorHue: 160,
-    breathVariances: [], accentColor: ACCENT, breakFlash: 0,
-    stars: [],
+    renderer: null, scene: null, camera: null, animId: 0,
+    ribbonPoints: [], ribbonLine: null, ribbonMat: null,
+    auroraParticles: null, auroraGeo: null, particlePositions: null,
+    colorHue: 160, waveX: 0, calmStreak: 0,
+    micLevel: 0, prevMicLevel: 0, breathVariances: [],
+    breakFlash: 0, wavePhase: 0,
+    micRef: null, stopMusic: null,
+    intervalId: null, resizeCleanup: null,
   });
-
   const [phase, setPhase] = useState<Phase>('start');
   const [timeLeft, setTimeLeft] = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
@@ -85,15 +73,16 @@ export default function AuroraWaveGame() {
   const [playerAvatar, setPlayerAvatar] = useState('🌌');
   const playerSessionRef = useRef<PlayerSession | null>(null);
 
-  useEffect(() => { stateRef.current.accentColor = theme.colors.accent ?? ACCENT; }, [theme]);
-
   const endGame = useCallback(() => {
     const s = stateRef.current;
     s.running = false;
-    cancelAnimationFrame(animRef.current);
-    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
-    if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
-    if (micRef.current) { micRef.current.stream.getTracks().forEach(t => t.stop()); micRef.current = null; }
+    cancelAnimationFrame(s.animId);
+    if (s.intervalId) { clearInterval(s.intervalId); s.intervalId = null; }
+    if (s.stopMusic) { s.stopMusic(); s.stopMusic = null; }
+    if (s.micRef) { s.micRef.stream.getTracks().forEach(t => t.stop()); s.micRef = null; }
+    s.resizeCleanup?.();
+    if (s.renderer) { s.renderer.dispose(); s.renderer = null; }
+    if (mountRef.current) mountRef.current.innerHTML = '';
     const avgVar = s.breathVariances.length > 0
       ? s.breathVariances.reduce((a, b) => a + b, 0) / s.breathVariances.length : 0;
     s.sig.avgBreathVariance = avgVar;
@@ -102,12 +91,12 @@ export default function AuroraWaveGame() {
   }, []);
 
   const startLoop = useCallback(async () => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+    const mount = mountRef.current;
+    if (!mount) return;
     const s = stateRef.current;
+    const W = window.innerWidth, H = window.innerHeight;
 
+    // Mic
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const ac = new AudioContext();
@@ -115,215 +104,205 @@ export default function AuroraWaveGame() {
       analyser.fftSize = 512;
       ac.createMediaStreamSource(stream).connect(analyser);
       const data = new Uint8Array(analyser.frequencyBinCount);
-      micRef.current = { stream, analyser, data };
-    } catch { /* no mic — use simulated breath */ }
+      s.micRef = { stream, analyser, data };
+    } catch { /* fallback */ }
 
     s.running = true; s.timeLeft = DURATION;
     s.sig = { auroraSegments: 0, brokenWaves: 0, longestCalmBreath: 0, avgBreathVariance: 0, score: 0, maxColor: 0 };
-    s.micLevel = 0; s.prevMicLevel = 0; s.wavePhase = 0; s.waveX = 0;
-    s.calmStreak = 0; s.waves = []; s.currentWave = null; s.colorHue = 160;
-    s.breathVariances = []; s.breakFlash = 0;
-
-    // Generate stars
-    s.stars = Array.from({ length: 80 }, () => ({
-      x: Math.random() * canvas.width, y: Math.random() * canvas.height * 0.4,
-      brightness: 0.3 + Math.random() * 0.7, twinkle: Math.random() * Math.PI * 2,
-    }));
-
+    s.micLevel = 0; s.prevMicLevel = 0; s.waveX = 0; s.calmStreak = 0;
+    s.breathVariances = []; s.breakFlash = 0; s.colorHue = 160; s.wavePhase = 0;
+    s.ribbonPoints = [];
     setScoreDisplay(0); setTimeLeft(DURATION); setPhase('playing');
-    stopMusicRef.current = startMusic('chill');
+    s.stopMusic = startMusic('chill');
 
-    timerRef.current = setInterval(() => {
-      s.timeLeft--;
-      setTimeLeft(s.timeLeft);
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(W, H);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setClearColor(0x040820);
+    mount.innerHTML = '';
+    mount.appendChild(renderer.domElement);
+    s.renderer = renderer;
+
+    const scene = new THREE.Scene();
+    s.scene = scene;
+    const camera = new THREE.PerspectiveCamera(65, W / H, 0.1, 200);
+    camera.position.set(0, 0, 8);
+    s.camera = camera;
+
+    scene.add(new THREE.AmbientLight(0x112244, 2));
+
+    // Stars
+    const starCount = 600;
+    const starPos = new Float32Array(starCount * 3);
+    for (let i = 0; i < starCount; i++) {
+      starPos[i * 3] = (Math.random() - 0.5) * 60;
+      starPos[i * 3 + 1] = Math.random() * 20 - 5;
+      starPos[i * 3 + 2] = -10 - Math.random() * 20;
+    }
+    const starGeo = new THREE.BufferGeometry();
+    starGeo.setAttribute('position', new THREE.BufferAttribute(starPos, 3));
+    scene.add(new THREE.Points(starGeo, new THREE.PointsMaterial({ color: 0xffffff, size: 0.06, transparent: true, opacity: 0.7 })));
+
+    // Mountain silhouette
+    const mountainShape = new THREE.Shape();
+    mountainShape.moveTo(-12, -5);
+    for (let mx = -12; mx <= 12; mx += 0.5) {
+      const my = -2 + Math.sin(mx * 0.3) * 1.5 + Math.sin(mx * 0.1) * 2.5;
+      mountainShape.lineTo(mx, my);
+    }
+    mountainShape.lineTo(12, -6); mountainShape.lineTo(-12, -6);
+    const mountainGeo = new THREE.ShapeGeometry(mountainShape);
+    const mountain = new THREE.Mesh(mountainGeo, new THREE.MeshBasicMaterial({ color: 0x0a1628 }));
+    mountain.position.z = -5;
+    scene.add(mountain);
+
+    // Aurora ribbon line
+    const ribbonMat = new THREE.LineBasicMaterial({ color: 0x34d399, linewidth: 2, transparent: true, opacity: 0.9 });
+    s.ribbonMat = ribbonMat;
+
+    // Aurora particle cloud
+    const pCount = 500;
+    const pPos = new Float32Array(pCount * 3);
+    for (let i = 0; i < pCount; i++) {
+      pPos[i * 3] = (Math.random() - 0.5) * 20;
+      pPos[i * 3 + 1] = Math.random() * 4 - 1;
+      pPos[i * 3 + 2] = -3 - Math.random() * 5;
+    }
+    const aGeo = new THREE.BufferGeometry();
+    aGeo.setAttribute('position', new THREE.BufferAttribute(pPos, 3));
+    const aParticles = new THREE.Points(aGeo, new THREE.PointsMaterial({
+      color: 0x34d399, size: 0.08, transparent: true, opacity: 0,
+    }));
+    scene.add(aParticles);
+    s.auroraParticles = aParticles;
+    s.auroraGeo = aGeo;
+    s.particlePositions = pPos;
+
+    const handleResize = () => {
+      const w = window.innerWidth, h = window.innerHeight;
+      renderer.setSize(w, h); camera.aspect = w / h; camera.updateProjectionMatrix();
+    };
+    window.addEventListener('resize', handleResize);
+    s.resizeCleanup = () => window.removeEventListener('resize', handleResize);
+
+    s.intervalId = setInterval(() => {
+      if (!s.running) return;
+      s.timeLeft--; setTimeLeft(s.timeLeft);
       if (s.timeLeft <= 0) { sfx.fail(); haptic([300]); endGame(); }
     }, 1000);
 
     const loop = () => {
       if (!s.running) return;
-      const W = canvas.width; const H = canvas.height;
 
-      // Read mic
+      // Breath reading
       let breathLevel = s.micLevel;
-      if (micRef.current) {
-        const { analyser, data } = micRef.current;
+      if (s.micRef) {
+        const { analyser, data } = s.micRef;
         analyser.getByteTimeDomainData(data as Uint8Array<ArrayBuffer>);
         let sum = 0;
         for (const v of data) sum += Math.abs(v - 128);
         breathLevel = sum / data.length / 128;
-        breathLevel = s.micLevel * 0.7 + breathLevel * 0.3; // smooth
+        breathLevel = s.micLevel * 0.7 + breathLevel * 0.3;
         s.micLevel = breathLevel;
       } else {
-        // Simulated breath for no-mic fallback
         s.micLevel = 0.06 + Math.sin(Date.now() / 2000) * 0.04;
         breathLevel = s.micLevel;
       }
 
       const variance = Math.abs(breathLevel - s.prevMicLevel);
       s.breathVariances.push(variance);
-      if (s.breathVariances.length > 300) s.breathVariances.shift();
       s.prevMicLevel = breathLevel;
+      s.wavePhase += 0.02;
 
       const isCalm = breathLevel > 0.02 && breathLevel < SMOOTH_THRESHOLD;
       const isErratic = variance > ERRATIC_THRESHOLD;
 
-      // Night sky
-      ctx.fillStyle = '#040820';
-      ctx.fillRect(0, 0, W, H);
-
-      // Stars
-      for (const star of s.stars) {
-        star.twinkle += 0.03;
-        const alpha = star.brightness * (0.7 + Math.sin(star.twinkle) * 0.3);
-        ctx.save(); ctx.globalAlpha = alpha;
-        ctx.fillStyle = '#ffffff';
-        ctx.beginPath(); ctx.arc(star.x, star.y, 1.5, 0, Math.PI * 2); ctx.fill();
-        ctx.restore();
-      }
-
-      // Mountains silhouette
-      ctx.fillStyle = '#0a1628';
-      ctx.beginPath(); ctx.moveTo(0, H * 0.65);
-      for (let mx = 0; mx <= W; mx += 20) {
-        const my = H * 0.55 + Math.sin(mx * 0.02) * 40 + Math.sin(mx * 0.007) * 60;
-        ctx.lineTo(mx, my);
-      }
-      ctx.lineTo(W, H); ctx.lineTo(0, H); ctx.fill();
-
-      // Wave progression
-      s.wavePhase += 0.02;
       if (isCalm) {
         s.calmStreak++;
         s.waveX += 1.5;
         s.colorHue = (s.colorHue + 0.3) % 360;
-        if (s.calmStreak > s.sig.longestCalmBreath * 60) {
-          s.sig.longestCalmBreath = s.calmStreak / 60;
-        }
+        if (s.calmStreak / 60 > s.sig.longestCalmBreath) s.sig.longestCalmBreath = s.calmStreak / 60;
 
-        // Start or continue wave
-        if (!s.currentWave) {
-          const hue = s.colorHue;
-          s.currentWave = { points: [], alpha: 0.85, color: `hsl(${hue}, 80%, 65%)` };
-        }
-        if (s.currentWave) {
-          const waveY = H * 0.4 + Math.sin(s.wavePhase + s.waveX * 0.01) * 40 * breathLevel * 8;
-          s.currentWave.points.push({ x: s.waveX, y: waveY, color: s.currentWave.color });
-          s.sig.auroraSegments++;
-          if (s.sig.auroraSegments % 30 === 0) {
-            s.sig.score++;
-            setScoreDisplay(s.sig.score);
-            sfx.collect();
-          }
+        const worldX = (s.waveX / window.innerWidth) * 16 - 8;
+        const waveY = Math.sin(s.wavePhase + s.waveX * 0.01) * 2 * breathLevel * 8;
+        s.ribbonPoints.push(new THREE.Vector3(worldX, waveY, 0));
+        if (s.ribbonPoints.length > 120) s.ribbonPoints.shift();
+
+        s.sig.auroraSegments++;
+        if (s.sig.auroraSegments % 30 === 0) {
+          s.sig.score++;
+          setScoreDisplay(s.sig.score);
+          sfx.collect();
         }
       } else if (isErratic) {
         s.calmStreak = 0;
         s.breakFlash = 15;
-        if (s.currentWave && s.currentWave.points.length > 10) {
-          s.waves.push({ ...s.currentWave });
+        if (s.ribbonPoints.length > 10) {
           s.sig.brokenWaves++;
           sfx.collision(); haptic([20, 30, 20]);
         }
-        s.currentWave = null;
+        s.ribbonPoints = [];
         s.waveX = 0;
-      } else {
-        s.calmStreak = Math.max(0, s.calmStreak - 1);
       }
 
-      if (s.waveX > W) {
-        // Wave completed full screen — score big!
-        if (s.currentWave) {
-          s.waves.push({ ...s.currentWave });
-          s.sig.score += 5;
-          setScoreDisplay(s.sig.score);
-          sfx.collect(); haptic([50, 30, 50]);
-        }
-        s.currentWave = null; s.waveX = 0;
+      if (s.waveX > window.innerWidth) {
+        s.sig.score += 5;
+        setScoreDisplay(s.sig.score);
+        sfx.collect();
+        s.ribbonPoints = [];
+        s.waveX = 0;
       }
 
-      // Keep only last 5 waves
-      if (s.waves.length > 5) s.waves.shift();
-
-      // Draw completed waves
-      for (const wave of s.waves) {
-        if (wave.points.length < 2) continue;
-        ctx.save(); ctx.globalAlpha = wave.alpha * 0.4;
-        ctx.strokeStyle = wave.color; ctx.lineWidth = 3;
-        ctx.shadowBlur = 15; ctx.shadowColor = wave.color;
-        ctx.beginPath();
-        ctx.moveTo(wave.points[0].x, wave.points[0].y);
-        for (let i = 1; i < wave.points.length; i++) {
-          ctx.lineTo(wave.points[i].x, wave.points[i].y);
-        }
-        ctx.stroke();
-        wave.alpha -= 0.002;
-        ctx.restore();
+      // Update aurora ribbon
+      if (s.ribbonLine && s.scene) {
+        s.scene.remove(s.ribbonLine);
+        s.ribbonLine.geometry.dispose();
+      }
+      if (s.ribbonPoints.length > 1 && s.ribbonMat) {
+        const geo = new THREE.BufferGeometry().setFromPoints(s.ribbonPoints);
+        const line = new THREE.Line(geo, s.ribbonMat);
+        scene.add(line);
+        s.ribbonLine = line;
+        s.ribbonMat.color.setHSL(s.colorHue / 360, 0.8, 0.65);
       }
 
-      // Draw current wave
-      if (s.currentWave && s.currentWave.points.length > 1) {
-        const pts = s.currentWave.points;
-        ctx.save();
-        // Aurora glow layers
-        for (let layer = 3; layer >= 0; layer--) {
-          ctx.globalAlpha = 0.15 + layer * 0.1;
-          ctx.strokeStyle = s.currentWave.color;
-          ctx.lineWidth = 4 + layer * 3;
-          ctx.shadowBlur = 20 + layer * 10; ctx.shadowColor = s.currentWave.color;
-          ctx.beginPath();
-          ctx.moveTo(pts[0].x, pts[0].y);
-          for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
-          ctx.stroke();
+      // Aurora particles follow breath
+      if (s.auroraParticles && s.particlePositions && isCalm) {
+        const mat = s.auroraParticles.material as THREE.PointsMaterial;
+        mat.opacity = Math.min(0.6, breathLevel * 5);
+        mat.color.setHSL(s.colorHue / 360, 0.8, 0.65);
+        const pArr = s.particlePositions;
+        for (let i = 0; i < 500; i++) {
+          pArr[i * 3 + 1] += Math.sin(Date.now() * 0.001 + i) * 0.01;
         }
-        ctx.restore();
+        (s.auroraGeo!.attributes.position as THREE.BufferAttribute).needsUpdate = true;
+      } else if (s.auroraParticles) {
+        const mat = s.auroraParticles.material as THREE.PointsMaterial;
+        mat.opacity *= 0.98;
       }
 
       // Break flash
       if (s.breakFlash > 0) {
         s.breakFlash--;
-        ctx.save(); ctx.globalAlpha = s.breakFlash / 15 * 0.3;
-        ctx.fillStyle = '#ef4444'; ctx.fillRect(0, 0, W, H);
-        ctx.restore();
+        renderer.setClearColor(new THREE.Color(0.15, 0.02, 0.02));
+      } else {
+        renderer.setClearColor(0x040820);
       }
 
-      // Breath guide
-      const breathBarH = 50;
-      const breathBarY = H - breathBarH - 10;
-      ctx.fillStyle = '#1e293b44'; ctx.fillRect(10, breathBarY, W - 20, breathBarH);
-      // Calm zone
-      ctx.fillStyle = '#4ade8033';
-      const calmStart = SMOOTH_THRESHOLD * 5 * (W - 20) / 1;
-      ctx.fillRect(10, breathBarY, calmStart, breathBarH);
-      // Current level
-      ctx.fillStyle = isErratic ? '#ef4444' : isCalm ? '#4ade80' : ACCENT;
-      ctx.fillRect(10, breathBarY, Math.min(W - 20, breathLevel * (W - 20) * 5), breathBarH);
-      ctx.strokeStyle = '#fff4'; ctx.lineWidth = 1;
-      ctx.strokeRect(10, breathBarY, W - 20, breathBarH);
-      ctx.fillStyle = '#fff'; ctx.font = '11px sans-serif'; ctx.textAlign = 'center';
-      ctx.fillText(isCalm ? '🌬️ Perfect breath' : isErratic ? '💨 Too erratic!' : '🫁 Breathe gently', W / 2, breathBarY + breathBarH / 2 + 4);
-
-      animRef.current = requestAnimationFrame(loop);
+      renderer.render(scene, camera);
+      s.animId = requestAnimationFrame(loop);
     };
-    animRef.current = requestAnimationFrame(loop);
+    s.animId = requestAnimationFrame(loop);
   }, [endGame]);
 
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const resize = () => {
-      canvas.width = canvas.offsetWidth; canvas.height = canvas.offsetHeight;
-      stateRef.current.waveX = 0;
-    };
-    resize(); window.addEventListener('resize', resize);
-    return () => window.removeEventListener('resize', resize);
-  }, []);
-
-  useEffect(() => {
-    return () => {
-      cancelAnimationFrame(animRef.current);
-      if (timerRef.current) clearInterval(timerRef.current);
-      if (stopMusicRef.current) stopMusicRef.current();
-      if (micRef.current) micRef.current.stream.getTracks().forEach(t => t.stop());
-    };
+  useEffect(() => () => {
+    const s = stateRef.current;
+    s.running = false; cancelAnimationFrame(s.animId);
+    if (s.intervalId) clearInterval(s.intervalId);
+    if (s.stopMusic) s.stopMusic();
+    if (s.micRef) s.micRef.stream.getTracks().forEach(t => t.stop());
+    s.resizeCleanup?.();
+    if (s.renderer) { s.renderer.dispose(); s.renderer = null; }
   }, []);
 
   const handleStart = useCallback((name: string, avatar: string) => {
@@ -331,18 +310,9 @@ export default function AuroraWaveGame() {
     initAudio(); playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar);
     setPhase('countdown');
   }, []);
-  const handleCountdownDone = useCallback(() => { startLoop(); }, [startLoop]);
   const handlePlayAgain = useCallback(() => {
     setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null);
   }, []);
-
-  const buildInsights = (sig: Signals) => [
-    { label: 'Aurora Segments', value: `${sig.auroraSegments}`, color: sig.auroraSegments >= 30 ? '#4ade80' : '#facc15' },
-    { label: 'Broken Waves',    value: `${sig.brokenWaves}`,     color: sig.brokenWaves === 0 ? '#4ade80' : '#ef4444' },
-    { label: 'Calm Streak',     value: `${Math.round(sig.longestCalmBreath)}s`, color: ACCENT },
-    { label: 'Breath Control',  value: sig.avgBreathVariance < 0.05 ? 'Excellent' : sig.avgBreathVariance < 0.1 ? 'Good' : 'Erratic',
-      color: sig.avgBreathVariance < 0.05 ? '#4ade80' : sig.avgBreathVariance < 0.1 ? '#facc15' : '#ef4444' },
-  ];
 
   return (
     <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
@@ -350,31 +320,33 @@ export default function AuroraWaveGame() {
         <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description={GAME_TAGLINE}
           ctaLabel="Allow Mic & Begin" accentColor={theme.colors.accent ?? ACCENT} onStart={handleStart} />
       )}
-      {phase === 'countdown' && (
-        <Countdown onComplete={handleCountdownDone} accentColor={theme.colors.accent ?? ACCENT} />
-      )}
-      {(phase === 'playing' || phase === 'countdown') && (
-        <>
-          <canvas ref={canvasRef} role="img" aria-label="Aurora wave breathing game"
-            style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none' }} />
-          {phase === 'playing' && (
-            <GameHUD accentColor={theme.colors.accent ?? ACCENT} items={[
-              { label: 'TIME', value: timeLeft, danger: timeLeft <= 5 },
-              { label: 'SCORE', value: scoreDisplay },
-            ]} />
-          )}
-        </>
+      {phase === 'countdown' && <Countdown onComplete={startLoop} accentColor={theme.colors.accent ?? ACCENT} />}
+      <div ref={mountRef} style={{
+        position: 'absolute', inset: 0, width: '100%', height: '100%',
+        display: phase === 'playing' ? 'block' : 'none', touchAction: 'none',
+      }} />
+      {phase === 'playing' && (
+        <GameHUD accentColor={theme.colors.accent ?? ACCENT} items={[
+          { label: 'TIME', value: timeLeft, danger: timeLeft <= 5 },
+          { label: 'SCORE', value: scoreDisplay },
+        ]} />
       )}
       {phase === 'done' && finalSig && (
         <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI}
           score={String(finalSig.score)} personality={getPersonality(finalSig)}
-          insights={buildInsights(finalSig)} accentColor={theme.colors.accent ?? ACCENT}
-          onPlayAgain={handlePlayAgain} didWin={finalSig.auroraSegments >= 20} />
+          insights={[
+            { label: 'Aurora Segments', value: `${finalSig.auroraSegments}`, color: finalSig.auroraSegments >= 30 ? '#4ade80' : '#facc15' },
+            { label: 'Broken Waves', value: `${finalSig.brokenWaves}`, color: finalSig.brokenWaves === 0 ? '#4ade80' : '#ef4444' },
+            { label: 'Calm Streak', value: `${Math.round(finalSig.longestCalmBreath)}s`, color: ACCENT },
+            { label: 'Breath Control', value: finalSig.avgBreathVariance < 0.05 ? 'Excellent' : finalSig.avgBreathVariance < 0.1 ? 'Good' : 'Erratic', color: finalSig.avgBreathVariance < 0.05 ? '#4ade80' : finalSig.avgBreathVariance < 0.1 ? '#facc15' : '#ef4444' },
+          ]}
+          accentColor={theme.colors.accent ?? ACCENT} onPlayAgain={handlePlayAgain}
+          didWin={finalSig.auroraSegments >= 20} />
       )}
-      {phase === 'done' && finalSig && (
-        <WebhookEmitter theme={theme} gameId={GAME_ID} sig={finalSig}
-          personality={getPersonality(finalSig)} player={playerSessionRef.current} />
-      )}
+      {phase === 'done' && finalSig && (() => {
+        const personality = getPersonality(finalSig);
+        return <WebhookEmitter theme={theme} gameId={GAME_ID} sig={finalSig} personality={personality} player={playerSessionRef.current} />;
+      })()}
     </GameShell>
   );
 }
@@ -385,11 +357,7 @@ function WebhookEmitter({ theme, gameId, sig, personality, player }: {
   const fired = useRef(false);
   useEffect(() => {
     if (fired.current) return; fired.current = true;
-    postWebhook(theme, gameId, { personality, score: sig.score, auroraSegments: sig.auroraSegments,
-      brokenWaves: sig.brokenWaves, longestCalmBreath: Math.round(sig.longestCalmBreath),
-      avgBreathVariance: parseFloat(sig.avgBreathVariance.toFixed(4)) }, player);
+    postWebhook(theme, gameId, { personality, score: sig.score, auroraSegments: sig.auroraSegments, brokenWaves: sig.brokenWaves, longestCalmBreath: Math.round(sig.longestCalmBreath) }, player);
   }, [theme, gameId, sig, personality, player]);
   return null;
 }
-
-

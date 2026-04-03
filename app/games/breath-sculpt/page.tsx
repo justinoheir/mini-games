@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
+import * as THREE from 'three';
 import GameShell from '@/components/GameShell';
 import GameHUD from '@/components/GameHUD';
 import GameStartScreen from '@/components/GameStartScreen';
@@ -10,7 +11,6 @@ import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
 import { hapticScore, hapticFail, hapticVictory } from '@/lib/haptics';
-import { motion, AnimatePresence } from 'framer-motion';
 
 const GAME_ID = 'breath-sculpt';
 const ACCENT = '#a78bfa';
@@ -22,15 +22,9 @@ const PB_KEY = 'mg_pb_breath-sculpt';
 const PARTICLE_COUNT = 28;
 const SCROLL_SPEED_BASE = 1.2;
 const SCROLL_SPEED_MAX = 2.4;
-const GAP_HEIGHT = 140;
+const GAP_HEIGHT = 2.5;
 
-interface Signals {
-  score: number;
-  gapsCleared: number;
-  collisions: number;
-  breathVariance: number;
-}
-
+interface Signals { score: number; gapsCleared: number; collisions: number; breathVariance: number; }
 function getPersonality(sig: Signals): string {
   if (sig.gapsCleared >= 12 && sig.collisions <= 2) return 'Sculpt Master 🎨';
   if (sig.gapsCleared >= 8) return 'Flow Rider 🌊';
@@ -38,465 +32,296 @@ function getPersonality(sig: Signals): string {
   if (sig.gapsCleared >= 5) return 'Shape Shifter 🌀';
   return 'First Breath 🌱';
 }
-
-interface SwarmParticle {
-  offX: number;  // offset from swarm center
-  offY: number;
-  vx: number;
-  vy: number;
-  size: number;
-  hue: number;
-}
-
-interface Barrier {
-  x: number;
-  gapY: number;   // center of gap
-  passed: boolean;
-  hitFlash: number;
-}
-
 type Phase = 'start' | 'countdown' | 'playing' | 'done';
 
-function WebhookEmitter({ theme, sig, personality, player }: {
-  theme: ReturnType<typeof useBrandTheme>;
-  sig: Signals;
-  personality: string;
-  player: PlayerSession | null;
-}) {
-  const fired = useRef(false);
-  useEffect(() => {
-    if (fired.current) return;
-    fired.current = true;
-    postWebhook(theme, GAME_ID, { personality, score: sig.score }, player);
-  }, [theme, sig, personality, player]);
-  return null;
+interface WallPair { meshBot: THREE.Mesh; meshTop: THREE.Mesh; gapY: number; z: number; passed: boolean; }
+interface GS {
+  running: boolean; timeLeft: number; sig: Signals;
+  renderer: THREE.WebGLRenderer | null; scene: THREE.Scene | null;
+  camera: THREE.PerspectiveCamera | null; animId: number;
+  swarmMeshes: THREE.Mesh[]; swarmPositions: Array<{ x: number; y: number; vx: number; vy: number }>;
+  swarmCenterY: number; targetY: number;
+  walls: WallPair[]; scrollZ: number; scrollSpeed: number;
+  micLevel: number;
+  micRef: { stream: MediaStream; analyser: AnalyserNode; data: Uint8Array } | null;
+  breathVariances: number[]; prevMicLevel: number;
+  frame: number;
+  stopMusic: (() => void) | null;
+  intervalId: ReturnType<typeof setInterval> | null;
+  resizeCleanup: (() => void) | null;
 }
 
-export default function BreathSculpt() {
+export default function BreathSculptGame() {
   const theme = useBrandTheme();
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const stopMusicRef = useRef<(() => void) | null>(null);
-
-  const stateRef = useRef({
-    running: false,
-    timeLeft: DURATION,
-    score: 0,
-    collisions: 0,
-    swarmY: 0,
-    swarmTargetY: 0,
-    swarmParticles: [] as SwarmParticle[],
-    barriers: [] as Barrier[],
-    nextBarrierIn: 0,
-    lives: 3,
-    volSamples: [] as number[],
-    analyser: null as AnalyserNode | null,
-    audioCtx: null as AudioContext | null,
-    stream: null as MediaStream | null,
-    animId: 0,
-    timerIntervalId: null as ReturnType<typeof setInterval> | null,
-    lastHitTime: 0,
-    screenFlash: 0,
-    screenFlashColor: 'rgba(168,139,250,0.2)',
-    passedFlash: 0,
+  const mountRef = useRef<HTMLDivElement>(null);
+  const stateRef = useRef<GS>({
+    running: false, timeLeft: DURATION,
+    sig: { score: 0, gapsCleared: 0, collisions: 0, breathVariance: 0 },
+    renderer: null, scene: null, camera: null, animId: 0,
+    swarmMeshes: [], swarmPositions: [], swarmCenterY: 0, targetY: 0,
+    walls: [], scrollZ: 0, scrollSpeed: SCROLL_SPEED_BASE,
+    micLevel: 0, micRef: null, breathVariances: [], prevMicLevel: 0,
+    frame: 0, stopMusic: null, intervalId: null, resizeCleanup: null,
   });
-
   const [phase, setPhase] = useState<Phase>('start');
   const [timeLeft, setTimeLeft] = useState(DURATION);
-  const [displayScore, setDisplayScore] = useState(0);
+  const [scoreDisplay, setScoreDisplay] = useState(0);
   const [finalSig, setFinalSig] = useState<Signals | null>(null);
   const playerSessionRef = useRef<PlayerSession | null>(null);
-  const [isNewBest, setIsNewBest] = useState(false);
-  const accent = theme.colors.accent ?? ACCENT;
-
-  const getVolume = useCallback((): number => {
-    const s = stateRef.current;
-    if (!s.analyser) return 0;
-    const data = new Uint8Array(s.analyser.frequencyBinCount);
-    s.analyser.getByteFrequencyData(data);
-    return data.reduce((a, b) => a + b, 0) / data.length / 255;
-  }, []);
-
-  const initSwarm = useCallback((cy: number) => {
-    const s = stateRef.current;
-    s.swarmParticles = Array.from({ length: PARTICLE_COUNT }, () => ({
-      offX: (Math.random() - 0.5) * 50,
-      offY: (Math.random() - 0.5) * 50,
-      vx: 0,
-      vy: 0,
-      size: 3 + Math.random() * 4,
-      hue: 260 + Math.random() * 40,
-    }));
-    s.swarmY = cy;
-    s.swarmTargetY = cy;
-  }, []);
 
   const endGame = useCallback(() => {
     const s = stateRef.current;
     s.running = false;
     cancelAnimationFrame(s.animId);
-    if (s.timerIntervalId) clearInterval(s.timerIntervalId);
-    if (s.stream) s.stream.getTracks().forEach(t => t.stop());
-    if (s.audioCtx) s.audioCtx.close().catch(() => {});
-    if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
-    sfx.success();
-    hapticVictory();
-    const avg = s.volSamples.length > 0 ? s.volSamples.reduce((a, b) => a + b, 0) / s.volSamples.length : 0;
-    const variance = s.volSamples.length > 0
-      ? Math.sqrt(s.volSamples.reduce((a, v) => a + (v - avg) ** 2, 0) / s.volSamples.length)
-      : 0;
-    const sig: Signals = {
-      score: s.score,
-      gapsCleared: s.score,
-      collisions: s.collisions,
-      breathVariance: Math.round(variance * 100),
-    };
+    if (s.intervalId) { clearInterval(s.intervalId); s.intervalId = null; }
+    if (s.stopMusic) { s.stopMusic(); s.stopMusic = null; }
+    if (s.micRef) { s.micRef.stream.getTracks().forEach(t => t.stop()); s.micRef = null; }
+    s.resizeCleanup?.();
+    if (s.renderer) { s.renderer.dispose(); s.renderer = null; }
+    if (mountRef.current) mountRef.current.innerHTML = '';
+    const avgVar = s.breathVariances.length > 0 ? s.breathVariances.reduce((a, b) => a + b, 0) / s.breathVariances.length : 0;
+    s.sig.breathVariance = avgVar;
     try {
       const prev = parseInt(localStorage.getItem(PB_KEY) || '0', 10);
-      if (sig.score > prev) { localStorage.setItem(PB_KEY, String(sig.score)); setIsNewBest(true); }
-    } catch { /* ignore */ }
-    setFinalSig(sig);
-    setPhase('done');
+      if (s.sig.score > prev) localStorage.setItem(PB_KEY, String(s.sig.score));
+    } catch { /* */ }
+    setFinalSig({ ...s.sig });
+    setPhase('done'); hapticVictory();
   }, []);
 
-  const startLoop = useCallback(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+  const spawnWall = useCallback((scene: THREE.Scene, s: GS) => {
+    const gapY = (Math.random() - 0.5) * 3;
+    const wallColor = 0x7c3aed;
+    const botH = Math.max(0.5, 4 + gapY - GAP_HEIGHT / 2);
+    const topH = Math.max(0.5, 4 - gapY - GAP_HEIGHT / 2);
+    const mBot = new THREE.Mesh(
+      new THREE.BoxGeometry(0.5, botH, 0.4),
+      new THREE.MeshStandardMaterial({ color: wallColor, emissive: wallColor, emissiveIntensity: 0.3, roughness: 0.4 })
+    );
+    mBot.position.set(0, -4 + botH / 2, s.scrollZ - 25);
+    scene.add(mBot);
+    const mTop = new THREE.Mesh(
+      new THREE.BoxGeometry(0.5, topH, 0.4),
+      new THREE.MeshStandardMaterial({ color: wallColor, emissive: wallColor, emissiveIntensity: 0.3, roughness: 0.4 })
+    );
+    mTop.position.set(0, 4 - topH / 2, s.scrollZ - 25);
+    scene.add(mTop);
+    s.walls.push({ meshBot: mBot, meshTop: mTop, gapY, z: s.scrollZ - 25, passed: false });
+  }, []);
+
+  const startLoop = useCallback(async () => {
+    const mount = mountRef.current;
+    if (!mount) return;
     const s = stateRef.current;
-    s.running = true;
-    s.timeLeft = DURATION;
-    s.score = 0;
-    s.collisions = 0;
-    s.lives = 3;
-    s.volSamples = [];
-    s.barriers = [];
-    s.nextBarrierIn = 120;
-    s.lastHitTime = 0;
-    s.screenFlash = 0;
-    s.passedFlash = 0;
-    setDisplayScore(0);
-    setTimeLeft(DURATION);
-    setIsNewBest(false);
-    setPhase('playing');
-    stopMusicRef.current = startMusic('calm');
+    const W = window.innerWidth, H = window.innerHeight;
 
-    const W = window.innerWidth;
-    const H = window.innerHeight;
-    initSwarm(H / 2);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const ac = new AudioContext();
+      const analyser = ac.createAnalyser();
+      analyser.fftSize = 512;
+      ac.createMediaStreamSource(stream).connect(analyser);
+      s.micRef = { stream, analyser, data: new Uint8Array(analyser.frequencyBinCount) };
+    } catch { /* fallback */ }
 
-    s.timerIntervalId = setInterval(() => {
+    s.running = true; s.timeLeft = DURATION; s.frame = 0;
+    s.sig = { score: 0, gapsCleared: 0, collisions: 0, breathVariance: 0 };
+    s.swarmCenterY = 0; s.targetY = 0; s.walls = []; s.scrollZ = 0;
+    s.micLevel = 0; s.prevMicLevel = 0; s.breathVariances = [];
+    s.scrollSpeed = SCROLL_SPEED_BASE;
+    setScoreDisplay(0); setTimeLeft(DURATION); setPhase('playing');
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(W, H);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setClearColor(0x0e0820);
+    mount.innerHTML = '';
+    mount.appendChild(renderer.domElement);
+    s.renderer = renderer;
+
+    const scene = new THREE.Scene();
+    scene.fog = new THREE.FogExp2(0x0e0820, 0.02);
+    s.scene = scene;
+    const camera = new THREE.PerspectiveCamera(65, W / H, 0.1, 100);
+    camera.position.set(0, 0, 8);
+    s.camera = camera;
+
+    scene.add(new THREE.AmbientLight(0x221133, 2.5));
+    const purpleLight = new THREE.PointLight(0xa78bfa, 2, 20);
+    purpleLight.position.set(0, 2, 4);
+    scene.add(purpleLight);
+
+    // Star field
+    const sPos = new Float32Array(300 * 3);
+    for (let i = 0; i < 300; i++) {
+      sPos[i * 3] = (Math.random() - 0.5) * 20;
+      sPos[i * 3 + 1] = (Math.random() - 0.5) * 10;
+      sPos[i * 3 + 2] = -15 - Math.random() * 15;
+    }
+    const sGeo = new THREE.BufferGeometry();
+    sGeo.setAttribute('position', new THREE.BufferAttribute(sPos, 3));
+    scene.add(new THREE.Points(sGeo, new THREE.PointsMaterial({ color: 0x886699, size: 0.05, transparent: true, opacity: 0.5 })));
+
+    // Swarm particles
+    s.swarmMeshes = [];
+    s.swarmPositions = [];
+    for (let i = 0; i < PARTICLE_COUNT; i++) {
+      const mesh = new THREE.Mesh(
+        new THREE.SphereGeometry(0.09, 8, 8),
+        new THREE.MeshStandardMaterial({ color: 0xa78bfa, emissive: 0xa78bfa, emissiveIntensity: 0.6, roughness: 0.2 })
+      );
+      mesh.position.set(-2 + (Math.random() - 0.5) * 0.5, (Math.random() - 0.5) * 0.5, 0);
+      scene.add(mesh);
+      s.swarmMeshes.push(mesh);
+      s.swarmPositions.push({ x: mesh.position.x, y: mesh.position.y, vx: 0, vy: 0 });
+    }
+
+    s.stopMusic = startMusic('chill');
+    const handleResize = () => {
+      const w = window.innerWidth, h = window.innerHeight;
+      renderer.setSize(w, h); camera.aspect = w / h; camera.updateProjectionMatrix();
+    };
+    window.addEventListener('resize', handleResize);
+    s.resizeCleanup = () => window.removeEventListener('resize', handleResize);
+
+    for (let i = 0; i < 3; i++) { s.scrollZ = -i * 8; spawnWall(scene, s); }
+    s.scrollZ = 0;
+
+    s.intervalId = setInterval(() => {
       if (!s.running) return;
-      s.timeLeft--;
-      setTimeLeft(s.timeLeft);
-      setDisplayScore(s.score);
-      sfx.tick();
-      if (s.timeLeft === 10) sfx.warning();
-      if (s.timeLeft <= 0) endGame();
+      s.timeLeft--; setTimeLeft(s.timeLeft);
+      const prog = 1 - s.timeLeft / DURATION;
+      s.scrollSpeed = SCROLL_SPEED_BASE + prog * (SCROLL_SPEED_MAX - SCROLL_SPEED_BASE);
+      if (s.timeLeft <= 0) { sfx.fail(); endGame(); }
     }, 1000);
 
     const loop = () => {
       if (!s.running) return;
-      const W2 = window.innerWidth;
-      const H2 = window.innerHeight;
-      const vol = getVolume();
-      s.volSamples.push(vol);
-      const now = Date.now();
-      const progress = (DURATION - s.timeLeft) / DURATION;
-      const scrollSpeed = SCROLL_SPEED_BASE + (SCROLL_SPEED_MAX - SCROLL_SPEED_BASE) * progress;
+      s.frame++;
+      const dt = 1 / 60;
 
-      // Swarm target Y: high vol = rise, low vol = fall
-      const targetY = H2 * 0.5 - (vol - 0.3) * H2 * 0.7;
-      s.swarmTargetY = Math.max(80, Math.min(H2 - 60, targetY));
-      s.swarmY += (s.swarmTargetY - s.swarmY) * 0.1;
+      // Mic
+      let breathLevel = 0.05 + Math.sin(Date.now() / 2500) * 0.04;
+      if (s.micRef) {
+        const { analyser, data } = s.micRef;
+        analyser.getByteTimeDomainData(data as Uint8Array<ArrayBuffer>);
+        let sum = 0;
+        for (const v of data) sum += Math.abs(v - 128);
+        const raw = sum / data.length / 128;
+        breathLevel = s.micLevel * 0.7 + raw * 0.3;
+        s.micLevel = breathLevel;
+      }
+      const variance = Math.abs(breathLevel - s.prevMicLevel);
+      s.breathVariances.push(variance);
+      s.prevMicLevel = breathLevel;
+
+      // Target Y based on breath level (louder = up)
+      s.targetY = (breathLevel - 0.06) * 20;
+      s.targetY = Math.max(-3.5, Math.min(3.5, s.targetY));
+      s.swarmCenterY += (s.targetY - s.swarmCenterY) * 0.08;
 
       // Update swarm particles
-      for (const p of s.swarmParticles) {
-        const fx = -p.offX * 0.04 + (Math.random() - 0.5) * 0.8;
-        const fy = -p.offY * 0.04 + (Math.random() - 0.5) * 0.8;
-        p.vx += fx; p.vy += fy;
-        p.vx *= 0.9; p.vy *= 0.9;
-        p.offX += p.vx; p.offY += p.vy;
-        const maxOff = 35 + vol * 20;
-        const dist = Math.sqrt(p.offX ** 2 + p.offY ** 2);
-        if (dist > maxOff) { p.offX *= maxOff / dist; p.offY *= maxOff / dist; }
-      }
+      s.swarmPositions.forEach((p, i) => {
+        const angle = (i / PARTICLE_COUNT) * Math.PI * 2 + Date.now() * 0.002;
+        const orbitR = 0.4 + Math.sin(i * 1.3) * 0.2;
+        const tx = -2 + Math.cos(angle) * orbitR;
+        const ty = s.swarmCenterY + Math.sin(angle) * orbitR;
+        p.vx = (tx - p.x) * 0.1;
+        p.vy = (ty - p.y) * 0.1;
+        p.x += p.vx;
+        p.y += p.vy;
+        const mesh = s.swarmMeshes[i];
+        mesh.position.x = p.x;
+        mesh.position.y = p.y;
+        const mat = mesh.material as THREE.MeshStandardMaterial;
+        mat.emissiveIntensity = 0.4 + breathLevel * 3;
+        mat.color.setHSL(0.73 + breathLevel * 0.3, 0.8, 0.65);
+      });
 
-      // Spawn barriers
-      s.nextBarrierIn--;
-      if (s.nextBarrierIn <= 0) {
-        const gapMin = 80;
-        const gapMax = H2 - 80;
-        const gapY = gapMin + Math.random() * (gapMax - gapMin);
-        s.barriers.push({ x: W2 + 30, gapY, passed: false, hitFlash: 0 });
-        s.nextBarrierIn = Math.max(80, 160 - s.score * 6);
-      }
+      // Scroll walls
+      s.scrollZ += s.scrollSpeed * dt;
+      const lastWall = s.walls[s.walls.length - 1];
+      if (!lastWall || s.scrollZ - lastWall.z > 7) spawnWall(scene, s);
 
-      // Background
-      ctx.fillStyle = '#050010';
-      ctx.fillRect(0, 0, W2, H2);
+      for (let i = s.walls.length - 1; i >= 0; i--) {
+        const w = s.walls[i];
+        const relZ = w.z + s.scrollZ;
+        w.meshBot.position.z = relZ;
+        w.meshTop.position.z = relZ;
 
-      // Ambient glow around swarm
-      const glowA = 0.1 + vol * 0.2;
-      const glowR = 60 + vol * 80;
-      const glow = ctx.createRadialGradient(W2 * 0.2, s.swarmY, 0, W2 * 0.2, s.swarmY, glowR);
-      glow.addColorStop(0, `rgba(167,139,250,${glowA})`);
-      glow.addColorStop(1, 'transparent');
-      ctx.fillStyle = glow;
-      ctx.fillRect(W2 * 0.2 - glowR, s.swarmY - glowR, glowR * 2, glowR * 2);
-
-      // Draw and update barriers
-      for (let i = s.barriers.length - 1; i >= 0; i--) {
-        const b = s.barriers[i];
-        b.x -= scrollSpeed;
-        if (b.x < -40) { s.barriers.splice(i, 1); continue; }
-
-        const hitAge = now - b.hitFlash;
-        const barrierAlpha = b.hitFlash > 0 && hitAge < 400 ? (0.4 + (hitAge / 400) * 0.4) : 0.8;
-        const barrierColor = b.hitFlash > 0 && hitAge < 400
-          ? `rgba(239,68,68,${barrierAlpha})`
-          : `rgba(100,60,220,${barrierAlpha})`;
-
-        // Top barrier
-        ctx.fillStyle = barrierColor;
-        ctx.shadowBlur = 12;
-        ctx.shadowColor = b.hitFlash > 0 ? '#ef4444' : '#7c3aed';
-        ctx.fillRect(b.x - 18, 0, 36, b.gapY - GAP_HEIGHT / 2);
-        // Bottom barrier
-        ctx.fillRect(b.x - 18, b.gapY + GAP_HEIGHT / 2, 36, H2 - (b.gapY + GAP_HEIGHT / 2));
-        ctx.shadowBlur = 0;
-
-        // Gap indicator line
-        ctx.strokeStyle = `rgba(167,139,250,0.3)`;
-        ctx.lineWidth = 1;
-        ctx.setLineDash([4, 4]);
-        ctx.beginPath();
-        ctx.moveTo(b.x - 18, b.gapY);
-        ctx.lineTo(b.x + 18, b.gapY);
-        ctx.stroke();
-        ctx.setLineDash([]);
-
-        // Check if swarm passed through gap
-        if (!b.passed && b.x < W2 * 0.2 + 20 && b.x > W2 * 0.2 - 30) {
-          const inGap = s.swarmY > b.gapY - GAP_HEIGHT / 2 + 15 && s.swarmY < b.gapY + GAP_HEIGHT / 2 - 15;
-          const hitBarrier = !inGap && now - s.lastHitTime > 700;
-          if (hitBarrier) {
-            b.hitFlash = now;
-            s.collisions++;
-            s.lives--;
-            s.lastHitTime = now;
-            sfx.collision();
-            hapticFail();
-            s.screenFlash = now;
-            s.screenFlashColor = 'rgba(239,68,68,0.2)';
-            if (s.lives <= 0) { endGame(); return; }
-          } else if (inGap) {
-            b.passed = true;
-            s.score++;
-            sfx.collect();
-            hapticScore();
-            s.passedFlash = now;
+        if (!w.passed && relZ > -1) {
+          w.passed = true;
+          // Check if swarm center passed through gap
+          const inGap = Math.abs(s.swarmCenterY - w.gapY) < GAP_HEIGHT / 2;
+          if (inGap) {
+            s.sig.gapsCleared++; s.sig.score += 5;
+            setScoreDisplay(s.sig.score);
+            sfx.collect?.(); hapticScore?.();
+          } else {
+            s.sig.collisions++;
+            sfx.collision?.(); haptic([40]);
           }
+        }
+
+        if (relZ > 10) {
+          scene.remove(w.meshBot); scene.remove(w.meshTop);
+          s.walls.splice(i, 1);
         }
       }
 
-      // Draw swarm particles
-      for (const p of s.swarmParticles) {
-        const px = W2 * 0.2 + p.offX;
-        const py = s.swarmY + p.offY;
-        const pAlpha = 0.5 + vol * 0.5;
-        ctx.save();
-        ctx.globalAlpha = pAlpha;
-        ctx.shadowBlur = 8 + vol * 12;
-        ctx.shadowColor = `hsl(${p.hue}, 80%, 65%)`;
-        ctx.fillStyle = `hsl(${p.hue}, 80%, ${55 + vol * 20}%)`;
-        ctx.beginPath();
-        ctx.arc(px, py, p.size * (0.8 + vol * 0.5), 0, Math.PI * 2);
-        ctx.fill();
-        ctx.restore();
-      }
-
-      // Lives
-      ctx.save();
-      for (let i = 0; i < 3; i++) {
-        ctx.globalAlpha = i < s.lives ? 1 : 0.2;
-        ctx.font = '20px serif';
-        ctx.fillText('💜', 14 + i * 28, H2 - 18);
-      }
-      ctx.restore();
-
-      // Mic bar
-      const bW = 60, bH = 4;
-      const bX = W2 / 2 - bW / 2, bY = H2 - 14;
-      ctx.fillStyle = 'rgba(255,255,255,0.1)';
-      ctx.fillRect(bX, bY, bW, bH);
-      ctx.fillStyle = `rgba(167,139,250,${0.4 + vol * 0.6})`;
-      ctx.fillRect(bX, bY, bW * Math.min(1, vol * 1.5), bH);
-
-      // Pass flash
-      if (now - s.passedFlash < 400) {
-        const fa = (1 - (now - s.passedFlash) / 400) * 0.18;
-        ctx.fillStyle = `rgba(167,139,250,${fa})`;
-        ctx.fillRect(0, 0, W2, H2);
-      }
-      if (now - s.screenFlash < 350) {
-        ctx.fillStyle = s.screenFlashColor.replace('0.2)', `${0.2 * (1 - (now - s.screenFlash) / 350)})`);
-        ctx.fillRect(0, 0, W2, H2);
-      }
-
+      renderer.render(scene, camera);
       s.animId = requestAnimationFrame(loop);
     };
     s.animId = requestAnimationFrame(loop);
-  }, [getVolume, endGame, initSwarm]);
+  }, [endGame, spawnWall]);
+
+  useEffect(() => () => {
+    const s = stateRef.current;
+    s.running = false; cancelAnimationFrame(s.animId);
+    if (s.intervalId) clearInterval(s.intervalId);
+    if (s.stopMusic) s.stopMusic();
+    if (s.micRef) s.micRef.stream.getTracks().forEach(t => t.stop());
+    s.resizeCleanup?.();
+    if (s.renderer) { s.renderer.dispose(); s.renderer = null; }
+  }, []);
 
   const handleStart = useCallback(async (name: string, avatar: string) => {
     playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar);
-    await initAudio();
-    sfx.click();
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const audioCtx = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
-      const src = audioCtx.createMediaStreamSource(stream);
-      const analyser = audioCtx.createAnalyser();
-      analyser.fftSize = 256;
-      analyser.smoothingTimeConstant = 0.45;
-      src.connect(analyser);
-      const s = stateRef.current;
-      s.stream = stream;
-      s.analyser = analyser;
-      s.audioCtx = audioCtx;
-    } catch { /* mic denied */ }
-    setPhase('countdown');
+    await initAudio(); setPhase('countdown');
   }, []);
-
   const handlePlayAgain = useCallback(() => {
-    setIsNewBest(false);
-    setFinalSig(null);
-    setPhase('start');
+    setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null);
   }, []);
-
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const dpr = window.devicePixelRatio || 1;
-    const resize = () => {
-      canvas.width = window.innerWidth * dpr;
-      canvas.height = window.innerHeight * dpr;
-      canvas.style.width = window.innerWidth + 'px';
-      canvas.style.height = window.innerHeight + 'px';
-      const c = canvas.getContext('2d');
-      if (c) c.setTransform(dpr, 0, 0, dpr, 0, 0);
-    };
-    resize();
-    window.addEventListener('resize', resize);
-    return () => {
-      window.removeEventListener('resize', resize);
-      const s = stateRef.current;
-      s.running = false;
-      cancelAnimationFrame(s.animId);
-      if (s.timerIntervalId) clearInterval(s.timerIntervalId);
-      if (s.stream) s.stream.getTracks().forEach(t => t.stop());
-      if (s.audioCtx) s.audioCtx.close().catch(() => {});
-      if (stopMusicRef.current) stopMusicRef.current();
-    };
-  }, []);
-
-  // suppress unused
-  void haptic;
-  void startMusic;
 
   return (
-    <GameShell
-      title={GAME_TITLE}
-      emoji={GAME_EMOJI}
-      accentColor={accent}
-      theme={theme}
-      background="radial-gradient(ellipse at 50% 50%, #0a0020 0%, #050010 60%, #000 100%)"
-    >
-      <canvas
-        ref={canvasRef}
-        style={{ display: phase === 'playing' ? 'block' : 'none', position: 'absolute', top: 0, left: 0, touchAction: 'none' }}
-        role="img"
-        aria-label="Breath Sculpt game canvas — guide the particle swarm with your breath"
-      />
-
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
+      {phase === 'start' && (
+        <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description={GAME_TAGLINE}
+          ctaLabel="Allow Mic & Sculpt" accentColor={theme.colors.accent ?? ACCENT} onStart={handleStart} />
+      )}
+      {phase === 'countdown' && <Countdown onComplete={startLoop} accentColor={theme.colors.accent ?? ACCENT} />}
+      <div ref={mountRef} style={{
+        position: 'absolute', inset: 0, width: '100%', height: '100%',
+        display: phase === 'playing' ? 'block' : 'none', touchAction: 'none',
+      }} />
       {phase === 'playing' && (
-        <GameHUD
-          accentColor={accent}
-          items={[
-            { label: 'GAPS', value: displayScore, testId: 'score' },
-            { label: 'TIME', value: timeLeft, danger: timeLeft <= 10, testId: 'timer' },
-          ]}
-        />
+        <GameHUD accentColor={theme.colors.accent ?? ACCENT} items={[
+          { label: 'TIME', value: timeLeft, danger: timeLeft <= 10 },
+          { label: 'SCORE', value: scoreDisplay },
+        ]} />
       )}
-
-      <AnimatePresence mode="wait">
-        {phase === 'start' && (
-          <motion.div key="start" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} style={{ height: '100%' }}>
-            <GameStartScreen
-              emoji={GAME_EMOJI}
-              title={GAME_TITLE}
-              description={GAME_TAGLINE + ' Blow harder to rise, breathe softly to fall. Navigate the particle swarm through the gaps in each barrier.'}
-              sensorNote="🎤 Uses microphone"
-              ctaLabel="Allow Mic & Sculpt →"
-              accentColor={accent}
-              onStart={handleStart}
-              gradient="radial-gradient(ellipse 80% 70% at 50% 30%, #0a0020 0%, #050010 55%, #000 100%)"
-            />
-          </motion.div>
-        )}
-        {phase === 'countdown' && (
-          <motion.div key="countdown" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-            <Countdown onComplete={startLoop} accentColor={accent} />
-          </motion.div>
-        )}
-        {phase === 'done' && finalSig && (
-          <motion.div key="done" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} style={{ height: '100%' }}>
-            <EndScreen
-              gameId={GAME_ID}
-              title={getPersonality(finalSig)}
-              emoji={GAME_EMOJI}
-              score={String(finalSig.score)}
-              personality={getPersonality(finalSig)}
-              insights={[
-                { label: 'Gaps cleared', value: String(finalSig.gapsCleared), color: '#a78bfa' },
-                { label: 'Collisions', value: String(finalSig.collisions), color: '#ef4444' },
-                { label: 'Breath control', value: `${finalSig.breathVariance}% var`, color: '#22d3ee' },
-              ]}
-              accentColor={accent}
-              onPlayAgain={handlePlayAgain}
-              didWin={finalSig.score >= 5}
-              finalScore={finalSig.score}
-            />
-          </motion.div>
-        )}
-      </AnimatePresence>
-
       {phase === 'done' && finalSig && (
-        <WebhookEmitter theme={theme} sig={finalSig} personality={getPersonality(finalSig)} player={playerSessionRef.current} />
+        <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI}
+          score={String(finalSig.score)} personality={getPersonality(finalSig)}
+          insights={[
+            { label: 'Gaps Cleared', value: String(finalSig.gapsCleared), color: ACCENT },
+            { label: 'Collisions', value: String(finalSig.collisions), color: '#ef4444' },
+            { label: 'Breath Control', value: finalSig.breathVariance < 0.03 ? 'Excellent' : finalSig.breathVariance < 0.06 ? 'Good' : 'Turbulent', color: finalSig.breathVariance < 0.03 ? '#4ade80' : '#facc15' },
+            { label: 'Score', value: String(finalSig.score), color: '#fbbf24' },
+          ]}
+          accentColor={theme.colors.accent ?? ACCENT} onPlayAgain={handlePlayAgain}
+          didWin={finalSig.gapsCleared >= 8} />
       )}
-
-      <AnimatePresence>
-        {isNewBest && phase === 'done' && (
-          <motion.div
-            key="new-best"
-            initial={{ opacity: 0, y: -20, scale: 0.8 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -20 }}
-            transition={{ duration: 0.4, delay: 0.5 }}
-            style={{
-              position: 'fixed', top: '10%', left: '50%', transform: 'translateX(-50%)',
-              zIndex: 90, pointerEvents: 'none',
-              background: 'linear-gradient(135deg, #fbbf24, #f59e0b)',
-              borderRadius: 20, padding: '8px 20px', fontSize: 20,
-              fontWeight: 900, color: '#000', whiteSpace: 'nowrap',
-              boxShadow: '0 4px 20px rgba(251,191,36,0.5)',
-            }}
-          >
-            🏆 New Best!
-          </motion.div>
-        )}
-      </AnimatePresence>
     </GameShell>
   );
 }

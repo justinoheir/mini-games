@@ -1,13 +1,6 @@
-/**
- * ══════════════════════════════════════════════════════════════════
- *  BALANCE BEAM — Ether Mini-Game
- *  Tilt your phone to balance a ball on a beam for 60 seconds.
- *  Sensor: DeviceOrientation (motion), touch fallback available.
- * ══════════════════════════════════════════════════════════════════
- */
-
 'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
+import * as THREE from 'three';
 import GameShell from '@/components/GameShell';
 import GameHUD from '@/components/GameHUD';
 import GameStartScreen from '@/components/GameStartScreen';
@@ -19,933 +12,409 @@ import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
 import { createTiltController } from '@/lib/tilt';
-import { Particle, spawnBurst, updateAndDrawParticles } from '@/lib/particles';
-import { motion, AnimatePresence } from 'framer-motion';
-import ScorePopEffect, { useScorePop } from '@/components/ScorePopEffect';
-import StreakBadge from '@/components/StreakBadge';
-import { CATEGORY_THEMES } from '@/lib/theme';
-import SwipeInstructions from '@/components/SwipeInstructions';
 
-const CATEGORY = CATEGORY_THEMES.sports;
-
-// ─── SPRITE CACHE ─────────────────────────────────────────────────────────────
-const _spriteCache = new Map<string, HTMLImageElement>();
-function _loadSprite(src: string): HTMLImageElement {
-  if (_spriteCache.has(src)) return _spriteCache.get(src)!;
-  const img = new Image();
-  img.src = src;
-  _spriteCache.set(src, img);
-  return img;
-}
-if (typeof window !== 'undefined') {
-  _loadSprite('/sprites/balance-beam/ball.svg');
-}
-
-// ─── SPEC CONSTANTS ────────────────────────────────────────────────────────────
-const GAME_ID      = 'balance-beam';
-const PB_KEY       = 'pb_balance-beam';
-const ACCENT       = '#f59e0b';
-const DURATION     = 60;
-const GAME_EMOJI   = '⚖️';
-const GAME_TITLE   = 'Balance Beam';
+const GAME_ID = 'balance-beam';
+const PB_KEY = 'pb_balance-beam';
+const ACCENT = '#f59e0b';
+const DURATION = 60;
+const GAME_EMOJI = '⚖️';
+const GAME_TITLE = 'Balance Beam';
 const GAME_TAGLINE = 'Keep the ball on the beam. Stay still.';
 
-const BALL_RADIUS    = 12;
-const BEAM_HEIGHT    = 18;
-const BEAM_FRAC      = 0.70;   // beam = 70% of canvas width
-const BEAM_Y_FRAC    = 0.55;   // beam at 55% canvas height
-const MAX_BEAM_ANGLE = 25 * (Math.PI / 180); // ±25 degrees max rotation
-const GRAVITY_SCALE  = 0.45;   // physics: how fast ball accelerates
-const FRICTION       = 0.94;   // velocity damping per frame
-const DANGER_FRAC    = 0.75;   // >75% toward edge = danger zone
-const SAFE_FRAC      = 0.50;   // <50% = safely back to center (recovery)
+const BALL_RADIUS = 0.22;
+const BEAM_HALF = 4.0;
+const GRAVITY_SCALE = 0.04;
+const FRICTION = 0.94;
+const MAX_BEAM_ANGLE = 25 * (Math.PI / 180);
+const DANGER_FRAC = 0.75;
+const SAFE_FRAC = 0.50;
 
-// ─── WIND PARTICLES ──────────────────────────────────────────────────────────
-interface WindParticle {
-  x: number;
-  y: number;
-  vx: number;
-  len: number;
-  alpha: number;
-  color: string;
-}
-
-// ─── SIGNALS ──────────────────────────────────────────────────────────────────
 interface Signals {
-  timeOnBeam:         number;   // ms total
-  falls:              number;   // count
-  microAdjustmentRate: number;  // adjustments/second (computed at end)
-  avgTiltDeviation:   number;   // degrees (computed at end)
-  recoveries:         number;   // count
-  score:              number;   // final score
-  // internal accumulators
-  microAdjustCount:   number;
-  tiltDeviationSum:   number;
-  tiltSampleCount:    number;
+  timeOnBeam: number; falls: number; microAdjustmentRate: number;
+  avgTiltDeviation: number; recoveries: number; score: number;
+  microAdjustCount: number; tiltDeviationSum: number; tiltSampleCount: number;
 }
-
-// ─── GAME STATE ────────────────────────────────────────────────────────────────
-interface GameState {
-  running:            boolean;
-  timeLeft:           number;
-  gameElapsedMs:      number;
-  lastFrameTime:      number;
-  beamAngle:          number;   // current beam rotation in radians
-  ballX:              number;   // px from beam center (negative = left)
-  ballVX:             number;   // px/frame velocity
-  fallAnimating:      boolean;
-  fallSX:             number;   // screen coords during fall anim
-  fallSY:             number;
-  fallVX:             number;
-  fallVY:             number;
-  touchLeftHeld:      boolean;
-  touchRightHeld:     boolean;
-  touchTiltValue:     number;   // smoothed touch tilt, -1..1
-  usingTouchFallback: boolean;
-  streakMs:           number;   // unbroken ms on beam (for multiplier)
-  nextWindTime:       number;   // gameElapsedMs threshold for next gust
-  windParticles:      WindParticle[];
-  particles:          Particle[];
-  ballInDangerZone:   boolean;
-  prevBeamAngle:      number;
-  accentColor:        string;
-  sig:                Signals;
-  bgCache:            HTMLCanvasElement | null;
-  bgCacheKey:         string;
-  shadowGradCache:    CanvasGradient | null;
-  shadowGradCacheKey: string;
-}
-
-type Phase = 'start' | 'countdown' | 'playing' | 'done';
-
-// ─── PERSONALITY CLASSIFICATION ───────────────────────────────────────────────
 function getPersonality(sig: Signals): string {
   const beamSecs = sig.timeOnBeam / 1000;
-  // Zen Master: calm and controlled — stays on beam with minimal tilt deviation, almost no falls
-  if (beamSecs > 45 && sig.falls <= 1 && sig.avgTiltDeviation < 6)             return 'Zen Master 🧘';
-  // Micromanager: hyper-corrective — constant micro-adjustments, low falls
-  if (sig.microAdjustmentRate > 5 && sig.falls <= 3)                           return 'Micromanager 🎛️';
-  // Bold Corrector: aggressive tilter who falls often but recovers confidently
-  if (sig.falls >= 3 && sig.recoveries >= 2)                                   return 'Bold Corrector ⚡';
-  // Learning Curve: shaky start, improves — falls but keeps coming back
-  if (sig.falls >= 2 && sig.recoveries >= 1)                                   return 'Learning Curve 📈';
-  // Steady: default — consistent, unfazed player
+  if (beamSecs > 45 && sig.falls <= 1 && sig.avgTiltDeviation < 6) return 'Zen Master 🧘';
+  if (sig.microAdjustmentRate > 5 && sig.falls <= 3) return 'Micromanager 🎛️';
+  if (sig.falls >= 3 && sig.recoveries >= 2) return 'Bold Corrector ⚡';
+  if (sig.falls >= 2 && sig.recoveries >= 1) return 'Learning Curve 📈';
   return 'Steady 🏔️';
 }
+type Phase = 'start' | 'countdown' | 'playing' | 'done';
 
-// ─── CANVAS HELPERS ───────────────────────────────────────────────────────────
-function drawRoundRect(
-  ctx: CanvasRenderingContext2D,
-  x: number, y: number, w: number, h: number, r: number,
-): void {
-  ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.lineTo(x + w - r, y);
-  ctx.arcTo(x + w, y, x + w, y + r, r);
-  ctx.lineTo(x + w, y + h - r);
-  ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
-  ctx.lineTo(x + r, y + h);
-  ctx.arcTo(x, y + h, x, y + h - r, r);
-  ctx.lineTo(x, y + r);
-  ctx.arcTo(x, y, x + r, y, r);
-  ctx.closePath();
+interface GS {
+  running: boolean; timeLeft: number; sig: Signals;
+  renderer: THREE.WebGLRenderer | null; scene: THREE.Scene | null;
+  camera: THREE.PerspectiveCamera | null; animId: number;
+  beam: THREE.Mesh | null; ball: THREE.Mesh | null;
+  beamAngle: number; ballX: number; ballVX: number;
+  fallAnimating: boolean; fallBall: THREE.Mesh | null;
+  fallVX: number; fallVY: number;
+  touchLeftHeld: boolean; touchRightHeld: boolean;
+  touchTiltValue: number; usingTouchFallback: boolean;
+  streakMs: number; ballInDangerZone: boolean; prevBeamAngle: number;
+  gameElapsedMs: number; lastFrameTime: number;
+  windParticles: Array<{ mesh: THREE.Mesh; vx: number; life: number }>;
+  nextWindTime: number;
+  stopMusic: (() => void) | null;
+  intervalId: ReturnType<typeof setInterval> | null;
+  resizeCleanup: (() => void) | null;
 }
 
-function hexToRgb(hex: string): { r: number; g: number; b: number } {
-  const clean = hex.replace('#', '');
-  const num = parseInt(clean, 16);
-  return {
-    r: (num >> 16) & 0xff,
-    g: (num >> 8) & 0xff,
-    b: num & 0xff,
-  };
-}
-
-function lighten(hex: string, amt: number): string {
-  const { r, g, b } = hexToRgb(hex);
-  return `rgb(${Math.min(255, r + amt)}, ${Math.min(255, g + amt)}, ${Math.min(255, b + amt)})`;
-}
-
-function darken(hex: string, amt: number): string {
-  const { r, g, b } = hexToRgb(hex);
-  return `rgb(${Math.max(0, r - amt)}, ${Math.max(0, g - amt)}, ${Math.max(0, b - amt)})`;
-}
-
-// ─── COMPONENT ────────────────────────────────────────────────────────────────
 export default function BalanceBeamGame() {
-  const theme          = useBrandTheme();
-  const canvasRef      = useRef<HTMLCanvasElement>(null);
-  const animRef        = useRef(0);
-  const timerRef       = useRef<ReturnType<typeof setInterval> | null>(null);
-  const stopMusicRef   = useRef<(() => void) | null>(null);
-  const tiltCtrlRef    = useRef<ReturnType<typeof createTiltController> | null>(null);
-
-  const stateRef = useRef<GameState>({
-    running:            false,
-    timeLeft:           DURATION,
-    gameElapsedMs:      0,
-    lastFrameTime:      0,
-    beamAngle:          0,
-    ballX:              0,
-    ballVX:             0,
-    fallAnimating:      false,
-    fallSX:             0,
-    fallSY:             0,
-    fallVX:             0,
-    fallVY:             0,
-    touchLeftHeld:      false,
-    touchRightHeld:     false,
-    touchTiltValue:     0,
-    usingTouchFallback: false,
-    streakMs:           0,
-    nextWindTime:       14000 + Math.random() * 6000,
-    windParticles:      [],
-    particles:          [],
-    ballInDangerZone:   false,
-    prevBeamAngle:      0,
-    accentColor:        ACCENT,
-    bgCache:            null,
-    bgCacheKey:         '',
-    shadowGradCache:    null,
-    shadowGradCacheKey: '',
-    sig: {
-      timeOnBeam:          0,
-      falls:               0,
-      microAdjustmentRate: 0,
-      avgTiltDeviation:    0,
-      recoveries:          0,
-      score:               0,
-      microAdjustCount:    0,
-      tiltDeviationSum:    0,
-      tiltSampleCount:     0,
-    },
+  const theme = useBrandTheme();
+  const mountRef = useRef<HTMLDivElement>(null);
+  const tiltCtrlRef = useRef<ReturnType<typeof createTiltController> | null>(null);
+  const stateRef = useRef<GS>({
+    running: false, timeLeft: DURATION,
+    sig: { timeOnBeam: 0, falls: 0, microAdjustmentRate: 0, avgTiltDeviation: 0, recoveries: 0, score: 0, microAdjustCount: 0, tiltDeviationSum: 0, tiltSampleCount: 0 },
+    renderer: null, scene: null, camera: null, animId: 0,
+    beam: null, ball: null, beamAngle: 0, ballX: 0, ballVX: 0,
+    fallAnimating: false, fallBall: null, fallVX: 0, fallVY: 0,
+    touchLeftHeld: false, touchRightHeld: false, touchTiltValue: 0, usingTouchFallback: false,
+    streakMs: 0, ballInDangerZone: false, prevBeamAngle: 0,
+    gameElapsedMs: 0, lastFrameTime: 0,
+    windParticles: [], nextWindTime: 14000,
+    stopMusic: null, intervalId: null, resizeCleanup: null,
   });
-
-  const [phase, setPhase]               = useState<Phase>('start');
-  const [showInstructions, setShowInstructions] = useState(true);
-  const [timeLeft, setTimeLeft]         = useState(DURATION);
+  const [phase, setPhase] = useState<Phase>('start');
+  const [timeLeft, setTimeLeft] = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
-  const [finalSig, setFinalSig]         = useState<Signals | null>(null);
-  const [playerName, setPlayerName]     = useState('');
-  const [playerAvatar, setPlayerAvatar] = useState('🎮');
-  const { pops, triggerPop } = useScorePop();
-  const [streak, setStreak] = useState(0);
+  const [finalSig, setFinalSig] = useState<Signals | null>(null);
   const [isNewBest, setIsNewBest] = useState(false);
-  const prevScoreRef = useRef(0);
-  useEffect(() => {
-    if (scoreDisplay > prevScoreRef.current) {
-      triggerPop(`+${scoreDisplay - prevScoreRef.current}`, window.innerWidth / 2, 200);
-    }
-    prevScoreRef.current = scoreDisplay;
-  }, [scoreDisplay, triggerPop]);
-  const playerSessionRef                = useRef<PlayerSession | null>(null);
+  const playerSessionRef = useRef<PlayerSession | null>(null);
 
-  // Sync brand theme into state for rAF loop
-  useEffect(() => {
-    stateRef.current.accentColor = theme.colors.accent ?? ACCENT;
-  }, [theme]);
-
-  // ─── END GAME ──────────────────────────────────────────────────────────────
   const endGame = useCallback(() => {
     const s = stateRef.current;
     s.running = false;
-    cancelAnimationFrame(animRef.current);
-    if (timerRef.current)   { clearInterval(timerRef.current); timerRef.current = null; }
-    if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
-    if (tiltCtrlRef.current)  { tiltCtrlRef.current.stop(); }
-
-    // Finalize computed signals
-    if (s.sig.tiltSampleCount > 0) {
-      s.sig.avgTiltDeviation = s.sig.tiltDeviationSum / s.sig.tiltSampleCount;
-    }
-    const gameSeconds = s.gameElapsedMs / 1000;
-    s.sig.microAdjustmentRate = gameSeconds > 0
-      ? s.sig.microAdjustCount / gameSeconds
-      : 0;
-
-    haptic([30, 50, 30, 50, 100]);
-    sfx.success();
-    // Personal best tracking
+    cancelAnimationFrame(s.animId);
+    if (s.intervalId) { clearInterval(s.intervalId); s.intervalId = null; }
+    if (s.stopMusic) { s.stopMusic(); s.stopMusic = null; }
+    s.resizeCleanup?.();
+    if (s.renderer) { s.renderer.dispose(); s.renderer = null; }
+    if (mountRef.current) mountRef.current.innerHTML = '';
+    tiltCtrlRef.current?.stop();
+    if (s.sig.tiltSampleCount > 0) s.sig.avgTiltDeviation = s.sig.tiltDeviationSum / s.sig.tiltSampleCount;
+    s.sig.microAdjustmentRate = s.gameElapsedMs > 0 ? s.sig.microAdjustCount / (s.gameElapsedMs / 1000) : 0;
+    haptic([30, 50, 30, 50, 100]); sfx.success();
     try {
-      const _pbPrev = parseInt(localStorage.getItem(PB_KEY) || '0', 10);
-      const _pbVal = parseFloat(String(s.sig?.score ?? 0));
-      if (!isNaN(_pbVal) && _pbVal > _pbPrev) {
-        localStorage.setItem(PB_KEY, String(Math.round(_pbVal)));
-        setIsNewBest(true);
-      }
-    } catch { /* ignore */ }
-
-
+      const prev = parseInt(localStorage.getItem(PB_KEY) || '0', 10);
+      const val = Math.floor(s.sig.score);
+      if (val > prev) { localStorage.setItem(PB_KEY, String(val)); setIsNewBest(true); }
+    } catch { /* */ }
     setFinalSig({ ...s.sig });
     setPhase('done');
   }, []);
 
-  // ─── GAME LOOP ─────────────────────────────────────────────────────────────
   const startLoop = useCallback(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+    const mount = mountRef.current;
+    if (!mount) return;
     const s = stateRef.current;
+    const W = window.innerWidth, H = window.innerHeight;
 
-    // ── Reset ─────────────────────────────────────────────────────────────────
-    s.running            = true;
-    s.timeLeft           = DURATION;
-    s.gameElapsedMs      = 0;
-    s.lastFrameTime      = performance.now();
-    s.beamAngle          = 0;
-    s.ballX              = 0;
-    s.ballVX             = 0;
-    s.fallAnimating      = false;
-    s.touchTiltValue     = 0;
-    s.touchLeftHeld      = false;
-    s.touchRightHeld     = false;
-    s.streakMs           = 0;
-    s.nextWindTime       = 14000 + Math.random() * 6000;
-    s.windParticles      = [];
-    s.particles          = [];
-    s.ballInDangerZone   = false;
-    s.prevBeamAngle      = 0;
-    s.sig = {
-      timeOnBeam: 0, falls: 0, microAdjustmentRate: 0, avgTiltDeviation: 0,
-      recoveries: 0, score: 0, microAdjustCount: 0, tiltDeviationSum: 0, tiltSampleCount: 0,
+    s.running = true; s.timeLeft = DURATION;
+    s.beamAngle = 0; s.ballX = 0; s.ballVX = 0; s.fallAnimating = false;
+    s.streakMs = 0; s.ballInDangerZone = false;
+    s.gameElapsedMs = 0; s.lastFrameTime = performance.now();
+    s.nextWindTime = 14000 + Math.random() * 6000;
+    s.windParticles = [];
+    s.sig = { timeOnBeam: 0, falls: 0, microAdjustmentRate: 0, avgTiltDeviation: 0, recoveries: 0, score: 0, microAdjustCount: 0, tiltDeviationSum: 0, tiltSampleCount: 0 };
+    setScoreDisplay(0); setTimeLeft(DURATION); setPhase('playing');
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(W, H);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setClearColor(0x0f1a3a);
+    mount.innerHTML = '';
+    mount.appendChild(renderer.domElement);
+    s.renderer = renderer;
+
+    const scene = new THREE.Scene();
+    s.scene = scene;
+    const camera = new THREE.PerspectiveCamera(65, W / H, 0.1, 100);
+    camera.position.set(0, 2, 10);
+    camera.lookAt(0, 0, 0);
+    s.camera = camera;
+
+    scene.add(new THREE.AmbientLight(0x334488, 2.5));
+    const keyLight = new THREE.DirectionalLight(0xf59e0b, 2);
+    keyLight.position.set(3, 5, 5);
+    scene.add(keyLight);
+    const fillLight = new THREE.PointLight(0x2244aa, 1.5, 30);
+    fillLight.position.set(-5, 3, 3);
+    scene.add(fillLight);
+
+    // Stars
+    const starPos = new Float32Array(300 * 3);
+    for (let i = 0; i < 300; i++) {
+      starPos[i * 3] = (Math.random() - 0.5) * 60;
+      starPos[i * 3 + 1] = (Math.random() - 0.5) * 30;
+      starPos[i * 3 + 2] = -20 - Math.random() * 20;
+    }
+    const starGeo = new THREE.BufferGeometry();
+    starGeo.setAttribute('position', new THREE.BufferAttribute(starPos, 3));
+    scene.add(new THREE.Points(starGeo, new THREE.PointsMaterial({ color: 0xaaccff, size: 0.06, transparent: true, opacity: 0.7 })));
+
+    // Platform base
+    const platform = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.3, 0.5, 3, 8),
+      new THREE.MeshStandardMaterial({ color: 0x334466, roughness: 0.8 })
+    );
+    platform.position.set(0, -2.5, 0);
+    scene.add(platform);
+
+    // Beam
+    const beam = new THREE.Mesh(
+      new THREE.BoxGeometry(BEAM_HALF * 2, 0.2, 0.3),
+      new THREE.MeshStandardMaterial({ color: 0xf59e0b, metalness: 0.4, roughness: 0.4, emissive: 0xf59e0b, emissiveIntensity: 0.1 })
+    );
+    beam.position.set(0, 0, 0);
+    scene.add(beam);
+    s.beam = beam;
+
+    // Ball
+    const ball = new THREE.Mesh(
+      new THREE.SphereGeometry(BALL_RADIUS, 24, 24),
+      new THREE.MeshStandardMaterial({ color: 0xffffff, metalness: 0.3, roughness: 0.3, emissive: 0xffffff, emissiveIntensity: 0.05 })
+    );
+    scene.add(ball);
+    s.ball = ball;
+
+    // Fall ball (hidden)
+    const fallBall = new THREE.Mesh(
+      new THREE.SphereGeometry(BALL_RADIUS * 0.85, 16, 16),
+      new THREE.MeshStandardMaterial({ color: 0xaaaaaa, transparent: true, opacity: 1 })
+    );
+    fallBall.visible = false;
+    scene.add(fallBall);
+    s.fallBall = fallBall;
+
+    s.stopMusic = startMusic('calm');
+
+    const handleResize = () => {
+      const w = window.innerWidth, h = window.innerHeight;
+      renderer.setSize(w, h); camera.aspect = w / h; camera.updateProjectionMatrix();
     };
+    window.addEventListener('resize', handleResize);
+    s.resizeCleanup = () => window.removeEventListener('resize', handleResize);
 
-    setScoreDisplay(0);
-    setTimeLeft(DURATION);
-    setPhase('playing');
-
-    stopMusicRef.current = startMusic('calm');
-
-    // ⚠️ setInterval for 1-second countdown only
-    timerRef.current = setInterval(() => {
-      s.timeLeft--;
-      setTimeLeft(s.timeLeft);
-      setScoreDisplay(Math.floor(s.sig.score)); // update once/second
-      setStreak(Math.floor(s.streakMs / 1000)); // sync streak for StreakBadge
-      // Audio feedback: urgent ticks in final 10s, normal tick otherwise
-      if (s.timeLeft > 0 && s.timeLeft <= 10) {
-        sfx.warning();
-      } else if (s.timeLeft > 10) {
-        sfx.tick();
-      }
-      if (s.timeLeft <= 0) { endGame(); }
+    s.intervalId = setInterval(() => {
+      if (!s.running) return;
+      s.timeLeft--; setTimeLeft(s.timeLeft);
+      setScoreDisplay(Math.floor(s.sig.score));
+      if (s.timeLeft > 0 && s.timeLeft <= 10) sfx.warning();
+      if (s.timeLeft <= 0) endGame();
     }, 1000);
 
-    // ── Local helpers ─────────────────────────────────────────────────────────
-
-    const triggerFall = (beamCX: number, beamCY: number) => {
-      const cosA = Math.cos(s.beamAngle);
-      const sinA = Math.sin(s.beamAngle);
-      const beamLocalY = -(BEAM_HEIGHT / 2 + BALL_RADIUS);
-      const bsx = beamCX + s.ballX * cosA - beamLocalY * sinA;
-      const bsy = beamCY + s.ballX * sinA + beamLocalY * cosA;
-
-      s.fallAnimating    = true;
-      s.fallSX           = bsx;
-      s.fallSY           = bsy;
-      s.fallVX           = s.ballVX * 0.4;
-      s.fallVY           = 1.5;
-      s.ballX            = 0;
-      s.ballVX           = 0;
-      s.sig.falls++;
-      s.streakMs         = 0;
-      s.ballInDangerZone = false;
-
-      sfx.collision();
-      haptic([200]);
-      spawnBurst(s.particles, bsx, bsy, s.accentColor, 10, 3);
-
-      // Respawn ball at center after 500ms
-      setTimeout(() => {
-        if (!stateRef.current.running) return;
-        stateRef.current.fallAnimating = false;
-        stateRef.current.ballX         = 0;
-        stateRef.current.ballVX        = 0;
-      }, 500);
-    };
-
-    const triggerWindGust = (beamCX: number, beamCY: number, W: number) => {
-      const dir       = Math.random() > 0.5 ? 1 : -1;
-      // Difficulty ramp: gust strength and frequency increase over time
-      const progress  = Math.min(s.gameElapsedMs / (DURATION * 1000), 1); // 0..1
-      const minImpulse = 1.5 + progress * 1.0;   // 1.5 → 2.5
-      const maxImpulse = 3.5 + progress * 1.5;   // 3.5 → 5.0
-      const impulse   = dir * (minImpulse + Math.random() * (maxImpulse - minImpulse));
-      s.ballVX       += impulse;
-      // Cooldown shrinks from 20s max → 10s max, 12s min → 6s min
-      const maxCooldown = 20000 - progress * 10000; // 20000 → 10000
-      const minCooldown = 12000 - progress * 6000;  // 12000 → 6000
-      s.nextWindTime  = s.gameElapsedMs + minCooldown + Math.random() * (maxCooldown - minCooldown);
-
-      sfx.whoosh();
-
-      const count = 8 + Math.floor(Math.random() * 6);
-      for (let i = 0; i < count; i++) {
-        const startX = dir > 0 ? -60 : W + 60;
-        s.windParticles.push({
-          x:     startX,
-          y:     beamCY - 40 + Math.random() * 80,
-          vx:    dir * (9 + Math.random() * 7),
-          len:   20 + Math.random() * 35,
-          alpha: 0.6 + Math.random() * 0.35,
-          color: s.accentColor,
-        });
-      }
-    };
-
-    // ── rAF Loop ──────────────────────────────────────────────────────────────
     const loop = (timestamp: number) => {
       if (!s.running) return;
-
       const deltaMs = Math.min(timestamp - s.lastFrameTime, 50);
-      s.lastFrameTime   = timestamp;
-      s.gameElapsedMs  += deltaMs;
+      s.lastFrameTime = timestamp;
+      s.gameElapsedMs += deltaMs;
 
-      const W        = window.innerWidth;
-      const H        = window.innerHeight;
-      const beamHalfLen = W * (BEAM_FRAC / 2);
-      const beamCX   = W / 2;
-      const beamCY   = H * BEAM_Y_FRAC;
-
-      // ── Touch fallback tilt ──────────────────────────────────────────────
+      // Touch tilt
       if (s.usingTouchFallback) {
-        const target     = s.touchLeftHeld ? -0.7 : s.touchRightHeld ? 0.7 : 0;
+        const target = s.touchLeftHeld ? -0.7 : s.touchRightHeld ? 0.7 : 0;
         s.touchTiltValue += (target - s.touchTiltValue) * 0.08;
-        s.beamAngle       = s.touchTiltValue * MAX_BEAM_ANGLE;
+        s.beamAngle = s.touchTiltValue * MAX_BEAM_ANGLE;
       }
 
-      // ── Micro-adjustment tracking ────────────────────────────────────────
+      // Micro-adjust tracking
       const angleChange = Math.abs(s.beamAngle - s.prevBeamAngle);
-      if (angleChange > 0.001 && angleChange < 3 * (Math.PI / 180)) {
-        s.sig.microAdjustCount++;
-      }
+      if (angleChange > 0.001 && angleChange < 3 * (Math.PI / 180)) s.sig.microAdjustCount++;
       s.prevBeamAngle = s.beamAngle;
 
-      // ── Tilt deviation tracking ──────────────────────────────────────────
+      // Tilt deviation
       const tiltDeg = Math.abs(s.beamAngle) * (180 / Math.PI);
-      s.sig.tiltDeviationSum += tiltDeg;
-      s.sig.tiltSampleCount++;
+      s.sig.tiltDeviationSum += tiltDeg; s.sig.tiltSampleCount++;
 
-      // ── Physics (only when ball is on beam) ─────────────────────────────
       if (!s.fallAnimating) {
-        const acc  = Math.sin(s.beamAngle) * GRAVITY_SCALE;
-        s.ballVX  += acc;
-        s.ballVX  *= FRICTION;
-        s.ballX   += s.ballVX;
+        const acc = Math.sin(s.beamAngle) * GRAVITY_SCALE;
+        s.ballVX += acc; s.ballVX *= FRICTION; s.ballX += s.ballVX;
 
-        // Wind gust check
+        // Wind gust
         if (s.gameElapsedMs >= s.nextWindTime) {
-          triggerWindGust(beamCX, beamCY, W);
+          const dir = Math.random() > 0.5 ? 1 : -1;
+          s.ballVX += dir * (2 + Math.random() * 2);
+          s.nextWindTime = s.gameElapsedMs + 12000 + Math.random() * 8000;
+          sfx.whoosh();
+          // Wind particles
+          for (let i = 0; i < 6; i++) {
+            const wp = new THREE.Mesh(
+              new THREE.SphereGeometry(0.05, 4, 4),
+              new THREE.MeshBasicMaterial({ color: 0xaaccff, transparent: true, opacity: 0.7 })
+            );
+            wp.position.set(dir > 0 ? -8 : 8, (Math.random() - 0.5) * 2, (Math.random() - 0.5) * 0.5);
+            scene.add(wp);
+            s.windParticles.push({ mesh: wp, vx: dir * (0.15 + Math.random() * 0.1), life: 30 });
+          }
         }
 
-        const ballFrac = Math.abs(s.ballX) / beamHalfLen;
-
-        // Danger zone → recovery tracking
+        const ballFrac = Math.abs(s.ballX) / BEAM_HALF;
         if (ballFrac > DANGER_FRAC && !s.ballInDangerZone) {
-          s.ballInDangerZone = true;
-          sfx.nearMiss();
+          s.ballInDangerZone = true; sfx.nearMiss?.();
         } else if (ballFrac < SAFE_FRAC && s.ballInDangerZone) {
-          // Recovery!
-          s.ballInDangerZone = false;
-          s.sig.recoveries++;
-          s.sig.score += 10;
-          sfx.collect();
-          haptic([15]);
-          spawnBurst(s.particles, beamCX, beamCY, s.accentColor, 8, 3);
+          s.ballInDangerZone = false; s.sig.recoveries++;
+          s.sig.score += 10; sfx.collect(); haptic([15]);
         }
 
-        // Fall check
-        if (Math.abs(s.ballX) > beamHalfLen) {
-          triggerFall(beamCX, beamCY);
+        if (Math.abs(s.ballX) > BEAM_HALF) {
+          // Fall
+          const bsx = s.ballX > 0 ? 4 : -4;
+          s.fallAnimating = true;
+          s.fallBall!.position.set(bsx, 0, 0);
+          s.fallBall!.visible = true;
+          s.fallVX = s.ballVX * 0.4;
+          s.fallVY = 0.05;
+          s.ballX = 0; s.ballVX = 0; s.sig.falls++; s.streakMs = 0; s.ballInDangerZone = false;
+          sfx.collision(); haptic([200]);
+          if (s.ball) s.ball.visible = false;
+          setTimeout(() => {
+            if (!stateRef.current.running) return;
+            stateRef.current.fallAnimating = false;
+            stateRef.current.ballX = 0; stateRef.current.ballVX = 0;
+            if (stateRef.current.ball) stateRef.current.ball.visible = true;
+            if (stateRef.current.fallBall) stateRef.current.fallBall.visible = false;
+          }, 600);
         } else {
-          // Score accumulation
-          const multiplier = s.streakMs >= 40000 ? 2.0 : s.streakMs >= 20000 ? 1.5 : 1.0;
+          const mult = s.streakMs >= 40000 ? 2.0 : s.streakMs >= 20000 ? 1.5 : 1.0;
           s.sig.timeOnBeam += deltaMs;
-          s.sig.score      += (deltaMs / 100) * multiplier;
-          s.streakMs       += deltaMs;
+          s.sig.score += (deltaMs / 100) * mult;
+          s.streakMs += deltaMs;
         }
-      } else {
-        // Fall animation: ball arcs off screen
-        s.fallVY += 0.45;
-        s.fallSY += s.fallVY;
-        s.fallSX += s.fallVX;
+      } else if (s.fallBall) {
+        s.fallVY += 0.05;
+        s.fallBall.position.y -= s.fallVY;
+        s.fallBall.position.x += s.fallVX;
+        const mat = s.fallBall.material as THREE.MeshStandardMaterial;
+        mat.opacity = Math.max(0, 1 - (s.fallBall.position.y + 5) / -10);
       }
 
-      // ══ DRAW ═════════════════════════════════════════════════════════════
-
-      // Background — cached offscreen canvas for performance (avoids gradient re-creation per frame)
-      const bgKey = `${W}x${H}`;
-      if (!s.bgCache || s.bgCacheKey !== bgKey) {
-        const off = document.createElement('canvas');
-        off.width = W; off.height = H;
-        const bx = off.getContext('2d')!;
-        const bgGrad = bx.createRadialGradient(W * 0.5, H * 0.3, 0, W * 0.5, H * 0.6, Math.max(W, H) * 0.9);
-        bgGrad.addColorStop(0, '#0f1a3a');
-        bgGrad.addColorStop(0.55, '#080e1f');
-        bgGrad.addColorStop(1, '#04060f');
-        bx.fillStyle = bgGrad;
-        bx.fillRect(0, 0, W, H);
-        const vig = bx.createRadialGradient(W * 0.5, H * 0.5, H * 0.15, W * 0.5, H * 0.5, H * 0.75);
-        vig.addColorStop(0, 'rgba(0,0,0,0)');
-        vig.addColorStop(1, 'rgba(0,0,0,0.55)');
-        bx.fillStyle = vig;
-        bx.fillRect(0, 0, W, H);
-        s.bgCache = off;
-        s.bgCacheKey = bgKey;
+      // Update beam rotation
+      if (s.beam) {
+        s.beam.rotation.z = -s.beamAngle;
+        const dangerColor = s.ballInDangerZone ? 0xff3300 : 0xf59e0b;
+        (s.beam.material as THREE.MeshStandardMaterial).emissive.setHex(dangerColor);
+        (s.beam.material as THREE.MeshStandardMaterial).emissiveIntensity = s.ballInDangerZone ? 0.3 : 0.1;
       }
-      ctx.drawImage(s.bgCache, 0, 0);
 
-      // Ground shadow under beam (ambient)
-      ctx.save();
-      ctx.globalAlpha = 0.18;
-      // Cache shadow gradient keyed on beam position (beamCX rarely changes)
-      const sgKey = `${Math.round(beamCX)},${Math.round(beamCY)},${Math.round(beamHalfLen)}`;
-      if (!s.shadowGradCache || s.shadowGradCacheKey !== sgKey) {
-        const sg = ctx.createRadialGradient(beamCX, beamCY + 24, 0, beamCX, beamCY + 24, beamHalfLen * 0.8);
-        sg.addColorStop(0, s.accentColor);
-        sg.addColorStop(1, 'transparent');
-        s.shadowGradCache = sg;
-        s.shadowGradCacheKey = sgKey;
+      // Update ball position on beam
+      if (s.ball && !s.fallAnimating) {
+        const cosA = Math.cos(-s.beamAngle);
+        const sinA = Math.sin(-s.beamAngle);
+        const localY = BALL_RADIUS + 0.1;
+        s.ball.position.x = s.ballX * cosA - localY * sinA;
+        s.ball.position.y = s.ballX * sinA + localY * cosA;
+        s.ball.rotation.x += s.ballVX * 0.1;
       }
-      ctx.fillStyle = s.shadowGradCache as CanvasGradient;
-      ctx.fillRect(beamCX - beamHalfLen, beamCY, beamHalfLen * 2, 40);
-      ctx.restore();
 
-      // ── Wind particles ───────────────────────────────────────────────────
+      // Wind particles
       for (let i = s.windParticles.length - 1; i >= 0; i--) {
         const wp = s.windParticles[i];
-        wp.x    += wp.vx;
-        wp.alpha -= 0.022;
-        if (wp.alpha <= 0 || wp.x < -120 || wp.x > W + 120) {
+        wp.mesh.position.x += wp.vx;
+        wp.life--;
+        (wp.mesh.material as THREE.MeshBasicMaterial).opacity = wp.life / 30;
+        if (wp.life <= 0 || Math.abs(wp.mesh.position.x) > 10) {
+          scene.remove(wp.mesh); wp.mesh.geometry.dispose();
           s.windParticles.splice(i, 1);
-          continue;
-        }
-        ctx.save();
-        ctx.globalAlpha = wp.alpha * 0.7;
-        ctx.strokeStyle = wp.color;
-        ctx.lineWidth   = 1.5;
-        ctx.lineCap     = 'round';
-        ctx.beginPath();
-        ctx.moveTo(wp.x, wp.y);
-        ctx.lineTo(wp.x - wp.vx * 3.5, wp.y);
-        ctx.stroke();
-        ctx.restore();
-      }
-
-      // ── Beam ─────────────────────────────────────────────────────────────
-      const beamW  = beamHalfLen * 2;
-      const cosA   = Math.cos(s.beamAngle);
-      const sinA   = Math.sin(s.beamAngle);
-      const tiltFrac = Math.abs(s.beamAngle) / MAX_BEAM_ANGLE;
-      const ac     = s.accentColor;
-      const { r: ar, g: ag, b: ab } = hexToRgb(ac);
-
-      ctx.save();
-      ctx.translate(beamCX, beamCY);
-      ctx.rotate(s.beamAngle);
-
-      // Tilt glow (accent side glows more when tilted)
-      if (tiltFrac > 0.25) {
-        const glowDir = s.beamAngle > 0 ? 1 : -1;
-        const glowGrad = ctx.createLinearGradient(-beamHalfLen, 0, beamHalfLen, 0);
-        if (glowDir > 0) {
-          glowGrad.addColorStop(0, 'rgba(0,0,0,0)');
-          glowGrad.addColorStop(1, `rgba(${ar},${ag},${ab},${0.35 * tiltFrac})`);
-        } else {
-          glowGrad.addColorStop(0, `rgba(${ar},${ag},${ab},${0.35 * tiltFrac})`);
-          glowGrad.addColorStop(1, 'rgba(0,0,0,0)');
-        }
-        ctx.fillStyle = glowGrad;
-        ctx.fillRect(-beamHalfLen, -BEAM_HEIGHT / 2 - 6, beamW, BEAM_HEIGHT + 12);
-      }
-
-      // Beam body — accent gradient (no shadow — CPU shadow blur kills FPS)
-      const beamGrad = ctx.createLinearGradient(0, -BEAM_HEIGHT / 2, 0, BEAM_HEIGHT / 2);
-      beamGrad.addColorStop(0,   lighten(ac, 40));
-      beamGrad.addColorStop(0.4, ac);
-      beamGrad.addColorStop(1,   darken(ac, 35));
-      ctx.fillStyle = beamGrad;
-      drawRoundRect(ctx, -beamHalfLen, -BEAM_HEIGHT / 2, beamW, BEAM_HEIGHT, BEAM_HEIGHT / 2);
-      ctx.fill();
-
-      // Beam top highlight
-      ctx.strokeStyle = `rgba(255,255,255,0.22)`;
-      ctx.lineWidth   = 1;
-      drawRoundRect(ctx, -beamHalfLen, -BEAM_HEIGHT / 2, beamW, BEAM_HEIGHT, BEAM_HEIGHT / 2);
-      ctx.stroke();
-
-      // Danger zone indicators (subtle end markers that brighten when ball is near)
-      if (s.ballInDangerZone) {
-        const endAlpha = 0.3 + 0.4 * tiltFrac;
-        ctx.fillStyle = `rgba(239, 68, 68, ${endAlpha})`;
-        // Left end cap glow
-        if (s.ballX < 0) {
-          drawRoundRect(ctx, -beamHalfLen, -BEAM_HEIGHT / 2, 20, BEAM_HEIGHT, BEAM_HEIGHT / 2);
-          ctx.fill();
-        } else {
-          drawRoundRect(ctx, beamHalfLen - 20, -BEAM_HEIGHT / 2, 20, BEAM_HEIGHT, BEAM_HEIGHT / 2);
-          ctx.fill();
         }
       }
 
-      ctx.restore();
-
-      // ── Ball (on beam) ───────────────────────────────────────────────────
-      if (!s.fallAnimating) {
-        const beamLocalY = -(BEAM_HEIGHT / 2 + BALL_RADIUS);
-        const ballSX = beamCX + s.ballX * cosA - beamLocalY * sinA;
-        const ballSY = beamCY + s.ballX * sinA + beamLocalY * cosA;
-
-        // Shadow on beam surface
-        ctx.save();
-        ctx.globalAlpha = 0.22;
-        ctx.fillStyle   = '#000';
-        ctx.beginPath();
-        ctx.ellipse(
-          beamCX + s.ballX * cosA,
-          beamCY + s.ballX * sinA,
-          BALL_RADIUS * 0.85,
-          3.5,
-          s.beamAngle,
-          0,
-          Math.PI * 2,
-        );
-        ctx.fill();
-        ctx.restore();
-
-        // Ball sprite (no shadow — gradient provides depth)
-        ctx.save();
-        const _bbBall = _loadSprite('/sprites/balance-beam/ball.svg');
-        if (_bbBall.complete && _bbBall.naturalWidth > 0) {
-          ctx.drawImage(_bbBall, ballSX - BALL_RADIUS, ballSY - BALL_RADIUS, BALL_RADIUS * 2, BALL_RADIUS * 2);
-        } else {
-          const ballGrad = ctx.createRadialGradient(
-            ballSX - BALL_RADIUS * 0.3, ballSY - BALL_RADIUS * 0.35, 0,
-            ballSX, ballSY, BALL_RADIUS,
-          );
-          ballGrad.addColorStop(0,   '#ffffff');
-          ballGrad.addColorStop(0.4, '#e2e8f0');
-          ballGrad.addColorStop(1,   '#94a3b8');
-          ctx.fillStyle = ballGrad;
-          ctx.beginPath();
-          ctx.arc(ballSX, ballSY, BALL_RADIUS, 0, Math.PI * 2);
-          ctx.fill();
-        }
-        ctx.restore();
-      }
-
-      // ── Falling ball animation ───────────────────────────────────────────
-      if (s.fallAnimating && s.fallSY < H + 60) {
-        const fadeAlpha = Math.max(0, 1 - (s.fallSY - (H * BEAM_Y_FRAC)) / (H * 0.5));
-        ctx.save();
-        ctx.globalAlpha = fadeAlpha;
-        ctx.fillStyle   = '#cbd5e1';
-        ctx.beginPath();
-        ctx.arc(s.fallSX, s.fallSY, BALL_RADIUS * 0.85, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.restore();
-      }
-
-      // ── Particles ────────────────────────────────────────────────────────
-      updateAndDrawParticles(ctx, s.particles);
-
-      // ── Multiplier badge (shown when active) ─────────────────────────────
-      if (!s.fallAnimating && s.streakMs > 0) {
-        const mult = s.streakMs >= 40000 ? 2.0 : s.streakMs >= 20000 ? 1.5 : 1.0;
-        if (mult > 1) {
-          ctx.save();
-          ctx.globalAlpha = 0.75;
-          ctx.font        = `700 18px 'Space Grotesk', sans-serif`;
-          ctx.textAlign   = 'center';
-          ctx.fillStyle   = ac;
-          ctx.fillText(`${mult}×`, W / 2, H * BEAM_Y_FRAC - beamHalfLen * 0.45);
-          ctx.restore();
-        }
-      }
-
-      animRef.current = requestAnimationFrame(loop);
+      renderer.render(scene, camera);
+      s.animId = requestAnimationFrame(loop);
     };
-
-    animRef.current = requestAnimationFrame(loop);
+    s.animId = requestAnimationFrame(loop);
   }, [endGame]);
 
-  // ─── CANVAS SETUP + INPUT ──────────────────────────────────────────────────
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    const resize = () => {
-      const dpr = window.devicePixelRatio || 1;
-      const w = window.innerWidth;
-      const h = window.innerHeight;
-      canvas.style.width  = w + 'px';
-      canvas.style.height = h + 'px';
-      canvas.width  = w * dpr;
-      canvas.height = h * dpr;
-      const ctx2 = canvas.getContext('2d');
-      if (ctx2) ctx2.setTransform(dpr, 0, 0, dpr, 0, 0);
-    };
-    resize();
-    window.addEventListener('resize', resize);
-
+    const mount = mountRef.current;
+    if (!mount) return;
     const onPointerDown = (e: PointerEvent) => {
       const s = stateRef.current;
       if (!s.running || !s.usingTouchFallback) return;
-      const rect = canvas.getBoundingClientRect();
-      const cx   = (e.clientX - rect.left) * (canvas.offsetWidth / rect.width);
-      if (cx < window.innerWidth / 2) {
-        s.touchLeftHeld  = true;
-        s.touchRightHeld = false;
+      const rect = mount.getBoundingClientRect();
+      if ((e.clientX - rect.left) < rect.width / 2) {
+        s.touchLeftHeld = true; s.touchRightHeld = false;
       } else {
-        s.touchRightHeld = true;
-        s.touchLeftHeld  = false;
+        s.touchRightHeld = true; s.touchLeftHeld = false;
       }
     };
-
     const onPointerUp = () => {
-      stateRef.current.touchLeftHeld  = false;
+      stateRef.current.touchLeftHeld = false;
       stateRef.current.touchRightHeld = false;
     };
-
-    canvas.addEventListener('pointerdown', onPointerDown);
-    canvas.addEventListener('pointerup',   onPointerUp);
-    canvas.addEventListener('pointercancel', onPointerUp);
-
+    mount.addEventListener('pointerdown', onPointerDown);
+    mount.addEventListener('pointerup', onPointerUp);
+    mount.addEventListener('pointercancel', onPointerUp);
     return () => {
-      window.removeEventListener('resize', resize);
-      canvas.removeEventListener('pointerdown',   onPointerDown);
-      canvas.removeEventListener('pointerup',     onPointerUp);
-      canvas.removeEventListener('pointercancel', onPointerUp);
+      mount.removeEventListener('pointerdown', onPointerDown);
+      mount.removeEventListener('pointerup', onPointerUp);
+      mount.removeEventListener('pointercancel', onPointerUp);
     };
   }, []);
 
-  // ─── CLEANUP ON UNMOUNT ───────────────────────────────────────────────────
-  useEffect(() => {
-    return () => {
-      cancelAnimationFrame(animRef.current);
-      if (timerRef.current)     clearInterval(timerRef.current);
-      if (stopMusicRef.current) stopMusicRef.current();
-      if (tiltCtrlRef.current)  tiltCtrlRef.current.stop();
-    };
+  useEffect(() => () => {
+    const s = stateRef.current;
+    s.running = false; cancelAnimationFrame(s.animId);
+    if (s.intervalId) clearInterval(s.intervalId);
+    if (s.stopMusic) s.stopMusic();
+    tiltCtrlRef.current?.stop();
+    s.resizeCleanup?.();
+    if (s.renderer) { s.renderer.dispose(); s.renderer = null; }
   }, []);
 
-  // ─── PHASE TRANSITIONS ────────────────────────────────────────────────────
   const handleStart = useCallback((name: string, avatar: string) => {
-    setPlayerName(name);
-    setPlayerAvatar(avatar);
+    playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar);
+    initAudio();
     (async () => {
-      initAudio();
-      playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar);
-
       const controller = createTiltController(
-        (x) => {
-          if (!stateRef.current.usingTouchFallback) {
-            // Phone tilts right → x positive → beam tilts right → ball rolls right
-            stateRef.current.beamAngle = x * MAX_BEAM_ANGLE;
-          }
-        },
-        { sensitivity: 1.0, smoothing: 0.5, clamp: 30 },
+        (x) => { if (!stateRef.current.usingTouchFallback) stateRef.current.beamAngle = x * MAX_BEAM_ANGLE; },
+        { sensitivity: 1.0, smoothing: 0.5, clamp: 30 }
       );
-
       const granted = await controller.start();
       tiltCtrlRef.current = controller;
       stateRef.current.usingTouchFallback = !granted;
-
       setPhase('countdown');
     })();
   }, []);
 
-  const handleCountdownDone = useCallback(() => {
-    startLoop();
-  }, [startLoop]);
-
   const handlePlayAgain = useCallback(() => {
-    // Don't stop the tilt controller — it stays active for the replay
-    // (stopping it here would prevent tilt input in the next game)
-    setScoreDisplay(0);
-    setTimeLeft(DURATION);
-    setFinalSig(null);
-    setIsNewBest(false);
-    setStreak(0);
-    prevScoreRef.current = 0;
-    // Go directly to countdown — skip start screen for fast replay
-    // (consistent with QA test pattern: playAgain → waitForPlaying)
+    setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null); setIsNewBest(false);
     setPhase('countdown');
   }, []);
 
-  // ─── END SCREEN INSIGHTS ─────────────────────────────────────────────────
-  const buildInsights = (sig: Signals) => {
-    const balanceSec   = Math.round(sig.timeOnBeam / 1000);
-    const stabilityDeg = Math.round(sig.avgTiltDeviation * 10) / 10;
-
-    return [
-      {
-        label: 'Balance Time',
-        value: `${balanceSec}s`,
-        color: balanceSec > 50 ? '#4ade80' : balanceSec >= 35 ? '#facc15' : '#ef4444',
-      },
-      {
-        label: 'Falls',
-        value: `${sig.falls}`,
-        color: sig.falls === 0 ? '#4ade80' : sig.falls <= 2 ? '#facc15' : '#ef4444',
-      },
-      {
-        label: 'Recoveries',
-        value: `${sig.recoveries}`,
-        color: theme.colors.accent ?? ACCENT,
-      },
-      {
-        label: 'Stability',
-        value: `${stabilityDeg}°`,
-        color: stabilityDeg < 5 ? '#4ade80' : stabilityDeg <= 12 ? '#facc15' : '#ef4444',
-      },
-    ];
-  };
-
-  // ─── RENDER ───────────────────────────────────────────────────────────────
   return (
-    <>
-      {phase === 'start' && showInstructions && (
-        <SwipeInstructions
-          gameId="balance-beam"
-          steps={[{ icon: "📱", title: "Tilt to balance", body: "Tilt your device left and right to stay on the beam." }, { icon: "⚖️", title: "Stay centered", body: "Too far either way and you fall off." }, { icon: "🏆", title: "Beat your time", body: "Balance as long as possible to set a new best." }]}
-          onDone={() => setShowInstructions(false)}
-        />
-      )}
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}
-      background="radial-gradient(ellipse at 50% 20%, rgba(255,200,100,0.2) 0%, rgba(255,150,50,0.08) 40%, transparent 70%), linear-gradient(180deg, #0d0608 0%, #180b0d 30%, #200d10 55%, #180b0d 80%, #0d0608 100%)">
-
-      {/* ── Start Screen ────────────────────────────────────────────────── */}
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
       {phase === 'start' && (
-        <GameStartScreen
-          emoji={GAME_EMOJI}
-          title={GAME_TITLE}
-          description={GAME_TAGLINE}
-          ctaLabel="Allow Motion"
-          accentColor={theme.colors.accent ?? ACCENT}
-          ctaTextColor="#000"
-          onStart={handleStart}
-          sensorNote="Tilt to balance · touch controls if motion is denied"
-          gradient="radial-gradient(ellipse 80% 70% at 50% 30%, #0f1a3a 0%, #080e1f 55%, #04060f 100%)"
-        >
-        </GameStartScreen>
+        <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description={GAME_TAGLINE}
+          ctaLabel="Allow Motion" accentColor={theme.colors.accent ?? ACCENT}
+          sensorNote="Tilt to balance · touch if motion denied"
+          onStart={handleStart} />
       )}
-
-      {/* ── Countdown ───────────────────────────────────────────────────── */}
-      {phase === 'countdown' && (
-        <Countdown onComplete={handleCountdownDone} accentColor={theme.colors.accent ?? ACCENT} />
+      {phase === 'countdown' && <Countdown onComplete={startLoop} accentColor={theme.colors.accent ?? ACCENT} />}
+      <div ref={mountRef} style={{
+        position: 'absolute', inset: 0, width: '100%', height: '100%',
+        display: phase === 'playing' ? 'block' : 'none', touchAction: 'none',
+      }} />
+      {phase === 'playing' && (
+        <GameHUD accentColor={theme.colors.accent ?? ACCENT} items={[
+          { label: 'TIME', value: timeLeft, danger: timeLeft <= 10, testId: 'timer' },
+          { label: 'BALANCE', value: scoreDisplay, testId: 'score' },
+        ]} />
       )}
-
-      {/* ── Playing (canvas + HUD) ───────────────────────────────────────── */}
-      {(phase === 'playing' || phase === 'countdown') && (
-        <>
-          <canvas
-            ref={canvasRef}
-            style={{
-              position:    'absolute',
-              inset:       0,
-              width:       '100%',
-              height:      '100%',
-              touchAction: 'none',
-            }}
-          />
-          {phase === 'playing' && (
-            <GameHUD
-              accentColor={theme.colors.accent ?? ACCENT}
-              items={[
-                { label: 'TIME',    value: timeLeft,     danger: timeLeft <= 10, testId: 'timer' },
-                { label: 'BALANCE', value: scoreDisplay, testId: 'score' },
-              ]}
-            />
-          )}
-          {phase === 'playing' && (
-            <>
-              <ScorePopEffect pops={pops} accentColor={CATEGORY.primaryAccent} />
-              <StreakBadge streak={streak} accentColor={CATEGORY.primaryAccent} />
-            </>
-          )}
-        </>
-      )}
-      {/* New best banner */}
-      <AnimatePresence>
-        {isNewBest && (
-          <motion.div
-            key="new-best"
-            initial={{ opacity: 0, y: -20, scale: 0.8 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -20 }}
-            transition={{ duration: 0.4, delay: 0.5 }}
-            style={{
-              position: 'fixed', top: '10%', left: '50%', transform: 'translateX(-50%)',
-              zIndex: 90, pointerEvents: 'none',
-              background: 'linear-gradient(135deg, #fbbf24, #f59e0b)',
-              borderRadius: 20, padding: '8px 20px', fontSize: 20,
-              fontWeight: 900, color: '#000', whiteSpace: 'nowrap',
-              boxShadow: '0 4px 20px rgba(251,191,36,0.5)',
-            }}
-          >
-            🏆 New Best!
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-
-
-      {/* ── End Screen ──────────────────────────────────────────────────── */}
       {phase === 'done' && finalSig && (
-        <EndScreen
-          gameId={GAME_ID}
-          title={getPersonality(finalSig)}
-          emoji={GAME_EMOJI}
-          score={String(Math.floor(finalSig.score))}
-          personality={getPersonality(finalSig)}
-          insights={buildInsights(finalSig)}
-          accentColor={theme.colors.accent ?? ACCENT}
-          onPlayAgain={handlePlayAgain}
-          didWin={finalSig.falls <= 2}
-        />
+        <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI}
+          score={String(Math.floor(finalSig.score))} personality={getPersonality(finalSig)}
+          insights={[
+            { label: 'Balance Time', value: `${Math.round(finalSig.timeOnBeam / 1000)}s`, color: finalSig.timeOnBeam > 50000 ? '#4ade80' : '#facc15' },
+            { label: 'Falls', value: `${finalSig.falls}`, color: finalSig.falls === 0 ? '#4ade80' : finalSig.falls <= 2 ? '#facc15' : '#ef4444' },
+            { label: 'Recoveries', value: `${finalSig.recoveries}`, color: ACCENT },
+            { label: 'Stability', value: `${Math.round(finalSig.avgTiltDeviation * 10) / 10}°`, color: finalSig.avgTiltDeviation < 5 ? '#4ade80' : '#facc15' },
+          ]}
+          accentColor={theme.colors.accent ?? ACCENT} onPlayAgain={handlePlayAgain} didWin={finalSig.falls <= 2} />
       )}
-
-      {/* ── Webhook emitter ─────────────────────────────────────────────── */}
-      {phase === 'done' && finalSig && (
-        <WebhookEmitter
-          theme={theme}
-          gameId={GAME_ID}
-          sig={finalSig}
-          personality={getPersonality(finalSig)}
-          player={playerSessionRef.current}
-        />
-      )}
-
     </GameShell>
-    </>
   );
-}
-
-// ─── WEBHOOK EMITTER ──────────────────────────────────────────────────────────
-function WebhookEmitter({
-  theme, gameId, sig, personality, player,
-}: {
-  theme:       ReturnType<typeof useBrandTheme>;
-  gameId:      string;
-  sig:         Signals;
-  personality: string;
-  player:      PlayerSession | null;
-}) {
-  const fired = useRef(false);
-  useEffect(() => {
-    if (fired.current) return;
-    fired.current = true;
-    postWebhook(theme, gameId, {
-      personality,
-      score:               Math.floor(sig.score),
-      timeOnBeam:          sig.timeOnBeam,
-      falls:               sig.falls,
-      microAdjustmentRate: parseFloat(sig.microAdjustmentRate.toFixed(3)),
-      avgTiltDeviation:    parseFloat(sig.avgTiltDeviation.toFixed(2)),
-      recoveries:          sig.recoveries,
-    }, player);
-  }, [theme, gameId, sig, personality, player]);
-  return null;
 }

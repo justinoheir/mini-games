@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
+import * as THREE from 'three';
 import GameShell from '@/components/GameShell';
 import GameHUD from '@/components/GameHUD';
 import GameStartScreen from '@/components/GameStartScreen';
@@ -10,426 +11,382 @@ import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
 
-const GAME_ID      = 'bbq-master';
-const ACCENT       = '#f97316';
-const DURATION     = 45;
-const GAME_EMOJI   = '🍖';
-const GAME_TITLE   = 'BBQ Master';
-const GAME_TAGLINE = 'Tap food at the PERFECT moment to flip it — don\'t burn the grill!';
-const PB_KEY       = 'mg_pb_bbq-master';
+const GAME_ID = 'bbq-master';
+const ACCENT = '#f97316';
+const DURATION = 45;
+const GAME_EMOJI = '🍖';
+const GAME_TITLE = 'BBQ Master';
+const GAME_TAGLINE = "Tap food at the PERFECT moment to flip it!";
+const PB_KEY = 'mg_pb_bbq-master';
 
-// Cook timing constants (seconds per side)
-const COOK_TOTAL = 5.5;    // seconds per side
-const PERFECT_LO = 0.42;   // perfect flip window start
-const PERFECT_HI = 0.58;   // perfect flip window end
-const GOOD_LO    = 0.32;
-const GOOD_HI    = 0.68;
-const BURN_START = 0.75;   // starts burning after this fraction
+const COOK_TOTAL = 5.5;
+const PERFECT_LO = 0.42;
+const PERFECT_HI = 0.58;
+const GOOD_LO = 0.32;
+const GOOD_HI = 0.68;
+const BURN_START = 0.75;
 
 type FoodType = 'burger' | 'sausage' | 'corn' | 'skewer';
-const FOOD_TYPES: FoodType[] = ['burger','sausage','corn','skewer'];
+const FOOD_TYPES: FoodType[] = ['burger', 'sausage', 'corn', 'skewer'];
 
-const SLOT_COLS = 2;
-const SLOT_ROWS = 2;
-
-interface FoodItem {
+interface FoodItem3D {
   id: number; type: FoodType;
-  slotCol: number; slotRow: number;
-  progress: number; // 0-1 within current side
-  side: number;     // 0 = first side, 1 = second side
-  burnt: boolean;
-  flipFlash: number; // animation
-  smokeParticles: {x:number;y:number;vy:number;alpha:number}[];
+  mesh: THREE.Group; progress: number; side: number;
+  burnt: boolean; flipFlash: number;
+  col: number; row: number;
 }
-interface Signals {
-  score: number;
-  perfectFlips: number;
-  goodFlips: number;
-  lateFlips: number;
-  burntItems: number;
-}
-
+interface Signals { score: number; perfectFlips: number; goodFlips: number; lateFlips: number; burntItems: number; }
 function getPersonality(sig: Signals): string {
-  const total = sig.perfectFlips + sig.goodFlips + sig.lateFlips;
-  const perfRatio = total > 0 ? sig.perfectFlips / total : 0;
-  if (perfRatio >= 0.7 && sig.burntItems === 0) return 'Grill Master 🔥';
-  if (perfRatio >= 0.5) return 'Seasoned Chef 👨‍🍳';
-  if (sig.burntItems >= 4) return 'Smoke Signal 💨';
-  if (sig.goodFlips >= 5) return 'Decent Flipper 🍳';
-  return 'BBQ Rookie 🥩';
+  if (sig.perfectFlips >= 8 && sig.burntItems === 0) return 'Pit Master 🏆';
+  if (sig.perfectFlips >= 5) return 'Grill Ace 🔥';
+  if (sig.burntItems >= 4) return 'Char Specialist 🖤';
+  if (sig.goodFlips >= 8) return 'BBQ Pro 🍖';
+  return 'Backyard Cook 🥩';
 }
 type Phase = 'start' | 'countdown' | 'playing' | 'done';
 
-function WebhookEmitter({ theme, sig, personality, player }: { theme: ReturnType<typeof useBrandTheme>; sig: Signals; personality: string; player: PlayerSession | null; }) {
-  const fired = useRef(false);
-  useEffect(() => { if (fired.current) return; fired.current = true; postWebhook(theme, GAME_ID, { personality, score: sig.score }, player); }, [theme, sig, personality, player]);
-  return null;
-}
-
-// ─── DRAW FOOD ────────────────────────────────────────────────────────────────
-function cookColor(progress: number, burnt: boolean): string {
-  if (burnt) return '#1a0a00';
-  if (progress < PERFECT_LO) {
-    // Raw: pinkish → golden
-    const t = progress / PERFECT_LO;
-    const r = Math.floor(220 - t*30), g = Math.floor(150 + t*60), b = Math.floor(130 - t*80);
-    return `rgb(${r},${g},${b})`;
-  }
-  if (progress < BURN_START) {
-    // Perfect → overdone
-    const t = (progress - PERFECT_LO) / (BURN_START - PERFECT_LO);
-    const r = Math.floor(190 - t*100), g = Math.floor(210 - t*130), b = Math.floor(50 - t*40);
-    return `rgb(${r},${g},${b})`;
-  }
-  // Burning
-  const t = Math.min(1, (progress - BURN_START) / 0.25);
-  const r = Math.floor(90 - t*70), g = Math.floor(80 - t*70), b = Math.floor(10);
-  return `rgb(${r},${g},${b})`;
-}
-
-function drawFood(ctx: CanvasRenderingContext2D, item: FoodItem, cx: number, cy: number, cellW: number, cellH: number) {
-  const col = cookColor(item.progress, item.burnt);
-  const flash = item.flipFlash;
-  ctx.save();
-  if (flash > 0) {
-    ctx.globalAlpha = 0.6 + flash * 0.4;
-  }
-
-  switch (item.type) {
-    case 'burger': {
-      const bw = cellW * 0.55, bh = cellH * 0.28;
-      ctx.fillStyle = col;
-      ctx.shadowBlur = flash > 0 ? 20 : 5; ctx.shadowColor = col;
-      ctx.beginPath(); ctx.roundRect(cx - bw/2, cy - bh/2, bw, bh, bh/2); ctx.fill();
-      // sesame seeds
-      ctx.fillStyle = '#facc15';
-      ctx.shadowBlur = 0;
-      for (let i = -1; i <= 1; i++) {
-        ctx.beginPath(); ctx.ellipse(cx + i*10, cy - bh*0.1, 2.5, 1.5, Math.PI*0.3, 0, Math.PI*2); ctx.fill();
-      }
-      break;
-    }
-    case 'sausage': {
-      const sw = cellW * 0.6, sh = cellH * 0.22;
-      ctx.fillStyle = col;
-      ctx.shadowBlur = flash > 0 ? 20 : 5; ctx.shadowColor = col;
-      ctx.save(); ctx.translate(cx, cy); ctx.rotate(Math.PI * 0.1);
-      ctx.beginPath(); ctx.roundRect(-sw/2, -sh/2, sw, sh, sh/2); ctx.fill();
-      ctx.restore();
-      break;
-    }
-    case 'corn': {
-      const cr = cellH * 0.28;
-      ctx.fillStyle = col;
-      ctx.shadowBlur = flash > 0 ? 20 : 5; ctx.shadowColor = col;
-      ctx.beginPath(); ctx.ellipse(cx, cy, cr*0.45, cr, 0, 0, Math.PI*2); ctx.fill();
-      // Kernels
-      ctx.fillStyle = item.burnt ? '#333' : '#fde68a';
-      ctx.shadowBlur = 0;
-      for (let row = -2; row <= 2; row++) {
-        for (let col2 = -1; col2 <= 1; col2++) {
-          ctx.beginPath(); ctx.arc(cx + col2*7 + (row%2)*3.5, cy + row*9, 3, 0, Math.PI*2); ctx.fill();
-        }
-      }
-      break;
-    }
-    case 'skewer': {
-      const sl = cellW * 0.65;
-      // Stick
-      ctx.strokeStyle = '#8b6914'; ctx.lineWidth = 3;
-      ctx.save(); ctx.translate(cx, cy); ctx.rotate(-Math.PI*0.15);
-      ctx.beginPath(); ctx.moveTo(-sl/2, 0); ctx.lineTo(sl/2, 0); ctx.stroke();
-      // Meat chunks
-      ctx.fillStyle = col;
-      ctx.shadowBlur = flash > 0 ? 20 : 5; ctx.shadowColor = col;
-      for (let i = -1; i <= 1; i++) {
-        ctx.beginPath(); ctx.roundRect(i*18 - 8, -8, 16, 16, 4); ctx.fill();
-      }
-      ctx.restore();
-      break;
-    }
-  }
-  ctx.shadowBlur = 0;
-  ctx.restore();
-}
-
 interface GS {
   running: boolean; timeLeft: number; sig: Signals;
-  items: FoodItem[]; nextId: number;
-  lastSpawn: number; spawnInterval: number;
-  cellW: number; cellH: number; gridX: number; gridY: number;
-  accentColor: string;
+  renderer: THREE.WebGLRenderer | null; scene: THREE.Scene | null;
+  camera: THREE.PerspectiveCamera | null; animId: number;
+  foods: FoodItem3D[]; nextId: number;
+  grillGlow: THREE.PointLight | null;
+  smokeParticles: Array<{ mesh: THREE.Mesh; vy: number; life: number }>;
+  stopMusic: (() => void) | null;
+  intervalId: ReturnType<typeof setInterval> | null;
+  resizeCleanup: (() => void) | null;
+}
+
+function makeFoodMesh(type: FoodType): THREE.Group {
+  const g = new THREE.Group();
+  if (type === 'burger') {
+    const patty = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.4, 0.4, 0.15, 16),
+      new THREE.MeshStandardMaterial({ color: 0x8b4513, roughness: 0.8 })
+    );
+    g.add(patty);
+  } else if (type === 'sausage') {
+    const saus = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.15, 0.15, 0.9, 12),
+      new THREE.MeshStandardMaterial({ color: 0xcc4400, roughness: 0.6 })
+    );
+    saus.rotation.z = Math.PI / 2;
+    g.add(saus);
+  } else if (type === 'corn') {
+    const cob = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.18, 0.18, 0.85, 8),
+      new THREE.MeshStandardMaterial({ color: 0xfbbf24, roughness: 0.5 })
+    );
+    cob.rotation.z = Math.PI / 2;
+    g.add(cob);
+  } else {
+    // skewer
+    const stick = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.03, 0.03, 1.2, 6),
+      new THREE.MeshStandardMaterial({ color: 0x8b6914 })
+    );
+    stick.rotation.z = Math.PI / 2;
+    g.add(stick);
+    [0.4, 0.1, -0.2, -0.45].forEach(ox => {
+      const chunk = new THREE.Mesh(
+        new THREE.SphereGeometry(0.13, 8, 8),
+        new THREE.MeshStandardMaterial({ color: 0xcc4400, roughness: 0.7 })
+      );
+      chunk.position.x = ox;
+      g.add(chunk);
+    });
+  }
+  return g;
 }
 
 export default function BBQMasterGame() {
   const theme = useBrandTheme();
-  const accentColor = theme.id !== 'ether' ? theme.colors.accent : ACCENT;
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const animRef = useRef(0);
-  const timerRef = useRef<ReturnType<typeof setInterval>|null>(null);
-  const stopMusicRef = useRef<(()=>void)|null>(null);
-  const lastFrameRef = useRef(0);
-
+  const mountRef = useRef<HTMLDivElement>(null);
   const stateRef = useRef<GS>({
-    running:false, timeLeft:DURATION,
-    sig:{score:0,perfectFlips:0,goodFlips:0,lateFlips:0,burntItems:0},
-    items:[], nextId:0, lastSpawn:0, spawnInterval:3200,
-    cellW:0, cellH:0, gridX:0, gridY:0, accentColor:ACCENT,
+    running: false, timeLeft: DURATION,
+    sig: { score: 0, perfectFlips: 0, goodFlips: 0, lateFlips: 0, burntItems: 0 },
+    renderer: null, scene: null, camera: null, animId: 0,
+    foods: [], nextId: 0, grillGlow: null, smokeParticles: [],
+    stopMusic: null, intervalId: null, resizeCleanup: null,
   });
-
   const [phase, setPhase] = useState<Phase>('start');
   const [timeLeft, setTimeLeft] = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
-  const [finalSig, setFinalSig] = useState<Signals|null>(null);
-  const playerSessionRef = useRef<PlayerSession|null>(null);
-  useEffect(()=>{stateRef.current.accentColor=accentColor;},[accentColor]);
+  const [finalSig, setFinalSig] = useState<Signals | null>(null);
+  const playerSessionRef = useRef<PlayerSession | null>(null);
 
   const endGame = useCallback(() => {
-    const s = stateRef.current; s.running = false;
-    cancelAnimationFrame(animRef.current);
-    if (timerRef.current){clearInterval(timerRef.current);timerRef.current=null;}
-    if (stopMusicRef.current){stopMusicRef.current();stopMusicRef.current=null;}
-    sfx.gameOver(); haptic([100]);
-    const pb = parseInt(localStorage.getItem(PB_KEY) ?? '0');
-    if (s.sig.score > pb) localStorage.setItem(PB_KEY, String(s.sig.score));
-    setFinalSig({...s.sig}); setPhase('done');
+    const s = stateRef.current;
+    s.running = false;
+    cancelAnimationFrame(s.animId);
+    if (s.intervalId) { clearInterval(s.intervalId); s.intervalId = null; }
+    if (s.stopMusic) { s.stopMusic(); s.stopMusic = null; }
+    s.resizeCleanup?.();
+    if (s.renderer) { s.renderer.dispose(); s.renderer = null; }
+    if (mountRef.current) mountRef.current.innerHTML = '';
+    try {
+      const prev = parseInt(localStorage.getItem(PB_KEY) || '0', 10);
+      if (s.sig.score > prev) localStorage.setItem(PB_KEY, String(s.sig.score));
+    } catch { /* */ }
+    setFinalSig({ ...s.sig });
+    setPhase('done');
   }, []);
 
-  const spawnItem = useCallback(() => {
-    const s = stateRef.current;
-    const emptySlots: {c:number;r:number}[] = [];
-    for (let c = 0; c < SLOT_COLS; c++) {
-      for (let r = 0; r < SLOT_ROWS; r++) {
-        if (!s.items.some(it => it.slotCol===c && it.slotRow===r)) {
-          emptySlots.push({c, r});
-        }
-      }
-    }
-    if (emptySlots.length === 0) return;
-    const slot = emptySlots[Math.floor(Math.random() * emptySlots.length)];
-    s.items.push({
-      id: s.nextId++,
-      type: FOOD_TYPES[Math.floor(Math.random() * FOOD_TYPES.length)],
-      slotCol: slot.c, slotRow: slot.r,
-      progress: 0, side: 0, burnt: false,
-      flipFlash: 0, smokeParticles: [],
-    });
+  const spawnFood = useCallback((scene: THREE.Scene, s: GS, col: number, row: number) => {
+    const type = FOOD_TYPES[Math.floor(Math.random() * FOOD_TYPES.length)];
+    const mesh = makeFoodMesh(type);
+    const px = (col - 0.5) * 2.5;
+    const pz = (row - 0.5) * 2.0;
+    mesh.position.set(px, 0.3, pz);
+    scene.add(mesh);
+    s.foods.push({ id: s.nextId++, type, mesh, progress: 0, side: 0, burnt: false, flipFlash: 0, col, row });
   }, []);
 
   const startLoop = useCallback(() => {
-    const canvas = canvasRef.current; if (!canvas) return;
-    const ctx = canvas.getContext('2d'); if (!ctx) return;
+    const mount = mountRef.current;
+    if (!mount) return;
     const s = stateRef.current;
-    canvas.width = canvas.offsetWidth; canvas.height = canvas.offsetHeight;
+    const W = window.innerWidth, H = window.innerHeight;
 
-    const W = canvas.width, H = canvas.height;
-    s.cellW = W / SLOT_COLS;
-    s.cellH = (H * 0.55) / SLOT_ROWS;
-    s.gridX = 0; s.gridY = H * 0.22;
-
-    s.running=true; s.timeLeft=DURATION;
-    s.sig={score:0,perfectFlips:0,goodFlips:0,lateFlips:0,burntItems:0};
-    s.items=[]; s.nextId=0; s.lastSpawn=0; s.spawnInterval=3200;
+    s.running = true; s.timeLeft = DURATION;
+    s.sig = { score: 0, perfectFlips: 0, goodFlips: 0, lateFlips: 0, burntItems: 0 };
+    s.foods = []; s.nextId = 0; s.smokeParticles = [];
     setScoreDisplay(0); setTimeLeft(DURATION); setPhase('playing');
-    stopMusicRef.current = startMusic('holiday');
-    lastFrameRef.current = performance.now();
-    spawnItem(); spawnItem();
 
-    timerRef.current = setInterval(()=>{
-      s.timeLeft--; setTimeLeft(s.timeLeft);
-      if (s.timeLeft<=5&&s.timeLeft>0) sfx.collect();
-      if (s.timeLeft<=0) endGame();
-    },1000);
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(W, H);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setClearColor(0x0d0503);
+    mount.innerHTML = '';
+    mount.appendChild(renderer.domElement);
+    s.renderer = renderer;
 
-    const loop = (ts: number) => {
+    const scene = new THREE.Scene();
+    s.scene = scene;
+    const camera = new THREE.PerspectiveCamera(60, W / H, 0.1, 100);
+    camera.position.set(0, 5, 7);
+    camera.lookAt(0, 0, 0);
+    s.camera = camera;
+
+    scene.add(new THREE.AmbientLight(0x221100, 3));
+    const sunLight = new THREE.DirectionalLight(0xffaa44, 2);
+    sunLight.position.set(3, 8, 5);
+    scene.add(sunLight);
+    const grillGlow = new THREE.PointLight(0xff6600, 2, 20);
+    grillGlow.position.set(0, 0.2, 0);
+    scene.add(grillGlow);
+    s.grillGlow = grillGlow;
+
+    // Grill surface
+    const grillBase = new THREE.Mesh(
+      new THREE.BoxGeometry(5.5, 0.2, 4.5),
+      new THREE.MeshStandardMaterial({ color: 0x333333, metalness: 0.8, roughness: 0.3 })
+    );
+    grillBase.position.y = -0.1;
+    scene.add(grillBase);
+
+    // Grill bars
+    for (let i = -2; i <= 2; i++) {
+      const bar = new THREE.Mesh(
+        new THREE.BoxGeometry(0.08, 0.12, 4.5),
+        new THREE.MeshStandardMaterial({ color: 0x555555, metalness: 0.9 })
+      );
+      bar.position.set(i * 0.9, 0.16, 0);
+      scene.add(bar);
+    }
+
+    // Coals/fire effect below
+    const coals = new THREE.Mesh(
+      new THREE.BoxGeometry(5, 0.1, 4),
+      new THREE.MeshStandardMaterial({ color: 0xff4400, emissive: 0xff2200, emissiveIntensity: 0.8 })
+    );
+    coals.position.y = -0.5;
+    scene.add(coals);
+
+    s.stopMusic = startMusic('ambient');
+    const handleResize = () => {
+      const w = window.innerWidth, h = window.innerHeight;
+      renderer.setSize(w, h); camera.aspect = w / h; camera.updateProjectionMatrix();
+    };
+    window.addEventListener('resize', handleResize);
+    s.resizeCleanup = () => window.removeEventListener('resize', handleResize);
+
+    // Spawn initial food on 2x2 grid
+    for (let c = 0; c < 2; c++) for (let r = 0; r < 2; r++) spawnFood(scene, s, c, r);
+
+    s.intervalId = setInterval(() => {
       if (!s.running) return;
-      const dt = Math.min(50, ts - lastFrameRef.current) / 1000; // seconds
-      lastFrameRef.current = ts;
-      const W2 = canvas.width, H2 = canvas.height;
+      s.timeLeft--; setTimeLeft(s.timeLeft);
+      if (s.timeLeft <= 0) { sfx.fail(); endGame(); }
+    }, 1000);
 
-      // BG
-      ctx.fillStyle = '#1a0a00'; ctx.fillRect(0, 0, W2, H2);
+    const loop = () => {
+      if (!s.running) return;
+      const dt = 1 / 60;
 
-      // Grill surface
-      const gTop = s.gridY - 10, gBot = s.gridY + s.cellH * SLOT_ROWS + 10;
-      ctx.fillStyle = '#2d1a00';
-      ctx.fillRect(0, gTop, W2, gBot - gTop);
-
-      // Grill bars (horizontal metal bars)
-      ctx.strokeStyle = '#4a2800'; ctx.lineWidth = 10;
-      const barCount = 8;
-      for (let i = 0; i <= barCount; i++) {
-        const gy = gTop + (i / barCount) * (gBot - gTop);
-        ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(W2, gy); ctx.stroke();
-      }
-      // Grill glow
-      const grillGrad = ctx.createLinearGradient(0, gBot, 0, gBot + 30);
-      grillGrad.addColorStop(0, 'rgba(255,100,0,0.35)');
-      grillGrad.addColorStop(1, 'rgba(255,100,0,0)');
-      ctx.fillStyle = grillGrad; ctx.fillRect(0, gBot, W2, 30);
-
-      // Grid dividers
-      ctx.strokeStyle = 'rgba(255,255,255,0.06)'; ctx.lineWidth = 1;
-      for (let c = 1; c < SLOT_COLS; c++) {
-        const gx = s.gridX + c * s.cellW;
-        ctx.beginPath(); ctx.moveTo(gx, gTop); ctx.lineTo(gx, gBot); ctx.stroke();
-      }
-
-      // Spawn
-      const now2 = performance.now();
-      if (now2 - s.lastSpawn > s.spawnInterval && s.items.length < SLOT_COLS * SLOT_ROWS) {
-        spawnItem(); s.lastSpawn = now2;
-        // Ramp up speed
-        s.spawnInterval = Math.max(1800, s.spawnInterval - 80);
-      }
-
-      // Update and draw items
-      for (const item of s.items) {
-        if (!item.burnt) item.progress = Math.min(1, item.progress + dt / COOK_TOTAL);
-        if (item.progress >= 1 && !item.burnt) {
-          item.burnt = true; s.sig.burntItems++;
-          sfx.nearMiss(); haptic([20,30,20]);
-          setScoreDisplay(s.sig.score);
+      // Update food items
+      for (const food of s.foods) {
+        if (food.burnt) {
+          const firstChild = food.mesh.children[0];
+          const mat = (firstChild instanceof THREE.Mesh ? firstChild.material : null) as THREE.MeshStandardMaterial | null;
+          if (!mat) continue;
+          mat.color.setHex(0x111111);
+          mat.emissive.setHex(0x220000);
+          mat.emissiveIntensity = 0.2;
+          continue;
         }
-        item.flipFlash = Math.max(0, item.flipFlash - dt * 4);
+        food.progress += dt / COOK_TOTAL;
+        if (food.flipFlash > 0) food.flipFlash--;
 
-        // Smoke for burning
-        if (item.burnt || item.progress > BURN_START) {
-          if (Math.random() < 0.12) {
-            const cx2 = s.gridX + item.slotCol * s.cellW + s.cellW / 2;
-            const cy2 = s.gridY + item.slotRow * s.cellH + s.cellH / 2;
-            item.smokeParticles.push({x: cx2 + (Math.random()-0.5)*20, y: cy2 - 20, vy: -0.6 - Math.random()*0.4, alpha: 0.5});
+        // Color feedback based on cook progress
+        const frac = food.progress % 1;
+        const heatColor = frac > BURN_START ? 0xff2200 : frac > GOOD_HI ? 0xff6600 : 0xd4611a;
+        food.mesh.children.forEach((child: THREE.Object3D) => {
+          if (child instanceof THREE.Mesh) {
+            const mat = child.material as THREE.MeshStandardMaterial;
+            mat.emissive.setHex(food.flipFlash > 0 ? 0x00ff88 : heatColor);
+            mat.emissiveIntensity = food.flipFlash > 0 ? 0.5 : 0.15;
+          }
+        });
+
+        // Burning detection
+        if (food.side < 2 && food.progress > food.side + BURN_START) {
+          if (food.side === 1) {
+            // Both sides burnt = lost
+            food.burnt = true;
+            s.sig.burntItems++;
+            sfx.collision?.(); haptic?.([50]);
           }
         }
-        item.smokeParticles = item.smokeParticles.filter(p=>p.alpha>0.02);
-        for (const p of item.smokeParticles) {
-          p.y += p.vy; p.alpha -= 0.012;
-          ctx.save(); ctx.globalAlpha = p.alpha;
-          ctx.fillStyle = '#888'; ctx.beginPath(); ctx.arc(p.x, p.y, 6, 0, Math.PI*2); ctx.fill();
-          ctx.restore();
-        }
 
-        const cx2 = s.gridX + item.slotCol * s.cellW + s.cellW / 2;
-        const cy2 = s.gridY + item.slotRow * s.cellH + s.cellH / 2;
-        drawFood(ctx, item, cx2, cy2, s.cellW * 0.85, s.cellH * 0.85);
-
-        // Cook progress ring
-        const ringR = Math.min(s.cellW, s.cellH) * 0.35;
-        const inPerfect = item.progress >= PERFECT_LO && item.progress <= PERFECT_HI;
-        const ringCol = item.burnt ? '#ef4444' : inPerfect ? '#4ade80' : item.progress < PERFECT_LO ? '#facc15' : '#f97316';
-        ctx.strokeStyle = ringCol; ctx.lineWidth = 3;
-        ctx.beginPath();
-        ctx.arc(cx2, cy2, ringR + 8, -Math.PI/2, -Math.PI/2 + Math.PI*2*item.progress);
-        ctx.stroke();
-        // Perfect zone arc
-        ctx.strokeStyle = '#4ade80'; ctx.lineWidth = 5; ctx.globalAlpha = 0.4;
-        ctx.beginPath();
-        ctx.arc(cx2, cy2, ringR + 8, -Math.PI/2 + Math.PI*2*PERFECT_LO, -Math.PI/2 + Math.PI*2*PERFECT_HI);
-        ctx.stroke(); ctx.globalAlpha = 1;
-
-        // Side indicator
-        ctx.fillStyle = 'rgba(255,255,255,0.5)'; ctx.font = '10px system-ui'; ctx.textAlign = 'center';
-        ctx.fillText(item.side === 0 ? 'SIDE 1' : 'SIDE 2', cx2, cy2 + s.cellH*0.38);
-
-        // Burnt X
-        if (item.burnt) {
-          ctx.fillStyle = '#ef4444'; ctx.font = 'bold 20px system-ui';
-          ctx.fillText('✗', cx2, cy2 - s.cellH*0.3);
-        }
+        // Gentle bounce on grill
+        food.mesh.position.y = 0.3 + Math.sin(Date.now() * 0.003 + food.id) * 0.02;
       }
 
-      // Remove burnt items after delay (they showed their burn state)
-      s.items = s.items.filter(it => !(it.burnt && it.progress >= 1 && it.flipFlash <= 0));
+      // Grill glow pulse
+      if (s.grillGlow) {
+        s.grillGlow.intensity = 1.5 + Math.sin(Date.now() * 0.004) * 0.5;
+      }
 
-      // Instructions
-      ctx.fillStyle = 'rgba(255,255,255,0.22)'; ctx.font = '12px system-ui'; ctx.textAlign = 'center';
-      ctx.fillText('TAP when the ring hits the GREEN zone', W2/2, H2 * 0.92);
+      // Smoke particles
+      if (Math.random() < 0.1) {
+        const sm = new THREE.Mesh(
+          new THREE.SphereGeometry(0.08, 4, 4),
+          new THREE.MeshBasicMaterial({ color: 0x888888, transparent: true, opacity: 0.4 })
+        );
+        sm.position.set((Math.random() - 0.5) * 4, 0.5, (Math.random() - 0.5) * 3);
+        scene.add(sm);
+        s.smokeParticles.push({ mesh: sm, vy: 0.02 + Math.random() * 0.02, life: 40 });
+      }
+      for (let i = s.smokeParticles.length - 1; i >= 0; i--) {
+        const sp = s.smokeParticles[i];
+        sp.mesh.position.y += sp.vy;
+        sp.mesh.position.x += (Math.random() - 0.5) * 0.01;
+        sp.life--;
+        const mat = sp.mesh.material as THREE.MeshBasicMaterial;
+        mat.opacity = (sp.life / 40) * 0.4;
+        if (sp.life <= 0) { scene.remove(sp.mesh); s.smokeParticles.splice(i, 1); }
+      }
 
-      animRef.current = requestAnimationFrame(loop);
+      renderer.render(scene, camera);
+      s.animId = requestAnimationFrame(loop);
     };
-    animRef.current = requestAnimationFrame(loop);
-  }, [endGame, spawnItem]);
+    s.animId = requestAnimationFrame(loop);
+  }, [endGame, spawnFood]);
 
   useEffect(() => {
-    const canvas = canvasRef.current; if (!canvas) return;
-    const resize = () => { canvas.width = canvas.offsetWidth; canvas.height = canvas.offsetHeight; };
-    resize(); window.addEventListener('resize', resize);
-
-    const onTap = (e: PointerEvent) => {
-      const s = stateRef.current; if (!s.running) return;
-      const rect = canvas.getBoundingClientRect();
-      const x = e.clientX - rect.left, y = e.clientY - rect.top;
-
-      for (const item of s.items) {
-        if (item.burnt) continue;
-        const cx = s.gridX + item.slotCol * s.cellW + s.cellW / 2;
-        const cy = s.gridY + item.slotRow * s.cellH + s.cellH / 2;
-        if (Math.hypot(x - cx, y - cy) < s.cellW * 0.4) {
-          // Flip!
-          const p = item.progress;
-          if (p >= PERFECT_LO && p <= PERFECT_HI) {
-            s.sig.perfectFlips++; s.sig.score += 3; item.flipFlash = 1;
-            sfx.collect(); haptic([30]);
-          } else if (p >= GOOD_LO && p <= GOOD_HI) {
-            s.sig.goodFlips++; s.sig.score += 1; item.flipFlash = 0.6;
-            sfx.collect(); haptic([20]);
-          } else {
-            s.sig.lateFlips++; s.sig.score = Math.max(0, s.sig.score - 1); item.flipFlash = 0.3;
-            sfx.nearMiss(); haptic([20,30,20]);
+    const mount = mountRef.current;
+    if (!mount) return;
+    const onPointerDown = (e: PointerEvent) => {
+      if (phase !== 'playing') return;
+      const s = stateRef.current;
+      if (!s.camera || !s.renderer) return;
+      const rect = mount.getBoundingClientRect();
+      const nx = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+      const ny = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+      const raycaster = new THREE.Raycaster();
+      raycaster.setFromCamera(new THREE.Vector2(nx, ny), s.camera);
+      for (const food of s.foods) {
+        if (food.burnt) continue;
+        const hits = raycaster.intersectObject(food.mesh, true);
+        if (hits.length > 0) {
+          const frac = food.progress % 1;
+          const isPerfect = frac >= PERFECT_LO && frac <= PERFECT_HI;
+          const isGood = frac >= GOOD_LO && frac <= GOOD_HI;
+          const isLate = frac > GOOD_HI && frac < BURN_START;
+          let pts = 0;
+          if (isPerfect) { pts = 10; s.sig.perfectFlips++; sfx.success(); }
+          else if (isGood) { pts = 5; s.sig.goodFlips++; sfx.collect(); }
+          else if (isLate) { pts = 2; s.sig.lateFlips++; sfx.click(); }
+          else { pts = 0; sfx.collision(); haptic([30]); }
+          if (pts > 0) {
+            s.sig.score += pts; setScoreDisplay(s.sig.score);
+            food.side++; food.progress = food.side;
+            food.flipFlash = 12;
+            food.mesh.rotation.z = food.side * Math.PI;
+            if (food.side >= 2) {
+              setTimeout(() => {
+                if (!stateRef.current.running || !stateRef.current.scene) return;
+                stateRef.current.scene.remove(food.mesh);
+                stateRef.current.foods = stateRef.current.foods.filter(f => f.id !== food.id);
+                spawnFood(stateRef.current.scene, stateRef.current, food.col, food.row);
+              }, 500);
+            }
           }
-          // Flip to side 2 or remove if done
-          if (item.side === 0) {
-            item.side = 1; item.progress = 0;
-          } else {
-            // Fully cooked — award and remove
-            s.sig.score += 2; setScoreDisplay(s.sig.score);
-            s.items = s.items.filter(it => it.id !== item.id);
-            sfx.collect(); haptic([30,20,30]);
-          }
-          setScoreDisplay(s.sig.score);
           break;
         }
       }
     };
-
-    canvas.addEventListener('pointerdown', onTap);
-    return () => { window.removeEventListener('resize', resize); canvas.removeEventListener('pointerdown', onTap); };
-  }, []);
+    mount.addEventListener('pointerdown', onPointerDown);
+    return () => mount.removeEventListener('pointerdown', onPointerDown);
+  }, [phase, spawnFood]);
 
   useEffect(() => () => {
-    cancelAnimationFrame(animRef.current);
-    if (timerRef.current) clearInterval(timerRef.current);
-    if (stopMusicRef.current) stopMusicRef.current();
+    const s = stateRef.current;
+    s.running = false; cancelAnimationFrame(s.animId);
+    if (s.intervalId) clearInterval(s.intervalId);
+    if (s.stopMusic) s.stopMusic();
+    s.resizeCleanup?.();
+    if (s.renderer) { s.renderer.dispose(); s.renderer = null; }
   }, []);
 
   const handleStart = useCallback(async (name: string, avatar: string) => {
     playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar);
-    await initAudio(); sfx.click(); setPhase('countdown');
+    await initAudio(); setPhase('countdown');
   }, []);
-  const handleCountdownDone = useCallback(() => { startLoop(); }, [startLoop]);
-  const handlePlayAgain = useCallback(() => { setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null); }, []);
-  const buildInsights = useCallback((sig: Signals) => {
-    const pb = parseInt(localStorage.getItem(PB_KEY) ?? '0');
-    return [
-      {label:'Perfect Flips',value:String(sig.perfectFlips),color:sig.perfectFlips>=5?'#4ade80':sig.perfectFlips>=2?'#facc15':'#ef4444'},
-      {label:'Burnt Items',value:String(sig.burntItems),color:sig.burntItems===0?'#4ade80':sig.burntItems<=2?'#facc15':'#ef4444'},
-      {label:'Score',value:String(sig.score),color:ACCENT},
-      {label:'Personal Best',value:String(pb),color:'var(--color-text)'},
-    ];
+  const handlePlayAgain = useCallback(() => {
+    setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null);
   }, []);
 
   return (
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accentColor} gameId={GAME_ID}>
-      {phase==='start'&&<GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description={GAME_TAGLINE} ctaLabel="Fire Up the Grill!" accentColor={accentColor} onStart={handleStart}/>}
-      {phase==='countdown'&&<Countdown onComplete={handleCountdownDone} accentColor={accentColor}/>}
-      {(phase==='playing'||phase==='countdown')&&<>
-        <canvas ref={canvasRef} role="img" aria-label="BBQ Master canvas" style={{position:'absolute',inset:0,width:'100%',height:'100%',touchAction:'none'}}/>
-        {phase==='playing'&&<GameHUD accentColor={accentColor} items={[{label:'TIME',value:timeLeft,danger:timeLeft<=5,testId:'timer'},{label:'SCORE',value:scoreDisplay,testId:'score'}]}/>}
-      </>}
-      {phase==='done'&&finalSig&&<>
-        <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI} score={String(finalSig.score)} personality={getPersonality(finalSig)} insights={buildInsights(finalSig)} accentColor={accentColor} onPlayAgain={handlePlayAgain} didWin={finalSig.perfectFlips>=4&&finalSig.burntItems<=2}/>
-        <WebhookEmitter theme={theme} sig={finalSig} personality={getPersonality(finalSig)} player={playerSessionRef.current}/>
-      </>}
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
+      {phase === 'start' && (
+        <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description={GAME_TAGLINE}
+          ctaLabel="Fire up the grill! 🔥" accentColor={theme.colors.accent ?? ACCENT} onStart={handleStart} />
+      )}
+      {phase === 'countdown' && <Countdown onComplete={startLoop} accentColor={theme.colors.accent ?? ACCENT} />}
+      <div ref={mountRef} style={{
+        position: 'absolute', inset: 0, width: '100%', height: '100%',
+        display: phase === 'playing' ? 'block' : 'none', touchAction: 'none',
+      }} />
+      {phase === 'playing' && (
+        <GameHUD accentColor={theme.colors.accent ?? ACCENT} items={[
+          { label: 'TIME', value: timeLeft, danger: timeLeft <= 10 },
+          { label: 'SCORE', value: scoreDisplay },
+        ]} />
+      )}
+      {phase === 'done' && finalSig && (
+        <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI}
+          score={String(finalSig.score)} personality={getPersonality(finalSig)}
+          insights={[
+            { label: 'Perfect Flips', value: String(finalSig.perfectFlips), color: '#fbbf24' },
+            { label: 'Good Flips', value: String(finalSig.goodFlips), color: ACCENT },
+            { label: 'Burnt Items', value: String(finalSig.burntItems), color: '#ef4444' },
+            { label: 'Total Score', value: String(finalSig.score), color: '#4ade80' },
+          ]}
+          accentColor={theme.colors.accent ?? ACCENT} onPlayAgain={handlePlayAgain}
+          didWin={finalSig.perfectFlips >= 4} />
+      )}
     </GameShell>
   );
 }

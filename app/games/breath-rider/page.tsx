@@ -1,734 +1,404 @@
 'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
+import * as THREE from 'three';
 import GameShell from '@/components/GameShell';
 import GameHUD from '@/components/GameHUD';
 import GameStartScreen from '@/components/GameStartScreen';
 import Countdown from '@/components/Countdown';
 import EndScreen from '@/components/EndScreen';
-import { initAudio, sfx, haptic, startMusic } from '@/lib/audio';
-import { playScoreHit, playVictoryFanfare, playNearMiss, playComboSfx, playUrgentTick } from '@/lib/audio';
+import { initAudio, sfx, haptic, startMusic, playScoreHit, playVictoryFanfare, playNearMiss, playComboSfx, playUrgentTick } from '@/lib/audio';
 import { hapticScore, hapticFail, hapticVictory } from '@/lib/haptics';
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
-import { motion, AnimatePresence } from 'framer-motion';
-import ScorePopEffect, { useScorePop } from '@/components/ScorePopEffect';
-import StreakBadge from '@/components/StreakBadge';
-import SwipeInstructions from '@/components/SwipeInstructions';
-import { Wind, Trophy, Mic, Navigation } from 'lucide-react';
 
 const GAME_ID = 'breath-rider';
 const PB_KEY = 'pb_breath-rider';
-const GAME_DURATION = 45; // seconds
-// Scroll speed ramps from BASE_SPEED → MAX_SPEED over the game duration
-// giving casual players an easy start and competitive players a real challenge
+const GAME_DURATION = 45;
 const BASE_SCROLL_SPEED = 1.5;
 const MAX_SCROLL_SPEED = 3.2;
+const GAME_EMOJI = '🌬️';
+const GAME_TITLE = 'Breath Rider';
 
-// ─── SPRITE CACHE ─────────────────────────────────────────────────────────────
-const _spriteCache = new Map<string, HTMLImageElement>();
-function _loadSprite(src: string): HTMLImageElement {
-  if (_spriteCache.has(src)) return _spriteCache.get(src)!;
-  const img = new Image();
-  img.src = src;
-  _spriteCache.set(src, img);
-  return img;
+interface Signals { score: number; gapsCleared: number; collisions: number; maxStreak: number; streakCurrent: number; highestCombo: number; }
+function getPersonality(sig: Signals): string {
+  if (sig.gapsCleared >= 15 && sig.collisions <= 2) return 'Wind Rider 🌪️';
+  if (sig.gapsCleared >= 10) return 'Breath Master 🌬️';
+  if (sig.collisions <= 1) return 'Precision Flier ✈️';
+  return 'Gust Learner 🌱';
 }
-if (typeof window !== 'undefined') {
-  _loadSprite('/sprites/breath-rider/bird.svg');
-  // pipe.svg reserved for future pipe-style obstacles; spikes currently drawn procedurally
-}
+type Phase = 'start' | 'countdown' | 'playing' | 'done';
 
-type GameState = 'start' | 'requesting' | 'countdown' | 'playing' | 'done';
-interface BehaviorData { breathVariance: number; avgAltitude: number; coinsCollected: number; spikeCollisions: number; }
-interface Coin { x: number; y: number; collected: boolean; floatY: number; floatT: number; spawnX: number; }
-interface Spike { x: number; top: boolean; }
-interface FloatText { x: number; y: number; t: number; }
-interface PulseRing { t: number; maxR: number; }
-interface CoinParticle { x: number; y: number; vx: number; vy: number; t: number; }
-
-function hexToRgbStr(hex: string): string {
-  const c = hex.replace('#', '');
-  const r = parseInt(c.substring(0, 2), 16);
-  const g = parseInt(c.substring(2, 4), 16);
-  const b = parseInt(c.substring(4, 6), 16);
-  return `${r},${g},${b}`;
+interface Obstacle { mesh: THREE.Mesh; topMesh: THREE.Mesh; gapY: number; z: number; passed: boolean; }
+interface GS {
+  running: boolean; timeLeft: number; sig: Signals;
+  renderer: THREE.WebGLRenderer | null; scene: THREE.Scene | null;
+  camera: THREE.PerspectiveCamera | null; animId: number;
+  birdMesh: THREE.Group | null; birdY: number; birdVY: number;
+  obstacles: Obstacle[]; scrollZ: number; scrollSpeed: number;
+  micLevel: number; prevMicLevel: number;
+  micRef: { stream: MediaStream; analyser: AnalyserNode; data: Uint8Array } | null;
+  particles: Array<{ mesh: THREE.Mesh; vx: number; vy: number; life: number }>;
+  frame: number; gameElapsed: number;
+  stopMusic: (() => void) | null;
+  intervalId: ReturnType<typeof setInterval> | null;
+  resizeCleanup: (() => void) | null;
 }
 
-function getProfile(b: BehaviorData): string {
-  // Steady: very calm breather, almost no spike collisions
-  if (b.breathVariance < 12 && b.spikeCollisions <= 1) return 'Steady 🧘';
-  // Guardian: avoids all danger, protective instinct
-  if (b.spikeCollisions === 0) return 'Guardian 🛡️';
-  // Sage: wise navigator, high coin collection
-  if (b.coinsCollected >= 9 && b.breathVariance <= 30) return 'Sage 🔮';
-  // Nurturer: gentle breather, flies in the safe middle zone
-  if (b.breathVariance >= 10 && b.breathVariance <= 28 && b.avgAltitude >= 35 && b.avgAltitude <= 65) return 'Nurturer 🌿';
-  // Harmonizer: finds their own rhythm across different styles
-  return 'Harmonizer 🌊';
+function makeBird(): THREE.Group {
+  const g = new THREE.Group();
+  const body = new THREE.Mesh(
+    new THREE.SphereGeometry(0.25, 12, 8),
+    new THREE.MeshStandardMaterial({ color: 0xfbbf24, emissive: 0xfbbf24, emissiveIntensity: 0.3, roughness: 0.3 })
+  );
+  g.add(body);
+  const wingL = new THREE.Mesh(
+    new THREE.BoxGeometry(0.6, 0.08, 0.3),
+    new THREE.MeshStandardMaterial({ color: 0xf97316, roughness: 0.4 })
+  );
+  wingL.position.set(-0.4, 0.1, 0);
+  wingL.rotation.z = 0.3;
+  g.add(wingL);
+  const wingR = wingL.clone();
+  wingR.position.x = 0.4;
+  wingR.rotation.z = -0.3;
+  g.add(wingR);
+  const beak = new THREE.Mesh(
+    new THREE.ConeGeometry(0.06, 0.2, 6),
+    new THREE.MeshStandardMaterial({ color: 0xff6600 })
+  );
+  beak.rotation.z = -Math.PI / 2;
+  beak.position.set(0.28, 0.05, 0);
+  g.add(beak);
+  return g;
 }
 
-export default function BreathRider() {
+export default function BreathRiderGame() {
   const theme = useBrandTheme();
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const stopMusicRef = useRef<(() => void) | null>(null);
-  const stateRef = useRef({
-    charY: 0, charX: 0,
-    trail: [] as { x: number; y: number }[],
-    coins: [] as Coin[], spikes: [] as Spike[],
-    floatTexts: [] as FloatText[],
-    altitudeSamples: [] as number[], volumeSamples: [] as number[],
-    coinsCollected: 0, spikeCollisions: 0,
-    spikeLastHit: [] as number[],
-    stream: null as MediaStream | null,
-    analyser: null as AnalyserNode | null,
-    audioCtx: null as AudioContext | null,
-    animId: 0, timerIntervalId: null as ReturnType<typeof setInterval> | null,
-    timeLeft: 45, running: false, canvasW: 0, canvasH: 0,
-    accentColor: '#3b82f6',
-    accentRgb: '59,130,246',
-    usingTouchFallback: false,
-    touchVolume: 0,
-    touchCleanup: null as (() => void) | null,
-    spikeFlashUntil: 0,
-    pulseRings: [] as PulseRing[],
-    coinParticles: [] as CoinParticle[],
-    lastBreathVol: 0,
-    streak: 0,
-    lastNearMissScore: -1,
-    nearMissPending: false,
-    streakNeedsReset: false,
+  const mountRef = useRef<HTMLDivElement>(null);
+  const stateRef = useRef<GS>({
+    running: false, timeLeft: GAME_DURATION,
+    sig: { score: 0, gapsCleared: 0, collisions: 0, maxStreak: 0, streakCurrent: 0, highestCombo: 0 },
+    renderer: null, scene: null, camera: null, animId: 0,
+    birdMesh: null, birdY: 0, birdVY: 0,
+    obstacles: [], scrollZ: 0, scrollSpeed: BASE_SCROLL_SPEED,
+    micLevel: 0, prevMicLevel: 0, micRef: null, particles: [],
+    frame: 0, gameElapsed: 0,
+    stopMusic: null, intervalId: null, resizeCleanup: null,
   });
-
-  // DOM ref for near-miss timeout tracking
-  const nearMissTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const [gameState, setGameState] = useState<GameState>('start');
-  const [showInstructions, setShowInstructions] = useState(true);
-  const [timeLeft, setTimeLeft] = useState(45);
-  const [score, setScore] = useState(0);
-  const [behavior, setBehavior] = useState<BehaviorData | null>(null);
-  const [playerName, setPlayerName]   = useState('');
-  const [playerAvatar, setPlayerAvatar] = useState('🎮');
-  const { pops, triggerPop } = useScorePop();
-  const prevScoreRef = useRef(0);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => {
-    const numScore = typeof score === 'number' ? score : 0;
-    if (numScore > prevScoreRef.current) {
-      // Score batched with 1s timer — pop reflects coins collected in that second
-      triggerPop(`+${numScore - prevScoreRef.current}`, window.innerWidth / 2, 200);
-    }
-    prevScoreRef.current = numScore;
-  }, [score]); // triggerPop is stable
+  const [phase, setPhase] = useState<Phase>('start');
+  const [timeLeft, setTimeLeft] = useState(GAME_DURATION);
+  const [scoreDisplay, setScoreDisplay] = useState(0);
+  const [finalSig, setFinalSig] = useState<Signals | null>(null);
   const playerSessionRef = useRef<PlayerSession | null>(null);
-  const [nearMissMsg, setNearMissMsg] = useState(false);
-  const [isNewBest, setIsNewBest] = useState(false);
-  const [streak, setStreak] = useState(0);
 
-  const getVolume = useCallback((): number => {
-    const s = stateRef.current;
-    if (s.usingTouchFallback) return s.touchVolume;
-    if (!s.analyser) return 0;
-    const data = new Uint8Array(s.analyser.frequencyBinCount);
-    s.analyser.getByteFrequencyData(data);
-    const sumSq = data.reduce((acc, v) => acc + v * v, 0);
-    return Math.min(100, (Math.sqrt(sumSq / data.length) / 128) * 100);
-  }, []);
-
-
-
-  const endGame = useCallback((capturedTheme: typeof theme) => {
+  const endGame = useCallback(() => {
     const s = stateRef.current;
     s.running = false;
     cancelAnimationFrame(s.animId);
-    if (s.timerIntervalId) clearInterval(s.timerIntervalId);
-    if (s.stream) s.stream.getTracks().forEach(t => t.stop());
-    if (s.audioCtx) s.audioCtx.close().catch(() => {/* ignore */});
-    if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
-    if (s.touchCleanup) { s.touchCleanup(); s.touchCleanup = null; }
-    sfx.success();
-    hapticVictory();
-    playVictoryFanfare();
-    const volAvg = s.volumeSamples.length > 0 ? s.volumeSamples.reduce((a,b)=>a+b,0)/s.volumeSamples.length : 0;
-    const variance = s.volumeSamples.length > 0
-      ? Math.sqrt(s.volumeSamples.reduce((a,v)=>a+(v-volAvg)**2,0)/s.volumeSamples.length) : 0;
-    const altAvg = s.altitudeSamples.length > 0 ? s.altitudeSamples.reduce((a,b)=>a+b,0)/s.altitudeSamples.length : 0;
-    const bData: BehaviorData = {
-      breathVariance: Math.round(variance),
-      avgAltitude: Math.round((1 - altAvg / (s.canvasH || 1)) * 100),
-      coinsCollected: s.coinsCollected,
-      spikeCollisions: s.spikeCollisions,
-    };
-    // Personal best
+    if (s.intervalId) { clearInterval(s.intervalId); s.intervalId = null; }
+    if (s.stopMusic) { s.stopMusic(); s.stopMusic = null; }
+    if (s.micRef) { s.micRef.stream.getTracks().forEach(t => t.stop()); s.micRef = null; }
+    s.resizeCleanup?.();
+    if (s.renderer) { s.renderer.dispose(); s.renderer = null; }
+    if (mountRef.current) mountRef.current.innerHTML = '';
     try {
       const prev = parseInt(localStorage.getItem(PB_KEY) || '0', 10);
-      if (bData.coinsCollected > prev) {
-        localStorage.setItem(PB_KEY, String(bData.coinsCollected));
-        setIsNewBest(true);
-      }
-    } catch { /* ignore */ }
-    setBehavior(bData);
-    setGameState('done');
-    postWebhook(capturedTheme, 'breath-rider', { score: String(bData.coinsCollected), personality: getProfile(bData), signals: bData }, playerSessionRef.current);
+      if (s.sig.score > prev) localStorage.setItem(PB_KEY, String(s.sig.score));
+    } catch { /* */ }
+    setFinalSig({ ...s.sig });
+    setPhase('done'); hapticVictory(); playVictoryFanfare();
   }, []);
 
-  const startLoop = useCallback(() => {
+  const spawnObstacle = useCallback((scene: THREE.Scene, s: GS) => {
+    const gapY = (Math.random() - 0.5) * 3;
+    const gapH = 1.8;
+    const wallColor = 0x1e40af;
+    const botH = 4 + gapY - gapH / 2;
+    const topH = 4 - gapY - gapH / 2;
+
+    const botMesh = new THREE.Mesh(
+      new THREE.BoxGeometry(0.7, Math.max(0.1, botH), 0.5),
+      new THREE.MeshStandardMaterial({ color: wallColor, emissive: wallColor, emissiveIntensity: 0.2, roughness: 0.4 })
+    );
+    botMesh.position.set(0, -4 + botH / 2, s.scrollZ - 20);
+    scene.add(botMesh);
+
+    const topMesh = new THREE.Mesh(
+      new THREE.BoxGeometry(0.7, Math.max(0.1, topH), 0.5),
+      new THREE.MeshStandardMaterial({ color: wallColor, emissive: wallColor, emissiveIntensity: 0.2, roughness: 0.4 })
+    );
+    topMesh.position.set(0, 4 - topH / 2, s.scrollZ - 20);
+    scene.add(topMesh);
+
+    s.obstacles.push({ mesh: botMesh, topMesh, gapY, z: s.scrollZ - 20, passed: false });
+  }, []);
+
+  const startLoop = useCallback(async () => {
+    const mount = mountRef.current;
+    if (!mount) return;
     const s = stateRef.current;
-    s.altitudeSamples = []; s.volumeSamples = []; s.coinsCollected = 0; s.spikeCollisions = 0;
-    s.timeLeft = 45; s.running = true; s.trail = []; s.floatTexts = [];
-    s.pulseRings = []; s.coinParticles = []; s.lastBreathVol = 0;
-    s.streak = 0; s.lastNearMissScore = -1;
-    s.nearMissPending = false; s.streakNeedsReset = false;
-    setTimeLeft(45); setScore(0); setStreak(0); setNearMissMsg(false); setIsNewBest(false);
-    setGameState('playing');
-    stopMusicRef.current = startMusic('calm');
-    const capturedTheme = theme;
-
-    const canvas = canvasRef.current; if (!canvas) return;
-    const ctx = canvas.getContext('2d'); if (!ctx) return;
     const W = window.innerWidth, H = window.innerHeight;
-    s.canvasW = W; s.canvasH = H;
-    s.charX = W * 0.18; s.charY = H * 0.5;
 
-    if (s.usingTouchFallback) {
-      const onDown = () => { s.touchVolume = 60; };
-      const onUp   = () => { s.touchVolume = 0; };
-      canvas.addEventListener('pointerdown', onDown);
-      canvas.addEventListener('pointerup',   onUp);
-      canvas.addEventListener('pointerleave', onUp);
-      s.touchCleanup = () => {
-        canvas.removeEventListener('pointerdown', onDown);
-        canvas.removeEventListener('pointerup',   onUp);
-        canvas.removeEventListener('pointerleave', onUp);
-      };
+    // Mic
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const ac = new AudioContext();
+      const analyser = ac.createAnalyser();
+      analyser.fftSize = 512;
+      ac.createMediaStreamSource(stream).connect(analyser);
+      s.micRef = { stream, analyser, data: new Uint8Array(analyser.frequencyBinCount) };
+    } catch { /* fallback */ }
+
+    s.running = true; s.timeLeft = GAME_DURATION; s.frame = 0; s.gameElapsed = 0;
+    s.sig = { score: 0, gapsCleared: 0, collisions: 0, maxStreak: 0, streakCurrent: 0, highestCombo: 0 };
+    s.birdY = 0; s.birdVY = 0; s.obstacles = []; s.scrollZ = 0;
+    s.micLevel = 0; s.particles = [];
+    setScoreDisplay(0); setTimeLeft(GAME_DURATION); setPhase('playing');
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(W, H);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setClearColor(0x0a0a2e);
+    mount.innerHTML = '';
+    mount.appendChild(renderer.domElement);
+    s.renderer = renderer;
+
+    const scene = new THREE.Scene();
+    scene.fog = new THREE.FogExp2(0x0a0a2e, 0.02);
+    s.scene = scene;
+    const camera = new THREE.PerspectiveCamera(65, W / H, 0.1, 100);
+    camera.position.set(0, 0, 6);
+    s.camera = camera;
+
+    scene.add(new THREE.AmbientLight(0x223366, 2.5));
+    const sunLight = new THREE.PointLight(0xfbbf24, 2, 25);
+    sunLight.position.set(0, 3, 4);
+    scene.add(sunLight);
+
+    // Scrolling background clouds
+    const cloudPositions: THREE.Mesh[] = [];
+    for (let i = 0; i < 15; i++) {
+      const cloud = new THREE.Mesh(
+        new THREE.SphereGeometry(0.5 + Math.random() * 0.5, 8, 6),
+        new THREE.MeshBasicMaterial({ color: 0x334466, transparent: true, opacity: 0.3 })
+      );
+      cloud.position.set((Math.random() - 0.5) * 8, (Math.random() - 0.5) * 5, -5 - Math.random() * 10);
+      scene.add(cloud);
+      cloudPositions.push(cloud);
     }
 
-    s.coins = Array.from({ length: 10 }, (_, i) => ({
-      x: W + 80 + i * (W * 0.12 + 20),
-      y: H * 0.15 + Math.random() * H * 0.7,
-      collected: false, floatY: 0, floatT: Math.random() * Math.PI * 2,
-      spawnX: W + 80 + i * (W * 0.12 + 20),
-    }));
-    s.spikes = Array.from({ length: 8 }, (_, i) => ({
-      x: W + 120 + i * (W * 0.15 + 25),
-      top: Math.random() > 0.5,
-    }));
-    s.spikeLastHit = new Array(8).fill(0);
+    // Star field
+    const sPos = new Float32Array(400 * 3);
+    for (let i = 0; i < 400; i++) {
+      sPos[i * 3] = (Math.random() - 0.5) * 30;
+      sPos[i * 3 + 1] = (Math.random() - 0.5) * 15;
+      sPos[i * 3 + 2] = -12 - Math.random() * 15;
+    }
+    const sGeo = new THREE.BufferGeometry();
+    sGeo.setAttribute('position', new THREE.BufferAttribute(sPos, 3));
+    scene.add(new THREE.Points(sGeo, new THREE.PointsMaterial({ color: 0xaaccff, size: 0.05, transparent: true, opacity: 0.6 })));
 
-    s.timerIntervalId = setInterval(() => {
+    // Bird
+    const bird = makeBird();
+    bird.position.set(-2, 0, 0);
+    scene.add(bird);
+    s.birdMesh = bird;
+
+    s.stopMusic = startMusic('drive');
+    const handleResize = () => {
+      const w = window.innerWidth, h = window.innerHeight;
+      renderer.setSize(w, h); camera.aspect = w / h; camera.updateProjectionMatrix();
+    };
+    window.addEventListener('resize', handleResize);
+    s.resizeCleanup = () => window.removeEventListener('resize', handleResize);
+
+    // Initial obstacles
+    for (let i = 0; i < 3; i++) {
+      s.scrollZ = -i * 6;
+      spawnObstacle(scene, s);
+    }
+    s.scrollZ = 0;
+
+    s.intervalId = setInterval(() => {
       if (!s.running) return;
-      s.timeLeft--;
-      setTimeLeft(s.timeLeft);
-      // Batch React state updates with the 1s tick (avoids setState inside rAF)
-      setScore(s.coinsCollected);
-      if (s.streakNeedsReset) {
-        s.streakNeedsReset = false;
-        setStreak(0);
-      } else {
-        setStreak(s.streak);
-      }
-      if (s.nearMissPending) {
-        s.nearMissPending = false;
-        setNearMissMsg(true);
-        if (nearMissTimeoutRef.current) clearTimeout(nearMissTimeoutRef.current);
-        nearMissTimeoutRef.current = setTimeout(() => setNearMissMsg(false), 1500);
-      }
-      sfx.tick();
-      if (s.timeLeft === 10) sfx.warning();
-      if (s.timeLeft <= 5 && s.timeLeft > 0) playUrgentTick(s.timeLeft);
-      if (s.timeLeft <= 0) endGame(capturedTheme);
+      s.timeLeft--; setTimeLeft(s.timeLeft);
+      const prog = 1 - s.timeLeft / GAME_DURATION;
+      s.scrollSpeed = BASE_SCROLL_SPEED + prog * (MAX_SCROLL_SPEED - BASE_SCROLL_SPEED);
+      if (s.timeLeft <= 0) { sfx.fail(); endGame(); }
     }, 1000);
 
     const loop = () => {
       if (!s.running) return;
-      // Dynamic difficulty: scroll speed ramps linearly over the game duration
-      const gameProgress = Math.max(0, Math.min(1, (GAME_DURATION - s.timeLeft) / GAME_DURATION));
-      const scrollSpeed = BASE_SCROLL_SPEED + (MAX_SCROLL_SPEED - BASE_SCROLL_SPEED) * gameProgress;
-      const vol = getVolume();
-      s.volumeSamples.push(vol);
+      s.frame++;
+      const dt = 1 / 60;
 
-      if (vol > 28 && s.lastBreathVol <= 28) {
-        s.pulseRings.push({ t: Date.now(), maxR: 22 + vol * 0.9 });
+      // Mic
+      let breathLevel = 0.04 + Math.sin(Date.now() / 2000) * 0.03; // fallback
+      if (s.micRef) {
+        const { analyser, data } = s.micRef;
+        analyser.getByteTimeDomainData(data as Uint8Array<ArrayBuffer>);
+        let sum = 0;
+        for (const v of data) sum += Math.abs(v - 128);
+        const raw = sum / data.length / 128;
+        breathLevel = s.micLevel * 0.7 + raw * 0.3;
+        s.micLevel = breathLevel;
       }
-      s.lastBreathVol = vol;
 
-      const targetY = s.charY - (vol / 100) * H * 0.07 + H * 0.018;
-      s.charY += (targetY - s.charY) * 0.14;
-      s.charY = Math.max(H * 0.07, Math.min(H * 0.93, s.charY));
-      s.altitudeSamples.push(s.charY);
+      // Bird physics: breath = lift
+      const lift = Math.max(0, breathLevel - 0.02) * 15;
+      s.birdVY += (lift - 9.8 * dt * 0.15);
+      s.birdVY *= 0.92;
+      s.birdY += s.birdVY * dt;
+      s.birdY = Math.max(-4, Math.min(4, s.birdY));
+      if (s.birdMesh) {
+        s.birdMesh.position.y = s.birdY;
+        // Wing flap
+        const wing = s.birdMesh.children[1] as THREE.Mesh;
+        if (wing) wing.rotation.z = 0.3 + Math.sin(Date.now() * 0.01 + lift * 0.5) * 0.3;
+        const wingR2 = s.birdMesh.children[2] as THREE.Mesh;
+        if (wingR2) wingR2.rotation.z = -0.3 - Math.sin(Date.now() * 0.01 + lift * 0.5) * 0.3;
+        // Bird tilt
+        s.birdMesh.rotation.z = s.birdVY * 0.15;
+        const mat = (s.birdMesh.children[0] as THREE.Mesh).material as THREE.MeshStandardMaterial;
+        mat.emissiveIntensity = 0.2 + breathLevel * 2;
+      }
 
-      const bgGrad = ctx.createRadialGradient(W * 0.5, H * 0.3, 0, W * 0.5, H * 0.7, Math.max(W, H) * 0.9);
-      bgGrad.addColorStop(0, '#071e3a');
-      bgGrad.addColorStop(0.5, '#0a1428');
-      bgGrad.addColorStop(1, '#040810');
-      ctx.fillStyle = bgGrad;
-      ctx.fillRect(0, 0, W, H);
+      // Scroll obstacles
+      s.scrollZ += s.scrollSpeed * dt;
+      // Spawn new if needed
+      const lastObs = s.obstacles[s.obstacles.length - 1];
+      if (!lastObs || (s.scrollZ - lastObs.z) > 6) {
+        spawnObstacle(scene, s);
+      }
 
-      // Vignette
-      const brVig = ctx.createRadialGradient(W * 0.5, H * 0.5, H * 0.2, W * 0.5, H * 0.5, H * 0.85);
-      brVig.addColorStop(0, 'rgba(0,0,0,0)');
-      brVig.addColorStop(1, 'rgba(0,0,0,0.5)');
-      ctx.fillStyle = brVig;
-      ctx.fillRect(0, 0, W, H);
+      // Update obstacles
+      for (let i = s.obstacles.length - 1; i >= 0; i--) {
+        const obs = s.obstacles[i];
+        const relZ = obs.z + s.scrollZ;
+        obs.mesh.position.z = relZ;
+        obs.topMesh.position.z = relZ;
 
-      ctx.fillStyle = 'rgba(255,68,68,0.12)';
-      ctx.fillRect(0, 0, W, H * 0.07);
-      ctx.fillRect(0, H * 0.93, W, H * 0.07);
-
-      s.spikes.forEach((spike, si) => {
-        spike.x -= scrollSpeed;
-        if (spike.x < -20) {
-          spike.x = W + 20 + Math.random() * W * 0.5;
-          spike.top = Math.random() > 0.5;
+        // Passed check
+        if (!obs.passed && relZ > 1) {
+          obs.passed = true;
+          s.sig.gapsCleared++;
+          s.sig.streakCurrent++;
+          if (s.sig.streakCurrent > s.sig.maxStreak) s.sig.maxStreak = s.sig.streakCurrent;
+          s.sig.score += 5 * (s.sig.streakCurrent >= 3 ? 2 : 1);
+          setScoreDisplay(s.sig.score);
+          sfx.collect?.(); hapticScore?.();
+          playScoreHit('default', s.sig.score);
         }
-        ctx.save();
-        ctx.shadowBlur = 8; ctx.shadowColor = '#ef4444';
-        ctx.fillStyle = '#ef4444';
-        ctx.beginPath();
-        if (spike.top) { ctx.moveTo(spike.x-14,0); ctx.lineTo(spike.x+14,0); ctx.lineTo(spike.x,44); }
-        else           { ctx.moveTo(spike.x-14,H); ctx.lineTo(spike.x+14,H); ctx.lineTo(spike.x,H-44); }
-        ctx.fill(); ctx.restore();
 
-        const tipY = spike.top ? 22 : H - 22;
-        const dist = Math.sqrt((s.charX-spike.x)**2 + (s.charY-tipY)**2);
-        const now = Date.now();
-        if (dist < 32 && now - s.spikeLastHit[si] > 1000) {
-          s.spikeCollisions++; s.spikeLastHit[si] = now;
-          s.charY = H * 0.5; sfx.collision();
-          hapticFail();
-          s.streak = 0;
-          s.streakNeedsReset = true;
-          s.spikeFlashUntil = now + 180;
-        }
-      });
-
-      s.coins.forEach((coin, ci) => {
-        coin.x -= scrollSpeed;
-        if (coin.x < -30) {
-          coin.x = W + 30 + Math.random() * W * 0.6;
-          coin.y = H * 0.15 + Math.random() * H * 0.7;
-          coin.collected = false;
-          coin.floatT = Math.random() * Math.PI * 2;
-        }
-        if (coin.collected) return;
-
-        coin.floatT += 0.05;
-        coin.floatY = Math.sin(coin.floatT) * 5;
-        const cy2 = coin.y + coin.floatY;
-
-        ctx.save();
-        ctx.beginPath();
-        ctx.arc(coin.x, cy2, 16 + Math.sin(coin.floatT * 2) * 3, 0, Math.PI * 2);
-        ctx.strokeStyle = `rgba(255,204,0,${0.3 + Math.sin(coin.floatT*3)*0.2})`;
-        ctx.lineWidth = 2; ctx.stroke(); ctx.restore();
-        ctx.beginPath(); ctx.arc(coin.x, cy2, 12, 0, Math.PI * 2);
-        ctx.fillStyle = '#fbbf24'; ctx.fill();
-        ctx.strokeStyle = '#f59e0b'; ctx.lineWidth = 2; ctx.stroke();
-
-        const dist = Math.sqrt((s.charX-coin.x)**2 + (s.charY-cy2)**2);
-        if (dist < 28) {
-          s.coins[ci].collected = true; s.coinsCollected++;
-          sfx.collect();
-          hapticScore();
-          playScoreHit('default', 10);
-          s.floatTexts.push({ x: coin.x, y: cy2, t: Date.now() });
-          for (let pi = 0; pi < 8; pi++) {
-            const angle = (Math.PI * 2 * pi) / 8 + Math.random() * 0.4;
-            const speed = 1.8 + Math.random() * 2.5;
-            s.coinParticles.push({ x: coin.x, y: cy2, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed, t: Date.now() });
-          }
-
-
-          // Streak tracking
-          s.streak++;
-          if (s.streak >= 3) playComboSfx(s.streak);
-
-          // Near-miss: score is within 10% of next milestone (every 5 coins)
-          const nextMilestone = Math.ceil(s.coinsCollected / 5) * 5;
-          const distToMilestone = nextMilestone - s.coinsCollected;
-          if (distToMilestone === 1 && s.lastNearMissScore !== s.coinsCollected) {
-            s.lastNearMissScore = s.coinsCollected;
-            playNearMiss();
-            s.nearMissPending = true;
+        // Collision check (bird at x=-2, y=birdY)
+        if (relZ > -1 && relZ < 0.5) {
+          const birdY = s.birdY;
+          const gapTop = obs.gapY + 0.9;
+          const gapBot = obs.gapY - 0.9;
+          if (birdY > gapTop || birdY < gapBot) {
+            // Collision!
+            if (s.sig.streakCurrent > 0) {
+              s.sig.collisions++;
+              s.sig.streakCurrent = 0;
+              sfx.collision?.(); haptic([50]);
+              // Flash
+              renderer.setClearColor(new THREE.Color(0.2, 0.03, 0.03));
+              setTimeout(() => { renderer.setClearColor(0x0a0a2e); }, 150);
+              // Push bird
+              s.birdVY = -1.5;
+            }
           }
         }
-      });
 
-      s.floatTexts = s.floatTexts.filter(ft => Date.now() - ft.t < 700);
-      s.floatTexts.forEach(ft => {
-        const age = (Date.now() - ft.t) / 700;
-        ctx.globalAlpha = 1 - age;
-        ctx.fillStyle = '#fbbf24';
-        ctx.font = 'bold 18px "Space Grotesk", sans-serif';
-        ctx.fillText('+1', ft.x - 8, ft.y - age * 40);
-        ctx.globalAlpha = 1;
-      });
-
-      if (Date.now() < s.spikeFlashUntil) {
-        const flashAlpha = 0.22 * (1 - (Date.now() - (s.spikeFlashUntil - 180)) / 180);
-        ctx.save();
-        ctx.fillStyle = `rgba(239,68,68,${Math.max(0, flashAlpha)})`;
-        ctx.fillRect(0, 0, W, H);
-        ctx.restore();
-      }
-
-      s.pulseRings = s.pulseRings.filter(ring => Date.now() - ring.t < 600);
-      s.pulseRings.forEach(ring => {
-        const age = (Date.now() - ring.t) / 600;
-        const r = 18 + (ring.maxR - 18) * age;
-        const opacity = 0.5 * (1 - age);
-        ctx.beginPath();
-        ctx.arc(s.charX, s.charY, r, 0, Math.PI * 2);
-        ctx.strokeStyle = `rgba(${s.accentRgb},${opacity})`;
-        ctx.lineWidth = 2 * (1 - age * 0.5);
-        ctx.stroke();
-      });
-
-      s.coinParticles = s.coinParticles.filter(p => Date.now() - p.t < 420);
-      s.coinParticles.forEach(p => {
-        const age = (Date.now() - p.t) / 420;
-        p.x += p.vx;
-        p.y += p.vy;
-        p.vy += 0.12;
-        const r = 4 * (1 - age);
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, Math.max(0.5, r), 0, Math.PI * 2);
-        ctx.fillStyle = `rgba(251,191,36,${1 - age})`;
-        ctx.fill();
-      });
-
-      s.trail.push({ x: s.charX, y: s.charY });
-      if (s.trail.length > 6) s.trail.shift();
-      s.trail.forEach((pos, i) => {
-        ctx.beginPath(); ctx.arc(pos.x, pos.y, 10 * (i / 6), 0, Math.PI * 2);
-        ctx.fillStyle = `rgba(${s.accentRgb},${(i/6)*0.4})`; ctx.fill();
-      });
-
-      ctx.save();
-      ctx.shadowBlur = 20; ctx.shadowColor = s.accentColor;
-      // Volume pulse ring
-      ctx.beginPath(); ctx.arc(s.charX, s.charY, 18 + vol * 0.25, 0, Math.PI * 2);
-      ctx.fillStyle = `rgba(${s.accentRgb},${vol/400})`; ctx.fill();
-      // Bird sprite
-      const _brBird = _loadSprite('/sprites/breath-rider/bird.svg');
-      if (_brBird.complete && _brBird.naturalWidth > 0) {
-        ctx.drawImage(_brBird, s.charX - 28, s.charY - 22, 56, 44);
-      } else {
-        ctx.beginPath(); ctx.arc(s.charX, s.charY, 18, 0, Math.PI * 2);
-        ctx.fillStyle = s.accentColor; ctx.fill();
-        ctx.strokeStyle = `rgba(${s.accentRgb},0.6)`; ctx.lineWidth = 2; ctx.stroke();
-      }
-      ctx.restore();
-
-      // Breath level indicator bar — always shown for AC-3 accessibility requirement
-      // Shows players that mic input is being received (critical for noisy venues)
-      if (!s.usingTouchFallback) {
-        const barW = 80;
-        const barH = 6;
-        const barX = W / 2 - barW / 2;
-        const barY = H - 28;
-        const fillW = (vol / 100) * barW;
-        // Track bg
-        ctx.save();
-        ctx.globalAlpha = 0.25;
-        ctx.fillStyle = '#ffffff';
-        ctx.beginPath();
-        ctx.roundRect?.(barX, barY, barW, barH, 3) ?? ctx.fillRect(barX, barY, barW, barH);
-        ctx.fill();
-        // Fill: green when active, accent when quiet
-        ctx.globalAlpha = vol > 20 ? 0.85 : 0.5;
-        ctx.fillStyle = vol > 20 ? '#4ade80' : `rgba(${s.accentRgb},0.6)`;
-        if (fillW > 0) {
-          ctx.beginPath();
-          ctx.roundRect?.(barX, barY, fillW, barH, 3) ?? ctx.fillRect(barX, barY, fillW, barH);
-          ctx.fill();
+        // Remove far behind
+        if (relZ > 8) {
+          scene.remove(obs.mesh); obs.mesh.geometry.dispose();
+          scene.remove(obs.topMesh); obs.topMesh.geometry.dispose();
+          s.obstacles.splice(i, 1);
         }
-        // Mic icon — drawn with canvas paths (no emoji allowed in gameplay UI)
-        const mx = W / 2, my = barY + barH + 13;
-        ctx.globalAlpha = 0.35;
-        ctx.strokeStyle = '#ffffff';
-        ctx.lineWidth = 1.2;
-        ctx.lineCap = 'round';
-        // Mic body (rounded rectangle)
-        ctx.beginPath();
-        ctx.roundRect?.(mx - 3, my - 7, 6, 8, 2) ?? (() => { ctx.rect(mx - 3, my - 7, 6, 8); })();
-        ctx.stroke();
-        // Mic stand arc
-        ctx.beginPath();
-        ctx.arc(mx, my + 1, 4.5, Math.PI, 2 * Math.PI, true);
-        ctx.stroke();
-        // Stand vertical line
-        ctx.beginPath();
-        ctx.moveTo(mx, my + 5.5);
-        ctx.lineTo(mx, my + 7);
-        ctx.stroke();
-        // Stand base
-        ctx.beginPath();
-        ctx.moveTo(mx - 3, my + 7);
-        ctx.lineTo(mx + 3, my + 7);
-        ctx.stroke();
-        ctx.restore();
       }
 
-      if (s.usingTouchFallback) {
-        ctx.save();
-        ctx.globalAlpha = 0.45;
-        ctx.fillStyle = '#ffffff';
-        ctx.font = '16px "Space Grotesk", sans-serif';
-        ctx.textAlign = 'center';
-        ctx.fillText('Hold screen to fly', W / 2, H - 20);
-        ctx.textAlign = 'left';
-        ctx.restore();
+      // Trail particles
+      if (s.birdMesh && s.frame % 3 === 0) {
+        const pm = new THREE.Mesh(
+          new THREE.SphereGeometry(0.05, 4, 4),
+          new THREE.MeshBasicMaterial({ color: 0xfbbf24, transparent: true, opacity: 0.8 })
+        );
+        pm.position.copy(s.birdMesh.position);
+        pm.position.x += (Math.random() - 0.5) * 0.1;
+        scene.add(pm);
+        s.particles.push({ mesh: pm, vx: -0.02, vy: (Math.random() - 0.5) * 0.02, life: 15 });
+      }
+      for (let i = s.particles.length - 1; i >= 0; i--) {
+        const p = s.particles[i];
+        p.mesh.position.x += p.vx;
+        p.mesh.position.y += p.vy;
+        p.life--;
+        (p.mesh.material as THREE.MeshBasicMaterial).opacity = p.life / 15 * 0.6;
+        if (p.life <= 0) { scene.remove(p.mesh); s.particles.splice(i, 1); }
       }
 
+      // Cloud scroll
+      cloudPositions.forEach(c => {
+        c.position.z += dt * 0.3;
+        if (c.position.z > 2) c.position.z = -15;
+      });
+
+      renderer.render(scene, camera);
       s.animId = requestAnimationFrame(loop);
     };
     s.animId = requestAnimationFrame(loop);
-  }, [getVolume, endGame, theme]);
+  }, [endGame, spawnObstacle]);
+
+  useEffect(() => () => {
+    const s = stateRef.current;
+    s.running = false; cancelAnimationFrame(s.animId);
+    if (s.intervalId) clearInterval(s.intervalId);
+    if (s.stopMusic) s.stopMusic();
+    if (s.micRef) s.micRef.stream.getTracks().forEach(t => t.stop());
+    s.resizeCleanup?.();
+    if (s.renderer) { s.renderer.dispose(); s.renderer = null; }
+  }, []);
 
   const handleStart = useCallback(async (name: string, avatar: string) => {
-    setPlayerName(name);
-    setPlayerAvatar(avatar);
     playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar);
-    initAudio(); sfx.click();
-    setGameState('requesting');
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const audioCtx = new AudioContext();
-      const source = audioCtx.createMediaStreamSource(stream);
-      const analyser = audioCtx.createAnalyser();
-      analyser.fftSize = 256; analyser.smoothingTimeConstant = 0.3;
-      source.connect(analyser);
-      const s = stateRef.current;
-      s.stream = stream; s.analyser = analyser; s.audioCtx = audioCtx;
-      s.usingTouchFallback = false;
-      setGameState('countdown');
-    } catch {
-      const s = stateRef.current;
-      s.stream = null; s.analyser = null; s.audioCtx = null;
-      s.usingTouchFallback = true;
-      s.touchVolume = 0;
-      setGameState('countdown');
-    }
+    await initAudio(); setPhase('countdown');
   }, []);
-
-  const handlePlayAgain = useCallback(async () => {
-    if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
-    // Instant replay: skip the start/registration screen and go directly to countdown.
-    // Re-request mic if possible; fall back to touch if denied.
-    const s = stateRef.current;
-    s.stream = null; s.analyser = null; s.audioCtx = null;
-    setGameState('requesting');
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const audioCtx = new AudioContext();
-      const source = audioCtx.createMediaStreamSource(stream);
-      const analyser = audioCtx.createAnalyser();
-      analyser.fftSize = 256; analyser.smoothingTimeConstant = 0.3;
-      source.connect(analyser);
-      s.stream = stream; s.analyser = analyser; s.audioCtx = audioCtx;
-      s.usingTouchFallback = false;
-      setGameState('countdown');
-    } catch {
-      s.stream = null; s.analyser = null; s.audioCtx = null;
-      s.usingTouchFallback = true;
-      s.touchVolume = 0;
-      setGameState('countdown');
-    }
-  
-    prevScoreRef.current = 0;
+  const handlePlayAgain = useCallback(() => {
+    setPhase('start'); setScoreDisplay(0); setTimeLeft(GAME_DURATION); setFinalSig(null);
   }, []);
-
-  useEffect(() => {
-    const canvas = canvasRef.current; if (!canvas) return;
-    const dpr = window.devicePixelRatio || 1;
-    canvas.width  = window.innerWidth  * dpr;
-    canvas.height = window.innerHeight * dpr;
-    canvas.style.width  = window.innerWidth  + 'px';
-    canvas.style.height = window.innerHeight + 'px';
-    const ctx2 = canvas.getContext('2d');
-    if (ctx2) ctx2.setTransform(dpr, 0, 0, dpr, 0, 0);
-    const onResize = () => {
-      const d = window.devicePixelRatio || 1;
-      canvas.width  = window.innerWidth  * d;
-      canvas.height = window.innerHeight * d;
-      canvas.style.width  = window.innerWidth  + 'px';
-      canvas.style.height = window.innerHeight + 'px';
-      const c2 = canvas.getContext('2d');
-      if (c2) c2.setTransform(d, 0, 0, d, 0, 0);
-    };
-    window.addEventListener('resize', onResize);
-    return () => {
-      window.removeEventListener('resize', onResize);
-      const s = stateRef.current; s.running = false;
-      cancelAnimationFrame(s.animId);
-      if (s.timerIntervalId) clearInterval(s.timerIntervalId);
-      if (s.stream) s.stream.getTracks().forEach(t => t.stop());
-      if (s.audioCtx) s.audioCtx.close().catch(()=>{/* ignore */});
-      if (stopMusicRef.current) stopMusicRef.current();
-      if (s.touchCleanup) s.touchCleanup();
-      if (nearMissTimeoutRef.current) clearTimeout(nearMissTimeoutRef.current);
-    };
-  }, []);
-
-  useEffect(() => {
-    stateRef.current.accentColor = theme.colors.accent;
-    stateRef.current.accentRgb = hexToRgbStr(theme.colors.accent);
-  }, [theme]);
-  const accent = theme.colors.accent;
 
   return (
-    <>
-      {gameState === 'start' && showInstructions && (
-        <SwipeInstructions
-          gameId="breath-rider"
-          steps={[
-            { icon: <Wind size={48} color={accent} />, title: "Breathe in", body: "Inhale slowly to rise. Exhale to descend." },
-            { icon: <Navigation size={48} color={accent} />, title: "Navigate", body: "Guide your rider through the gaps." },
-            { icon: <Mic size={48} color={accent} />, title: "Stay smooth", body: "Calm, steady breaths = better control." }
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? '#fbbf24'}>
+      {phase === 'start' && (
+        <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE}
+          description="Breathe into the mic to fly the bird through gaps. Steady breath = steady flight!"
+          ctaLabel="Allow Mic & Fly! 🌬️" accentColor={theme.colors.accent ?? '#fbbf24'} onStart={handleStart} />
+      )}
+      {phase === 'countdown' && <Countdown onComplete={startLoop} accentColor={theme.colors.accent ?? '#fbbf24'} />}
+      <div ref={mountRef} style={{
+        position: 'absolute', inset: 0, width: '100%', height: '100%',
+        display: phase === 'playing' ? 'block' : 'none', touchAction: 'none',
+      }} />
+      {phase === 'playing' && (
+        <GameHUD accentColor={theme.colors.accent ?? '#fbbf24'} items={[
+          { label: 'TIME', value: timeLeft, danger: timeLeft <= 10 },
+          { label: 'SCORE', value: scoreDisplay },
+        ]} />
+      )}
+      {phase === 'done' && finalSig && (
+        <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI}
+          score={String(finalSig.score)} personality={getPersonality(finalSig)}
+          insights={[
+            { label: 'Gaps Cleared', value: String(finalSig.gapsCleared), color: '#fbbf24' },
+            { label: 'Collisions', value: String(finalSig.collisions), color: '#ef4444' },
+            { label: 'Best Streak', value: `×${finalSig.maxStreak}`, color: '#4ade80' },
+            { label: 'Score', value: String(finalSig.score), color: '#06b6d4' },
           ]}
-          onDone={() => setShowInstructions(false)}
-        />
-      )}
-    <GameShell title="Breath Rider" emoji="" titleIcon={<Wind size={18} color="#fff" />} accentColor={accent} theme={theme}
-      background="linear-gradient(180deg, #1a6eb5 0%, #2e8fd4 20%, #7ec8e3 45%, #c8e8f5 65%, #e8f4fa 80%, #f5faff 100%)">
-      <canvas
-        ref={canvasRef}
-        style={{
-          display: gameState==='playing' ? 'block' : 'none',
-          position: 'absolute', top: 0, left: 0,
-          touchAction: 'none',
-        }}
-      />
-
-      {gameState==='playing' && (
-        <>
-          <GameHUD
-            items={[
-              { label: 'COINS', value: String(score), testId: 'score' },
-              { label: 'TIME', value: `${timeLeft}s`, danger: timeLeft <= 10, testId: 'timer' },
-            ]}
-            accentColor={accent}
-          />
-
-          {/* Near-miss message */}
-          <AnimatePresence>
-            {nearMissMsg && (
-              <motion.div
-                key="near-miss"
-                initial={{ opacity: 0, scale: 0.7 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.8, y: -20 }}
-                transition={{ duration: 0.3 }}
-                style={{
-                  position: 'fixed', top: '22%', left: '50%', transform: 'translateX(-50%)',
-                  zIndex: 80, pointerEvents: 'none',
-                  fontSize: 22, fontWeight: 800, color: '#fbbf24',
-                  textShadow: '0 0 12px #fbbf2488',
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                So close!
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </>
-      )}
-
-      {/* New best banner */}
-      <AnimatePresence>
-        {isNewBest && gameState === 'done' && (
-          <motion.div
-            key="new-best"
-            initial={{ opacity: 0, y: -20, scale: 0.8 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -20 }}
-            transition={{ duration: 0.4, delay: 0.5 }}
-            style={{
-              position: 'fixed', top: '10%', left: '50%', transform: 'translateX(-50%)',
-              zIndex: 90, pointerEvents: 'none',
-              background: 'linear-gradient(135deg, #fbbf24, #f59e0b)',
-              borderRadius: 20,
-              padding: '8px 20px',
-              fontSize: 20,
-              fontWeight: 900,
-              color: '#000',
-              whiteSpace: 'nowrap',
-              boxShadow: '0 4px 20px rgba(251,191,36,0.5)',
-              display: 'flex', alignItems: 'center', gap: 6,
-            }}
-          >
-            <Trophy size={18} color="#000" />
-            New Best!
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      <AnimatePresence mode="wait">
-        {gameState==='countdown' && (
-          <motion.div key="countdown" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-            <Countdown onComplete={startLoop} accentColor={accent} />
-          </motion.div>
-        )}
-        {gameState==='start' && (
-          <motion.div key="start" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} style={{ height: '100%' }}>
-            <GameStartScreen
-              emoji=""
-              iconNode={<Wind size={72} color={accent} />}
-              title="Breath Rider"
-              description="Blow into the mic to make the rider climb. Collect coins and avoid spikes."
-              sensorNote="Uses microphone"
-              ctaLabel="Allow Mic & Play →"
-              accentColor={accent}
-              onStart={handleStart}
-              gradient="radial-gradient(ellipse 80% 70% at 50% 30%, #061525 0%, #030c18 55%, #010508 100%)"
-            />
-          </motion.div>
-        )}
-        {gameState==='requesting' && (
-          <motion.div key="requesting" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            style={{ display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', height:'100%', gap: 16 }}>
-            <motion.div
-              animate={{ scale: [1, 1.18, 1], opacity: [0.7, 1, 0.7] }}
-              transition={{ duration: 1.4, repeat: Infinity, ease: 'easeInOut' }}
-              style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-            >
-              <Mic size={44} color={accent} />
-            </motion.div>
-            <div style={{ color: 'rgba(255,255,255,0.75)', fontSize: 16, fontWeight: 600, letterSpacing: '0.04em' }}>
-              Requesting microphone…
-            </div>
-          </motion.div>
-        )}
-        {gameState==='done' && behavior && (
-          <motion.div key="done" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} style={{ height: '100%' }}>
-            <EndScreen
-              gameId="breath-rider"
-              title={getProfile(behavior)}
-              emoji="🌬️"
-              score={String(behavior.coinsCollected)}
-              personality={getProfile(behavior)}
-              insights={[
-                { label:`Breath control`, value: behavior.breathVariance < 15 ? 'Smooth & steady' : behavior.breathVariance > 35 ? 'Wild & free' : 'Well-focused', color:accent },
-                { label:`Avg altitude`, value:`${behavior.avgAltitude}% — You flew ${behavior.avgAltitude > 60 ? 'high' : behavior.avgAltitude < 40 ? 'low' : 'mid-range'}`, color:'#93c5fd' },
-                { label:`Spike hits`, value:`${behavior.spikeCollisions} — ${behavior.spikeCollisions === 0 ? 'Flawless!' : behavior.spikeCollisions <= 2 ? 'Quick recovery' : 'Adventurous path'}`, color:'#ef4444' },
-                { label:`Coins`, value:`${behavior.coinsCollected} collected`, color:'#fbbf24' },
-              ]}
-              accentColor={accent}
-              onPlayAgain={handlePlayAgain}
-              didWin={behavior.coinsCollected >= 7}
-            />
-          </motion.div>
-        )}
-      </AnimatePresence>
-      {gameState === 'playing' && (
-        <>
-          <ScorePopEffect pops={pops} accentColor={accent} />
-          <StreakBadge streak={streak} accentColor={accent} />
-        </>
+          accentColor={theme.colors.accent ?? '#fbbf24'} onPlayAgain={handlePlayAgain}
+          didWin={finalSig.gapsCleared >= 10} />
       )}
     </GameShell>
-    </>
   );
 }

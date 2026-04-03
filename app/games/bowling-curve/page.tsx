@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
+import * as THREE from 'three';
 import GameShell from '@/components/GameShell';
 import GameHUD from '@/components/GameHUD';
 import GameStartScreen from '@/components/GameStartScreen';
@@ -9,104 +10,382 @@ import { initAudio, sfx } from '@/lib/audio';
 import { hapticScore, hapticFail, hapticVictory, hapticImpact, hapticCelebration } from '@/lib/haptics';
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
-const GAME_ID='bowling-curve';const ACCENT='#7c3aed';const DURATION=45;const GAME_EMOJI='🎳';const GAME_TITLE='Bowling Curve';const GAME_TAGLINE='Hook it. Hit the pocket.';
-interface Pin{x:number;y:number;knocked:boolean;vx:number;vy:number;}
-interface Signals{frames:number;strikes:number;spares:number;totalPins:number;maxStreak:number;streakCurrent:number;score:number;}
-function getPersonality(sig:Signals){if(sig.strikes>=4&&sig.maxStreak>=3)return'Perfect Game Pro 🎳';if(sig.strikes>=3)return'Strike King 👑';if(sig.maxStreak>=4)return'Pocket Finder 🎯';return'Lane Learner 🌀';}
-type Phase='start'|'countdown'|'playing'|'done';
-interface Ball{x:number;y:number;vx:number;vy:number;spin:number;active:boolean;}
-interface GameState{running:boolean;timeLeft:number;sig:Signals;ball:Ball;pins:Pin[];swipeStartX:number;swipeStartY:number;swipeCurveX:number;swiping:boolean;settleTimer:number;accentColor:string;floats:Array<{x:number;y:number;text:string;alpha:number;vy:number;color:string}>;scorePop:number;frame:number;}
 
-function makePins(W:number,H:number):Pin[]{
-  const pins:Pin[]=[];const rows=4;const startY=H*0.12;const gap=34;
-  for(let r=0;r<rows;r++){const count=r+1;const startX=W/2-(count-1)*gap/2;
-    for(let c=0;c<count;c++){pins.push({x:startX+c*gap,y:startY+r*gap*0.7,knocked:false,vx:0,vy:0});}}
+const GAME_ID = 'bowling-curve';
+const ACCENT = '#7c3aed';
+const DURATION = 45;
+const GAME_EMOJI = '🎳';
+const GAME_TITLE = 'Bowling Curve';
+const GAME_TAGLINE = 'Hook it. Hit the pocket.';
+
+interface Pin3D { mesh: THREE.Mesh; knocked: boolean; vx: number; vy: number; }
+interface Signals { frames: number; strikes: number; spares: number; totalPins: number; maxStreak: number; streakCurrent: number; score: number; }
+function getPersonality(sig: Signals): string {
+  if (sig.strikes >= 4 && sig.maxStreak >= 3) return 'Perfect Game Pro 🎳';
+  if (sig.strikes >= 3) return 'Strike King 👑';
+  if (sig.maxStreak >= 4) return 'Pocket Finder 🎯';
+  return 'Lane Learner 🌀';
+}
+type Phase = 'start' | 'countdown' | 'playing' | 'done';
+
+interface GS {
+  running: boolean; timeLeft: number; sig: Signals;
+  renderer: THREE.WebGLRenderer | null; scene: THREE.Scene | null;
+  camera: THREE.PerspectiveCamera | null; animId: number;
+  ball: THREE.Mesh | null; pins: Pin3D[];
+  ballActive: boolean; ballX: number; ballZ: number;
+  ballVX: number; ballVZ: number; ballSpin: number;
+  swipeStartX: number; swipeStartY: number; swiping: boolean;
+  settleTimer: number; frame: number;
+  particles: Array<{ mesh: THREE.Mesh; vx: number; vy: number; vz: number; life: number }>;
+  intervalId: ReturnType<typeof setInterval> | null;
+  resizeCleanup: (() => void) | null;
+}
+
+function makePins(scene: THREE.Scene): Pin3D[] {
+  const pins: Pin3D[] = [];
+  const rows = 4;
+  const gap = 0.7;
+  for (let r = 0; r < rows; r++) {
+    const count = r + 1;
+    const startX = -(count - 1) * gap / 2;
+    for (let c = 0; c < count; c++) {
+      const mesh = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.12, 0.18, 0.7, 10),
+        new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.3, metalness: 0.1, emissive: 0xaaaaff, emissiveIntensity: 0.05 })
+      );
+      mesh.position.set(startX + c * gap, 0.35, -8 + r * gap * 0.6);
+      scene.add(mesh);
+      pins.push({ mesh, knocked: false, vx: 0, vy: 0 });
+    }
+  }
   return pins;
 }
 
-export default function BowlingCurve(){
-  const theme=useBrandTheme();
-  const canvasRef=useRef<HTMLCanvasElement>(null);const animRef=useRef(0);const timerRef=useRef<ReturnType<typeof setInterval>|null>(null);
-  const stateRef=useRef<GameState>({running:false,timeLeft:DURATION,sig:{frames:0,strikes:0,spares:0,totalPins:0,maxStreak:0,streakCurrent:0,score:0},ball:{x:0,y:0,vx:0,vy:0,spin:0,active:false},pins:[],swipeStartX:0,swipeStartY:0,swipeCurveX:0,swiping:false,settleTimer:0,accentColor:ACCENT,floats:[],scorePop:0,frame:0});
-  const[phase,setPhase]=useState<Phase>('start');const[timeLeft,setTimeLeft]=useState(DURATION);const[scoreDisplay,setScoreDisplay]=useState(0);const[finalSig,setFinalSig]=useState<Signals|null>(null);
-  const playerSessionRef=useRef<PlayerSession|null>(null);
-  useEffect(()=>{stateRef.current.accentColor=theme.colors.accent??ACCENT;},[theme]);
-  const endGame=useCallback(()=>{const s=stateRef.current;s.running=false;cancelAnimationFrame(animRef.current);if(timerRef.current){clearInterval(timerRef.current);timerRef.current=null;}const pb=parseInt(localStorage.getItem(`pb_${GAME_ID}`)??"0");if(s.sig.score>pb)localStorage.setItem(`pb_${GAME_ID}`,String(s.sig.score));setFinalSig({...s.sig});setPhase('done');hapticVictory();},[]);
+export default function BowlingCurveGame() {
+  const theme = useBrandTheme();
+  const mountRef = useRef<HTMLDivElement>(null);
+  const stateRef = useRef<GS>({
+    running: false, timeLeft: DURATION,
+    sig: { frames: 0, strikes: 0, spares: 0, totalPins: 0, maxStreak: 0, streakCurrent: 0, score: 0 },
+    renderer: null, scene: null, camera: null, animId: 0,
+    ball: null, pins: [], ballActive: false,
+    ballX: 0, ballZ: 3, ballVX: 0, ballVZ: 0, ballSpin: 0,
+    swipeStartX: 0, swipeStartY: 0, swiping: false,
+    settleTimer: 0, frame: 0, particles: [],
+    intervalId: null, resizeCleanup: null,
+  });
+  const [phase, setPhase] = useState<Phase>('start');
+  const [timeLeft, setTimeLeft] = useState(DURATION);
+  const [scoreDisplay, setScoreDisplay] = useState(0);
+  const [finalSig, setFinalSig] = useState<Signals | null>(null);
+  const playerSessionRef = useRef<PlayerSession | null>(null);
 
-  const startLoop=useCallback(()=>{
-    const canvas=canvasRef.current;if(!canvas)return;const ctx=canvas.getContext('2d');if(!ctx)return;
-    const s=stateRef.current;const W=canvas.width,H=canvas.height;
-    s.running=true;s.timeLeft=DURATION;s.sig={frames:0,strikes:0,spares:0,totalPins:0,maxStreak:0,streakCurrent:0,score:0};
-    s.pins=makePins(W,H);s.ball={x:W/2,y:H*0.88,vx:0,vy:0,spin:0,active:false};s.frame=0;s.floats=[];s.scorePop=0;s.settleTimer=0;
-    setScoreDisplay(0);setTimeLeft(DURATION);setPhase('playing');
-    timerRef.current=setInterval(()=>{s.timeLeft--;setTimeLeft(s.timeLeft);if(s.timeLeft<=0){sfx.fail();endGame();}},1000);
-    const loop=()=>{
-      if(!s.running)return;ctx.clearRect(0,0,W,H);s.frame++;
-      // Bowling alley
-      const bg=ctx.createLinearGradient(0,0,W,0);bg.addColorStop(0,'#1a1008');bg.addColorStop(0.5,'#2d1a06');bg.addColorStop(1,'#1a1008');
-      ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);
-      // Lane
-      ctx.fillStyle='#c8a464';ctx.fillRect(W*0.1,0,W*0.8,H);
-      // Lane lines
-      ctx.strokeStyle='rgba(0,0,0,0.1)';ctx.lineWidth=1;
-      for(let lx=W*0.1;lx<W*0.9;lx+=W*0.06){ctx.beginPath();ctx.moveTo(lx,0);ctx.lineTo(lx,H);ctx.stroke();}
-      // Foul line
-      ctx.strokeStyle='#ef4444';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(W*0.1,H*0.8);ctx.lineTo(W*0.9,H*0.8);ctx.stroke();
-      // Update knocked pins
-      s.pins.forEach(p=>{if(p.knocked){p.x+=p.vx;p.y+=p.vy;p.vx*=0.9;p.vy*=0.9;}});
-      // Ball physics
-      if(s.ball.active){
-        s.ball.vy*=0.99;s.ball.x+=s.ball.vx+Math.sin(s.frame*0.1)*s.ball.spin;s.ball.y+=s.ball.vy;
-        // Pin collision
-        s.pins.forEach(p=>{if(p.knocked)return;const d=Math.hypot(s.ball.x-p.x,s.ball.y-p.y);if(d<28){p.knocked=true;s.sig.totalPins++;p.vx=(p.x-s.ball.x)/d*5;p.vy=(p.y-s.ball.y)/d*3;sfx.collision();}});
-        // Reached top
-        if(s.ball.y<H*0.08||s.ball.x<W*0.05||s.ball.x>W*0.95){s.ball.active=false;s.settleTimer=60;}
-      }
-      // Settle and score
-      if(s.settleTimer>0){s.settleTimer--;if(s.settleTimer===0){
-        const knocked=s.pins.filter(p=>p.knocked).length;const total=s.pins.length;
-        const isStrike=knocked===total;const isSpare=knocked>0&&knocked<total&&s.sig.frames>0;
-        s.sig.frames++;s.sig.streakCurrent++;if(s.sig.streakCurrent>s.sig.maxStreak)s.sig.maxStreak=s.sig.streakCurrent;
-        if(isStrike){s.sig.strikes++;hapticCelebration();sfx.success();s.floats.push({x:W/2,y:H*0.4,text:'🎳 STRIKE!',alpha:1,vy:-2,color:'#fbbf24'});}
-        const mult=s.sig.streakCurrent>=3?2:1;const pts=isStrike?10*mult:knocked*mult;
-        s.sig.score+=pts;s.scorePop=Date.now()+400;setScoreDisplay(s.sig.score);hapticScore();
-        if(!isStrike)s.floats.push({x:W/2,y:H*0.4,text:`+${pts} (${knocked} pins)`,alpha:1,vy:-1.5,color:ACCENT});
-        s.pins=makePins(W,H);s.ball={x:W/2,y:H*0.88,vx:0,vy:0,spin:0,active:false};
-      }}
-      // Draw pins
-      s.pins.forEach(p=>{ctx.save();ctx.shadowBlur=6;ctx.shadowColor='#ffffff';ctx.fillStyle=p.knocked?'#444':'#ffffff';ctx.beginPath();ctx.ellipse(p.x,p.y,8,12,0,0,Math.PI*2);ctx.fill();if(!p.knocked){ctx.strokeStyle='#ef4444';ctx.lineWidth=2;ctx.beginPath();ctx.arc(p.x,p.y-5,4,0,Math.PI*2);ctx.stroke();}ctx.restore();});
-      // Draw ball
-      if(s.ball.y<H+20){ctx.save();ctx.shadowBlur=12;ctx.shadowColor=ACCENT;const g=ctx.createRadialGradient(s.ball.x-6,s.ball.y-6,2,s.ball.x,s.ball.y,22);g.addColorStop(0,'#c4b5fd');g.addColorStop(1,'#4c1d95');ctx.fillStyle=g;ctx.beginPath();ctx.arc(s.ball.x,s.ball.y,22,0,Math.PI*2);ctx.fill();ctx.fillStyle='rgba(0,0,0,0.4)';for(let h=0;h<3;h++){const a=h*(Math.PI*2/3)+s.frame*0.05;ctx.beginPath();ctx.arc(s.ball.x+Math.cos(a)*8,s.ball.y+Math.sin(a)*8,4,0,Math.PI*2);ctx.fill();}ctx.restore();}
-      // Aim guide
-      if(!s.ball.active&&!s.swiping){ctx.save();ctx.strokeStyle='rgba(196,181,253,0.3)';ctx.lineWidth=2;ctx.setLineDash([6,4]);ctx.beginPath();ctx.moveTo(s.ball.x,s.ball.y);ctx.lineTo(W/2,H*0.15);ctx.stroke();ctx.setLineDash([]);ctx.restore();}
-      if(s.scorePop>Date.now()){const t=(s.scorePop-Date.now())/400;ctx.save();ctx.globalAlpha=t;ctx.font=`bold ${Math.round(38*(1+(1-t)*0.3))}px sans-serif`;ctx.fillStyle=ACCENT;ctx.textAlign='center';ctx.fillText(`${s.sig.score}`,W/2,H*0.65);ctx.restore();}
-      s.floats=s.floats.filter(f=>f.alpha>0.02);s.floats.forEach(f=>{ctx.save();ctx.globalAlpha=f.alpha;ctx.fillStyle=f.color;ctx.font='bold 24px sans-serif';ctx.textAlign='center';ctx.fillText(f.text,f.x,f.y);ctx.restore();f.y+=f.vy;f.alpha*=0.96;});
-      animRef.current=requestAnimationFrame(loop);
+  const endGame = useCallback(() => {
+    const s = stateRef.current;
+    s.running = false;
+    cancelAnimationFrame(s.animId);
+    if (s.intervalId) { clearInterval(s.intervalId); s.intervalId = null; }
+    s.resizeCleanup?.();
+    if (s.renderer) { s.renderer.dispose(); s.renderer = null; }
+    if (mountRef.current) mountRef.current.innerHTML = '';
+    const pb = parseInt(localStorage.getItem(`pb_${GAME_ID}`) ?? '0');
+    if (s.sig.score > pb) localStorage.setItem(`pb_${GAME_ID}`, String(s.sig.score));
+    setFinalSig({ ...s.sig });
+    setPhase('done'); hapticVictory();
+  }, []);
+
+  const resetPins = useCallback((scene: THREE.Scene, s: GS) => {
+    s.pins.forEach(p => scene.remove(p.mesh));
+    s.pins = makePins(scene);
+    s.ballX = 0; s.ballZ = 3; s.ballVX = 0; s.ballVZ = 0; s.ballActive = false;
+    if (s.ball) s.ball.position.set(0, 0.2, 3);
+    s.settleTimer = 0;
+  }, []);
+
+  const startLoop = useCallback(() => {
+    const mount = mountRef.current;
+    if (!mount) return;
+    const s = stateRef.current;
+    const W = window.innerWidth, H = window.innerHeight;
+
+    s.running = true; s.timeLeft = DURATION; s.frame = 0;
+    s.sig = { frames: 0, strikes: 0, spares: 0, totalPins: 0, maxStreak: 0, streakCurrent: 0, score: 0 };
+    s.particles = [];
+    setScoreDisplay(0); setTimeLeft(DURATION); setPhase('playing');
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(W, H);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setClearColor(0x0a0a1a);
+    mount.innerHTML = '';
+    mount.appendChild(renderer.domElement);
+    s.renderer = renderer;
+
+    const scene = new THREE.Scene();
+    scene.fog = new THREE.FogExp2(0x0a0a1a, 0.03);
+    s.scene = scene;
+    const camera = new THREE.PerspectiveCamera(65, W / H, 0.1, 100);
+    camera.position.set(0, 3, 9);
+    camera.lookAt(0, 0, -3);
+    s.camera = camera;
+
+    scene.add(new THREE.AmbientLight(0x223366, 2));
+    const spotLight = new THREE.SpotLight(0xffffff, 3, 30, Math.PI / 4, 0.3);
+    spotLight.position.set(0, 8, 0);
+    spotLight.target.position.set(0, 0, -5);
+    scene.add(spotLight); scene.add(spotLight.target);
+    const purpleLight = new THREE.PointLight(0x7c3aed, 1.5, 20);
+    purpleLight.position.set(-3, 3, 3);
+    scene.add(purpleLight);
+
+    // Lane
+    const lane = new THREE.Mesh(
+      new THREE.BoxGeometry(2.5, 0.1, 18),
+      new THREE.MeshStandardMaterial({ color: 0xcc9944, roughness: 0.7, metalness: 0.1 })
+    );
+    lane.position.set(0, -0.05, -3);
+    scene.add(lane);
+
+    // Lane arrows
+    [0, -1, -2].forEach((dz) => {
+      const arrow = new THREE.Mesh(
+        new THREE.ConeGeometry(0.08, 0.2, 6),
+        new THREE.MeshBasicMaterial({ color: 0xcc3300 })
+      );
+      arrow.rotation.z = Math.PI;
+      arrow.position.set(0, 0.05, dz);
+      scene.add(arrow);
+    });
+
+    // Side gutters
+    [-1.4, 1.4].forEach(x => {
+      const gutter = new THREE.Mesh(
+        new THREE.BoxGeometry(0.3, 0.05, 18),
+        new THREE.MeshStandardMaterial({ color: 0x553311, roughness: 0.9 })
+      );
+      gutter.position.set(x, -0.08, -3);
+      scene.add(gutter);
+    });
+
+    // Stars
+    const sPos = new Float32Array(300 * 3);
+    for (let i = 0; i < 300; i++) {
+      sPos[i * 3] = (Math.random() - 0.5) * 30;
+      sPos[i * 3 + 1] = Math.random() * 10 + 2;
+      sPos[i * 3 + 2] = -15 - Math.random() * 10;
+    }
+    const sGeo = new THREE.BufferGeometry();
+    sGeo.setAttribute('position', new THREE.BufferAttribute(sPos, 3));
+    scene.add(new THREE.Points(sGeo, new THREE.PointsMaterial({ color: 0x8888ff, size: 0.06 })));
+
+    // Ball
+    const ball = new THREE.Mesh(
+      new THREE.SphereGeometry(0.28, 24, 24),
+      new THREE.MeshStandardMaterial({ color: 0x7c3aed, emissive: 0x7c3aed, emissiveIntensity: 0.3, roughness: 0.3, metalness: 0.4 })
+    );
+    ball.position.set(0, 0.2, 3);
+    scene.add(ball);
+    s.ball = ball;
+
+    s.pins = makePins(scene);
+    s.ballX = 0; s.ballZ = 3; s.ballActive = false;
+
+    const handleResize = () => {
+      const w = window.innerWidth, h = window.innerHeight;
+      renderer.setSize(w, h); camera.aspect = w / h; camera.updateProjectionMatrix();
     };
-    animRef.current=requestAnimationFrame(loop);
-  },[endGame]);
+    window.addEventListener('resize', handleResize);
+    s.resizeCleanup = () => window.removeEventListener('resize', handleResize);
 
-  useEffect(()=>{
-    const canvas=canvasRef.current;if(!canvas)return;
-    const resize=()=>{canvas.width=canvas.offsetWidth;canvas.height=canvas.offsetHeight;};resize();window.addEventListener('resize',resize);
-    const onDown=(e:PointerEvent)=>{if(phase!=='playing')return;const s=stateRef.current;if(s.ball.active||s.settleTimer>0)return;const rect=canvas.getBoundingClientRect();s.swipeStartX=(e.clientX-rect.left)*(canvas.width/rect.width);s.swipeStartY=(e.clientY-rect.top)*(canvas.height/rect.height);s.swipeCurveX=s.swipeStartX;s.swiping=true;};
-    const onMove=(e:PointerEvent)=>{if(phase!=='playing')return;const s=stateRef.current;if(!s.swiping)return;const rect=canvas.getBoundingClientRect();s.swipeCurveX=(e.clientX-rect.left)*(canvas.width/rect.width);};
-    const onUp=(e:PointerEvent)=>{if(phase!=='playing')return;const s=stateRef.current;if(!s.swiping)return;s.swiping=false;const rect=canvas.getBoundingClientRect();const ey=(e.clientY-rect.top)*(canvas.height/rect.height);const dy=ey-s.swipeStartY;if(dy>20)return;const curve=(s.swipeCurveX-s.swipeStartX)/100;s.ball.vx=curve*2;s.ball.vy=-12;s.ball.spin=curve*0.3;s.ball.active=true;sfx.click();hapticImpact();};
-    canvas.addEventListener('pointerdown',onDown);canvas.addEventListener('pointermove',onMove);canvas.addEventListener('pointerup',onUp);
-    return()=>{window.removeEventListener('resize',resize);canvas.removeEventListener('pointerdown',onDown);canvas.removeEventListener('pointermove',onMove);canvas.removeEventListener('pointerup',onUp);};
-  },[phase]);
-  useEffect(()=>()=>{cancelAnimationFrame(animRef.current);if(timerRef.current)clearInterval(timerRef.current);},[]);
-  const handleStart=useCallback(async(name:string,avatar:string)=>{playerSessionRef.current=savePlayerSession(GAME_ID,name,avatar);await initAudio();setPhase('countdown');},[]);
-  const handlePlayAgain=useCallback(()=>{setPhase('start');setScoreDisplay(0);setTimeLeft(DURATION);setFinalSig(null);},[]);
-  return(
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent??ACCENT}>
-      {phase==='start'&&<GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description="Swipe up to bowl! Curve your swipe to add hook spin!" ctaLabel="Bowl! 🎳" accentColor={theme.colors.accent??ACCENT} onStart={handleStart}/>}
-      {phase==='countdown'&&<Countdown onComplete={startLoop} accentColor={theme.colors.accent??ACCENT}/>}
-      {(phase==='playing'||phase==='countdown')&&(<><canvas ref={canvasRef} style={{position:'absolute',inset:0,width:'100%',height:'100%',touchAction:'none'}} role="img" aria-label="Bowling game canvas"/>
-      {phase==='playing'&&<GameHUD accentColor={theme.colors.accent??ACCENT} items={[{label:'TIME',value:timeLeft,danger:timeLeft<=10},{label:'SCORE',value:scoreDisplay}]}/>}</>)}
-      {phase==='done'&&finalSig&&(<EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI} score={String(finalSig.score)} personality={getPersonality(finalSig)}
-        insights={[{label:'Strikes',value:String(finalSig.strikes),color:'#fbbf24'},{label:'Pins Knocked',value:String(finalSig.totalPins),color:ACCENT},{label:'Best Streak',value:`×${finalSig.maxStreak}`,color:'#4ade80'},{label:'Frames',value:String(finalSig.frames),color:'#06b6d4'}]}
-        accentColor={theme.colors.accent??ACCENT} onPlayAgain={handlePlayAgain} didWin={finalSig.strikes>=3}/>)}
+    s.intervalId = setInterval(() => {
+      if (!s.running) return;
+      s.timeLeft--; setTimeLeft(s.timeLeft);
+      if (s.timeLeft <= 0) { sfx.fail(); endGame(); }
+    }, 1000);
+
+    const loop = () => {
+      if (!s.running) return;
+      s.frame++;
+
+      if (s.ballActive && s.ball) {
+        s.ballVZ -= 0.12;
+        s.ballX += s.ballVX + s.ballSpin * 0.02;
+        s.ballZ += s.ballVZ;
+        s.ball.position.set(s.ballX, 0.2, s.ballZ);
+        s.ball.rotation.x -= 0.1;
+        s.ball.rotation.z += s.ballSpin * 0.05;
+
+        // Ball gutter check
+        if (Math.abs(s.ballX) > 1.2) {
+          s.ballActive = false;
+          sfx.collision(); hapticFail();
+          s.sig.frames++;
+          setTimeout(() => { if (s.running && s.scene) resetPins(s.scene, s); }, 1500);
+        }
+
+        // Pin collision
+        for (const pin of s.pins) {
+          if (pin.knocked) continue;
+          const dx = s.ball.position.x - pin.mesh.position.x;
+          const dz = s.ball.position.z - pin.mesh.position.z;
+          const dist = Math.sqrt(dx * dx + dz * dz);
+          if (dist < 0.45) {
+            pin.knocked = true;
+            pin.vx = (s.ballVX + s.ballSpin * 0.1) * 0.5 + dx * 0.3;
+            pin.vy = 0.08;
+            s.sig.totalPins++;
+            sfx.collect(); hapticImpact?.();
+            // Spawn debris
+            for (let pi = 0; pi < 5; pi++) {
+              const pm = new THREE.Mesh(
+                new THREE.SphereGeometry(0.05, 4, 4),
+                new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 1 })
+              );
+              pm.position.copy(pin.mesh.position);
+              scene.add(pm);
+              s.particles.push({ mesh: pm, vx: (Math.random() - 0.5) * 0.1, vy: 0.05 + Math.random() * 0.08, vz: (Math.random() - 0.5) * 0.1, life: 25 });
+            }
+          }
+        }
+
+        // Ball past pins
+        if (s.ballZ < -12) {
+          s.ballActive = false;
+          const knockedCount = s.pins.filter(p => p.knocked).length;
+          const isStrike = knockedCount === 10;
+          if (isStrike) {
+            s.sig.strikes++;
+            s.sig.streakCurrent++;
+            if (s.sig.streakCurrent > s.sig.maxStreak) s.sig.maxStreak = s.sig.streakCurrent;
+            s.sig.score += 30;
+            sfx.success(); hapticCelebration?.();
+          } else {
+            s.sig.streakCurrent = 0;
+            s.sig.score += knockedCount;
+          }
+          s.sig.frames++;
+          setScoreDisplay(s.sig.score);
+          setTimeout(() => { if (s.running && s.scene) resetPins(s.scene, s); }, 1800);
+        }
+      }
+
+      // Animate knocked pins
+      s.pins.forEach(pin => {
+        if (!pin.knocked) return;
+        pin.mesh.rotation.z += pin.vx * 0.3;
+        pin.mesh.position.x += pin.vx;
+        pin.mesh.position.z += pin.vy;
+        pin.vy -= 0.003;
+        if (pin.mesh.position.y > -2) pin.mesh.position.y -= 0.02;
+      });
+
+      // Particles
+      for (let i = s.particles.length - 1; i >= 0; i--) {
+        const p = s.particles[i];
+        p.mesh.position.x += p.vx;
+        p.mesh.position.y += p.vy;
+        p.mesh.position.z += p.vz;
+        p.vy -= 0.005;
+        p.life--;
+        (p.mesh.material as THREE.MeshBasicMaterial).opacity = p.life / 25;
+        if (p.life <= 0) { scene.remove(p.mesh); s.particles.splice(i, 1); }
+      }
+
+      // Ball idle pulse
+      if (!s.ballActive && s.ball) {
+        (s.ball.material as THREE.MeshStandardMaterial).emissiveIntensity = 0.2 + Math.sin(Date.now() * 0.004) * 0.1;
+      }
+
+      renderer.render(scene, camera);
+      s.animId = requestAnimationFrame(loop);
+    };
+    s.animId = requestAnimationFrame(loop);
+  }, [endGame, resetPins]);
+
+  useEffect(() => {
+    const mount = mountRef.current;
+    if (!mount) return;
+    const onPointerDown = (e: PointerEvent) => {
+      if (phase !== 'playing') return;
+      const s = stateRef.current;
+      if (s.ballActive) return;
+      const rect = mount.getBoundingClientRect();
+      s.swipeStartX = e.clientX - rect.left;
+      s.swipeStartY = e.clientY - rect.top;
+      s.swiping = true;
+    };
+    const onPointerUp = (e: PointerEvent) => {
+      if (phase !== 'playing') return;
+      const s = stateRef.current;
+      if (!s.swiping) return;
+      s.swiping = false;
+      const rect = mount.getBoundingClientRect();
+      const dx = (e.clientX - rect.left) - s.swipeStartX;
+      const dy = (e.clientY - rect.top) - s.swipeStartY;
+      if (Math.abs(dy) > 30 && dy < 0) {
+        // Swipe up to throw
+        s.ballVX = (dx / rect.width) * 0.3;
+        s.ballVZ = -0.15;
+        s.ballSpin = dx / rect.width;
+        s.ballActive = true;
+        sfx.click(); hapticImpact?.();
+      }
+    };
+    mount.addEventListener('pointerdown', onPointerDown);
+    mount.addEventListener('pointerup', onPointerUp);
+    return () => {
+      mount.removeEventListener('pointerdown', onPointerDown);
+      mount.removeEventListener('pointerup', onPointerUp);
+    };
+  }, [phase]);
+
+  useEffect(() => () => {
+    const s = stateRef.current;
+    s.running = false; cancelAnimationFrame(s.animId);
+    if (s.intervalId) clearInterval(s.intervalId);
+    s.resizeCleanup?.();
+    if (s.renderer) { s.renderer.dispose(); s.renderer = null; }
+  }, []);
+
+  const handleStart = useCallback(async (name: string, avatar: string) => {
+    playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar);
+    await initAudio(); setPhase('countdown');
+  }, []);
+  const handlePlayAgain = useCallback(() => {
+    setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null);
+  }, []);
+
+  return (
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
+      {phase === 'start' && (
+        <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE}
+          description="Swipe up to throw the ball. Swipe left/right to curve. Hit the pocket!"
+          ctaLabel="Bowl! 🎳" accentColor={theme.colors.accent ?? ACCENT} onStart={handleStart} />
+      )}
+      {phase === 'countdown' && <Countdown onComplete={startLoop} accentColor={theme.colors.accent ?? ACCENT} />}
+      <div ref={mountRef} style={{
+        position: 'absolute', inset: 0, width: '100%', height: '100%',
+        display: phase === 'playing' ? 'block' : 'none', touchAction: 'none',
+      }} />
+      {phase === 'playing' && (
+        <GameHUD accentColor={theme.colors.accent ?? ACCENT} items={[
+          { label: 'TIME', value: timeLeft, danger: timeLeft <= 10 },
+          { label: 'SCORE', value: scoreDisplay },
+        ]} />
+      )}
+      {phase === 'done' && finalSig && (
+        <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI}
+          score={String(finalSig.score)} personality={getPersonality(finalSig)}
+          insights={[
+            { label: 'Strikes', value: String(finalSig.strikes), color: '#fbbf24' },
+            { label: 'Pins Knocked', value: String(finalSig.totalPins), color: ACCENT },
+            { label: 'Best Streak', value: `×${finalSig.maxStreak}`, color: '#4ade80' },
+            { label: 'Frames', value: String(finalSig.frames), color: '#06b6d4' },
+          ]}
+          accentColor={theme.colors.accent ?? ACCENT} onPlayAgain={handlePlayAgain}
+          didWin={finalSig.strikes >= 2} />
+      )}
     </GameShell>
   );
 }

@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
+import * as THREE from 'three';
 import GameShell from '@/components/GameShell';
 import GameHUD from '@/components/GameHUD';
 import GameStartScreen from '@/components/GameStartScreen';
@@ -18,18 +19,10 @@ const GAME_TITLE = 'Category Clash';
 const GAME_TAGLINE = 'Sort fast. But the rules keep changing!';
 
 interface Signals {
-  total: number;
-  correct: number;
-  wrong: number;
-  correctAfterSwitch: number;  // correct answers right after category switch
-  switchCount: number;
-  avgReactionMs: number;
-  totalMs: number;
-  score: number;
-  maxStreak: number;
-  streakCurrent: number;
+  total: number; correct: number; wrong: number; correctAfterSwitch: number;
+  switchCount: number; avgReactionMs: number; totalMs: number;
+  score: number; maxStreak: number; streakCurrent: number;
 }
-
 function getPersonality(sig: Signals): string {
   const acc = sig.total > 0 ? sig.correct / sig.total : 0;
   if (acc >= 0.85 && sig.switchCount >= 4) return 'Adaptive Ace 🧠';
@@ -38,327 +31,334 @@ function getPersonality(sig: Signals): string {
   if (sig.avgReactionMs < 500) return 'Lightning Sort ⚡';
   return 'Still Sorting 🤔';
 }
-
 type Phase = 'start' | 'countdown' | 'playing' | 'done';
 
-// Category pairs that can switch
-const CATEGORY_PAIRS = [
-  {
-    left: 'ANIMAL', right: 'PLANT',
-    leftItems: ['Cat', 'Dog', 'Fish', 'Bird', 'Frog', 'Bear', 'Wolf', 'Deer'],
-    rightItems: ['Rose', 'Tree', 'Fern', 'Moss', 'Vine', 'Lily', 'Cactus', 'Tulip'],
-  },
-  {
-    left: 'FRUIT', right: 'VEGGIE',
-    leftItems: ['Apple', 'Grape', 'Mango', 'Plum', 'Pear', 'Kiwi', 'Lemon', 'Berry'],
-    rightItems: ['Onion', 'Carrot', 'Potato', 'Pea', 'Kale', 'Beet', 'Corn', 'Leek'],
-  },
-  {
-    left: 'FAST', right: 'SLOW',
-    leftItems: ['Car', 'Jet', 'Bolt', 'Rocket', 'Cheetah', 'Train', 'Arrow', 'Laser'],
-    rightItems: ['Turtle', 'Snail', 'Sloth', 'Glacier', 'Slug', 'Walk', 'Drift', 'Crawl'],
-  },
-  {
-    left: 'HOT', right: 'COLD',
-    leftItems: ['Lava', 'Fire', 'Sun', 'Sauna', 'Pepper', 'Forge', 'Grill', 'Steam'],
-    rightItems: ['Ice', 'Snow', 'Frost', 'Arctic', 'Blizzard', 'Tundra', 'Freeze', 'Glacier'],
-  },
+const CATEGORIES = [
+  { name: 'Animals', items: ['🐶', '🐱', '🐭', '🐸', '🦊', '🐨', '🦁', '🐯'] },
+  { name: 'Food', items: ['🍕', '🍔', '🍎', '🍓', '🥑', '🍦', '🥐', '🍣'] },
+  { name: 'Sports', items: ['⚽', '🏀', '🎾', '🏈', '⚾', '🎿', '🏊', '🚴'] },
 ];
 
-interface FallingItem {
-  word: string;
-  isLeft: boolean;  // belongs to left category
-  x: number;
-  y: number;
-  vy: number;
-  alpha: number;
+interface Trial { item: string; category: string; correctSide: 'left' | 'right'; isSwitch: boolean; }
+
+function makeTrial(prevCat: string | null, currentCatName: string, categories: typeof CATEGORIES): Trial {
+  const cat = categories.find(c => c.name === currentCatName)!;
+  const item = cat.items[Math.floor(Math.random() * cat.items.length)];
+  const correctSide: 'left' | 'right' = Math.random() < 0.5 ? 'left' : 'right';
+  return { item, category: currentCatName, correctSide, isSwitch: prevCat !== null && prevCat !== currentCatName };
 }
 
-interface GameState {
-  running: boolean; timeLeft: number;
-  sig: Signals; frame: number; accentColor: string;
-  floats: Array<{ x: number; y: number; text: string; alpha: number; vy: number; color: string }>;
-  currentPair: typeof CATEGORY_PAIRS[0];
-  currentItem: FallingItem | null;
-  pairIdx: number;
-  itemsHandled: number;
-  nextSwitchIn: number;   // items until next switch
-  switchFlash: number;    // frames showing switch animation
-  shownAt: number;
+interface GS {
+  running: boolean; timeLeft: number; sig: Signals;
+  renderer: THREE.WebGLRenderer | null; scene: THREE.Scene | null;
+  camera: THREE.PerspectiveCamera | null; animId: number;
+  itemSprite: THREE.Sprite | null; leftPanel: THREE.Mesh | null; rightPanel: THREE.Mesh | null;
+  leftLight: THREE.PointLight | null; rightLight: THREE.PointLight | null;
+  trial: Trial | null; prevCat: string | null; currentCatName: string;
+  shownAt: number; feedback: 'correct' | 'wrong' | null; feedbackTimer: number;
+  catSwitchTimer: number; level: number;
+  intervalId: ReturnType<typeof setInterval> | null;
+  resizeCleanup: (() => void) | null;
+}
+
+function makeEmojiSprite(emoji: string, size = 100): THREE.Sprite {
+  const canvas = document.createElement('canvas');
+  canvas.width = 200; canvas.height = 200;
+  const ctx = canvas.getContext('2d')!;
+  ctx.clearRect(0, 0, 200, 200);
+  ctx.font = `${size}px serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(emoji, 100, 100);
+  const tex = new THREE.CanvasTexture(canvas);
+  const mat = new THREE.SpriteMaterial({ map: tex, transparent: true });
+  const sp = new THREE.Sprite(mat);
+  sp.scale.set(3, 3, 1);
+  return sp;
 }
 
 export default function CategoryClashGame() {
   const theme = useBrandTheme();
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const animRef = useRef(0);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  const stateRef = useRef<GameState>({
+  const mountRef = useRef<HTMLDivElement>(null);
+  const stateRef = useRef<GS>({
     running: false, timeLeft: DURATION,
     sig: { total: 0, correct: 0, wrong: 0, correctAfterSwitch: 0, switchCount: 0, avgReactionMs: 0, totalMs: 0, score: 0, maxStreak: 0, streakCurrent: 0 },
-    frame: 0, accentColor: ACCENT, floats: [],
-    currentPair: CATEGORY_PAIRS[0], currentItem: null,
-    pairIdx: 0, itemsHandled: 0, nextSwitchIn: 5, switchFlash: 0, shownAt: 0,
+    renderer: null, scene: null, camera: null, animId: 0,
+    itemSprite: null, leftPanel: null, rightPanel: null,
+    leftLight: null, rightLight: null,
+    trial: null, prevCat: null, currentCatName: 'Animals',
+    shownAt: 0, feedback: null, feedbackTimer: 0,
+    catSwitchTimer: 0, level: 1,
+    intervalId: null, resizeCleanup: null,
   });
-
   const [phase, setPhase] = useState<Phase>('start');
   const [timeLeft, setTimeLeft] = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
   const [finalSig, setFinalSig] = useState<Signals | null>(null);
   const playerSessionRef = useRef<PlayerSession | null>(null);
-  const isAfterSwitch = useRef(false);
 
-  useEffect(() => { stateRef.current.accentColor = theme.colors.accent ?? ACCENT; }, [theme]);
-
-  const spawnItem = useCallback((W: number) => {
-    const s = stateRef.current;
-    const pair = s.currentPair;
-    const isLeft = Math.random() < 0.5;
-    const items = isLeft ? pair.leftItems : pair.rightItems;
-    const word = items[Math.floor(Math.random() * items.length)];
-    s.currentItem = {
-      word, isLeft,
-      x: W / 2, y: 100,
-      vy: 1.5 + s.sig.total * 0.04,
-      alpha: 1,
-    };
+  const nextTrial = useCallback((scene: THREE.Scene, s: GS) => {
+    if (s.itemSprite) { scene.remove(s.itemSprite); (s.itemSprite.material as THREE.SpriteMaterial).dispose(); }
+    const t = makeTrial(s.prevCat, s.currentCatName, CATEGORIES);
+    if (s.trial) s.prevCat = s.trial.category;
+    s.trial = t;
     s.shownAt = Date.now();
-  }, []);
+    s.feedback = null; s.feedbackTimer = 0;
 
-  const switchCategories = useCallback((W: number) => {
-    const s = stateRef.current;
-    s.pairIdx = (s.pairIdx + 1) % CATEGORY_PAIRS.length;
-    s.currentPair = CATEGORY_PAIRS[s.pairIdx];
-    s.nextSwitchIn = 4 + Math.floor(Math.random() * 4);
-    s.switchFlash = 60;
-    s.sig.switchCount++;
-    isAfterSwitch.current = true;
-    hapticWarning();
-    const canvas = canvasRef.current;
-    if (canvas) {
-      s.floats.push({ x: W / 2, y: canvas.height * 0.3, text: '⚡ SWITCH!', alpha: 1, vy: -2.5, color: '#fbbf24' });
+    const sp = makeEmojiSprite(t.item);
+    sp.position.set(0, 0.5, 0);
+    scene.add(sp);
+    s.itemSprite = sp;
+
+    // Update panel labels
+    if (t.correctSide === 'left') {
+      if (s.leftLight) s.leftLight.intensity = 2;
+      if (s.rightLight) s.rightLight.intensity = 0.5;
+    } else {
+      if (s.rightLight) s.rightLight.intensity = 2;
+      if (s.leftLight) s.leftLight.intensity = 0.5;
     }
   }, []);
 
   const endGame = useCallback(() => {
     const s = stateRef.current;
     s.running = false;
-    cancelAnimationFrame(animRef.current);
-    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
-    const pb = parseInt(localStorage.getItem('pb_' + GAME_ID) ?? '0');
-    if (s.sig.score > pb) localStorage.setItem('pb_' + GAME_ID, String(s.sig.score));
+    cancelAnimationFrame(s.animId);
+    if (s.intervalId) { clearInterval(s.intervalId); s.intervalId = null; }
+    s.resizeCleanup?.();
+    if (s.renderer) { s.renderer.dispose(); s.renderer = null; }
+    if (mountRef.current) mountRef.current.innerHTML = '';
+    if (s.sig.total > 0) s.sig.avgReactionMs = s.sig.totalMs / s.sig.total;
+    const pb = parseInt(localStorage.getItem(`pb_${GAME_ID}`) ?? '0');
+    if (s.sig.score > pb) localStorage.setItem(`pb_${GAME_ID}`, String(s.sig.score));
     setFinalSig({ ...s.sig });
-    setPhase('done');
-    hapticVictory();
+    setPhase('done'); hapticVictory();
   }, []);
 
   const startLoop = useCallback(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+    const mount = mountRef.current;
+    if (!mount) return;
     const s = stateRef.current;
-    const W = canvas.width, H = canvas.height;
+    const W = window.innerWidth, H = window.innerHeight;
 
     s.running = true; s.timeLeft = DURATION;
     s.sig = { total: 0, correct: 0, wrong: 0, correctAfterSwitch: 0, switchCount: 0, avgReactionMs: 0, totalMs: 0, score: 0, maxStreak: 0, streakCurrent: 0 };
-    s.frame = 0; s.floats = []; s.pairIdx = 0; s.currentPair = CATEGORY_PAIRS[0];
-    s.itemsHandled = 0; s.nextSwitchIn = 5; s.switchFlash = 0;
-    spawnItem(W);
+    s.prevCat = null; s.currentCatName = 'Animals'; s.level = 1; s.catSwitchTimer = 0;
     setScoreDisplay(0); setTimeLeft(DURATION); setPhase('playing');
 
-    timerRef.current = setInterval(() => {
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(W, H);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setClearColor(0x0f0820);
+    mount.innerHTML = '';
+    mount.appendChild(renderer.domElement);
+    s.renderer = renderer;
+
+    const scene = new THREE.Scene();
+    s.scene = scene;
+    const camera = new THREE.PerspectiveCamera(60, W / H, 0.1, 100);
+    camera.position.set(0, 0, 9);
+    s.camera = camera;
+
+    scene.add(new THREE.AmbientLight(0x221133, 3));
+    const leftLight = new THREE.PointLight(0xa78bfa, 2, 18);
+    leftLight.position.set(-4, 2, 3);
+    scene.add(leftLight);
+    s.leftLight = leftLight;
+    const rightLight = new THREE.PointLight(0xf59e0b, 0.5, 18);
+    rightLight.position.set(4, 2, 3);
+    scene.add(rightLight);
+    s.rightLight = rightLight;
+
+    // Left zone
+    const leftPanel = new THREE.Mesh(
+      new THREE.PlaneGeometry(5.5, 9),
+      new THREE.MeshBasicMaterial({ color: 0x1a1035, transparent: true, opacity: 0.5, side: THREE.DoubleSide })
+    );
+    leftPanel.position.set(-2.8, 0, -0.5);
+    scene.add(leftPanel);
+    s.leftPanel = leftPanel;
+
+    // Right zone
+    const rightPanel = new THREE.Mesh(
+      new THREE.PlaneGeometry(5.5, 9),
+      new THREE.MeshBasicMaterial({ color: 0x1a1005, transparent: true, opacity: 0.5, side: THREE.DoubleSide })
+    );
+    rightPanel.position.set(2.8, 0, -0.5);
+    scene.add(rightPanel);
+    s.rightPanel = rightPanel;
+
+    // Divider
+    const div = new THREE.Mesh(
+      new THREE.BoxGeometry(0.04, 10, 0.1),
+      new THREE.MeshBasicMaterial({ color: 0x334455, transparent: true, opacity: 0.5 })
+    );
+    scene.add(div);
+
+    // Category labels as 3D text sprites
+    const leftLabelSp = makeEmojiSprite('←', 60);
+    leftLabelSp.position.set(-2.5, -2.5, 0);
+    scene.add(leftLabelSp);
+    const rightLabelSp = makeEmojiSprite('→', 60);
+    rightLabelSp.position.set(2.5, -2.5, 0);
+    scene.add(rightLabelSp);
+
+    // Stars
+    const sPos = new Float32Array(200 * 3);
+    for (let i = 0; i < 200; i++) {
+      sPos[i * 3] = (Math.random() - 0.5) * 20;
+      sPos[i * 3 + 1] = (Math.random() - 0.5) * 10;
+      sPos[i * 3 + 2] = -5 - Math.random() * 8;
+    }
+    const sGeo = new THREE.BufferGeometry();
+    sGeo.setAttribute('position', new THREE.BufferAttribute(sPos, 3));
+    scene.add(new THREE.Points(sGeo, new THREE.PointsMaterial({ color: 0x886699, size: 0.05, transparent: true, opacity: 0.4 })));
+
+    const handleResize = () => {
+      const w = window.innerWidth, h = window.innerHeight;
+      renderer.setSize(w, h); camera.aspect = w / h; camera.updateProjectionMatrix();
+    };
+    window.addEventListener('resize', handleResize);
+    s.resizeCleanup = () => window.removeEventListener('resize', handleResize);
+
+    nextTrial(scene, s);
+
+    s.intervalId = setInterval(() => {
+      if (!s.running) return;
       s.timeLeft--; setTimeLeft(s.timeLeft);
+      s.catSwitchTimer++;
+      // Switch category every ~8 seconds
+      if (s.catSwitchTimer >= 8) {
+        s.catSwitchTimer = 0;
+        const others = CATEGORIES.filter(c => c.name !== s.currentCatName);
+        s.currentCatName = others[Math.floor(Math.random() * others.length)].name;
+        s.sig.switchCount++;
+        sfx.warning?.(); hapticWarning?.();
+      }
       if (s.timeLeft <= 0) { sfx.fail(); endGame(); }
     }, 1000);
 
     const loop = () => {
       if (!s.running) return;
-      ctx.clearRect(0, 0, W, H);
-      s.frame++;
+      if (s.feedbackTimer > 0) s.feedbackTimer--;
 
-      if (s.switchFlash > 0) s.switchFlash--;
-
-      // Background
-      ctx.fillStyle = '#0a0414'; ctx.fillRect(0, 0, W, H);
-      // Switch flash overlay
-      if (s.switchFlash > 0) {
-        ctx.fillStyle = `rgba(167,139,250,${(s.switchFlash / 60) * 0.2})`;
-        ctx.fillRect(0, 0, W, H);
-      }
-
-      // Left bucket
-      const bucketW = W * 0.36, bucketH = 70;
-      const leftBucketX = 10, rightBucketX = W - bucketW - 10;
-      const bucketY = H - bucketH - 20;
-
-      ctx.save();
-      ctx.fillStyle = 'rgba(59,130,246,0.2)'; ctx.strokeStyle = '#3b82f6'; ctx.lineWidth = 2;
-      ctx.beginPath(); (ctx as any).roundRect?.(leftBucketX, bucketY, bucketW, bucketH, 8) ?? ctx.rect(leftBucketX, bucketY, bucketW, bucketH);
-      ctx.fill(); ctx.stroke();
-      ctx.fillStyle = '#ffffff'; ctx.font = `bold ${Math.min(14, bucketW * 0.13)}px sans-serif`; ctx.textAlign = 'center';
-      ctx.fillText(s.currentPair.left, leftBucketX + bucketW / 2, bucketY + bucketH / 2 + 6);
-      ctx.restore();
-
-      // Right bucket
-      ctx.save();
-      ctx.fillStyle = 'rgba(239,68,68,0.2)'; ctx.strokeStyle = '#ef4444'; ctx.lineWidth = 2;
-      ctx.beginPath(); (ctx as any).roundRect?.(rightBucketX, bucketY, bucketW, bucketH, 8) ?? ctx.rect(rightBucketX, bucketY, bucketW, bucketH);
-      ctx.fill(); ctx.stroke();
-      ctx.fillStyle = '#ffffff'; ctx.font = `bold ${Math.min(14, bucketW * 0.13)}px sans-serif`; ctx.textAlign = 'center';
-      ctx.fillText(s.currentPair.right, rightBucketX + bucketW / 2, bucketY + bucketH / 2 + 6);
-      ctx.restore();
-
-      // Swipe arrows hint
-      ctx.fillStyle = 'rgba(255,255,255,0.2)'; ctx.font = '18px sans-serif'; ctx.textAlign = 'center';
-      ctx.fillText('⬅ swipe  swipe ➡', W / 2, bucketY - 15);
-
-      // Falling item
-      if (s.currentItem) {
-        const item = s.currentItem;
-        item.y += item.vy;
-
-        // Drop zone timeout
-        if (item.y > H - 100) {
-          // Missed! Auto-fail
-          s.sig.total++; s.sig.wrong++;
-          s.sig.streakCurrent = 0;
-          sfx.collision(); hapticFail();
-          s.floats.push({ x: W / 2, y: H * 0.5, text: 'TOO SLOW!', alpha: 1, vy: -3, color: '#ef4444' });
-          s.itemsHandled++;
-          s.nextSwitchIn--;
-          if (s.nextSwitchIn <= 0) switchCategories(W);
-          spawnItem(W);
+      // Timeout
+      const t = s.trial;
+      if (t && s.feedback === null) {
+        const elapsed = (Date.now() - s.shownAt) / 1000;
+        const limit = Math.max(1.2, 3 - s.level * 0.2);
+        if (elapsed > limit) {
+          s.sig.total++; s.sig.wrong++; s.sig.streakCurrent = 0;
+          sfx.collision?.(); hapticFail?.();
+          s.feedback = 'wrong'; s.feedbackTimer = 10;
+          setTimeout(() => { if (s.running && s.scene) nextTrial(s.scene, s); }, 400);
         }
-
-        // Draw item card
-        const cardW = Math.min(160, W * 0.4), cardH = 52;
-        const cx = item.x, cy = item.y;
-
-        ctx.save();
-        ctx.shadowBlur = 16; ctx.shadowColor = ACCENT;
-        ctx.fillStyle = 'rgba(167,139,250,0.15)'; ctx.strokeStyle = ACCENT; ctx.lineWidth = 2.5;
-        ctx.beginPath(); (ctx as any).roundRect?.(cx - cardW / 2, cy - cardH / 2, cardW, cardH, 10) ?? ctx.rect(cx - cardW / 2, cy - cardH / 2, cardW, cardH);
-        ctx.fill(); ctx.stroke();
-        ctx.fillStyle = '#ffffff'; ctx.font = `bold ${Math.min(20, cardW * 0.14)}px sans-serif`; ctx.textAlign = 'center';
-        ctx.fillText(item.word, cx, cy + 7);
-        ctx.restore();
       }
 
-      // Progress bar (items until switch)
-      const switchProgress = 1 - (s.nextSwitchIn / 5);
-      ctx.fillStyle = 'rgba(255,255,255,0.1)'; ctx.fillRect(20, 30, W - 40, 6);
-      ctx.fillStyle = switchProgress > 0.7 ? '#ef4444' : ACCENT;
-      ctx.fillRect(20, 30, (W - 40) * switchProgress, 6);
-      ctx.fillStyle = 'rgba(255,255,255,0.4)'; ctx.font = '10px sans-serif'; ctx.textAlign = 'right';
-      ctx.fillText('SWITCH ↑', W - 20, 26);
+      // Panel feedback
+      if (s.leftPanel && s.rightPanel) {
+        if (s.feedback === 'correct') {
+          (s.leftPanel.material as THREE.MeshBasicMaterial).color.setHex(0x0a3a1a);
+          (s.rightPanel.material as THREE.MeshBasicMaterial).color.setHex(0x0a3a1a);
+        } else if (s.feedback === 'wrong') {
+          (s.leftPanel.material as THREE.MeshBasicMaterial).color.setHex(0x3a0a0a);
+          (s.rightPanel.material as THREE.MeshBasicMaterial).color.setHex(0x3a0a0a);
+        } else {
+          (s.leftPanel.material as THREE.MeshBasicMaterial).color.setHex(0x1a1035);
+          (s.rightPanel.material as THREE.MeshBasicMaterial).color.setHex(0x1a1005);
+        }
+      }
 
-      // Floats
-      s.floats = s.floats.filter(f => f.alpha > 0.02);
-      s.floats.forEach(f => {
-        ctx.save(); ctx.globalAlpha = f.alpha;
-        ctx.fillStyle = f.color; ctx.font = 'bold 20px sans-serif'; ctx.textAlign = 'center';
-        ctx.fillText(f.text, f.x, f.y); ctx.restore();
-        f.y += f.vy; f.alpha *= 0.95;
-      });
+      // Item sprite bounce
+      if (s.itemSprite) {
+        s.itemSprite.position.y = 0.5 + Math.sin(Date.now() * 0.003) * 0.1;
+      }
 
-      animRef.current = requestAnimationFrame(loop);
+      renderer.render(scene, camera);
+      s.animId = requestAnimationFrame(loop);
     };
-    animRef.current = requestAnimationFrame(loop);
-  }, [endGame, spawnItem, switchCategories]);
+    s.animId = requestAnimationFrame(loop);
+  }, [endGame, nextTrial]);
 
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const resize = () => { canvas.width = canvas.offsetWidth; canvas.height = canvas.offsetHeight; };
-    resize();
-    window.addEventListener('resize', resize);
-
-    let pointerStartX = 0, pointerStartY = 0, pointerStartTime = 0;
-
+    const mount = mountRef.current;
+    if (!mount) return;
     const onPointerDown = (e: PointerEvent) => {
       if (phase !== 'playing') return;
-      pointerStartX = e.clientX; pointerStartY = e.clientY; pointerStartTime = Date.now();
-    };
-
-    const onPointerUp = (e: PointerEvent) => {
-      if (phase !== 'playing') return;
       const s = stateRef.current;
-      if (!s.currentItem) return;
-      const dx = e.clientX - pointerStartX;
-      const dt = Date.now() - pointerStartTime;
-
-      if (Math.abs(dx) < 20 && dt > 300) return; // not a swipe
-      if (Math.abs(dx) < 15) return;
-
-      const playerSaysLeft = dx < 0;
+      if (s.feedback !== null || !s.trial) return;
+      const rect = mount.getBoundingClientRect();
+      const isLeft = (e.clientX - rect.left) < rect.width / 2;
+      const answer: 'left' | 'right' = isLeft ? 'left' : 'right';
       const ms = Date.now() - s.shownAt;
       s.sig.total++; s.sig.totalMs += ms;
-
-      const isCorrect = (playerSaysLeft && s.currentItem.isLeft) || (!playerSaysLeft && !s.currentItem.isLeft);
-
-      if (isCorrect) {
+      const t = s.trial;
+      if (answer === t.correctSide) {
         s.sig.correct++;
-        if (isAfterSwitch.current) { s.sig.correctAfterSwitch++; isAfterSwitch.current = false; }
+        if (t.isSwitch) s.sig.correctAfterSwitch++;
         s.sig.streakCurrent++;
         if (s.sig.streakCurrent > s.sig.maxStreak) s.sig.maxStreak = s.sig.streakCurrent;
-        const speedPts = ms < 400 ? 3 : ms < 800 ? 2 : 1;
-        s.sig.score += speedPts; setScoreDisplay(s.sig.score);
-        sfx.collect(); hapticScore();
+        const pts = ms < 500 ? 3 : ms < 1200 ? 2 : 1;
+        s.sig.score += pts; setScoreDisplay(s.sig.score);
+        s.level = Math.min(8, 1 + Math.floor(s.sig.correct / 5));
+        sfx.collect?.(); hapticScore?.();
         if (s.sig.streakCurrent >= 3) hapticCombo(s.sig.streakCurrent);
-        s.floats.push({ x: canvas.width / 2, y: canvas.height * 0.55, text: `+${speedPts} ✓`, alpha: 1, vy: -2.5, color: '#fbbf24' });
+        s.feedback = 'correct'; s.feedbackTimer = 8;
       } else {
         s.sig.wrong++; s.sig.streakCurrent = 0;
-        isAfterSwitch.current = false;
-        sfx.collision(); hapticFail();
-        s.floats.push({ x: canvas.width / 2, y: canvas.height * 0.55, text: 'WRONG SIDE!', alpha: 1, vy: -2, color: '#ef4444' });
+        sfx.collision?.(); hapticFail?.();
+        s.feedback = 'wrong'; s.feedbackTimer = 10;
       }
-
-      s.itemsHandled++;
-      s.nextSwitchIn--;
-      if (s.nextSwitchIn <= 0) switchCategories(canvas.width);
-      spawnItem(canvas.width);
+      setTimeout(() => { if (s.running && s.scene) nextTrial(s.scene, s); }, 350);
     };
-
-    canvas.addEventListener('pointerdown', onPointerDown);
-    canvas.addEventListener('pointerup', onPointerUp);
-    return () => {
-      window.removeEventListener('resize', resize);
-      canvas.removeEventListener('pointerdown', onPointerDown);
-      canvas.removeEventListener('pointerup', onPointerUp);
-    };
-  }, [phase, spawnItem, switchCategories]);
+    mount.addEventListener('pointerdown', onPointerDown);
+    return () => mount.removeEventListener('pointerdown', onPointerDown);
+  }, [phase, nextTrial]);
 
   useEffect(() => () => {
-    cancelAnimationFrame(animRef.current);
-    if (timerRef.current) clearInterval(timerRef.current);
+    const s = stateRef.current;
+    s.running = false; cancelAnimationFrame(s.animId);
+    if (s.intervalId) clearInterval(s.intervalId);
+    s.resizeCleanup?.();
+    if (s.renderer) { s.renderer.dispose(); s.renderer = null; }
   }, []);
 
-  const handleStart = useCallback(async (n: string, a: string) => {
-    playerSessionRef.current = savePlayerSession(GAME_ID, n, a);
+  const handleStart = useCallback(async (name: string, avatar: string) => {
+    playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar);
     await initAudio(); setPhase('countdown');
   }, []);
-  const handlePlayAgain = useCallback(() => { setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null); }, []);
+  const handlePlayAgain = useCallback(() => {
+    setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null);
+  }, []);
 
   return (
     <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
-      {phase === 'start' && <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description="Swipe LEFT or RIGHT to sort items. But the categories change!" ctaLabel="Sort! 📦" accentColor={theme.colors.accent ?? ACCENT} onStart={handleStart} />}
+      {phase === 'start' && (
+        <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description={GAME_TAGLINE}
+          ctaLabel="Sort! 📦" accentColor={theme.colors.accent ?? ACCENT} onStart={handleStart} />
+      )}
       {phase === 'countdown' && <Countdown onComplete={startLoop} accentColor={theme.colors.accent ?? ACCENT} />}
-      {(phase === 'playing' || phase === 'countdown') && (
-        <>
-          <canvas ref={canvasRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none' }} role="img" aria-label="Category Clash sorting game canvas" />
-          {phase === 'playing' && <GameHUD accentColor={theme.colors.accent ?? ACCENT} items={[{ label: 'TIME', value: timeLeft, danger: timeLeft <= 10 }, { label: 'SCORE', value: scoreDisplay }]} />}
-        </>
+      <div ref={mountRef} style={{
+        position: 'absolute', inset: 0, width: '100%', height: '100%',
+        display: phase === 'playing' ? 'block' : 'none', touchAction: 'none',
+      }} />
+      {phase === 'playing' && (
+        <GameHUD accentColor={theme.colors.accent ?? ACCENT} items={[
+          { label: 'TIME', value: timeLeft, danger: timeLeft <= 5 },
+          { label: 'SCORE', value: scoreDisplay },
+        ]} />
       )}
       {phase === 'done' && finalSig && (
-        <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI} score={String(finalSig.score)} personality={getPersonality(finalSig)}
+        <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI}
+          score={String(finalSig.score)} personality={getPersonality(finalSig)}
           insights={[
             { label: 'Accuracy', value: `${finalSig.total > 0 ? Math.round(finalSig.correct / finalSig.total * 100) : 0}%`, color: ACCENT },
             { label: 'Switches', value: String(finalSig.switchCount), color: '#fbbf24' },
-            { label: 'Post-Switch', value: String(finalSig.correctAfterSwitch), color: '#4ade80' },
-            { label: 'Best Streak', value: `×${finalSig.maxStreak}`, color: '#06b6d4' },
+            { label: 'Best Streak', value: `×${finalSig.maxStreak}`, color: '#4ade80' },
+            { label: 'Post-Switch Correct', value: String(finalSig.correctAfterSwitch), color: '#06b6d4' },
           ]}
-          accentColor={theme.colors.accent ?? ACCENT} onPlayAgain={handlePlayAgain} didWin={finalSig.correct >= 15} />
+          accentColor={theme.colors.accent ?? ACCENT} onPlayAgain={handlePlayAgain}
+          didWin={finalSig.correct >= 15} />
       )}
     </GameShell>
   );
