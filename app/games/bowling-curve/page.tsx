@@ -127,6 +127,14 @@ export default function BowlingCurveGame() {
     s.scene = scene;
     const camera = new THREE.PerspectiveCamera(65, W / H, 0.1, 100);
     camera.position.set(0, 3, 9);
+    // === POLISH: Enhanced rim + fill lighting ===
+    const rimLightA = new THREE.PointLight(0x4466ff, 1.2, 20);
+    rimLightA.position.set(-6, 5, 3);
+    scene.add(rimLightA);
+    const fillLightB = new THREE.PointLight(0xff6644, 0.8, 15);
+    fillLightB.position.set(6, -3, 5);
+    scene.add(fillLightB);
+    // === END POLISH ===
     camera.lookAt(0, 0, -3);
     s.camera = camera;
 

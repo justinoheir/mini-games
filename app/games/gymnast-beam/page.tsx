@@ -154,6 +154,14 @@ export default function GymnastBeamGame() {
     scene.background = new THREE.Color(0x1a0030);
     const camera = new THREE.PerspectiveCamera(65, W / H, 0.1, 100);
     camera.position.set(0, 1, 10);
+    // === POLISH: Enhanced rim + fill lighting ===
+    const rimLightA = new THREE.PointLight(0x4466ff, 1.2, 20);
+    rimLightA.position.set(-6, 5, 3);
+    scene.add(rimLightA);
+    const fillLightB = new THREE.PointLight(0xff6644, 0.8, 15);
+    fillLightB.position.set(6, -3, 5);
+    scene.add(fillLightB);
+    // === END POLISH ===
 
     scene.add(new THREE.AmbientLight(0xffffff, 0.3));
     const spotlight = new THREE.SpotLight(0xf472b6, 3, 20, Math.PI / 4, 0.5);

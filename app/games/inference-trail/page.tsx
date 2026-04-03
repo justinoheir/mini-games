@@ -137,6 +137,14 @@ export default function InferenceTrailGame() {
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(60, W / H, 0.1, 200);
     camera.position.set(0, 0, 10);
+    // === POLISH: Enhanced rim + fill lighting ===
+    const rimLightA = new THREE.PointLight(0x4466ff, 1.2, 20);
+    rimLightA.position.set(-6, 5, 3);
+    scene.add(rimLightA);
+    const fillLightB = new THREE.PointLight(0xff6644, 0.8, 15);
+    fillLightB.position.set(6, -3, 5);
+    scene.add(fillLightB);
+    // === END POLISH ===
 
     scene.add(new THREE.AmbientLight(0x1a0a3a, 5));
     const purpleLight = new THREE.PointLight(0x7c3aed, 2, 20);
