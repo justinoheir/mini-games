@@ -88,6 +88,18 @@ export default function GameDartboard() {
 
     const camera=new THREE.PerspectiveCamera(65,W/H,0.1,50);
     camera.position.set(0,1,7);
+    // === POLISH: Atmospheric particle field ===
+    const _sfCount = 80;
+    const _sfGeo = new THREE.BufferGeometry();
+    const _sfPos = new Float32Array(_sfCount * 3);
+    for (let _i = 0; _i < _sfCount; _i++) {
+      _sfPos[_i*3] = (Math.random()-0.5)*20;
+      _sfPos[_i*3+1] = (Math.random()-0.5)*15;
+      _sfPos[_i*3+2] = (Math.random()-0.5)*8-3;
+    }
+    _sfGeo.setAttribute('position', new THREE.BufferAttribute(_sfPos, 3));
+    scene.add(new THREE.Points(_sfGeo, new THREE.PointsMaterial({ color: 0xaaddff, size: 0.05, transparent: true, opacity: 0.4 })));
+    // === END POLISH ===
     camera.lookAt(0,0,-5);
     cameraRef.current=camera;
 

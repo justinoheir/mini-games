@@ -77,7 +77,7 @@ export default function HockeySlap() {
     const W = mount.clientWidth, H = mount.clientHeight;
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setSize(W, H); renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    renderer.setClearColor(0xd0e8f5);
+    renderer.setClearColor(0x04101a);
     renderer.shadowMap.enabled = true;
     mount.innerHTML = ''; mount.appendChild(renderer.domElement);
 

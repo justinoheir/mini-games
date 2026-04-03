@@ -124,7 +124,7 @@ export default function SkiSlalomGame() {
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setSize(W, H);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    renderer.setClearColor(0xc8e6f0);
+    renderer.setClearColor(0x041218);
     if (mountRef.current) { mountRef.current.innerHTML = ''; mountRef.current.appendChild(renderer.domElement); }
     s.renderer = renderer;
 
@@ -303,7 +303,7 @@ export default function SkiSlalomGame() {
         s.flashTimer--;
         renderer.setClearColor(new THREE.Color(1, 0.2, 0.2).lerp(new THREE.Color(0xc8e6f0), 1 - s.flashTimer / 20));
       } else {
-        renderer.setClearColor(0xc8e6f0);
+        renderer.setClearColor(0x041218);
       }
 
       // Lives icons (skier light color)
