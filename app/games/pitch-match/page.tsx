@@ -1,1110 +1,449 @@
-/**
- * ══════════════════════════════════════════════════════════════════
- *  ETHER MINI-GAMES — PITCH MATCH
- *  Sensor: Microphone (required, no touch fallback)
- *  Players hum/sing to match target pitch lines on a waveform canvas.
- *  Signals: notesHit, avgPitchDeviation, longestHold, totalHoldTime, silenceGaps
- * ══════════════════════════════════════════════════════════════════
- */
-
 'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
+import * as THREE from 'three';
 import GameShell from '@/components/GameShell';
 import GameHUD from '@/components/GameHUD';
 import GameStartScreen from '@/components/GameStartScreen';
 import Countdown from '@/components/Countdown';
 import EndScreen from '@/components/EndScreen';
-import { initAudio, sfx, haptic, startMusic } from '@/lib/audio';
-import { playScoreHit, playVictoryFanfare, playNearMiss } from '@/lib/audio';
-import { hapticScore, hapticFail, hapticVictory } from '@/lib/haptics';
+import { initAudio, sfx, haptic } from '@/lib/audio';
+import { hapticScore, hapticVictory } from '@/lib/haptics';
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
-import { spawnBurst, updateAndDrawParticles, Particle } from '@/lib/particles';
-import { Mic, MicOff } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
-import ScorePopEffect, { useScorePop } from '@/components/ScorePopEffect';
-import StreakBadge from '@/components/StreakBadge';
-import { CATEGORY_THEMES } from '@/lib/theme';
-import SwipeInstructions from '@/components/SwipeInstructions';
 
-const CATEGORY_ACCENT = CATEGORY_THEMES.breath.primaryAccent;
-
-// ─── SPRITE CACHE ─────────────────────────────────────────────────────────────
-const _spriteCache = new Map<string, HTMLImageElement>();
-function _loadSprite(src: string): HTMLImageElement {
-  if (_spriteCache.has(src)) return _spriteCache.get(src)!;
-  const img = new Image();
-  img.src = src;
-  _spriteCache.set(src, img);
-  return img;
-}
-if (typeof window !== 'undefined') {
-  _loadSprite('/sprites/pitch-match/note.svg');
-  _loadSprite('/sprites/pitch-match/wave.svg');
-}
-
-// ─── SPEC CONSTANTS ──────────────────────────────────────────────────────────
-
-const GAME_ID      = 'pitch-match';
-const PB_KEY       = 'pb_pitch-match';
-const ACCENT       = '#34d399';
-const DURATION     = 45;
+const GAME_ID  = 'pitch-match';
+const ACCENT   = '#a855f7';
+const DURATION = 45;
 const GAME_EMOJI   = '🎵';
 const GAME_TITLE   = 'Pitch Match';
-const GAME_TAGLINE = 'Hit the note. Hold it. Feel it.';
+const GAME_TAGLINE = 'Hum or sing to match the target frequency!';
 
-// ─── NOTE DEFINITIONS ────────────────────────────────────────────────────────
-// 8 target notes across comfortable vocal range C3–C5
+const TARGET_NOTES = [196.00, 261.63, 329.63, 440.00, 392.00, 220.00, 293.66, 523.25];
+const FREQ_MIN = 90; const FREQ_MAX = 620;
+const HIT_CENTS = 50; const PRECISION_CENTS = 20;
 
-const TARGET_NOTES: number[] = [
-  196.00, // G3
-  261.63, // C4
-  329.63, // E4
-  440.00, // A4
-  392.00, // G4
-  220.00, // A3
-  293.66, // D4
-  523.25, // C5
-];
-
-// Note name lookup table
-const NOTE_NAME_MAP: Array<[number, string]> = [
-  [130.81, 'C3'], [138.59, 'C#3'], [146.83, 'D3'], [155.56, 'D#3'],
-  [164.81, 'E3'], [174.61, 'F3'], [185.00, 'F#3'], [196.00, 'G3'],
-  [207.65, 'G#3'], [220.00, 'A3'], [233.08, 'A#3'], [246.94, 'B3'],
-  [261.63, 'C4'], [277.18, 'C#4'], [293.66, 'D4'], [311.13, 'D#4'],
-  [329.63, 'E4'], [349.23, 'F4'], [369.99, 'F#4'], [392.00, 'G4'],
-  [415.30, 'G#4'], [440.00, 'A4'], [466.16, 'A#4'], [493.88, 'B4'],
-  [523.25, 'C5'],
-];
-
-function getNoteName(freq: number): string {
-  if (freq <= 0) return '';
-  let closest = NOTE_NAME_MAP[0];
-  let minDiff = Math.abs(freq - closest[0]);
-  for (const pair of NOTE_NAME_MAP) {
-    const diff = Math.abs(freq - pair[0]);
-    if (diff < minDiff) { minDiff = diff; closest = pair; }
-  }
-  return minDiff > 25 ? `${Math.round(freq)}Hz` : closest[1];
+function freqToCents(freq: number, ref: number): number {
+  return 1200 * Math.log2(freq / ref);
 }
-
-// Y-axis frequency range for the canvas
-const FREQ_MIN = 90;    // below C3 (bottom of visible range)
-const FREQ_MAX = 620;   // above C5 (top of visible range)
-
-// Note timing
-const NOTE_DURATION_MS = Math.floor((DURATION * 1000) / TARGET_NOTES.length); // 5625ms
-
-// Guide frequencies drawn as subtle horizontal lines
-const GUIDE_FREQS = [130.81, 196.00, 261.63, 329.63, 392.00, 440.00, 523.25];
-
-// Scoring constants
-const HIT_CENTS       = 50;
-const PRECISION_CENTS = 20;
-const SCORE_TICK_MS   = 100;
-const NOTE_HIT_BONUS  = 10;
-const HIT_SCORE       = 1;
-const PRECISION_SCORE = 2;
-const COMBO_MULT      = 1.5;
-
-// Timing thresholds
-const SILENCE_GAP_MS  = 500;
-const PITCH_DETECT_MS = 50;  // run autocorrelation every 50ms (20fps)
-
-// ─── PITCH DETECTION: AUTOCORRELATION ────────────────────────────────────────
 
 function autoCorrelate(buf: Float32Array, sampleRate: number): number {
   const SIZE = buf.length;
-  const HALF = SIZE >> 1;
-
-  // RMS signal check
+  const rmsThreshold = 0.01;
   let rms = 0;
   for (let i = 0; i < SIZE; i++) rms += buf[i] * buf[i];
   rms = Math.sqrt(rms / SIZE);
-  if (rms < 0.015) return -1; // below silence threshold
-
-  // Search lag range corresponding to 80–700 Hz vocal range
-  const minLag = Math.floor(sampleRate / 700);
-  const maxLag = Math.min(Math.ceil(sampleRate / 80), SIZE - 2);
-
-  let bestLag = -1;
-  let bestCorr = -Infinity;
-
-  for (let lag = minLag; lag <= maxLag; lag++) {
-    let corr = 0;
-    for (let i = 0; i < HALF; i++) corr += buf[i] * buf[i + lag];
-    if (corr > bestCorr) { bestCorr = corr; bestLag = lag; }
-  }
-
-  if (bestLag < 1) return -1;
-
-  // Confidence: compare correlation against signal power
-  let norm = 0;
-  for (let i = 0; i < HALF; i++) norm += buf[i] * buf[i];
-  if (norm < 1e-8 || bestCorr / norm < 0.3) return -1;
-
-  // Parabolic interpolation for sub-sample accuracy
-  if (bestLag > 1 && bestLag < maxLag - 1) {
-    let c0 = 0, c1 = 0, c2 = 0;
-    for (let i = 0; i < HALF; i++) {
-      c0 += buf[i] * buf[i + bestLag - 1];
-      c1 += buf[i] * buf[i + bestLag];
-      c2 += buf[i] * buf[i + bestLag + 1];
-    }
-    const a = (c0 + c2 - 2 * c1) / 2;
-    const b = (c2 - c0) / 2;
-    if (a < 0) {
-      const refined = bestLag - b / (2 * a);
-      return sampleRate / refined;
-    }
-  }
-
-  return sampleRate / bestLag;
+  if (rms < rmsThreshold) return -1;
+  let r1 = 0; let r2 = SIZE - 1; const thres = 0.2;
+  for (let i = 0; i < SIZE / 2; i++) { if (Math.abs(buf[i]) < thres) { r1 = i; break; } }
+  for (let i = 1; i < SIZE / 2; i++) { if (Math.abs(buf[SIZE - i]) < thres) { r2 = SIZE - i; break; } }
+  const sliced = buf.slice(r1, r2);
+  const c = new Float32Array(sliced.length * 2);
+  for (let i = 0; i < sliced.length; i++) for (let j = 0; j < sliced.length; j++) c[i + j] += sliced[i] * sliced[j];
+  const d = c.slice(sliced.length);
+  let maxval = -1; let maxpos = -1;
+  for (let i = 1; i < d.length; i++) { if (d[i] > d[i - 1] && d[i] > d[i + 1] && d[i] > maxval) { maxval = d[i]; maxpos = i; } }
+  if (maxpos < 0) return -1;
+  let T0 = maxpos;
+  const x1 = d[T0 - 1]; const x2 = d[T0]; const x3 = d[T0 + 1];
+  const a = (x1 + x3 - 2 * x2) / 2; const b = (x3 - x1) / 2;
+  if (a) T0 = T0 - b / (2 * a);
+  return sampleRate / T0;
 }
-
-// ─── COORDINATE HELPERS ──────────────────────────────────────────────────────
-
-function freqToY(freq: number, H: number): number {
-  const logMin = Math.log2(FREQ_MIN);
-  const logMax = Math.log2(FREQ_MAX);
-  const logF   = Math.log2(Math.max(FREQ_MIN, Math.min(FREQ_MAX, freq)));
-  return H * (1 - (logF - logMin) / (logMax - logMin));
-}
-
-// ─── BEHAVIORAL SIGNALS ──────────────────────────────────────────────────────
 
 interface Signals {
-  notesHit: number;
-  avgPitchDeviation: number;   // average cents off while in hit zone
-  longestHold: number;         // ms
-  totalHoldTime: number;       // ms
-  silenceGaps: number;
-  score: number;
-  // Internal tracking — not sent to webhook
-  deviationTotal: number;
-  deviationSamples: number;
-  notesFirstHit: boolean[];    // [8] — first-hit tracking per note
+  notesHit: number; precisionHits: number; missedNotes: number;
+  avgPitchDeviation: number; longestHold: number; score: number;
+  maxStreak: number; streakCurrent: number;
 }
-
-// ─── PERSONALITY CLASSIFICATION ──────────────────────────────────────────────
 
 function getPersonality(sig: Signals): string {
-  if (sig.notesHit >= 8 && sig.avgPitchDeviation < 30)       return 'Natural Pitch 🎼';
-  if (sig.longestHold > 4000 && sig.totalHoldTime > 20000)   return 'Sustained Voice 🌬️';
-  if (sig.notesHit >= 5 && sig.avgPitchDeviation > 60)       return 'Close Enough 🎸';
-  return 'Finding Voice 🌊';
-}
-
-// ─── GAME STATE ──────────────────────────────────────────────────────────────
-
-interface GameState {
-  running: boolean;
-  timeLeft: number;
-  sig: Signals;
-  gameStartTime: number;
-
-  // Pitch analysis
-  detectedPitch: number;       // Hz from autocorrelate, or -1
-  displayPitch: number;        // exponentially smoothed pitch for visual
-  lastPitchDetect: number;     // timestamp of last autocorrelation call
-
-  // Note tracking
-  currentNoteIndex: number;
-
-  // Hold & score tracking
-  holdingNote: boolean;
-  holdStartTime: number;
-  lastScoreTick: number;
-
-  // Silence tracking
-  inSilence: boolean;
-  silenceStartTime: number;
-  firstPitchDetected: boolean;
-  silenceGapCounted: boolean;
-
-  // Combo
-  comboActive: boolean;
-
-  // Visual state
-  accentColor: string;
-  particles: Particle[];
-  hitFlashAlpha: number;       // 0–1, brightness when in zone
-  noteChangeFlash: number;     // 0–1, brief flash on note change
+  if (sig.precisionHits >= 5 && sig.avgPitchDeviation < 15) return '🎤 Perfect Pitch';
+  if (sig.notesHit >= 6) return '🎵 Melody Master';
+  if (sig.longestHold > 2000) return '🎶 Sustained Singer';
+  if (sig.notesHit >= 3) return '🎼 On Key';
+  return '🎤 Finding the Tune';
 }
 
 type Phase = 'start' | 'countdown' | 'playing' | 'done';
 
-// ─── COMPONENT ───────────────────────────────────────────────────────────────
+interface WaveBar {
+  mesh: THREE.Mesh; baseY: number; targetScaleY: number;
+}
+
+interface NoteOrb {
+  mesh: THREE.Mesh; targetY: number; light: THREE.PointLight;
+}
+
+interface GS {
+  running: boolean; timeLeft: number; sig: Signals;
+  renderer: THREE.WebGLRenderer | null;
+  scene: THREE.Scene | null;
+  camera: THREE.OrthographicCamera | null;
+  animId: number; frame: number;
+  // Audio
+  audioCtx: AudioContext | null;
+  analyser: AnalyserNode | null;
+  micStream: MediaStream | null;
+  pitchBuffer: Float32Array | null;
+  lastDetect: number;
+  // Game state
+  currentFreq: number;
+  noteIndex: number;
+  noteStartMs: number;
+  holdMs: number;
+  noteHoldMs: number;
+  // 3D refs
+  waveBars: WaveBar[];
+  noteOrb: NoteOrb | null;
+  targetOrb: THREE.Mesh | null;
+  freqLine: THREE.Mesh | null;
+  targetLine: THREE.Mesh | null;
+  particles: Array<{ mesh: THREE.Mesh; vx: number; vy: number; vz: number; life: number }>;
+  intervalId: ReturnType<typeof setInterval> | null;
+  viewH: number; viewW: number;
+}
 
 export default function PitchMatchGame() {
-  const theme        = useBrandTheme();
-  const canvasRef    = useRef<HTMLCanvasElement>(null);
-  const animRef      = useRef(0);
-  const timerRef     = useRef<ReturnType<typeof setInterval> | null>(null);
-  const stopMusicRef = useRef<(() => void) | null>(null);
-
-  // Mic & audio analysis
-  const micStreamRef = useRef<MediaStream | null>(null);
-  const audioCtxRef  = useRef<AudioContext | null>(null);
-  const analyserRef  = useRef<AnalyserNode | null>(null);
-  const pitchBufRef  = useRef<Float32Array | null>(null);
-
-  // ⚠️ All mutable game state in stateRef — never useState inside rAF
-  const stateRef = useRef<GameState>({
-    running: false,
-    timeLeft: DURATION,
-    sig: {
-      notesHit: 0, avgPitchDeviation: 0, longestHold: 0, totalHoldTime: 0,
-      silenceGaps: 0, score: 0, deviationTotal: 0, deviationSamples: 0,
-      notesFirstHit: Array<boolean>(8).fill(false),
-    },
-    gameStartTime: 0,
-    detectedPitch: -1,
-    displayPitch: -1,
-    lastPitchDetect: 0,
-    currentNoteIndex: 0,
-    holdingNote: false,
-    holdStartTime: 0,
-    lastScoreTick: 0,
-    inSilence: false,
-    silenceStartTime: 0,
-    firstPitchDetected: false,
-    silenceGapCounted: false,
-    comboActive: false,
-    accentColor: ACCENT,
-    particles: [],
-    hitFlashAlpha: 0,
-    noteChangeFlash: 0,
+  const theme = useBrandTheme();
+  const mountRef = useRef<HTMLDivElement>(null);
+  const stateRef = useRef<GS>({
+    running: false, timeLeft: DURATION,
+    sig: { notesHit: 0, precisionHits: 0, missedNotes: 0, avgPitchDeviation: 0, longestHold: 0, score: 0, maxStreak: 0, streakCurrent: 0 },
+    renderer: null, scene: null, camera: null, animId: 0, frame: 0,
+    audioCtx: null, analyser: null, micStream: null, pitchBuffer: null, lastDetect: 0,
+    currentFreq: 0, noteIndex: 0, noteStartMs: 0, holdMs: 0, noteHoldMs: 0,
+    waveBars: [], noteOrb: null, targetOrb: null, freqLine: null, targetLine: null,
+    particles: [], intervalId: null, viewH: 0, viewW: 0,
   });
 
-  // ⚠️ Only these drive re-renders
-  const [phase, setPhase]               = useState<Phase>('start');
-  const [showInstructions, setShowInstructions] = useState(true);
-  const [timeLeft, setTimeLeft]         = useState(DURATION);
+  const [phase, setPhase] = useState<Phase>('start');
+  const [timeLeft, setTimeLeft] = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
-  const [finalSig, setFinalSig]         = useState<Signals | null>(null);
-
-  const [playerName, setPlayerName]     = useState('');
-  const [playerAvatar, setPlayerAvatar] = useState('🎤');
-  const { pops, triggerPop } = useScorePop();
-  const [streak, setStreak] = useState(0);
-  const [isNewBest, setIsNewBest] = useState(false);
-  const prevScoreRef = useRef(0);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => {
-    const numScore = typeof scoreDisplay === 'number' ? scoreDisplay : 0;
-    if (numScore > prevScoreRef.current) {
-      triggerPop(`+${numScore - prevScoreRef.current}`, window.innerWidth / 2, 200);
-      hapticScore();
-      playScoreHit('default', numScore - prevScoreRef.current);
-      setStreak(Math.floor(numScore / 5));
-    }
-    prevScoreRef.current = numScore;
-  }, [scoreDisplay]); // triggerPop is stable
-  const [micError, setMicError]         = useState(false);
-  const playerSessionRef                = useRef<PlayerSession | null>(null);
-
-  // Sync brand theme accent
-  useEffect(() => {
-    stateRef.current.accentColor = theme.colors.accent ?? ACCENT;
-  }, [theme]);
-
-  // ─── END GAME ────────────────────────────────────────────────────────────
+  const [finalSig, setFinalSig] = useState<Signals | null>(null);
+  const [micError, setMicError] = useState('');
+  const playerSessionRef = useRef<PlayerSession | null>(null);
 
   const endGame = useCallback(() => {
     const s = stateRef.current;
     s.running = false;
-    cancelAnimationFrame(animRef.current);
-    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
-    if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
-
-    // Finalize any active hold
-    if (s.holdingNote) {
-      const holdDuration = Date.now() - s.holdStartTime;
-      s.sig.totalHoldTime += holdDuration;
-      if (holdDuration > s.sig.longestHold) s.sig.longestHold = holdDuration;
-      s.holdingNote = false;
-    }
-
-    // Compute average pitch deviation
-    s.sig.avgPitchDeviation = s.sig.deviationSamples > 0
-      ? s.sig.deviationTotal / s.sig.deviationSamples
-      : 0;
-
-    sfx.success();
-    hapticVictory();
-    playVictoryFanfare();
-    // Personal best tracking
-    try {
-      const _pbPrev = parseInt(localStorage.getItem(PB_KEY) || '0', 10);
-      const _pbVal = parseFloat(String(s.sig?.score ?? 0));
-      if (!isNaN(_pbVal) && _pbVal > _pbPrev) {
-        localStorage.setItem(PB_KEY, String(Math.round(_pbVal)));
-        setIsNewBest(true);
-      }
-    } catch { /* ignore */ }
-
-
-
+    cancelAnimationFrame(s.animId);
+    if (s.intervalId) { clearInterval(s.intervalId); s.intervalId = null; }
+    if (s.analyser) { s.analyser.disconnect(); }
+    if (s.micStream) { s.micStream.getTracks().forEach(t => t.stop()); s.micStream = null; }
+    if (s.audioCtx) { s.audioCtx.close().catch(() => {}); s.audioCtx = null; }
+    if (s.renderer) { s.renderer.dispose(); s.renderer = null; }
+    if (mountRef.current) mountRef.current.innerHTML = '';
     setFinalSig({ ...s.sig });
     setPhase('done');
+    hapticVictory();
   }, []);
 
-  // ─── GAME LOOP ───────────────────────────────────────────────────────────
+  const startLoop = useCallback(async () => {
+    const mount = mountRef.current;
+    if (!mount) return;
 
-  const startLoop = useCallback(() => {
-    startMusic('calm');
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+    // Request microphone
+    let stream: MediaStream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+    } catch {
+      setMicError('Microphone access denied. Please allow mic and retry.');
+      setPhase('start');
+      return;
+    }
+
     const s = stateRef.current;
+    const W = mount.clientWidth || window.innerWidth;
+    const H = mount.clientHeight || window.innerHeight;
 
-    // Reset all game state
-    s.running = true;
-    s.timeLeft = DURATION;
-    s.gameStartTime = Date.now();
-    s.sig = {
-      notesHit: 0, avgPitchDeviation: 0, longestHold: 0, totalHoldTime: 0,
-      silenceGaps: 0, score: 0, deviationTotal: 0, deviationSamples: 0,
-      notesFirstHit: Array<boolean>(8).fill(false),
+    s.running = true; s.timeLeft = DURATION; s.frame = 0;
+    s.sig = { notesHit: 0, precisionHits: 0, missedNotes: 0, avgPitchDeviation: 0, longestHold: 0, score: 0, maxStreak: 0, streakCurrent: 0 };
+    s.noteIndex = 0; s.noteStartMs = Date.now(); s.holdMs = 0; s.noteHoldMs = 0; s.particles = [];
+    setScoreDisplay(0); setTimeLeft(DURATION); setPhase('playing');
+
+    // Audio setup
+    const audioCtx = new AudioContext();
+    const analyser = audioCtx.createAnalyser();
+    analyser.fftSize = 2048;
+    const source = audioCtx.createMediaStreamSource(stream);
+    source.connect(analyser);
+    s.audioCtx = audioCtx; s.analyser = analyser; s.micStream = stream;
+    s.pitchBuffer = new Float32Array(analyser.fftSize);
+
+    // Three.js setup
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(W, H);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setClearColor(0x080010);
+    mount.innerHTML = '';
+    mount.appendChild(renderer.domElement);
+    s.renderer = renderer;
+
+    const scene = new THREE.Scene();
+    s.scene = scene;
+
+    const vw = W / 2; const vh = H / 2;
+    const camera = new THREE.OrthographicCamera(-vw, vw, vh, -vh, 0.1, 100);
+    camera.position.z = 10;
+    s.camera = camera;
+    s.viewW = W; s.viewH = H;
+
+    // Lighting
+    scene.add(new THREE.AmbientLight(0x221133, 3));
+    const mainLight = new THREE.PointLight(0xa855f7, 3, 30);
+    mainLight.position.set(0, 0, 5);
+    scene.add(mainLight);
+    const rimLight = new THREE.PointLight(0x7c3aed, 1.5, 20);
+    rimLight.position.set(-vw * 0.5, 0, 5);
+    scene.add(rimLight);
+
+    // Frequency wave bars (equalizer-style)
+    const BAR_COUNT = 32;
+    const barW = W / BAR_COUNT * 0.7;
+    const waveBars: WaveBar[] = [];
+    for (let i = 0; i < BAR_COUNT; i++) {
+      const barGeo = new THREE.BoxGeometry(barW, 1, 10);
+      const barMat = new THREE.MeshStandardMaterial({ color: 0xa855f7, emissive: 0xa855f7, emissiveIntensity: 0.3, transparent: true, opacity: 0.6 });
+      const bar = new THREE.Mesh(barGeo, barMat);
+      const bx = -vw + (i + 0.5) * (W / BAR_COUNT);
+      bar.position.set(bx, -vh * 0.2, 0);
+      scene.add(bar);
+      waveBars.push({ mesh: bar, baseY: -vh * 0.2, targetScaleY: 1 });
+    }
+    s.waveBars = waveBars;
+
+    // Frequency range indicator (vertical axis)
+    // Target frequency line (horizontal)
+    const targetLineGeo = new THREE.PlaneGeometry(W, 3);
+    const targetLineMat = new THREE.MeshBasicMaterial({ color: 0xa855f7, transparent: true, opacity: 0.4, side: THREE.DoubleSide });
+    const targetLine = new THREE.Mesh(targetLineGeo, targetLineMat);
+    scene.add(targetLine);
+    s.targetLine = targetLine;
+
+    // Current freq indicator
+    const freqLineGeo = new THREE.PlaneGeometry(W, 4);
+    const freqLineMat = new THREE.MeshBasicMaterial({ color: 0xfbbf24, transparent: true, opacity: 0.8, side: THREE.DoubleSide });
+    const freqLine = new THREE.Mesh(freqLineGeo, freqLineMat);
+    scene.add(freqLine);
+    s.freqLine = freqLine;
+
+    // Note target orb
+    const targetOrbGeo = new THREE.SphereGeometry(20, 16, 16);
+    const targetOrbMat = new THREE.MeshStandardMaterial({ color: 0xa855f7, emissive: 0xa855f7, emissiveIntensity: 0.8, transparent: true, opacity: 0.9 });
+    const targetOrb = new THREE.Mesh(targetOrbGeo, targetOrbMat);
+    scene.add(targetOrb);
+    s.targetOrb = targetOrb;
+
+    // Current pitch orb
+    const orbGeo = new THREE.SphereGeometry(15, 16, 16);
+    const orbMat = new THREE.MeshStandardMaterial({ color: 0xfbbf24, emissive: 0xfbbf24, emissiveIntensity: 1, transparent: true, opacity: 0 });
+    const orbMesh = new THREE.Mesh(orbGeo, orbMat);
+    scene.add(orbMesh);
+    const orbLight = new THREE.PointLight(0xfbbf24, 0, 8);
+    orbLight.position.set(0, 0, 1);
+    scene.add(orbLight);
+    s.noteOrb = { mesh: orbMesh, targetY: 0, light: orbLight };
+
+    const freqToY = (freq: number): number => {
+      if (freq <= 0) return -vh;
+      const normalized = (freq - FREQ_MIN) / (FREQ_MAX - FREQ_MIN);
+      return (normalized - 0.5) * vh * 1.4;
     };
-    s.currentNoteIndex = 0;
-    s.detectedPitch = -1;
-    s.displayPitch = -1;
-    s.lastPitchDetect = 0;
-    s.holdingNote = false;
-    s.holdStartTime = 0;
-    s.lastScoreTick = Date.now();
-    s.inSilence = false;
-    s.firstPitchDetected = false;
-    s.silenceGapCounted = false;
-    s.comboActive = false;
-    s.particles = [];
-    s.hitFlashAlpha = 0;
-    s.noteChangeFlash = 1.0; // flash on first note
-    ctx.imageSmoothingEnabled = true;
 
-    setScoreDisplay(0);
-    setTimeLeft(DURATION);
-    setPhase('playing');
+    const onResize = () => {
+      const W2 = mount.clientWidth || window.innerWidth;
+      const H2 = mount.clientHeight || window.innerHeight;
+      renderer.setSize(W2, H2);
+      (camera as THREE.OrthographicCamera).left = -W2 / 2;
+      (camera as THREE.OrthographicCamera).right = W2 / 2;
+      (camera as THREE.OrthographicCamera).top = H2 / 2;
+      (camera as THREE.OrthographicCamera).bottom = -H2 / 2;
+      camera.updateProjectionMatrix();
+    };
+    window.addEventListener('resize', onResize);
+    (s as unknown as { _resizeCleanup: () => void })._resizeCleanup = () => window.removeEventListener('resize', onResize);
 
-    // ⚠️ setInterval ONLY for the 1-second countdown
-    timerRef.current = setInterval(() => {
-      s.timeLeft--;
-      setTimeLeft(s.timeLeft);
-      sfx.tick();
-      if (s.timeLeft === 10) sfx.warning();
-      if (s.timeLeft <= 0) endGame();
+    s.intervalId = setInterval(() => {
+      s.timeLeft--; setTimeLeft(s.timeLeft);
+      if (s.timeLeft <= 0) { sfx.fail(); haptic([300]); endGame(); }
     }, 1000);
 
-    // ─── Gradient cache — recreated only when canvas dimensions change ───
-    let bgGrad: CanvasGradient | null = null;
-    let vigGrad: CanvasGradient | null = null;
-    let gradCacheW = 0;
-    let gradCacheH = 0;
+    const NOTE_DURATION_MS = (DURATION * 1000) / TARGET_NOTES.length;
 
-    // ─── rAF LOOP ────────────────────────────────────────────────────────
-    const loop = () => {
+    const loop = (ts: number) => {
       if (!s.running) return;
-      const now = Date.now();
-      const W = window.innerWidth;
-      const H = window.innerHeight;
+      s.frame++;
 
-      // ── 1. Pitch Detection (throttled to every PITCH_DETECT_MS) ─────────
-      if (
-        now - s.lastPitchDetect >= PITCH_DETECT_MS &&
-        analyserRef.current !== null &&
-        pitchBufRef.current !== null &&
-        audioCtxRef.current !== null
-      ) {
-        s.lastPitchDetect = now;
-        analyserRef.current.getFloatTimeDomainData(pitchBufRef.current as Float32Array<ArrayBuffer>);
-        s.detectedPitch = autoCorrelate(pitchBufRef.current, audioCtxRef.current.sampleRate);
+      const targetFreq = TARGET_NOTES[s.noteIndex] ?? TARGET_NOTES[TARGET_NOTES.length - 1];
+      const elapsed = Date.now() - s.noteStartMs;
+      if (elapsed >= NOTE_DURATION_MS) {
+        if (s.noteHoldMs < 500) { s.sig.missedNotes++; s.sig.streakCurrent = 0; sfx.collision(); }
+        s.noteIndex = (s.noteIndex + 1) % TARGET_NOTES.length;
+        s.noteStartMs = Date.now(); s.noteHoldMs = 0;
       }
 
-      // ── 2. Pitch Smoothing & Silence Tracking ────────────────────────────
-      const rawPitch = s.detectedPitch;
-      if (rawPitch > 0) {
-        // Exponential smoothing toward detected pitch
-        s.displayPitch = s.displayPitch > 0
-          ? s.displayPitch * 0.80 + rawPitch * 0.20
-          : rawPitch;
-        s.firstPitchDetected = true;
-        if (s.inSilence) {
-          s.inSilence = false;
-          s.silenceGapCounted = false;
-        }
-      } else {
-        // No pitch — track silence gap
-        if (s.firstPitchDetected && !s.inSilence) {
-          s.inSilence = true;
-          s.silenceStartTime = now;
-        }
-        if (s.inSilence && !s.silenceGapCounted && (now - s.silenceStartTime) > SILENCE_GAP_MS) {
-          s.sig.silenceGaps++;
-          s.silenceGapCounted = true;
-        }
-        // Fade display pitch to zero (visual fade-out)
-        if (s.displayPitch > 0) {
-          s.displayPitch *= 0.93;
-          if (s.displayPitch < FREQ_MIN + 10) s.displayPitch = -1;
-        }
-      }
+      // Detect pitch
+      if (s.analyser && s.pitchBuffer && ts - s.lastDetect > 50) {
+        s.lastDetect = ts;
+        s.analyser.getFloatTimeDomainData(s.pitchBuffer as Float32Array<ArrayBuffer>);
+        const freq = autoCorrelate(s.pitchBuffer, s.audioCtx!.sampleRate);
+        s.currentFreq = freq > 0 ? freq : 0;
 
-      // ── 3. Note Progression ──────────────────────────────────────────────
-      const elapsed = now - s.gameStartTime;
-      const noteIndex = Math.min(
-        Math.floor(elapsed / NOTE_DURATION_MS),
-        TARGET_NOTES.length - 1,
-      );
-
-      if (noteIndex !== s.currentNoteIndex) {
-        const prevIdx = s.currentNoteIndex;
-
-        // Finalize hold from the note that just ended
-        if (s.holdingNote) {
-          const holdDuration = now - s.holdStartTime;
-          s.sig.totalHoldTime += holdDuration;
-          if (holdDuration > s.sig.longestHold) s.sig.longestHold = holdDuration;
-          s.holdingNote = false;
-        }
-
-        // Combo: prev note was hit AND no silence gap means combo stays active
-        s.comboActive = s.sig.notesFirstHit[prevIdx] && !s.inSilence;
-
-        // Play miss sound if the note expired without being hit
-        if (!s.sig.notesFirstHit[prevIdx]) {
-          sfx.collision();
-          haptic([40]);
-        }
-
-        s.currentNoteIndex = noteIndex;
-        s.noteChangeFlash = 1.0;
-
-        // Spawn particles at new target line to signal the change
-        const newTargetY = freqToY(TARGET_NOTES[noteIndex], H);
-        spawnBurst(s.particles, W * 0.42, newTargetY, s.accentColor, 10, 3);
-      }
-
-      // Decay note-change flash
-      s.noteChangeFlash = Math.max(0, s.noteChangeFlash - 0.035);
-
-      // ── 4. Hit Zone Logic ────────────────────────────────────────────────
-      const targetFreq = TARGET_NOTES[s.currentNoteIndex];
-      const dp         = s.displayPitch;
-      let inHitZone       = false;
-      let inPrecisionZone = false;
-      let centsOff        = 999;
-
-      if (dp > 0) {
-        centsOff        = Math.abs(1200 * Math.log2(dp / targetFreq));
-        inHitZone       = centsOff <= HIT_CENTS;
-        inPrecisionZone = centsOff <= PRECISION_CENTS;
-      }
-
-      if (inHitZone) {
-        if (!s.holdingNote) {
-          // Just entered the hit zone
-          s.holdingNote = true;
-          s.holdStartTime = now;
-          s.hitFlashAlpha = 1.0;
-          sfx.collect();
-          haptic([15]);
-
-          // Particle burst at the intersection of player and target lines
-          const targetY = freqToY(targetFreq, H);
-          const playerY = freqToY(dp, H);
-          spawnBurst(s.particles, W * 0.5, (targetY + playerY) * 0.5, s.accentColor, 20, 5);
-
-          // Award first-hit bonus (only once per note)
-          if (!s.sig.notesFirstHit[s.currentNoteIndex]) {
-            s.sig.notesFirstHit[s.currentNoteIndex] = true;
-            s.sig.notesHit++;
-            const bonus = s.comboActive
-              ? Math.round(NOTE_HIT_BONUS * COMBO_MULT)
-              : NOTE_HIT_BONUS;
-            s.sig.score += bonus;
+        if (freq > 0 && targetFreq > 0) {
+          const cents = Math.abs(freqToCents(freq, targetFreq));
+          if (cents < HIT_CENTS) {
+            s.noteHoldMs += 50;
+            s.holdMs += 50;
+            s.sig.score += cents < PRECISION_CENTS ? 2 : 1;
+            if (s.noteHoldMs === 50) {
+              s.sig.notesHit++;
+              if (cents < PRECISION_CENTS) s.sig.precisionHits++;
+              s.sig.streakCurrent++;
+              if (s.sig.streakCurrent > s.sig.maxStreak) s.sig.maxStreak = s.sig.streakCurrent;
+              hapticScore();
+            }
             setScoreDisplay(s.sig.score);
           }
-        }
-
-        // Accumulate score every SCORE_TICK_MS while in zone
-        if (now - s.lastScoreTick >= SCORE_TICK_MS) {
-          s.lastScoreTick = now;
-          const base = inPrecisionZone ? PRECISION_SCORE : HIT_SCORE;
-          const pts  = s.comboActive ? Math.ceil(base * COMBO_MULT) : base;
-          s.sig.score += pts;
-          setScoreDisplay(s.sig.score);
-          // Track precision deviation
-          s.sig.deviationTotal += centsOff;
-          s.sig.deviationSamples++;
-        }
-
-        s.hitFlashAlpha = Math.min(1, s.hitFlashAlpha + 0.08);
-      } else {
-        // Left hit zone — finalize hold
-        if (s.holdingNote) {
-          const holdDuration = now - s.holdStartTime;
-          s.sig.totalHoldTime += holdDuration;
-          if (holdDuration > s.sig.longestHold) s.sig.longestHold = holdDuration;
-          s.holdingNote = false;
-        }
-        s.hitFlashAlpha = Math.max(0, s.hitFlashAlpha - 0.04);
+          if (s.holdMs > s.sig.longestHold) s.sig.longestHold = s.holdMs;
+        } else { s.holdMs = 0; }
       }
 
-      // ─────────────────────────────────────────────────────────────────────
-      // ── 5. RENDER ──────────────────────────────────────────────────────
-      // ─────────────────────────────────────────────────────────────────────
+      const tY = freqToY(targetFreq);
+      const cY = freqToY(s.currentFreq);
 
-      // Layer 1: Background — deep violet/studio gradient (cached per canvas size)
-      if (W !== gradCacheW || H !== gradCacheH) {
-        gradCacheW = W; gradCacheH = H;
-        bgGrad = ctx.createRadialGradient(W * 0.5, H * 0.35, 0, W * 0.5, H * 0.65, Math.max(W, H) * 0.9);
-        bgGrad.addColorStop(0,   '#100820');
-        bgGrad.addColorStop(0.55, '#080514');
-        bgGrad.addColorStop(1,   '#030208');
-        vigGrad = ctx.createRadialGradient(W * 0.5, H * 0.5, H * 0.2, W * 0.5, H * 0.5, H * 0.8);
-        vigGrad.addColorStop(0, 'rgba(0,0,0,0)');
-        vigGrad.addColorStop(1, 'rgba(0,0,0,0.5)');
-      }
-      ctx.fillStyle = bgGrad!;
-      ctx.fillRect(0, 0, W, H);
-
-      // Vignette
-      ctx.fillStyle = vigGrad!;
-      ctx.fillRect(0, 0, W, H);
-
-      // Layer 2: Subtle oscilloscope waveform (studio monitor aesthetic)
-      if (pitchBufRef.current !== null) {
-        const wbuf = pitchBufRef.current;
-        const step = Math.ceil(wbuf.length / W);
-        ctx.save();
-        ctx.strokeStyle = 'rgba(52,211,153,0.06)';
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        const centerY = H * 0.5;
-        for (let x = 0; x < W; x++) {
-          const idx = Math.min(x * step, wbuf.length - 1);
-          const y = centerY + wbuf[idx] * H * 0.12;
-          if (x === 0) ctx.moveTo(x, y);
-          else ctx.lineTo(x, y);
-        }
-        ctx.stroke();
-        ctx.restore();
+      // Update target line
+      if (s.targetLine) {
+        s.targetLine.position.y = tY;
+        (s.targetLine.material as THREE.MeshBasicMaterial).opacity = 0.3 + Math.sin(s.frame * 0.08) * 0.1;
       }
 
-      // Layer 3: Frequency guide lines
-      for (const gf of GUIDE_FREQS) {
-        const gy = freqToY(gf, H);
-        ctx.strokeStyle = 'rgba(255,255,255,0.035)';
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.moveTo(0, gy);
-        ctx.lineTo(W, gy);
-        ctx.stroke();
-        // Note name label (far left)
-        ctx.save();
-        ctx.fillStyle = 'rgba(255,255,255,0.09)';
-        ctx.font = '10px "JetBrains Mono", monospace';
-        ctx.textBaseline = 'bottom';
-        ctx.fillText(getNoteName(gf), 8, gy - 2);
-        ctx.restore();
+      // Update target orb
+      if (s.targetOrb) {
+        s.targetOrb.position.set(-vw * 0.4, tY, 0);
+        s.targetOrb.rotation.y += 0.02;
+        const isPrecise = s.currentFreq > 0 && Math.abs(freqToCents(s.currentFreq, targetFreq)) < PRECISION_CENTS;
+        (s.targetOrb.material as THREE.MeshStandardMaterial).emissiveIntensity = isPrecise ? 1.5 : 0.6 + Math.sin(s.frame * 0.1) * 0.2;
       }
 
-      // Layer 4: Hit zone band (±50 cents around target)
-      const targetY  = freqToY(targetFreq, H);
-      const hitTopY  = freqToY(targetFreq * Math.pow(2,  HIT_CENTS / 1200), H);
-      const hitBotY  = freqToY(targetFreq * Math.pow(2, -HIT_CENTS / 1200), H);
-      const precTopY = freqToY(targetFreq * Math.pow(2,  PRECISION_CENTS / 1200), H);
-      const precBotY = freqToY(targetFreq * Math.pow(2, -PRECISION_CENTS / 1200), H);
-
-      const hitZoneAlpha = 0.06 + s.noteChangeFlash * 0.08 + s.hitFlashAlpha * 0.07;
-      ctx.fillStyle = `rgba(52,211,153,${hitZoneAlpha})`;
-      ctx.fillRect(0, hitTopY, W * 0.86, hitBotY - hitTopY);
-
-      // Precision zone (±20 cents, slightly brighter)
-      const precAlpha = 0.05 + s.noteChangeFlash * 0.06 + s.hitFlashAlpha * 0.06;
-      ctx.fillStyle = `rgba(52,211,153,${precAlpha})`;
-      ctx.fillRect(0, precTopY, W * 0.86, precBotY - precTopY);
-
-      // Dashed zone boundary lines
-      ctx.save();
-      ctx.setLineDash([4, 7]);
-      ctx.strokeStyle = `rgba(52,211,153,${0.13 + s.hitFlashAlpha * 0.12})`;
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(0, hitTopY); ctx.lineTo(W * 0.86, hitTopY);
-      ctx.moveTo(0, hitBotY); ctx.lineTo(W * 0.86, hitBotY);
-      ctx.stroke();
-      ctx.restore();
-
-      // Layer 5: Target note line (glowing horizontal)
-      // Shadow only when in hit zone or briefly after a note change (perf: skip when idle)
-      ctx.save();
-      if (inHitZone || s.noteChangeFlash > 0.05) {
-        ctx.shadowBlur = inHitZone
-          ? 28 + s.hitFlashAlpha * 14
-          : 14 + s.noteChangeFlash * 10;
-        ctx.shadowColor = s.accentColor;
-      }
-      ctx.strokeStyle = inHitZone
-        ? s.accentColor
-        : `rgba(52,211,153,${0.55 + s.noteChangeFlash * 0.25})`;
-      ctx.lineWidth = inHitZone ? 3 : 2;
-      ctx.beginPath();
-      ctx.moveTo(0, targetY);
-      ctx.lineTo(W * 0.84, targetY);
-      ctx.stroke();
-      ctx.restore();
-
-      // Note label next to target line
-      ctx.save();
-      ctx.font = 'bold 13px "JetBrains Mono", monospace';
-      ctx.textBaseline = 'middle';
-      ctx.fillStyle = inHitZone ? s.accentColor : 'rgba(52,211,153,0.6)';
-      if (inHitZone) { ctx.shadowBlur = 12; ctx.shadowColor = s.accentColor; }
-      ctx.fillText(getNoteName(targetFreq), W * 0.86, targetY);
-      ctx.restore();
-
-      // Layer 6: Note progression tracker (vertical dots, far right)
-      const dotR       = 5;
-      const dotsX      = W - 14;
-      const dotsTop    = 60;
-      const dotsGap    = Math.min(28, (H - 120) / TARGET_NOTES.length);
-
-      for (let di = 0; di < TARGET_NOTES.length; di++) {
-        const dy        = dotsTop + di * dotsGap;
-        const isHit     = s.sig.notesFirstHit[di];
-        const isCurrent = di === s.currentNoteIndex;
-        const isPast    = di < s.currentNoteIndex;
-
-        ctx.save();
-        ctx.beginPath();
-        ctx.arc(dotsX, dy, isCurrent ? dotR * 1.4 : dotR * 0.9, 0, Math.PI * 2);
-
-        if (isHit) {
-          ctx.fillStyle = s.accentColor;
-          // Shadow only on current hit dot to reduce overdraw cost
-          if (isCurrent) { ctx.shadowBlur = 10; ctx.shadowColor = s.accentColor; }
-        } else if (isCurrent) {
-          ctx.fillStyle = `rgba(52,211,153,0.55)`;
-        } else if (isPast) {
-          ctx.fillStyle = 'rgba(255,255,255,0.12)';
-        } else {
-          ctx.fillStyle = 'rgba(255,255,255,0.07)';
-        }
-        ctx.fill();
-        ctx.restore();
-      }
-
-      // Layer 7: Player pitch line
-      if (dp > 0) {
-        const playerY = freqToY(dp, H);
-
-        ctx.save();
-        if (inHitZone) {
-          ctx.shadowBlur = 22 + s.hitFlashAlpha * 14;
-          ctx.shadowColor = s.accentColor;
-          ctx.strokeStyle = s.accentColor;
-          ctx.lineWidth = 3;
-        } else {
-          ctx.shadowBlur = 6;
-          ctx.shadowColor = 'rgba(255,255,255,0.35)';
-          ctx.strokeStyle = 'rgba(255,255,255,0.82)';
-          ctx.lineWidth = 2;
-        }
-        ctx.beginPath();
-        ctx.moveTo(W * 0.05, playerY);
-        ctx.lineTo(W * 0.78, playerY);
-        ctx.stroke();
-
-        // Leading dot (left edge)
-        ctx.beginPath();
-        ctx.arc(W * 0.03, playerY, 5, 0, Math.PI * 2);
-        ctx.fillStyle = inHitZone ? s.accentColor : 'rgba(255,255,255,0.88)';
-        ctx.shadowBlur = inHitZone ? 16 : 4;
-        ctx.shadowColor = inHitZone ? s.accentColor : 'rgba(255,255,255,0.4)';
-        ctx.fill();
-        ctx.restore();
-
-        // Layer 8: Proximity meter (right-side vertical bar)
-        const meterX   = W - 30;
-        const meterW   = 6;
-        const meterH   = H * 0.5;
-        const meterTop = (H - meterH) * 0.5;
-        const proximity = Math.max(0, 1 - Math.min(centsOff, HIT_CENTS) / HIT_CENTS);
-
-        // Background track
-        ctx.fillStyle = 'rgba(255,255,255,0.05)';
-        ctx.fillRect(meterX, meterTop, meterW, meterH);
-
-        // Fill
-        const fillH = meterH * proximity;
-        const fillY = meterTop + meterH - fillH;
-        if (fillH > 0) {
-          ctx.save();
-          const meterColor = inPrecisionZone
-            ? s.accentColor
-            : inHitZone
-              ? '#86efac'
-              : 'rgba(255,255,255,0.22)';
-          ctx.fillStyle = meterColor;
-          if (inHitZone) { ctx.shadowBlur = 10; ctx.shadowColor = meterColor; }
-          ctx.fillRect(meterX, fillY, meterW, fillH);
-          ctx.restore();
+      // Update current freq orb
+      if (s.noteOrb) {
+        s.noteOrb.targetY = cY;
+        s.noteOrb.mesh.position.y += (s.noteOrb.targetY - s.noteOrb.mesh.position.y) * 0.2;
+        s.noteOrb.mesh.position.x = vw * 0.4;
+        const hasFreq = s.currentFreq > 0;
+        (s.noteOrb.mesh.material as THREE.MeshStandardMaterial).opacity = hasFreq ? 0.9 : 0;
+        s.noteOrb.light.intensity = hasFreq ? 2 : 0;
+        s.noteOrb.light.position.copy(s.noteOrb.mesh.position);
+        if (hasFreq) {
+          const cents = Math.abs(freqToCents(s.currentFreq, targetFreq));
+          const onTarget = cents < HIT_CENTS;
+          (s.noteOrb.mesh.material as THREE.MeshStandardMaterial).color.setHex(onTarget ? (cents < PRECISION_CENTS ? 0x4ade80 : 0xfbbf24) : 0xf87171);
         }
       }
 
-      // Layer 9: Combo indicator (canvas overlay)
-      if (s.comboActive) {
-        ctx.save();
-        ctx.font = 'bold 13px "Space Grotesk", sans-serif';
-        ctx.textBaseline = 'bottom';
-        ctx.fillStyle = s.accentColor;
-        ctx.shadowBlur = 10;
-        ctx.shadowColor = s.accentColor;
-        ctx.fillText('×1.5 COMBO', 14, H - 18);
-        ctx.restore();
+      // Current freq horizontal line
+      if (s.freqLine) {
+        s.freqLine.position.y = s.noteOrb ? s.noteOrb.mesh.position.y : -vh;
+        (s.freqLine.material as THREE.MeshBasicMaterial).opacity = s.currentFreq > 0 ? 0.6 : 0;
       }
 
-      // Layer 10: Particles
-      updateAndDrawParticles(ctx, s.particles);
+      // Equalizer bars - driven by audio frequency data
+      if (s.analyser) {
+        const freqData = new Uint8Array(s.analyser.frequencyBinCount);
+        s.analyser.getByteFrequencyData(freqData as Uint8Array<ArrayBuffer>);
+        const step = Math.floor(freqData.length / BAR_COUNT);
+        s.waveBars.forEach((bar, i) => {
+          const val = freqData[i * step] / 255;
+          bar.targetScaleY = 1 + val * vh * 0.8;
+          bar.mesh.scale.y += (bar.targetScaleY - bar.mesh.scale.y) * 0.25;
+          bar.mesh.position.y = bar.baseY + bar.mesh.scale.y * 0.5 - 0.5;
+          const mat = bar.mesh.material as THREE.MeshStandardMaterial;
+          mat.emissiveIntensity = 0.1 + val * 0.9;
+          mat.opacity = 0.3 + val * 0.5;
+        });
+      }
 
-      animRef.current = requestAnimationFrame(loop);
+      // Particles
+      s.particles = s.particles.filter(p => {
+        p.mesh.position.x += p.vx; p.mesh.position.y += p.vy; p.mesh.position.z += p.vz;
+        p.life--;
+        (p.mesh.material as THREE.MeshStandardMaterial).opacity = Math.max(0, p.life / 20);
+        if (p.life <= 0) { scene.remove(p.mesh); return false; }
+        return true;
+      });
+
+      renderer.render(scene, camera);
+      s.animId = requestAnimationFrame(loop);
     };
-
-    animRef.current = requestAnimationFrame(loop);
+    s.animId = requestAnimationFrame(loop);
   }, [endGame]);
 
-  // ─── CANVAS RESIZE ───────────────────────────────────────────────────────
-
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    const resize = () => {
-      const dpr = window.devicePixelRatio || 1;
-      const w = window.innerWidth;
-      const h = window.innerHeight;
-      canvas.style.width  = w + 'px';
-      canvas.style.height = h + 'px';
-      canvas.width  = w * dpr;
-      canvas.height = h * dpr;
-      const ctx2 = canvas.getContext('2d');
-      if (ctx2) ctx2.setTransform(dpr, 0, 0, dpr, 0, 0);
-    };
-    resize();
-    window.addEventListener('resize', resize);
-
-    return () => {
-      window.removeEventListener('resize', resize);
-    };
+  useEffect(() => () => {
+    const s = stateRef.current;
+    cancelAnimationFrame(s.animId);
+    if (s.intervalId) clearInterval(s.intervalId);
+    if (s.analyser) s.analyser.disconnect();
+    if (s.micStream) s.micStream.getTracks().forEach(t => t.stop());
+    if (s.audioCtx) s.audioCtx.close().catch(() => {});
+    if (s.renderer) s.renderer.dispose();
+    (s as unknown as { _resizeCleanup?: () => void })._resizeCleanup?.();
   }, []);
 
-  // ─── UNMOUNT CLEANUP ─────────────────────────────────────────────────────
-
-  useEffect(() => {
-    return () => {
-      cancelAnimationFrame(animRef.current);
-      if (timerRef.current) clearInterval(timerRef.current);
-      if (stopMusicRef.current) stopMusicRef.current();
-      if (micStreamRef.current) {
-        micStreamRef.current.getTracks().forEach(t => t.stop());
-      }
-      if (audioCtxRef.current && audioCtxRef.current.state !== 'closed') {
-        audioCtxRef.current.close().catch(() => { /* ignore */ });
-      }
-    };
+  const handleStart = useCallback((name: string, avatar: string) => {
+    initAudio(); playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar); setPhase('countdown');
   }, []);
+  const handleCountdownDone = useCallback(() => { startLoop(); }, [startLoop]);
+  const handlePlayAgain = useCallback(() => { setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null); setMicError(''); }, []);
 
-  // ─── PHASE HANDLERS ──────────────────────────────────────────────────────
-
-  const handleStart = useCallback(async (name: string, avatar: string) => {
-    setPlayerName(name);
-    setPlayerAvatar(avatar);
-    initAudio();
-    playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar);
-    setMicError(false);
-
-    // Test shortcut: skip mic acquisition when audio is disabled (e.g. Playwright)
-    if ((window as unknown as Record<string,unknown>).__DISABLE_AUDIO) { setPhase('countdown'); return; }
-
-    if (!navigator.mediaDevices?.getUserMedia) {
-      setMicError(true);
-      return;
-    }
-
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-      micStreamRef.current = stream;
-
-      const audioCtx = new AudioContext();
-      await audioCtx.resume();
-      audioCtxRef.current = audioCtx;
-
-      const source  = audioCtx.createMediaStreamSource(stream);
-      const analyser = audioCtx.createAnalyser();
-      analyser.fftSize              = 2048;
-      analyser.smoothingTimeConstant = 0.0; // no smoothing — we handle it ourselves
-      source.connect(analyser);
-      analyserRef.current = analyser;
-      pitchBufRef.current = new Float32Array(analyser.fftSize);
-
-      setPhase('countdown');
-    } catch {
-      setMicError(true);
-    }
-  }, []);
-
-  const handleCountdownDone = useCallback(() => {
-    startLoop();
-  }, [startLoop]);
-
-  const handlePlayAgain = useCallback(() => {
-    // Clean up mic & audio context for fresh re-request
-    if (micStreamRef.current) {
-      micStreamRef.current.getTracks().forEach(t => t.stop());
-      micStreamRef.current = null;
-    }
-    if (audioCtxRef.current && audioCtxRef.current.state !== 'closed') {
-      audioCtxRef.current.close().catch(() => { /* ignore */ });
-      audioCtxRef.current = null;
-    }
-    analyserRef.current = null;
-    pitchBufRef.current = null;
-
-    setScoreDisplay(0);
-    setTimeLeft(DURATION);
-    setFinalSig(null);
-    setMicError(false);
-    setIsNewBest(false);
-    setStreak(0);
-    prevScoreRef.current = 0;
-
-    // Test shortcut: __DISABLE_AUDIO means mic re-request is skipped — go directly to
-    // countdown so tests don't have to navigate the start-screen flow a second time.
-    if ((window as unknown as Record<string,unknown>).__DISABLE_AUDIO) {
-      setPhase('countdown');
-      return;
-    }
-
-    setPhase('start');
-  }, []);
-
-  // ─── END SCREEN INSIGHTS ─────────────────────────────────────────────────
-
-  const buildInsights = (sig: Signals) => {
-    const pct   = Math.round((sig.notesHit / 8) * 100);
-    const hold  = (sig.longestHold / 1000).toFixed(1);
-    const dev   = Math.round(sig.avgPitchDeviation);
-    const total = (sig.totalHoldTime / 1000).toFixed(1);
-
-    return [
-      {
-        label: 'Notes Hit',
-        value: `${sig.notesHit}/8 (${pct}%)`,
-        color: sig.notesHit >= 6 ? '#4ade80' : sig.notesHit >= 3 ? '#facc15' : '#ef4444',
-      },
-      {
-        label: 'Best Hold',
-        value: `${hold}s`,
-        color: sig.longestHold > 3000 ? '#4ade80' : sig.longestHold > 1500 ? '#facc15' : '#ef4444',
-      },
-      {
-        label: 'Avg Precision',
-        value: `±${dev} cents`,
-        color: dev < 25 ? '#4ade80' : dev < 60 ? '#facc15' : '#ef4444',
-      },
-      {
-        label: 'On-Target',
-        value: `${total}s`,
-        color: theme.colors.accent ?? ACCENT,
-      },
-    ];
-  };
-
-  // ─── RENDER ──────────────────────────────────────────────────────────────
+  const buildInsights = (sig: Signals) => [
+    { label: 'Notes Hit', value: String(sig.notesHit), color: ACCENT },
+    { label: 'Precision', value: String(sig.precisionHits), color: '#4ade80' },
+    { label: 'Longest Hold', value: `${(sig.longestHold / 1000).toFixed(1)}s`, color: '#fbbf24' },
+    { label: 'Best Streak', value: `×${sig.maxStreak}`, color: ACCENT },
+  ];
 
   return (
-    <>
-      {phase === 'start' && showInstructions && (
-        <SwipeInstructions
-          gameId="pitch-match"
-          steps={[{ icon: "🎤", title: "Sing or hum", body: "Match the target pitch shown on screen." }, { icon: "🎵", title: "Hold steady", body: "Stay on pitch as long as you can." }, { icon: "🏆", title: "Score points", body: "The closer your pitch, the more you score." }]}
-          onDone={() => setShowInstructions(false)}
-        />
-      )}
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}
-      background="radial-gradient(ellipse at 50% 30%, rgba(0,180,255,0.08) 0%, transparent 50%), radial-gradient(ellipse at 20% 70%, rgba(0,255,150,0.06) 0%, transparent 40%), linear-gradient(180deg, #060809 0%, #080c0e 40%, #060a0c 70%, #040608 100%)">
-
-      {/* ── Start Screen ─────────────────────────────────────────────────── */}
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
       {phase === 'start' && (
-        <GameStartScreen
-          emoji={GAME_EMOJI}
-          title={GAME_TITLE}
-          description={GAME_TAGLINE}
-          ctaLabel={micError ? 'Retry Microphone' : 'Enable Microphone'}
-          accentColor={theme.colors.accent ?? ACCENT}
-          onStart={handleStart}
-          gradient="radial-gradient(ellipse 80% 70% at 50% 30%, #100820 0%, #080514 55%, #030208 100%)"
-        >
-          {/* ⚠️ Per-game player name capture — required in every game */}
-
-          {micError ? (
-            <div
-              style={{
-                marginTop: 16,
-                padding: '12px 16px',
-                background: 'rgba(239,68,68,0.12)',
-                borderRadius: 10,
-                border: '1px solid rgba(239,68,68,0.28)',
-                display: 'flex',
-                alignItems: 'flex-start',
-                gap: 10,
-              }}
-            >
-              <MicOff size={18} color="#ef4444" style={{ flexShrink: 0, marginTop: 2 }} />
-              <span style={{ color: '#ef4444', fontSize: 14, lineHeight: 1.5 }}>
-                Microphone access required. Please allow mic access in your browser settings and try again.
-              </span>
-            </div>
-          ) : (
-            <div
-              style={{
-                marginTop: 14,
-                display: 'flex',
-                alignItems: 'center',
-                gap: 8,
-                color: 'rgba(255,255,255,0.38)',
-                fontSize: 13,
-              }}
-            >
-              <Mic size={14} />
-              <span>Requires microphone access</span>
-            </div>
-          )}
-        </GameStartScreen>
+        <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE}
+          description={micError || GAME_TAGLINE}
+          ctaLabel="Allow Mic 🎤" accentColor={theme.colors.accent ?? ACCENT} onStart={handleStart} />
       )}
-
-      {/* ── Countdown ────────────────────────────────────────────────────── */}
-      {phase === 'countdown' && (
-        <Countdown onComplete={handleCountdownDone} accentColor={theme.colors.accent ?? ACCENT} />
-      )}
-
-      {/* ── Playing (canvas + HUD) ───────────────────────────────────────── */}
+      {phase === 'countdown' && <Countdown onComplete={handleCountdownDone} accentColor={theme.colors.accent ?? ACCENT} />}
       {(phase === 'playing' || phase === 'countdown') && (
         <>
-          {/* ⚠️ Canvas: full-bleed, touchAction none */}
-          <canvas
-            ref={canvasRef}
-            style={{
-              position: 'absolute',
-              inset: 0,
-              width: '100%',
-              height: '100%',
-              touchAction: 'none',
-            }}
-          />
-          {/* ⚠️ HUD above canvas — TIME and SCORE always visible */}
+          <div ref={mountRef} style={{ position: 'absolute', inset: 0, touchAction: 'none' }} />
           {phase === 'playing' && (
-            <GameHUD
-              accentColor={theme.colors.accent ?? ACCENT}
-              items={[
-                { label: 'TIME', value: timeLeft, danger: timeLeft <= 10, testId: 'timer' },
-                { label: 'SCORE', value: scoreDisplay, testId: 'score' },
-              ]}
-            />
+            <GameHUD accentColor={theme.colors.accent ?? ACCENT} items={[
+              { label: 'TIME', value: timeLeft, danger: timeLeft <= 10 },
+              { label: 'SCORE', value: scoreDisplay },
+            ]} />
           )}
         </>
       )}
-      {/* New best banner */}
-      <AnimatePresence>
-        {isNewBest && (
-          <motion.div
-            key="new-best"
-            initial={{ opacity: 0, y: -20, scale: 0.8 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -20 }}
-            transition={{ duration: 0.4, delay: 0.5 }}
-            style={{
-              position: 'fixed', top: '10%', left: '50%', transform: 'translateX(-50%)',
-              zIndex: 90, pointerEvents: 'none',
-              background: 'linear-gradient(135deg, #fbbf24, #f59e0b)',
-              borderRadius: 20, padding: '8px 20px', fontSize: 20,
-              fontWeight: 900, color: '#000', whiteSpace: 'nowrap',
-              boxShadow: '0 4px 20px rgba(251,191,36,0.5)',
-            }}
-          >
-            🏆 New Best!
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-
-
-      {/* ── End Screen ───────────────────────────────────────────────────── */}
-      {phase === 'done' && finalSig !== null && (
-        <EndScreen
-          gameId={GAME_ID}
-          title={getPersonality(finalSig)}
-          emoji={GAME_EMOJI}
-          score={String(finalSig.score)}
-          personality={getPersonality(finalSig)}
-          insights={buildInsights(finalSig)}
-          accentColor={theme.colors.accent ?? ACCENT}
-          onPlayAgain={handlePlayAgain}
-          didWin={finalSig.notesHit >= 5}
-        />
-      )}
-
-      {/* ⚠️ Webhook — fires once when done phase mounts */}
-      {phase === 'done' && finalSig !== null && (
-        <WebhookEmitter
-          theme={theme}
-          gameId={GAME_ID}
-          sig={finalSig}
-          personality={getPersonality(finalSig)}
-          player={playerSessionRef.current}
-        />
-      )}
-
-      {phase === 'playing' && (
+      {phase === 'done' && finalSig && (
         <>
-          <ScorePopEffect pops={pops} accentColor={CATEGORY_ACCENT} />
-          <StreakBadge streak={streak} accentColor={CATEGORY_ACCENT} />
+          <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI}
+            score={String(finalSig.score)} personality={getPersonality(finalSig)}
+            insights={buildInsights(finalSig)} accentColor={theme.colors.accent ?? ACCENT}
+            onPlayAgain={handlePlayAgain} didWin={finalSig.notesHit >= 5} />
+          <WebhookEmitter theme={theme} sig={finalSig} personality={getPersonality(finalSig)} player={playerSessionRef.current} />
         </>
       )}
     </GameShell>
-    </>
   );
 }
 
-// ─── WEBHOOK EMITTER ─────────────────────────────────────────────────────────
-// Isolated component so postWebhook fires exactly once on mount.
+const BAR_COUNT = 32;
 
-function WebhookEmitter({ theme, gameId, sig, personality, player }: {
-  theme: ReturnType<typeof useBrandTheme>;
-  gameId: string;
-  sig: Signals;
-  personality: string;
-  player: PlayerSession | null;
+function WebhookEmitter({ theme, sig, personality, player }: {
+  theme: ReturnType<typeof useBrandTheme>; sig: Signals; personality: string; player: PlayerSession | null;
 }) {
   const fired = useRef(false);
   useEffect(() => {
-    if (fired.current) return;
-    fired.current = true;
-    postWebhook(theme, gameId, {
-      personality,
-      score:             sig.score,
-      notesHit:          sig.notesHit,
-      avgPitchDeviation: parseFloat(sig.avgPitchDeviation.toFixed(2)),
-      longestHold:       sig.longestHold,
-      totalHoldTime:     sig.totalHoldTime,
-      silenceGaps:       sig.silenceGaps,
-    }, player);
-  }, [theme, gameId, sig, personality, player]);
+    if (fired.current) return; fired.current = true;
+    postWebhook(theme, GAME_ID, { personality, score: sig.score, notesHit: sig.notesHit }, player);
+  }, [theme, sig, personality, player]);
   return null;
 }

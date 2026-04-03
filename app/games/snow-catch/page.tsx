@@ -1,1043 +1,452 @@
-/**
- * ════════════════════════════════════════════════════════════════════
- *  ETHER MINI-GAMES — Snow Catch ❄️
- *  Holiday Christmas tilt-catch game.
- *  Canvas-based. DeviceOrientation tilt → basket movement.
- *  Three item types: snowflake (+1), golden flake (+3), icicle (-2).
- *  BLIZZARD event at 22s elapsed — 5s of chaos.
- * ════════════════════════════════════════════════════════════════════
- */
-
 'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
+import * as THREE from 'three';
 import GameShell from '@/components/GameShell';
 import GameHUD from '@/components/GameHUD';
 import GameStartScreen from '@/components/GameStartScreen';
 import Countdown from '@/components/Countdown';
 import EndScreen from '@/components/EndScreen';
-import { initAudio, sfx, haptic, startMusic, increaseMusicTempo } from '@/lib/audio';
-import { playScoreHit, playVictoryFanfare, playNearMiss } from '@/lib/audio';
+import { initAudio, sfx, haptic, startMusic } from '@/lib/audio';
 import { hapticScore, hapticFail, hapticVictory } from '@/lib/haptics';
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
-import { createTiltController } from '@/lib/tilt';
-import { ShakeState, triggerShake, applyShake } from '@/lib/screenShake';
-import { Particle, spawnBurst, updateAndDrawParticles } from '@/lib/particles';
-import { motion, AnimatePresence } from 'framer-motion';
-import ScorePopEffect, { useScorePop } from '@/components/ScorePopEffect';
-import StreakBadge from '@/components/StreakBadge';
-import { CATEGORY_THEMES } from '@/lib/theme';
-import SwipeInstructions from '@/components/SwipeInstructions';
 
-const CATEGORY_ACCENT = CATEGORY_THEMES.holiday.primaryAccent;
-
-// ─── SPEC CONSTANTS ──────────────────────────────────────────────────────────
-
-
-// --- SPRITE CACHE -------------------------------------------------------------
-const _spriteCache = new Map<string, HTMLImageElement>();
-function _loadSprite(src: string): HTMLImageElement {
-  if (_spriteCache.has(src)) return _spriteCache.get(src)!;
-  const img = new Image();
-  img.src = src;
-  _spriteCache.set(src, img);
-  return img;
-}
-if (typeof window !== 'undefined') {
-  _loadSprite('/sprites/snow-catch/snowflake.svg');
-  _loadSprite('/sprites/snow-catch/present.svg');
-}
-
-const GAME_ID        = 'snow-catch';
-const PB_KEY       = 'pb_snow-catch';
-const ACCENT         = '#93c5fd';
-const DURATION       = 45;
-const GAME_EMOJI     = '❄️';
-const GAME_TITLE     = 'Snow Catch';
-const GAME_TAGLINE   = 'Tilt to catch the snow. Dodge the icicles!';
-const BASKET_WIDTH   = 80;
-const BASKET_HEIGHT  = 46;
-const BASKET_Y_FROM_BOTTOM = 88;   // px from canvas bottom to basket center
-const TILT_SPEED     = 7;          // px/frame at full tilt (sensitivity applied separately)
-const SPAWN_NORMAL   = 800;        // ms
-const SPAWN_BLIZZARD = 200;        // ms
-const BLIZZARD_AT    = 22;         // seconds elapsed
-const BLIZZARD_DURATION = 5;       // seconds
-
-// ─── TYPES ───────────────────────────────────────────────────────────────────
-
-type FlakeType = 'snowflake' | 'golden_flake' | 'icicle';
-
-interface Flake {
-  x: number;
-  y: number;
-  vx: number;
-  vy: number;
-  type: FlakeType;
-  size: number;
-  rotation: number;
-  rotationSpeed: number;
-}
+const GAME_ID  = 'snow-catch';
+const ACCENT   = '#38bdf8';
+const DURATION = 45;
+const GAME_EMOJI   = '❄️';
+const GAME_TITLE   = 'Snow Catch';
+const GAME_TAGLINE = 'Tilt or swipe to catch snowflakes. Avoid icicles!';
+const PB_KEY = 'pb_snow-catch';
 
 interface Signals {
-  score: number;
-  goldenCaught: number;
-  iciclesHit: number;
-  maxStreak: number;
-  blizzardSurvived: boolean;
-  totalMissed: number;
-  streakCurrent: number;
+  snowflakesCaught: number; goldenCaught: number; iciclesHit: number;
+  maxStreak: number; streakCurrent: number; score: number; blizzardBonus: number;
 }
-
-// ─── PERSONALITY CLASSIFICATION ──────────────────────────────────────────────
 
 function getPersonality(sig: Signals): string {
-  if (sig.blizzardSurvived && sig.score >= 25) return 'Blizzard Survivor 🌨️';
-  if (sig.score >= 35 && sig.iciclesHit === 0)  return 'Snow Magnet ❄️';
-  if (sig.goldenCaught >= 3)                    return 'Golden Hunter ✨';
-  if (sig.score >= 20)                          return 'Winter Warrior 🧊';
-  return 'First Snowfall 🌱';
-}
-
-// ─── GAME STATE ───────────────────────────────────────────────────────────────
-
-interface GameState {
-  running: boolean;
-  timeLeft: number;
-  elapsed: number;
-  sig: Signals;
-  flakes: Flake[];
-  particles: Particle[];
-  basketX: number;
-  lastSpawnTime: number;
-  shake: ShakeState;
-  blizzardActive: boolean;
-  blizzardOverlayAlpha: number;
-  redFlashAlpha: number;
-  scoreBeforeBlizzard: number;
-  touchTargetX: number | null;
-  useTouchFallback: boolean;
-  accentColor: string;
+  if (sig.iciclesHit === 0 && sig.snowflakesCaught >= 15) return '❄️ Blizzard Tamer';
+  if (sig.goldenCaught >= 5) return '✨ Gold Rush';
+  if (sig.maxStreak >= 8) return '🌨️ Streak Catcher';
+  if (sig.snowflakesCaught >= 20) return '☃️ Snow Guardian';
+  return '🌬️ Chilly Start';
 }
 
 type Phase = 'start' | 'countdown' | 'playing' | 'done';
+type ItemType = 'snow' | 'golden' | 'icicle';
 
-// ─── PURE DRAWING HELPERS ─────────────────────────────────────────────────────
-
-function drawSnowflake(
-  ctx: CanvasRenderingContext2D,
-  x: number, y: number, size: number, rotation: number,
-  color: string, glow: boolean,
-): void {
-  const _sfImg = _loadSprite('/sprites/snow-catch/snowflake.svg');
-  if (_sfImg.complete && _sfImg.naturalWidth > 0) {
-    ctx.save();
-    if (glow) { ctx.shadowBlur = size * 2; ctx.shadowColor = color; }
-    ctx.translate(x, y);
-    ctx.rotate(rotation);
-    ctx.drawImage(_sfImg, -size, -size, size * 2, size * 2);
-    ctx.restore();
-    return;
-  }
-  ctx.save();
-  ctx.translate(x, y);
-  ctx.rotate(rotation);
-  ctx.strokeStyle = color;
-  ctx.lineWidth = Math.max(1.5, size * 0.13);
-  ctx.lineCap = 'round';
-  if (glow) {
-    ctx.shadowBlur = size * 2;
-    ctx.shadowColor = color;
-  }
-  for (let i = 0; i < 6; i++) {
-    const angle = (Math.PI / 3) * i;
-    const cos = Math.cos(angle);
-    const sin = Math.sin(angle);
-    // Main arm
-    ctx.beginPath();
-    ctx.moveTo(0, 0);
-    ctx.lineTo(cos * size, sin * size);
-    ctx.stroke();
-    // Side branches
-    const mid = size * 0.55;
-    const arm = size * 0.26;
-    ctx.beginPath();
-    ctx.moveTo(cos * mid - sin * arm, sin * mid + cos * arm);
-    ctx.lineTo(cos * mid, sin * mid);
-    ctx.lineTo(cos * mid + sin * arm, sin * mid - cos * arm);
-    ctx.stroke();
-  }
-  ctx.restore();
+interface FallingItem {
+  mesh: THREE.Mesh; type: ItemType; vy: number; id: number;
+  light?: THREE.PointLight;
 }
 
-function drawIcicle(
-  ctx: CanvasRenderingContext2D,
-  x: number, y: number, size: number, rotation: number,
-): void {
-  ctx.save();
-  ctx.translate(x, y);
-  ctx.rotate(rotation);
-  const h = size * 2.6;
-  const w = size * 0.75;
-  ctx.fillStyle = '#a5d8ff';
-  ctx.strokeStyle = '#74c0fc';
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(0, h * 0.5);           // tip (pointing down)
-  ctx.lineTo(-w * 0.5, -h * 0.5);  // top-left
-  ctx.lineTo(w * 0.5, -h * 0.5);   // top-right
-  ctx.closePath();
-  ctx.fill();
-  ctx.stroke();
-  // Shine streak
-  ctx.strokeStyle = 'rgba(255,255,255,0.55)';
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(-w * 0.15, -h * 0.4);
-  ctx.lineTo(-w * 0.05, h * 0.1);
-  ctx.stroke();
-  ctx.restore();
+interface GS {
+  running: boolean; timeLeft: number; sig: Signals;
+  renderer: THREE.WebGLRenderer | null;
+  scene: THREE.Scene | null;
+  camera: THREE.PerspectiveCamera | null;
+  animId: number; frame: number;
+  basketMesh: THREE.Group | null;
+  basketX: number;
+  items: FallingItem[];
+  nextItemId: number;
+  spawnTimer: number;
+  spawnInterval: number;
+  blizzardActive: boolean;
+  blizzardTimer: number;
+  tiltX: number; // device tilt or touch position
+  particles: Array<{ mesh: THREE.Mesh; vx: number; vy: number; vz: number; life: number }>;
+  intervalId: ReturnType<typeof setInterval> | null;
+  stopMusic: (() => void) | null;
+  snowfield: THREE.Points | null;
+  difficultyLevel: number;
 }
-
-function drawBasket(
-  ctx: CanvasRenderingContext2D,
-  x: number, y: number, width: number, accentColor: string,
-): void {
-  ctx.save();
-  ctx.translate(x, y);
-  const r   = width * 0.52;
-  const bh  = BASKET_HEIGHT * 0.58;
-  // Sack body (no shadowBlur for perf — use subtle background glow instead)
-  ctx.fillStyle = '#b91c1c';
-  ctx.beginPath();
-  ctx.ellipse(0, 0, r, bh, 0, 0, Math.PI * 2);
-  ctx.fill();
-  // Fabric shading
-  ctx.fillStyle = '#991b1b';
-  ctx.beginPath();
-  ctx.ellipse(r * 0.15, bh * 0.15, r * 0.65, bh * 0.55, 0.3, 0, Math.PI * 2);
-  ctx.fill();
-  // Highlight
-  ctx.fillStyle = 'rgba(255,255,255,0.14)';
-  ctx.beginPath();
-  ctx.ellipse(-r * 0.22, -bh * 0.18, r * 0.28, bh * 0.28, -0.3, 0, Math.PI * 2);
-  ctx.fill();
-  // Belt / tie
-  ctx.fillStyle = '#d97706';
-  ctx.beginPath();
-  ctx.ellipse(0, -bh * 0.48, r * 0.45, bh * 0.12, 0, 0, Math.PI * 2);
-  ctx.fill();
-  // Knot
-  ctx.fillStyle = '#f59e0b';
-  ctx.beginPath();
-  ctx.arc(0, -bh * 0.56, bh * 0.12, 0, Math.PI * 2);
-  ctx.fill();
-  // Rim glow ring (no shadowBlur for perf)
-  ctx.strokeStyle = accentColor + 'bb';
-  ctx.lineWidth   = 2.5;
-  ctx.beginPath();
-  ctx.ellipse(0, 0, r + 5, bh + 5, 0, 0, Math.PI * 2);
-  ctx.stroke();
-  ctx.restore();
-}
-
-function drawMountainSilhouette(
-  ctx: CanvasRenderingContext2D,
-  W: number, H: number,
-): void {
-  // Distant mountains — dark layer behind gameplay
-  ctx.fillStyle = '#080f1a';
-  ctx.beginPath();
-  ctx.moveTo(0, H);
-  ctx.lineTo(0, H * 0.74);
-  ctx.lineTo(W * 0.08, H * 0.60);
-  ctx.lineTo(W * 0.16, H * 0.74);
-  ctx.lineTo(W * 0.27, H * 0.54);
-  ctx.lineTo(W * 0.36, H * 0.70);
-  ctx.lineTo(W * 0.50, H * 0.50);
-  ctx.lineTo(W * 0.64, H * 0.68);
-  ctx.lineTo(W * 0.73, H * 0.57);
-  ctx.lineTo(W * 0.82, H * 0.74);
-  ctx.lineTo(W * 0.92, H * 0.62);
-  ctx.lineTo(W,         H * 0.70);
-  ctx.lineTo(W, H);
-  ctx.closePath();
-  ctx.fill();
-
-  // Snow caps on mountain peaks
-  ctx.fillStyle = 'rgba(180, 210, 255, 0.18)';
-  const peaks: Array<[number, number]> = [
-    [W * 0.27, H * 0.54],
-    [W * 0.50, H * 0.50],
-    [W * 0.73, H * 0.57],
-  ];
-  for (const [px, py] of peaks) {
-    const capW = W * 0.06;
-    ctx.beginPath();
-    ctx.moveTo(px, py);
-    ctx.lineTo(px - capW, py + capW * 0.7);
-    ctx.lineTo(px + capW, py + capW * 0.7);
-    ctx.closePath();
-    ctx.fill();
-  }
-
-  // Village silhouette strip
-  ctx.fillStyle = '#060d17';
-  const vy = H * 0.86;
-  // House 1
-  const h1x = W * 0.10;
-  ctx.fillRect(h1x, vy, 20, 14);
-  ctx.beginPath();
-  ctx.moveTo(h1x - 3, vy); ctx.lineTo(h1x + 10, vy - 11); ctx.lineTo(h1x + 23, vy);
-  ctx.fill();
-  // House 2
-  const h2x = W * 0.32;
-  ctx.fillRect(h2x, vy - 2, 24, 16);
-  ctx.beginPath();
-  ctx.moveTo(h2x - 2, vy - 2); ctx.lineTo(h2x + 12, vy - 16); ctx.lineTo(h2x + 26, vy - 2);
-  ctx.fill();
-  // Church
-  const tx = W * 0.58;
-  ctx.fillRect(tx, vy - 4, 16, 18);
-  ctx.fillRect(tx + 5, vy - 18, 6, 14);   // steeple
-  ctx.fillRect(tx + 6, vy - 24, 4, 8);    // spire
-  // House 3
-  const h3x = W * 0.78;
-  ctx.fillRect(h3x, vy, 22, 12);
-  ctx.beginPath();
-  ctx.moveTo(h3x - 2, vy); ctx.lineTo(h3x + 11, vy - 10); ctx.lineTo(h3x + 24, vy);
-  ctx.fill();
-  // Warm window glows
-  ctx.fillStyle = 'rgba(255, 200, 80, 0.55)';
-  ctx.fillRect(h1x + 4,  vy + 3,  6, 5);
-  ctx.fillRect(h2x + 5,  vy + 2,  7, 6);
-  ctx.fillRect(h2x + 14, vy + 2,  6, 6);
-  ctx.fillRect(tx + 2,   vy + 2,  5, 5);
-  ctx.fillRect(tx + 9,   vy + 2,  4, 5);
-  ctx.fillRect(h3x + 4,  vy + 2,  6, 5);
-}
-
-// ─── COMPONENT ────────────────────────────────────────────────────────────────
 
 export default function SnowCatchGame() {
-  const theme        = useBrandTheme();
-  const canvasRef    = useRef<HTMLCanvasElement>(null);
-  const bgCanvasRef  = useRef<HTMLCanvasElement | null>(null); // offscreen static background
-  const animRef      = useRef(0);
-  const timerRef     = useRef<ReturnType<typeof setInterval> | null>(null);
-  const stopMusicRef = useRef<(() => void) | null>(null);
-  const tiltRef      = useRef<ReturnType<typeof createTiltController> | null>(null);
-
-  // ⚠️ All mutable game state in one ref — never in useState (stale closures in rAF)
-  const stateRef = useRef<GameState>({
-    running:              false,
-    timeLeft:             DURATION,
-    elapsed:              0,
-    sig: {
-      score: 0, goldenCaught: 0, iciclesHit: 0,
-      maxStreak: 0, blizzardSurvived: false, totalMissed: 0, streakCurrent: 0,
-    },
-    flakes:               [],
-    particles:            [],
-    basketX:              0,
-    lastSpawnTime:        0,
-    shake:                { intensity: 0, duration: 0 },
-    blizzardActive:       false,
-    blizzardOverlayAlpha: 0,
-    redFlashAlpha:        0,
-    scoreBeforeBlizzard:  0,
-    touchTargetX:         null,
-    useTouchFallback:     false,
-    accentColor:          ACCENT,
+  const theme = useBrandTheme();
+  const mountRef = useRef<HTMLDivElement>(null);
+  const stateRef = useRef<GS>({
+    running: false, timeLeft: DURATION,
+    sig: { snowflakesCaught: 0, goldenCaught: 0, iciclesHit: 0, maxStreak: 0, streakCurrent: 0, score: 0, blizzardBonus: 0 },
+    renderer: null, scene: null, camera: null, animId: 0, frame: 0,
+    basketMesh: null, basketX: 0, items: [], nextItemId: 0,
+    spawnTimer: 0, spawnInterval: 60, blizzardActive: false, blizzardTimer: 0,
+    tiltX: 0, particles: [], intervalId: null, stopMusic: null, snowfield: null, difficultyLevel: 1,
   });
 
-  // React state — HUD values only
-  const [phase, setPhase]               = useState<Phase>('start');
-  const [showInstructions, setShowInstructions] = useState(true);
-  const [timeLeft, setTimeLeft]         = useState(DURATION);
+  const [phase, setPhase] = useState<Phase>('start');
+  const [timeLeft, setTimeLeft] = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
-  const [streakDisplay, setStreakDisplay] = useState(0);
-  const [finalSig, setFinalSig]         = useState<Signals | null>(null);
-  const [playerName, setPlayerName]     = useState('');
-  const [playerAvatar, setPlayerAvatar] = useState('🎮');
-  const { pops, triggerPop } = useScorePop();
-  const [streak, setStreak] = useState(0);
-  const [isNewBest, setIsNewBest] = useState(false);
-  const [blizzardVisible, setBlizzardVisible] = useState(false);
-  const prevScoreRef = useRef(0);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => {
-    const numScore = typeof scoreDisplay === 'number' ? scoreDisplay : 0;
-    if (numScore > prevScoreRef.current) {
-      triggerPop(`+${numScore - prevScoreRef.current}`, window.innerWidth / 2, 200);
-      hapticScore();
-      playScoreHit('default', numScore - prevScoreRef.current);
-      setStreak(Math.floor(numScore / 5));
-    }
-    prevScoreRef.current = numScore;
-  }, [scoreDisplay]); // triggerPop is stable
-  const playerSessionRef                = useRef<PlayerSession | null>(null);
-
-  // Sync brand theme accent colour into ref (so rAF picks it up)
-  useEffect(() => {
-    stateRef.current.accentColor = theme.colors.accent ?? ACCENT;
-  }, [theme]);
-
-  // ─── SPAWN FLAKE ─────────────────────────────────────────────────────────
-
-  const spawnFlake = useCallback(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const rand = Math.random();
-    let type: FlakeType;
-    if (rand < 0.65)      type = 'snowflake';
-    else if (rand < 0.85) type = 'icicle';
-    else                  type = 'golden_flake';
-
-    const size =
-      type === 'golden_flake' ? 15 + Math.random() * 7
-      : type === 'icicle'     ? 9  + Math.random() * 6
-      :                         8  + Math.random() * 12;
-
-    const speedMin = type === 'icicle' ? 4 : type === 'golden_flake' ? 3 : 2;
-    const speedMax = type === 'icicle' ? 8 : type === 'golden_flake' ? 6 : 5;
-    const vy = speedMin + Math.random() * (speedMax - speedMin);
-    const vx = (Math.random() - 0.5) * 1.5;
-
-    stateRef.current.flakes.push({
-      x:             size + Math.random() * (window.innerWidth - size * 2),
-      y:             -size * 2,
-      vx,
-      vy,
-      type,
-      size,
-      rotation:      Math.random() * Math.PI * 2,
-      rotationSpeed: (Math.random() - 0.5) * 0.08,
-    });
-  }, []);
-
-  // ─── END GAME ─────────────────────────────────────────────────────────────
+  const [finalSig, setFinalSig] = useState<Signals | null>(null);
+  const playerSessionRef = useRef<PlayerSession | null>(null);
+  const touchXRef = useRef<number | null>(null);
+  const tiltCleanupRef = useRef<(() => void) | null>(null);
 
   const endGame = useCallback(() => {
     const s = stateRef.current;
     s.running = false;
-    cancelAnimationFrame(animRef.current);
-    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
-    if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
-    if (tiltRef.current) { tiltRef.current.stop(); tiltRef.current = null; }
-    // Personal best tracking
+    cancelAnimationFrame(s.animId);
+    if (s.intervalId) { clearInterval(s.intervalId); s.intervalId = null; }
+    if (s.stopMusic) { s.stopMusic(); s.stopMusic = null; }
+    tiltCleanupRef.current?.();
     try {
-      const _pbPrev = parseInt(localStorage.getItem(PB_KEY) || '0', 10);
-      const _pbVal = parseFloat(String(s.sig?.score ?? 0));
-      if (!isNaN(_pbVal) && _pbVal > _pbPrev) {
-        localStorage.setItem(PB_KEY, String(Math.round(_pbVal)));
-        setIsNewBest(true);
-      }
+      const prev = parseInt(localStorage.getItem(PB_KEY) || '0', 10);
+      if (s.sig.score > prev) localStorage.setItem(PB_KEY, String(s.sig.score));
     } catch { /* ignore */ }
-
-
+    if (s.renderer) { s.renderer.dispose(); s.renderer = null; }
+    if (mountRef.current) mountRef.current.innerHTML = '';
     setFinalSig({ ...s.sig });
     setPhase('done');
+    hapticVictory();
   }, []);
 
-  // ─── GAME LOOP ────────────────────────────────────────────────────────────
+  const spawnItem = useCallback((scene: THREE.Scene, s: GS) => {
+    const roll = s.blizzardActive ? Math.random() : Math.random();
+    let type: ItemType = 'snow';
+    if (roll < 0.1) type = 'golden';
+    else if (roll < 0.25) type = 'icicle';
+
+    const color = type === 'golden' ? 0xfbbf24 : type === 'icicle' ? 0x93c5fd : 0xffffff;
+    let geo: THREE.BufferGeometry;
+    if (type === 'icicle') {
+      geo = new THREE.ConeGeometry(0.12, 0.6, 6);
+    } else if (type === 'golden') {
+      geo = new THREE.OctahedronGeometry(0.2);
+    } else {
+      geo = new THREE.DodecahedronGeometry(0.15, 0);
+    }
+    const mat = new THREE.MeshStandardMaterial({
+      color, emissive: color, emissiveIntensity: type === 'golden' ? 0.8 : 0.3,
+      roughness: 0.2, metalness: type === 'icicle' ? 0.6 : 0.1,
+      transparent: true, opacity: 0.9,
+    });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.set((Math.random() - 0.5) * 8, 7, (Math.random() - 0.5) * 2);
+    if (type === 'icicle') mesh.rotation.z = Math.PI;
+    scene.add(mesh);
+
+    let light: THREE.PointLight | undefined;
+    if (type === 'golden') {
+      light = new THREE.PointLight(0xfbbf24, 2, 3);
+      light.position.copy(mesh.position);
+      scene.add(light);
+    }
+
+    const vy = -(0.04 + Math.random() * 0.02 + s.difficultyLevel * 0.008 + (s.blizzardActive ? 0.025 : 0));
+    s.items.push({ mesh, type, vy, id: s.nextItemId++, light });
+  }, []);
 
   const startLoop = useCallback(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    ctx.imageSmoothingEnabled = true;
-
+    const mount = mountRef.current;
+    if (!mount) return;
     const s = stateRef.current;
+    const W = mount.clientWidth || window.innerWidth;
+    const H = mount.clientHeight || window.innerHeight;
 
-    // Reset state
-    s.running              = true;
-    s.timeLeft             = DURATION;
-    s.elapsed              = 0;
-    s.sig                  = { score: 0, goldenCaught: 0, iciclesHit: 0, maxStreak: 0, blizzardSurvived: false, totalMissed: 0, streakCurrent: 0 };
-    s.flakes               = [];
-    s.particles            = [];
-    s.basketX              = window.innerWidth / 2;
-    s.lastSpawnTime        = performance.now();
-    s.shake                = { intensity: 0, duration: 0 };
-    s.blizzardActive       = false;
-    s.blizzardOverlayAlpha = 0;
-    s.redFlashAlpha        = 0;
-    s.scoreBeforeBlizzard  = 0;
-    s.touchTargetX         = null;
+    s.running = true; s.timeLeft = DURATION; s.frame = 0;
+    s.sig = { snowflakesCaught: 0, goldenCaught: 0, iciclesHit: 0, maxStreak: 0, streakCurrent: 0, score: 0, blizzardBonus: 0 };
+    s.items = []; s.nextItemId = 0; s.spawnTimer = 0; s.spawnInterval = 60;
+    s.blizzardActive = false; s.blizzardTimer = 0; s.difficultyLevel = 1; s.particles = [];
+    setScoreDisplay(0); setTimeLeft(DURATION); setPhase('playing');
 
-    setScoreDisplay(0);
-    setStreakDisplay(0);
-    setTimeLeft(DURATION);
-    setBlizzardVisible(false);
-    setPhase('playing');
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(W, H);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setClearColor(0x0a1628);
+    mount.innerHTML = '';
+    mount.appendChild(renderer.domElement);
+    s.renderer = renderer;
 
-    stopMusicRef.current = startMusic('calm');
+    const scene = new THREE.Scene();
+    scene.fog = new THREE.Fog(0x0a1628, 10, 20);
+    s.scene = scene;
 
-    // 1-second countdown timer
-    timerRef.current = setInterval(() => {
-      s.timeLeft--;
-      s.elapsed++;
-      setTimeLeft(s.timeLeft);
+    const camera = new THREE.PerspectiveCamera(60, W / H, 0.1, 30);
+    camera.position.set(0, 3, 12);
+    camera.lookAt(0, 2, 0);
+    s.camera = camera;
 
-      // Blizzard start
-      if (s.elapsed === BLIZZARD_AT && !s.blizzardActive) {
-        s.blizzardActive      = true;
-        s.scoreBeforeBlizzard = s.sig.score;
-        setBlizzardVisible(true);
-        sfx.warning();
-        haptic([50, 30, 50, 30, 50]);
-        increaseMusicTempo(130); // ramp up music for blizzard
+    // Lighting
+    scene.add(new THREE.AmbientLight(0x223344, 2.5));
+    const moonLight = new THREE.DirectionalLight(0x88aaff, 1.5);
+    moonLight.position.set(-5, 10, 5);
+    scene.add(moonLight);
+    const rimLight = new THREE.PointLight(0x38bdf8, 1.5, 15);
+    rimLight.position.set(0, 8, 3);
+    scene.add(rimLight);
+    const fillLight = new THREE.PointLight(0x60a5fa, 0.8, 12);
+    fillLight.position.set(5, 3, 8);
+    scene.add(fillLight);
+
+    // Ground (snow)
+    const groundGeo = new THREE.PlaneGeometry(20, 10);
+    const groundMat = new THREE.MeshStandardMaterial({ color: 0xddefff, roughness: 0.9 });
+    const ground = new THREE.Mesh(groundGeo, groundMat);
+    ground.rotation.x = -Math.PI / 2;
+    ground.position.y = -3;
+    scene.add(ground);
+
+    // Trees (background)
+    for (let i = 0; i < 8; i++) {
+      const treeGeo = new THREE.ConeGeometry(0.5 + Math.random() * 0.3, 2 + Math.random() * 1, 6);
+      const treeMat = new THREE.MeshStandardMaterial({ color: 0x0a3d1a, roughness: 0.9 });
+      const tree = new THREE.Mesh(treeGeo, treeMat);
+      tree.position.set(-9 + i * 2.5, -2.5, -4 + Math.random() * 2);
+      scene.add(tree);
+      // Snow on tree
+      const snowGeo = new THREE.ConeGeometry(0.3, 0.6, 6);
+      const snowMat = new THREE.MeshStandardMaterial({ color: 0xeeffff });
+      const snowCap = new THREE.Mesh(snowGeo, snowMat);
+      snowCap.position.copy(tree.position);
+      snowCap.position.y += 0.8;
+      scene.add(snowCap);
+    }
+
+    // Basket
+    const basket = new THREE.Group();
+    const basketBodyGeo = new THREE.CylinderGeometry(0.7, 0.5, 0.6, 12, 1, true);
+    const basketMat = new THREE.MeshStandardMaterial({ color: 0x92400e, roughness: 0.8, side: THREE.DoubleSide });
+    basket.add(new THREE.Mesh(basketBodyGeo, basketMat));
+    const rimGeo = new THREE.TorusGeometry(0.7, 0.05, 8, 20);
+    const rimMat = new THREE.MeshStandardMaterial({ color: 0xb45309, metalness: 0.3 });
+    const rim = new THREE.Mesh(rimGeo, rimMat);
+    rim.position.y = 0.3;
+    basket.add(rim);
+    basket.position.set(0, -2.5, 0);
+    scene.add(basket);
+    s.basketMesh = basket;
+    s.basketX = 0;
+
+    // Snowfield particles background
+    const snowCount = 150;
+    const snowGeo = new THREE.BufferGeometry();
+    const snowPos = new Float32Array(snowCount * 3);
+    for (let i = 0; i < snowCount; i++) {
+      snowPos[i * 3] = (Math.random() - 0.5) * 14;
+      snowPos[i * 3 + 1] = (Math.random() - 0.5) * 12 + 2;
+      snowPos[i * 3 + 2] = (Math.random() - 0.5) * 6 - 2;
+    }
+    snowGeo.setAttribute('position', new THREE.BufferAttribute(snowPos, 3));
+    const snowPoints = new THREE.Points(snowGeo, new THREE.PointsMaterial({ color: 0xffffff, size: 0.07, transparent: true, opacity: 0.5 }));
+    scene.add(snowPoints);
+    s.snowfield = snowPoints;
+
+    // Device tilt (DeviceOrientation)
+    const onOrientation = (e: DeviceOrientationEvent) => {
+      if (!s.running) return;
+      const gamma = e.gamma ?? 0;
+      s.tiltX = Math.max(-1, Math.min(1, gamma / 30));
+    };
+    window.addEventListener('deviceorientation', onOrientation);
+    tiltCleanupRef.current = () => window.removeEventListener('deviceorientation', onOrientation);
+
+    // Resize
+    const onResize = () => {
+      const W2 = mount.clientWidth || window.innerWidth;
+      const H2 = mount.clientHeight || window.innerHeight;
+      renderer.setSize(W2, H2);
+      camera.aspect = W2 / H2;
+      camera.updateProjectionMatrix();
+    };
+    window.addEventListener('resize', onResize);
+    const prevCleanup = tiltCleanupRef.current;
+    tiltCleanupRef.current = () => { prevCleanup?.(); window.removeEventListener('resize', onResize); };
+
+    s.stopMusic = startMusic('winter' as import('@/lib/audio').MusicPattern);
+    s.intervalId = setInterval(() => {
+      s.timeLeft--; setTimeLeft(s.timeLeft);
+      s.difficultyLevel = 1 + Math.floor((DURATION - s.timeLeft) / 10);
+      s.spawnInterval = Math.max(25, 60 - s.difficultyLevel * 8);
+      // Blizzard at 22s elapsed
+      const elapsed = DURATION - s.timeLeft;
+      if (elapsed === 22 && !s.blizzardActive) {
+        s.blizzardActive = true; s.blizzardTimer = 5;
+        sfx.collect(); haptic([30, 50, 30]);
       }
-      // Blizzard end
-      if (s.elapsed === BLIZZARD_AT + BLIZZARD_DURATION && s.blizzardActive) {
-        s.blizzardActive = false;
-        setBlizzardVisible(false);
-        if (s.sig.score > s.scoreBeforeBlizzard) s.sig.blizzardSurvived = true;
-        increaseMusicTempo(60); // ramp back to calm tempo
-      }
-
-      // Timer warning and urgency ticks
-      if (s.timeLeft === 10) {
-        sfx.warning();
-        haptic([50, 30, 50]);
-      } else if (s.timeLeft <= 5 && s.timeLeft > 0) {
-        sfx.tick();
-        haptic([20]);
-      }
-
-      if (s.timeLeft <= 0) {
-        sfx.success(); // timer completion — triumphant, not fail
-        haptic([30, 50, 100, 50, 150]);
-        endGame();
-      }
+      if (s.blizzardTimer > 0) { s.blizzardTimer--; if (s.blizzardTimer === 0) s.blizzardActive = false; }
+      if (s.timeLeft <= 0) { sfx.fail(); haptic([300]); endGame(); }
     }, 1000);
 
-    spawnFlake();
-
-    const loop = (now: number) => {
+    const loop = () => {
       if (!s.running) return;
-      const W = window.innerWidth;
-      const H = window.innerHeight;
+      s.frame++;
 
-      // ── Basket movement ────────────────────────────────────────────────
-      const tilt = tiltRef.current;
-      if (tilt && !s.useTouchFallback) {
-        const { x } = tilt.getValues();
-        s.basketX += x * TILT_SPEED * (W / 390);
-      } else if (s.touchTargetX !== null) {
-        s.basketX += (s.touchTargetX - s.basketX) * 0.25;
+      // Move basket
+      if (touchXRef.current !== null) {
+        const frac = (touchXRef.current / (W)) * 2 - 1;
+        s.basketX = frac * 3.8;
+        s.tiltX = frac;
+      } else {
+        s.basketX = s.tiltX * 3.8;
       }
-      s.basketX = Math.max(BASKET_WIDTH / 2, Math.min(W - BASKET_WIDTH / 2, s.basketX));
-
-      // ── Spawn flakes ──────────────────────────────────────────────────
-      const spawnInterval = s.blizzardActive ? SPAWN_BLIZZARD : SPAWN_NORMAL;
-      if (now - s.lastSpawnTime >= spawnInterval) {
-        spawnFlake();
-        if (s.blizzardActive) { spawnFlake(); spawnFlake(); }
-        s.lastSpawnTime = now;
+      if (s.basketMesh) {
+        s.basketMesh.position.x += (s.basketX - s.basketMesh.position.x) * 0.2;
+        s.basketMesh.rotation.z = s.tiltX * 0.15;
       }
 
-      // ── Update & detect catch ─────────────────────────────────────────
-      const basketBottom = H - BASKET_Y_FROM_BOTTOM + BASKET_HEIGHT * 0.5;
-      const basketTop    = basketBottom - BASKET_HEIGHT;
-      const halfW        = BASKET_WIDTH * 0.5;
+      // Spawn items
+      s.spawnTimer++;
+      if (s.spawnTimer >= s.spawnInterval) {
+        s.spawnTimer = 0;
+        spawnItem(scene, s);
+        if (s.blizzardActive) spawnItem(scene, s);
+      }
 
-      for (let i = s.flakes.length - 1; i >= 0; i--) {
-        const f = s.flakes[i];
-        f.y += f.vy;
-        f.x += f.vx;
-        f.rotation += f.rotationSpeed;
-        if (f.x < 0 || f.x > W) f.vx *= -1;
+      // Snowfield drift
+      if (s.snowfield) {
+        s.snowfield.position.y -= 0.008;
+        if (s.snowfield.position.y < -6) s.snowfield.position.y = 0;
+      }
 
-        const flakeBottom = f.y + f.size;
+      // Update items
+      s.items = s.items.filter(item => {
+        item.mesh.position.y += item.vy;
+        item.mesh.rotation.y += 0.03;
+        item.mesh.rotation.x += 0.02;
+        if (item.light) item.light.position.copy(item.mesh.position);
 
-        // Catch zone
-        if (
-          flakeBottom >= basketTop &&
-          flakeBottom <= basketBottom + 12 &&
-          f.x >= s.basketX - halfW - f.size * 0.4 &&
-          f.x <= s.basketX + halfW + f.size * 0.4
-        ) {
-          if (f.type === 'icicle') {
-            s.sig.iciclesHit++;
+        // Check basket collision
+        const bx = s.basketMesh ? s.basketMesh.position.x : 0;
+        const dx = Math.abs(item.mesh.position.x - bx);
+        const dy = Math.abs(item.mesh.position.y - (-2.5));
+        if (dx < 0.8 && dy < 0.6) {
+          if (item.type === 'icicle') {
+            s.sig.iciclesHit++; s.sig.streakCurrent = 0;
+            sfx.collision(); hapticFail();
             s.sig.score = Math.max(0, s.sig.score - 2);
-            s.sig.streakCurrent = 0;
-            s.redFlashAlpha = 0.55;
-            triggerShake(s.shake, 10, 14);
-            sfx.collision();
-            haptic([200]);
-            spawnBurst(s.particles, f.x, f.y, '#ef4444', 8, 3);
-            setScoreDisplay(s.sig.score);
-            setStreakDisplay(0);
           } else {
-            const pts = f.type === 'golden_flake' ? 3 : 1;
-            s.sig.score += pts;
+            const pts = item.type === 'golden' ? 3 : 1;
+            if (item.type === 'golden') s.sig.goldenCaught++;
+            else s.sig.snowflakesCaught++;
             s.sig.streakCurrent++;
             if (s.sig.streakCurrent > s.sig.maxStreak) s.sig.maxStreak = s.sig.streakCurrent;
-            if (f.type === 'golden_flake') {
-              s.sig.goldenCaught++;
-              sfx.success();
-              haptic([30, 50, 100]);
-              spawnBurst(s.particles, f.x, f.y, '#fbbf24', 16, 5);
-            } else {
-              sfx.shimmer();
-              haptic([15]);
-              spawnBurst(s.particles, f.x, f.y, s.accentColor, 10, 4);
-            }
+            s.sig.score += pts * (s.blizzardActive ? 2 : 1);
             setScoreDisplay(s.sig.score);
-            setStreakDisplay(s.sig.streakCurrent);
+            sfx.collect(); hapticScore();
+            // Burst
+            for (let pi = 0; pi < 6; pi++) {
+              const pGeo = new THREE.SphereGeometry(0.05, 6, 6);
+              const pMat = new THREE.MeshStandardMaterial({ color: item.type === 'golden' ? 0xfbbf24 : 0x38bdf8, emissive: item.type === 'golden' ? 0xfbbf24 : 0x38bdf8, emissiveIntensity: 1, transparent: true, opacity: 1 });
+              const pMesh = new THREE.Mesh(pGeo, pMat);
+              pMesh.position.copy(item.mesh.position);
+              scene.add(pMesh);
+              const angle = (pi / 6) * Math.PI * 2;
+              s.particles.push({ mesh: pMesh, vx: Math.cos(angle) * 0.1, vy: 0.1, vz: 0, life: 20 });
+            }
           }
-          s.flakes.splice(i, 1);
-          continue;
+          if (item.light) scene.remove(item.light);
+          scene.remove(item.mesh);
+          item.mesh.geometry.dispose();
+          (item.mesh.material as THREE.Material).dispose();
+          return false;
         }
 
-        // Missed — fell off screen
-        if (f.y - f.size > H) {
-          s.sig.totalMissed++;
-          s.sig.streakCurrent = 0;
-          setStreakDisplay(0);
-          s.flakes.splice(i, 1);
+        // Off screen
+        if (item.mesh.position.y < -4) {
+          if (item.type !== 'icicle') {
+            s.sig.streakCurrent = 0;
+          }
+          if (item.light) scene.remove(item.light);
+          scene.remove(item.mesh);
+          return false;
         }
-      }
-
-      // ── Render ────────────────────────────────────────────────────────
-      ctx.save();
-      applyShake(ctx, s.shake);
-
-      // Background — simple solid fill for perf, then static elements from offscreen canvas
-      ctx.fillStyle = '#060f1a';
-      ctx.fillRect(0, 0, W, H);
-
-      // Static background (gradient + moon + mountains) — pre-rendered, blitted 1:1
-      const bgCanvas = bgCanvasRef.current;
-      if (bgCanvas) {
-        ctx.globalAlpha = 1;
-        // Reset transform temporarily to draw at physical pixels (1:1, no scaling)
-        ctx.save();
-        ctx.setTransform(1, 0, 0, 1, 0, 0);
-        ctx.drawImage(bgCanvas, 0, 0);
-        ctx.restore();
-      } else {
-        // Fallback mountains
-        drawMountainSilhouette(ctx, W, H);
-      }
-
-      // Twinkling stars — reduced to 24 for perf, drawn as small rects (faster than arc)
-      for (let j = 0; j < 24; j++) {
-        const sx = (j * 137.508 + 23) % W;
-        const sy = (j * 97.31 + 11) % (H * 0.52);
-        const twinkle = 0.3 + 0.7 * Math.abs(Math.sin(now * 0.0008 + j * 0.9));
-        ctx.globalAlpha = twinkle * (j % 5 === 0 ? 1 : 0.6);
-        ctx.fillStyle = j % 5 === 0 ? '#fde68a' : '#c8dcff';
-        const r = 0.5 + (j % 3) * 0.5;
-        ctx.fillRect(sx - r, sy - r, r * 2, r * 2);
-      }
-      ctx.globalAlpha = 1;
-
-      // Flakes
-      for (const f of s.flakes) {
-        if (f.type === 'icicle') {
-          drawIcicle(ctx, f.x, f.y, f.size, f.rotation);
-        } else if (f.type === 'golden_flake') {
-          drawSnowflake(ctx, f.x, f.y, f.size, f.rotation, '#fbbf24', true);
-        } else {
-          drawSnowflake(ctx, f.x, f.y, f.size, f.rotation, s.accentColor, false);
-        }
-      }
+        return true;
+      });
 
       // Particles
-      updateAndDrawParticles(ctx, s.particles);
+      s.particles = s.particles.filter(p => {
+        p.mesh.position.x += p.vx; p.mesh.position.y += p.vy; p.mesh.position.z += p.vz;
+        p.vy -= 0.005; p.life--;
+        (p.mesh.material as THREE.MeshStandardMaterial).opacity = Math.max(0, p.life / 20);
+        if (p.life <= 0) { scene.remove(p.mesh); return false; }
+        return true;
+      });
 
-      // Basket
-      drawBasket(ctx, s.basketX, H - BASKET_Y_FROM_BOTTOM, BASKET_WIDTH, s.accentColor);
-
-      ctx.restore(); // un-shake
-
-      // Red flash overlay (icicle hit)
-      if (s.redFlashAlpha > 0) {
-        ctx.fillStyle = `rgba(239,68,68,${s.redFlashAlpha.toFixed(3)})`;
-        ctx.fillRect(0, 0, W, H);
-        s.redFlashAlpha = Math.max(0, s.redFlashAlpha - 0.045);
-      }
-
-      // Blizzard overlay — fade in/out
-      if (s.blizzardActive) {
-        s.blizzardOverlayAlpha = Math.min(1, s.blizzardOverlayAlpha + 0.06);
-      } else {
-        s.blizzardOverlayAlpha = Math.max(0, s.blizzardOverlayAlpha - 0.04);
-      }
-
-      if (s.blizzardOverlayAlpha > 0.01) {
-        // Wind streaks
-        ctx.save();
-        ctx.globalAlpha = s.blizzardOverlayAlpha * 0.28;
-        ctx.strokeStyle = '#ffffff';
-        ctx.lineWidth   = 0.5;
-        for (let j = 0; j < 22; j++) {
-          const wx = ((j * 67.3 + now * 0.32) % (W + 60)) - 30;
-          const wy = (j * 41.1 + now * 0.14) % H;
-          ctx.beginPath();
-          ctx.moveTo(wx, wy);
-          ctx.lineTo(wx - 35, wy + 9);
-          ctx.stroke();
-        }
-        ctx.restore();
-
-        // BLIZZARD text (no shadowBlur for perf)
-        if (s.blizzardActive) {
-          const pulse = 0.75 + 0.25 * Math.sin(now * 0.012);
-          ctx.save();
-          ctx.globalAlpha = pulse * s.blizzardOverlayAlpha;
-          ctx.fillStyle   = '#ffffff';
-          ctx.font        = `bold ${Math.round(Math.max(18, W * 0.066))}px system-ui, sans-serif`;
-          ctx.textAlign   = 'center';
-          ctx.textBaseline = 'middle';
-          ctx.fillText('BLIZZARD! ❄️❄️❄️', W / 2, H * 0.22);
-          ctx.restore();
-          // Continuous mild shake during blizzard
-          triggerShake(s.shake, 2, 2);
-        }
-      }
-
-      // Touch fallback hint
-      if (s.useTouchFallback) {
-        ctx.save();
-        ctx.globalAlpha = 0.32;
-        ctx.fillStyle = '#ffffff';
-        ctx.font = '11px system-ui, sans-serif';
-        ctx.textAlign = 'center';
-        ctx.fillText('Drag to move basket', W / 2, H - 8);
-        ctx.restore();
-      }
-
-      animRef.current = requestAnimationFrame(loop);
+      renderer.render(scene, camera);
+      s.animId = requestAnimationFrame(loop);
     };
-
-    animRef.current = requestAnimationFrame(loop);
-  }, [endGame, spawnFlake]);
-
-  // ─── CANVAS SETUP & RESIZE ────────────────────────────────────────────────
+    s.animId = requestAnimationFrame(loop);
+  }, [endGame, spawnItem]);
 
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const resize = () => {
-      // Cap DPR at 2 for performance — 3x DPR creates 9x pixels which kills canvas perf
-      const dpr = Math.min(window.devicePixelRatio || 1, 2);
-      const w = window.innerWidth;
-      const h = window.innerHeight;
-      canvas.style.width  = w + 'px';
-      canvas.style.height = h + 'px';
-      canvas.width  = w * dpr;
-      canvas.height = h * dpr;
-      const ctx2 = canvas.getContext('2d');
-      if (ctx2) ctx2.setTransform(dpr, 0, 0, dpr, 0, 0);
-
-      // Rebuild offscreen static background at physical pixel size (DPR-scaled for 1:1 blit)
-      const bg = document.createElement('canvas');
-      bg.width  = w * dpr;  // physical pixels
-      bg.height = h * dpr;
-      const bgCtx = bg.getContext('2d');
-      if (bgCtx) {
-        bgCtx.scale(dpr, dpr);  // draw at CSS pixel coords
-        // Deep winter night gradient
-        const scBg = bgCtx.createRadialGradient(w * 0.5, 0, 0, w * 0.5, h * 0.5, Math.max(w, h) * 0.9);
-        scBg.addColorStop(0,   '#0a1825');
-        scBg.addColorStop(0.5, '#060f1a');
-        scBg.addColorStop(1,   '#020810');
-        bgCtx.fillStyle = scBg;
-        bgCtx.fillRect(0, 0, w, h);
-        // Vignette
-        const scVig = bgCtx.createRadialGradient(w * 0.5, h * 0.5, h * 0.2, w * 0.5, h * 0.5, h * 0.85);
-        scVig.addColorStop(0, 'rgba(0,0,0,0)');
-        scVig.addColorStop(1, 'rgba(0,0,10,0.45)');
-        bgCtx.fillStyle = scVig;
-        bgCtx.fillRect(0, 0, w, h);
-        // Moon (no shadowBlur)
-        bgCtx.save();
-        bgCtx.globalAlpha = 0.18;
-        bgCtx.fillStyle = '#c7d2fe';
-        bgCtx.beginPath();
-        bgCtx.arc(w * 0.82, h * 0.10, 30, 0, Math.PI * 2);
-        bgCtx.fill();
-        bgCtx.globalAlpha = 1;
-        bgCtx.fillStyle   = '#e0e7ff';
-        bgCtx.beginPath();
-        bgCtx.arc(w * 0.82, h * 0.10, 22, 0, Math.PI * 2);
-        bgCtx.fill();
-        bgCtx.fillStyle = '#0d1b2a';
-        bgCtx.beginPath();
-        bgCtx.arc(w * 0.82 + 10, h * 0.10 - 5, 18, 0, Math.PI * 2);
-        bgCtx.fill();
-        bgCtx.restore();
-        // Mountain silhouette
-        drawMountainSilhouette(bgCtx, w, h);
-      }
-      bgCanvasRef.current = bg;
-
-      if (stateRef.current.running) {
-        stateRef.current.basketX = Math.min(
-          Math.max(stateRef.current.basketX, BASKET_WIDTH / 2),
-          window.innerWidth - BASKET_WIDTH / 2,
-        );
-      }
+    const mount = mountRef.current;
+    if (!mount) return;
+    const onMove = (e: PointerEvent) => {
+      if (phase !== 'playing') return;
+      touchXRef.current = e.clientX;
     };
-    resize();
-    window.addEventListener('resize', resize);
-    return () => window.removeEventListener('resize', resize);
-  }, []);
-
-  // ─── POINTER INPUT (touch fallback) ──────────────────────────────────────
-
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const onPointerMove = (e: PointerEvent) => {
-      if (!stateRef.current.running) return;
-      const rect = canvas.getBoundingClientRect();
-      const x = (e.clientX - rect.left) * (canvas.offsetWidth / rect.width);
-      stateRef.current.touchTargetX  = x;
-      stateRef.current.useTouchFallback = true;
-    };
-    canvas.addEventListener('pointermove', onPointerMove);
-    return () => canvas.removeEventListener('pointermove', onPointerMove);
-  }, []);
-
-  // ─── CLEANUP ON UNMOUNT ───────────────────────────────────────────────────
-
-  useEffect(() => {
+    const onUp = () => { touchXRef.current = null; };
+    mount.addEventListener('pointermove', onMove);
+    mount.addEventListener('pointerup', onUp);
+    mount.addEventListener('pointercancel', onUp);
     return () => {
-      cancelAnimationFrame(animRef.current);
-      if (timerRef.current) clearInterval(timerRef.current);
-      if (stopMusicRef.current) stopMusicRef.current();
-      if (tiltRef.current) tiltRef.current.stop();
+      mount.removeEventListener('pointermove', onMove);
+      mount.removeEventListener('pointerup', onUp);
+      mount.removeEventListener('pointercancel', onUp);
     };
+  }, [phase]);
+
+  useEffect(() => () => {
+    const s = stateRef.current;
+    cancelAnimationFrame(s.animId);
+    if (s.intervalId) clearInterval(s.intervalId);
+    if (s.stopMusic) s.stopMusic();
+    if (s.renderer) s.renderer.dispose();
+    tiltCleanupRef.current?.();
   }, []);
 
-  // ─── PHASE TRANSITIONS ────────────────────────────────────────────────────
-
-  const handleStart = useCallback(async (name: string, avatar: string) => {
-    setPlayerName(name);
-    setPlayerAvatar(avatar);
-    initAudio();
-    // Stop any prior tilt session from play-again
-    if (tiltRef.current) { tiltRef.current.stop(); tiltRef.current = null; }
-    stateRef.current.useTouchFallback = false;
-
-    playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar);
-
-    const controller = createTiltController(
-      (_x: number, _y: number) => { /* values polled via getValues() in rAF */ },
-      { sensitivity: 0.9, smoothing: 0.45, deadzone: 2, clamp: 30 },
-    );
-    const granted = await controller.start();
-    tiltRef.current = controller;
-    if (!granted) stateRef.current.useTouchFallback = true;
-
-    setPhase('countdown');
+  const handleStart = useCallback((name: string, avatar: string) => {
+    initAudio(); playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar); setPhase('countdown');
   }, []);
-
-  const handleCountdownDone = useCallback(() => {
-    startLoop();
-  }, [startLoop]);
-
-  const handlePlayAgain = useCallback(() => {
-    setPhase('start');
-    setScoreDisplay(0);
-    setStreakDisplay(0);
-    setTimeLeft(DURATION);
-    setFinalSig(null);
-    setIsNewBest(false);
-    setStreak(0);
-    setBlizzardVisible(false);
-    prevScoreRef.current = 0;
-  }, []);
-
-  // ─── END SCREEN INSIGHTS ─────────────────────────────────────────────────
+  const handleCountdownDone = useCallback(() => { startLoop(); }, [startLoop]);
+  const handlePlayAgain = useCallback(() => { setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null); }, []);
 
   const buildInsights = (sig: Signals) => [
-    {
-      label: 'Snow Caught',
-      value: String(sig.score),
-      color: ACCENT,
-    },
-    {
-      label: 'Golden Flakes',
-      value: String(sig.goldenCaught),
-      color: '#fbbf24',
-    },
-    {
-      label: 'Icicles Hit',
-      value: String(sig.iciclesHit),
-      color: sig.iciclesHit === 0 ? '#4ade80' : '#ef4444',
-    },
-    {
-      label: 'Max Streak',
-      value: `×${sig.maxStreak}`,
-      color: ACCENT,
-    },
+    { label: 'Snowflakes', value: String(sig.snowflakesCaught), color: ACCENT },
+    { label: 'Golden', value: `✨${sig.goldenCaught}`, color: '#fbbf24' },
+    { label: 'Icicles Hit', value: String(sig.iciclesHit), color: sig.iciclesHit === 0 ? '#4ade80' : '#ef4444' },
+    { label: 'Best Streak', value: `×${sig.maxStreak}`, color: ACCENT },
   ];
 
-  // ─── RENDER ───────────────────────────────────────────────────────────────
-
   return (
-    <>
-      {phase === 'start' && showInstructions && (
-        <SwipeInstructions
-          gameId="snow-catch"
-          steps={[{ icon: "❄️", title: "Catch the snowflakes", body: "Tilt your device to move the catcher left and right." }, { icon: "⭐", title: "Big flakes = more", body: "Larger snowflakes score more points." }, { icon: "🔥", title: "Build a streak", body: "Catch consecutive flakes without missing for a bonus." }]}
-          onDone={() => setShowInstructions(false)}
-        />
-      )}
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}
-      background="linear-gradient(180deg, #04091a 0%, #080f2a 30%, #0d1840 60%, #091228 85%, #040a1a 100%), radial-gradient(ellipse at 50% 0%, rgba(160,200,255,0.1) 0%, transparent 60%)">
-
-      {/* ── Start Screen ─────────────────────────────────────────────────── */}
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
       {phase === 'start' && (
-        <GameStartScreen
-          emoji={GAME_EMOJI}
-          title={GAME_TITLE}
-          description={GAME_TAGLINE}
-          ctaLabel="Allow Motion & Start"
-          sensorNote="Tilt your phone left/right to move the basket"
-          accentColor={theme.colors.accent ?? ACCENT}
-          onStart={handleStart}
-          gradient="radial-gradient(ellipse 80% 70% at 50% 30%, #041220 0%, #020a14 55%, #010408 100%)"
-        />
+        <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description={GAME_TAGLINE}
+          ctaLabel="Let it Snow!" accentColor={theme.colors.accent ?? ACCENT} onStart={handleStart} />
       )}
-
-      {/* ── Countdown ────────────────────────────────────────────────────── */}
-      {phase === 'countdown' && (
-        <Countdown onComplete={handleCountdownDone} accentColor={theme.colors.accent ?? ACCENT} />
-      )}
-
-      {/* ── Playing ──────────────────────────────────────────────────────── */}
+      {phase === 'countdown' && <Countdown onComplete={handleCountdownDone} accentColor={theme.colors.accent ?? ACCENT} />}
       {(phase === 'playing' || phase === 'countdown') && (
         <>
-          <canvas
-            ref={canvasRef}
-            style={{
-              position:    'absolute',
-              inset:       0,
-              width:       '100%',
-              height:      '100%',
-              touchAction: 'none',
-            }}
-          />
+          <div ref={mountRef} style={{ position: 'absolute', inset: 0, touchAction: 'none' }} />
           {phase === 'playing' && (
-            <GameHUD
-              accentColor={theme.colors.accent ?? ACCENT}
-              items={[
-                { label: 'TIME',   value: timeLeft,      danger: timeLeft <= 10, testId: 'timer' },
-                { label: 'CAUGHT', value: scoreDisplay,  testId: 'score' },
-                { label: 'STREAK', value: streakDisplay },
-              ]}
-            />
+            <GameHUD accentColor={theme.colors.accent ?? ACCENT} items={[
+              { label: 'TIME', value: timeLeft, danger: timeLeft <= 10 },
+              { label: 'SCORE', value: scoreDisplay },
+            ]} />
           )}
         </>
       )}
-      {/* New best banner */}
-      <AnimatePresence>
-        {isNewBest && (
-          <motion.div
-            key="new-best"
-            initial={{ opacity: 0, y: -20, scale: 0.8 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -20 }}
-            transition={{ duration: 0.4, delay: 0.5 }}
-            style={{
-              position: 'fixed', top: '10%', left: '50%', transform: 'translateX(-50%)',
-              zIndex: 90, pointerEvents: 'none',
-              background: 'linear-gradient(135deg, #fbbf24, #f59e0b)',
-              borderRadius: 20, padding: '8px 20px', fontSize: 20,
-              fontWeight: 900, color: '#000', whiteSpace: 'nowrap',
-              boxShadow: '0 4px 20px rgba(251,191,36,0.5)',
-            }}
-          >
-            🏆 New Best!
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-
-
-      {/* ── End Screen ───────────────────────────────────────────────────── */}
       {phase === 'done' && finalSig && (
-        <EndScreen
-          gameId={GAME_ID}
-          title={getPersonality(finalSig)}
-          emoji={GAME_EMOJI}
-          score={String(finalSig.score)}
-          personality={getPersonality(finalSig)}
-          insights={buildInsights(finalSig)}
-          accentColor={theme.colors.accent ?? ACCENT}
-          onPlayAgain={handlePlayAgain}
-          didWin={finalSig.score >= 15}
-        />
-      )}
-
-      {/* ── Webhook (fires once on mount) ────────────────────────────────── */}
-      {phase === 'done' && finalSig && (
-        <WebhookEmitter
-          theme={theme}
-          gameId={GAME_ID}
-          sig={finalSig}
-          personality={getPersonality(finalSig)}
-          player={playerSessionRef.current}
-        />
-      )}
-      {phase === 'playing' && (
         <>
-          <ScorePopEffect pops={pops} accentColor={CATEGORY_ACCENT} />
-          <StreakBadge streak={streakDisplay} accentColor={CATEGORY_ACCENT} />
+          <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI}
+            score={String(finalSig.score)} personality={getPersonality(finalSig)}
+            insights={buildInsights(finalSig)} accentColor={theme.colors.accent ?? ACCENT}
+            onPlayAgain={handlePlayAgain} didWin={finalSig.snowflakesCaught >= 10} />
+          <WebhookEmitter theme={theme} sig={finalSig} personality={getPersonality(finalSig)} player={playerSessionRef.current} />
         </>
       )}
-      {/* Blizzard DOM indicator — invisible overlay for test detection */}
-      {blizzardVisible && (
-        <div
-          data-testid="blizzard-active"
-          aria-label="BLIZZARD"
-          style={{
-            position: 'absolute',
-            top: 0, left: 0, right: 0, bottom: 0,
-            pointerEvents: 'none',
-            zIndex: 5,
-          }}
-        />
-      )}
     </GameShell>
-    </>
   );
 }
 
-// ─── WEBHOOK EMITTER ──────────────────────────────────────────────────────────
-
-function WebhookEmitter({
-  theme, gameId, sig, personality, player,
-}: {
-  theme:       ReturnType<typeof useBrandTheme>;
-  gameId:      string;
-  sig:         Signals;
-  personality: string;
-  player:      PlayerSession | null;
+function WebhookEmitter({ theme, sig, personality, player }: {
+  theme: ReturnType<typeof useBrandTheme>; sig: Signals; personality: string; player: PlayerSession | null;
 }) {
   const fired = useRef(false);
   useEffect(() => {
-    if (fired.current) return;
-    fired.current = true;
-    postWebhook(theme, gameId, {
-      personality,
-      score:            sig.score,
-      goldenCaught:     sig.goldenCaught,
-      iciclesHit:       sig.iciclesHit,
-      maxStreak:        sig.maxStreak,
-      totalMissed:      sig.totalMissed,
-      blizzardSurvived: sig.blizzardSurvived,
-      streakCurrent:    sig.streakCurrent,
-    }, player);
-  }, [theme, gameId, sig, personality, player]);
+    if (fired.current) return; fired.current = true;
+    postWebhook(theme, GAME_ID, { personality, score: sig.score, snowflakesCaught: sig.snowflakesCaught, goldenCaught: sig.goldenCaught, iciclesHit: sig.iciclesHit }, player);
+  }, [theme, sig, personality, player]);
   return null;
 }

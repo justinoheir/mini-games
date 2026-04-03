@@ -1,1150 +1,386 @@
-/**
- * ══════════════════════════════════════════════════════════════════
- *  CUPID SHOT — Valentine's Day precision timing game
- *  Holiday: valentines | Sensor: touch | Duration: 45s
- *  A heart oscillates across screen — tap when it aligns with the bullseye.
- * ══════════════════════════════════════════════════════════════════
- */
-
 'use client';
-
 import { useEffect, useRef, useState, useCallback } from 'react';
+import * as THREE from 'three';
 import GameShell from '@/components/GameShell';
 import GameHUD from '@/components/GameHUD';
 import GameStartScreen from '@/components/GameStartScreen';
 import Countdown from '@/components/Countdown';
 import EndScreen from '@/components/EndScreen';
 import { initAudio, sfx, haptic, startMusic } from '@/lib/audio';
-import { playScoreHit, playVictoryFanfare, playNearMiss } from '@/lib/audio';
 import { hapticScore, hapticFail, hapticVictory } from '@/lib/haptics';
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { postWebhook } from '@/lib/webhook';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
-import { motion, AnimatePresence } from 'framer-motion';
-import ScorePopEffect, { useScorePop } from '@/components/ScorePopEffect';
-import StreakBadge from '@/components/StreakBadge';
-import { CATEGORY_THEMES } from '@/lib/theme';
-import SwipeInstructions from '@/components/SwipeInstructions';
 
-const CATEGORY_ACCENT = CATEGORY_THEMES.holiday.primaryAccent;
-
-// ─── SPEC CONSTANTS ───────────────────────────────────────────────────────────
-
-
-// --- SPRITE CACHE -------------------------------------------------------------
-const _spriteCache = new Map<string, HTMLImageElement>();
-function _loadSprite(src: string): HTMLImageElement {
-  if (_spriteCache.has(src)) return _spriteCache.get(src)!;
-  const img = new Image();
-  img.src = src;
-  _spriteCache.set(src, img);
-  return img;
-}
-if (typeof window !== 'undefined') {
-  _loadSprite('/sprites/cupid-shot/arrow.svg');
-  _loadSprite('/sprites/cupid-shot/heart.svg');
-}
-
-const GAME_ID      = 'cupid-shot';
-const PB_KEY       = 'pb_cupid-shot';
-const ACCENT       = '#f43f5e';
-const DURATION     = 45;
+const GAME_ID  = 'cupid-shot';
+const ACCENT   = '#f43f5e';
+const DURATION = 45;
 const GAME_EMOJI   = '💘';
 const GAME_TITLE   = 'Cupid Shot';
-const GAME_TAGLINE = 'Aim. Wait. Shoot at the perfect moment.';
+const GAME_TAGLINE = 'Tap the heart when it aligns with the bullseye!';
 
-const HEART_SIZE    = 30;  // radius-equivalent for the heart path
-const RELOAD_MS     = 1500;
-const GOLDEN_CHANCE = 0.10;
-const MAX_PARTICLES = 180;
-const TRAIL_LENGTH  = 14;
+interface Signals {
+  totalShots: number; cupidHits: number; loveHits: number; misses: number;
+  maxStreak: number; streakCurrent: number; score: number;
+}
 
-/** Progression stages: seconds elapsed → target count + oscillation speed */
-const PROGRESSION: Array<{ atSecond: number; count: number; speed: number; label: string }> = [
-  { atSecond: 0,  count: 1, speed: 1.0, label: 'Finding love…' },
-  { atSecond: 15, count: 2, speed: 1.4, label: 'Hearts racing!' },
-  { atSecond: 30, count: 3, speed: 1.8, label: 'Love is complicated' },
-];
+function getPersonality(sig: Signals): string {
+  const acc = sig.totalShots > 0 ? (sig.cupidHits + sig.loveHits) / sig.totalShots : 0;
+  if (sig.cupidHits >= 6) return "💘 Cupid's Ace";
+  if (acc >= 0.7 && sig.maxStreak >= 5) return '💕 Romantic Precision';
+  if (acc >= 0.6) return '❤️ Sure Shot';
+  if (sig.maxStreak >= 4) return '🔥 On a Roll';
+  return '💝 Hopeful';
+}
 
-/** Score tiers based on |targetX - bullseyeX| */
-const TIERS: Array<{ maxDist: number; pts: number; label: string; color: string }> = [
-  { maxDist: 15,       pts: 5, label: "CUPID'S ARROW 💘", color: '#fbbf24' },
-  { maxDist: 30,       pts: 3, label: 'LOVE SHOT 💕',     color: '#f43f5e' },
-  { maxDist: 55,       pts: 1, label: 'CLOSE ❤️',         color: '#fb7185' },
-  { maxDist: Infinity, pts: 0, label: 'MISSED 💔',        color: '#6b7280' },
-];
-
-// ─── TYPES ────────────────────────────────────────────────────────────────────
+type Phase = 'start' | 'countdown' | 'playing' | 'done';
 
 interface HeartTarget {
   id: number;
-  /** Oscillation phase offset (radians) — keeps targets out of sync */
+  mesh: THREE.Group;
   phase: number;
-  /** Vertical position as fraction of canvas height (fixed per target) */
-  yFrac: number;
-  /** Base oscillation speed multiplier */
-  baseSpeed: number;
+  speed: number;
+  yPos: number;
   isGolden: boolean;
-  /** Timestamp when the reload cooldown ends (0 = ready to shoot) */
-  reloadUntil: number;
-  /** Timestamp when the hit-flash animation ends */
-  flashUntil: number;
-  /** Whether this target slot is currently active */
-  active: boolean;
-  /** Current computed canvas X (updated every frame) */
-  x: number;
-  /** Current computed canvas Y (computed from yFrac every frame) */
-  y: number;
-  /** Recent position history for trail rendering */
-  trail: Array<{ x: number; y: number }>;
+  flashTimer: number;
+  reloadTimer: number;
 }
 
-interface Particle {
-  x: number;
-  y: number;
-  vx: number;
-  vy: number;
-  life: number;   // 1 → 0
-  decay: number;  // subtracted from life each frame
-  color: string;
-  size: number;
-  rotation: number;
-  rotSpeed: number;
-  type: 'petal' | 'burst' | 'shard';
-}
+const TIERS = [
+  { maxDist: 0.5,       pts: 5, label: "CUPID'S ARROW 💘", color: '#fbbf24' },
+  { maxDist: 1.0,       pts: 3, label: 'LOVE SHOT 💕',     color: '#f43f5e' },
+  { maxDist: 1.8,       pts: 1, label: 'CLOSE ❤️',         color: '#fb7185' },
+  { maxDist: Infinity,  pts: 0, label: 'MISSED 💔',        color: '#6b7280' },
+];
 
-interface FloatText {
-  x: number;
-  y: number;
-  text: string;
-  color: string;
-  life: number;   // 1 → 0
-  vy: number;
-  scale: number;
-}
-
-interface ArrowAnim {
-  fromX: number;
-  fromY: number;
-  toX: number;
-  toY: number;
-  progress: number;  // 0 → 1
-  color: string;
-}
-
-interface Signals {
-  score: number;
-  bullseyes: number;
-  shotsTotal: number;
-  hitShots: number;      // shots that scored ≥ 1 pt
-  maxStreak: number;
-  streakCurrent: number;
-  goldenHearts: number;
-}
-
-interface GState {
-  running: boolean;
-  timeLeft: number;
-  elapsedMs: number;
+interface GS {
+  running: boolean; timeLeft: number; sig: Signals;
+  renderer: THREE.WebGLRenderer | null;
+  scene: THREE.Scene | null;
+  camera: THREE.PerspectiveCamera | null;
+  animId: number; frame: number;
   targets: HeartTarget[];
-  particles: Particle[];
-  floats: FloatText[];
-  arrows: ArrowAnim[];
-  sig: Signals;
-  lastTs: number;
-  progressPhase: number;
-  bullseyePulse: number;
-  petalTimer: number;
+  bullseye: THREE.Mesh | null;
+  bullseyeX: number;
+  nextId: number;
+  intervalId: ReturnType<typeof setInterval> | null;
+  stopMusic: (() => void) | null;
+  particles: Array<{ mesh: THREE.Mesh; vx: number; vy: number; vz: number; life: number }>;
+  centerLight: THREE.PointLight | null;
+  elapsed: number;
 }
 
-type GamePhase = 'start' | 'countdown' | 'playing' | 'done';
-
-// ─── CANVAS HELPERS ───────────────────────────────────────────────────────────
-
-/**
- * Draw a heart shape centered at (cx, cy) with approximate radius r.
- * Uses two bezier curves — one for each lobe.
- */
-function heartPath(
-  ctx: CanvasRenderingContext2D,
-  cx: number,
-  cy: number,
-  r: number,
-): void {
-  ctx.beginPath();
-  // Bottom tip of the heart
-  ctx.moveTo(cx, cy + r * 0.75);
-  // Left lobe
-  ctx.bezierCurveTo(
-    cx - r * 1.75, cy + r * 0.2,
-    cx - r * 1.75, cy - r * 0.75,
-    cx, cy - r * 0.2,
-  );
-  // Right lobe
-  ctx.bezierCurveTo(
-    cx + r * 1.75, cy - r * 0.75,
-    cx + r * 1.75, cy + r * 0.2,
-    cx, cy + r * 0.75,
-  );
-  ctx.closePath();
+// Build a heart-shaped mesh using heart curve
+function buildHeartMesh(color: number, size = 0.5): THREE.Group {
+  const group = new THREE.Group();
+  // Approximate heart with two overlapping spheres + triangle
+  const sGeo = new THREE.SphereGeometry(size * 0.6, 16, 16);
+  const sMat = new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.4, roughness: 0.3, metalness: 0.1 });
+  const s1 = new THREE.Mesh(sGeo, sMat);
+  s1.position.set(-size * 0.35, size * 0.15, 0);
+  const s2 = new THREE.Mesh(sGeo.clone(), sMat.clone());
+  s2.position.set(size * 0.35, size * 0.15, 0);
+  const cGeo = new THREE.ConeGeometry(size * 0.75, size * 1.2, 3);
+  const cMesh = new THREE.Mesh(cGeo, sMat.clone());
+  cMesh.rotation.z = Math.PI;
+  cMesh.position.set(0, -size * 0.2, 0);
+  group.add(s1, s2, cMesh);
+  return group;
 }
 
-// ─── PARTICLE FACTORY ─────────────────────────────────────────────────────────
-
-function spawnPetal(W: number): Particle {
-  const petalColors = ['#f43f5e', '#fb7185', '#fda4af', '#fecdd3', '#fbbf24', '#f9a8d4'];
-  return {
-    x: Math.random() * W,
-    y: -20,
-    vx: (Math.random() - 0.5) * 1.4,
-    vy: 0.6 + Math.random() * 1.2,
-    life: 1,
-    decay: 0.0015 + Math.random() * 0.0015,
-    color: petalColors[Math.floor(Math.random() * petalColors.length)],
-    size: 7 + Math.random() * 9,
-    rotation: Math.random() * Math.PI * 2,
-    rotSpeed: (Math.random() - 0.5) * 0.06,
-    type: 'petal',
-  };
-}
-
-function spawnBurst(x: number, y: number, isGolden: boolean): Particle[] {
-  const pts: Particle[] = [];
-  const count = 12 + Math.floor(Math.random() * 6);
-  for (let i = 0; i < count; i++) {
-    const angle = (i / count) * Math.PI * 2 + Math.random() * 0.3;
-    const speed = 2.5 + Math.random() * 4;
-    pts.push({
-      x, y,
-      vx: Math.cos(angle) * speed,
-      vy: Math.sin(angle) * speed - 1,
-      life: 1,
-      decay: 0.022 + Math.random() * 0.018,
-      color: isGolden ? '#fbbf24' : (Math.random() > 0.4 ? '#f43f5e' : '#fb7185'),
-      size: 4 + Math.random() * 7,
-      rotation: Math.random() * Math.PI * 2,
-      rotSpeed: (Math.random() - 0.5) * 0.18,
-      type: 'burst',
-    });
-  }
-  return pts;
-}
-
-function spawnShards(x: number, y: number): Particle[] {
-  const pts: Particle[] = [];
-  for (let i = 0; i < 4; i++) {
-    const angle = (i / 4) * Math.PI * 2 + Math.random() * 0.8;
-    const speed = 1.8 + Math.random() * 2.5;
-    pts.push({
-      x, y,
-      vx: Math.cos(angle) * speed,
-      vy: Math.sin(angle) * speed,
-      life: 1,
-      decay: 0.014 + Math.random() * 0.012,
-      color: '#9ca3af',
-      size: 7 + Math.random() * 6,
-      rotation: Math.random() * Math.PI * 2,
-      rotSpeed: (Math.random() - 0.5) * 0.22,
-      type: 'shard',
-    });
-  }
-  return pts;
-}
-
-// ─── INITIAL STATE FACTORY ────────────────────────────────────────────────────
-
-function makeTargets(): HeartTarget[] {
-  // Three target slots with different phases and vertical positions
-  const phases = [0, Math.PI * 0.7, Math.PI * 1.35];
-  const yFracs = [0.38, 0.57, 0.73];
-  return [0, 1, 2].map(i => ({
-    id: i,
-    phase: phases[i],
-    yFrac: yFracs[i],
-    baseSpeed: 1.0,
-    isGolden: Math.random() < GOLDEN_CHANCE,
-    reloadUntil: 0,
-    flashUntil: 0,
-    active: i === 0,  // only first target starts active
-    x: 0,
-    y: 0,
-    trail: [],
-  }));
-}
-
-function makeSig(): Signals {
-  return {
-    score: 0,
-    bullseyes: 0,
-    shotsTotal: 0,
-    hitShots: 0,
-    maxStreak: 0,
-    streakCurrent: 0,
-    goldenHearts: 0,
-  };
-}
-
-// ─── PERSONALITY ──────────────────────────────────────────────────────────────
-
-function getPersonality(sig: Signals): string {
-  const acc = sig.shotsTotal > 0 ? (sig.hitShots / sig.shotsTotal) * 100 : 0;
-  if (sig.bullseyes >= 8 && acc >= 80)          return 'Cupid Himself 💘';
-  if (sig.goldenHearts >= 2 && sig.bullseyes >= 5) return 'True Love ❤️‍🔥';
-  if (acc >= 85)                                  return 'Sharpshooter 🏹';
-  if (sig.shotsTotal >= 20 && sig.score >= 20)   return 'Hopeless Romantic 💕';
-  return 'Still Searching 💔';
-}
-
-// ─── COMPONENT ────────────────────────────────────────────────────────────────
-
-export default function CupidShot() {
-  const theme        = useBrandTheme();
-  const canvasRef    = useRef<HTMLCanvasElement>(null);
-  const animRef      = useRef(0);
-  const timerRef     = useRef<ReturnType<typeof setInterval> | null>(null);
-  const stopMusicRef = useRef<(() => void) | null>(null);
-  const phaseRef     = useRef<GamePhase>('start');
-
-  // ⚠️ All mutable game state lives in one ref — never useState inside rAF
-  const stateRef = useRef<GState>({
-    running: false,
-    timeLeft: DURATION,
-    elapsedMs: 0,
-    targets: [],
-    particles: [],
-    floats: [],
-    arrows: [],
-    sig: makeSig(),
-    lastTs: 0,
-    progressPhase: 0,
-    bullseyePulse: 0,
-    petalTimer: 0,
+export default function CupidShotGame() {
+  const theme = useBrandTheme();
+  const mountRef = useRef<HTMLDivElement>(null);
+  const stateRef = useRef<GS>({
+    running: false, timeLeft: DURATION,
+    sig: { totalShots: 0, cupidHits: 0, loveHits: 0, misses: 0, maxStreak: 0, streakCurrent: 0, score: 0 },
+    renderer: null, scene: null, camera: null, animId: 0, frame: 0,
+    targets: [], bullseye: null, bullseyeX: 0, nextId: 0,
+    intervalId: null, stopMusic: null, particles: [], centerLight: null, elapsed: 0,
   });
 
-  // Only React state values that drive re-renders
-  const [gamePhase, setGamePhase]       = useState<GamePhase>('start');
-  const [showInstructions, setShowInstructions] = useState(true);
-  const [timeLeft, setTimeLeft]         = useState(DURATION);
+  const [phase, setPhase] = useState<Phase>('start');
+  const [timeLeft, setTimeLeft] = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
-  const [finalSig, setFinalSig]         = useState<Signals | null>(null);
-
-  const [arrowsDisplay, setArrowsDisplay] = useState(0);  // tracks shotsTotal for HUD
-
-  const [playerName, setPlayerName]     = useState('');
-  const [playerAvatar, setPlayerAvatar] = useState('🎮');
-  const { pops, triggerPop } = useScorePop();
-  const [streak, setStreak] = useState(0);
-  const [isNewBest, setIsNewBest] = useState(false);
-  const prevScoreRef = useRef(0);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => {
-    const numScore = typeof scoreDisplay === 'number' ? scoreDisplay : 0;
-    if (numScore > prevScoreRef.current) {
-      triggerPop(`+${numScore - prevScoreRef.current}`, window.innerWidth / 2, 200);
-      hapticScore();
-      playScoreHit('default', numScore - prevScoreRef.current);
-      setStreak(Math.floor(numScore / 5));
-    }
-    prevScoreRef.current = numScore;
-  }, [scoreDisplay]);
-  const playerSessionRef                = useRef<PlayerSession | null>(null);
-  const warningFiredRef                 = useRef(false);
-
-  // Keep phaseRef in sync so canvas pointer listener can check without stale closure
-  useEffect(() => { phaseRef.current = gamePhase; }, [gamePhase]);
-
-  // End screen completion sound — fires once when game transitions to 'done'
-  useEffect(() => {
-    if (gamePhase !== 'done' || !finalSig) return;
-    const t = setTimeout(() => {
-      if (finalSig.score >= 30) {
-        sfx.success();   // rewarding arpeggio for a strong score
-      } else {
-        sfx.shimmer();   // softer chime for low/no score
-      }
-    }, 380); // brief delay — lets the fail/time-up sound clear first
-    return () => clearTimeout(t);
-  }, [gamePhase, finalSig]);
-
-  // Sync brand accent into a ref so rAF can read it without stale closure issues
-  const accentRef = useRef(ACCENT);
-  useEffect(() => { accentRef.current = theme.colors.accent ?? ACCENT; }, [theme]);
-
-  // ─── END GAME ────────────────────────────────────────────────────────────
+  const [finalSig, setFinalSig] = useState<Signals | null>(null);
+  const playerSessionRef = useRef<PlayerSession | null>(null);
 
   const endGame = useCallback(() => {
     const s = stateRef.current;
     s.running = false;
-    cancelAnimationFrame(animRef.current);
-    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
-    if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
-    // Personal best tracking
-    try {
-      const _pbPrev = parseInt(localStorage.getItem(PB_KEY) || '0', 10);
-      const _pbVal = parseFloat(String(s.sig?.score ?? 0));
-      if (!isNaN(_pbVal) && _pbVal > _pbPrev) {
-        localStorage.setItem(PB_KEY, String(Math.round(_pbVal)));
-        setIsNewBest(true);
-      }
-    } catch { /* ignore */ }
-
-
+    cancelAnimationFrame(s.animId);
+    if (s.intervalId) { clearInterval(s.intervalId); s.intervalId = null; }
+    if (s.stopMusic) { s.stopMusic(); s.stopMusic = null; }
+    if (s.renderer) { s.renderer.dispose(); s.renderer = null; }
+    if (mountRef.current) mountRef.current.innerHTML = '';
     setFinalSig({ ...s.sig });
-    setGamePhase('done');
+    setPhase('done');
+    hapticVictory();
   }, []);
 
-  // ─── GAME LOOP ───────────────────────────────────────────────────────────
+  const spawnTarget = useCallback((scene: THREE.Scene, s: GS, forceGolden = false) => {
+    const isGolden = forceGolden || (s.sig.cupidHits + s.sig.loveHits > 8 && Math.random() < 0.25);
+    const color = isGolden ? 0xfbbf24 : 0xf43f5e;
+    const mesh = buildHeartMesh(color, 0.45);
+    const yPos = -1.5 + Math.random() * 3;
+    mesh.position.set(-5, yPos, 0);
+    scene.add(mesh);
+    const totalTargets = s.targets.length + 1;
+    const speed = Math.min(0.06, 0.025 + totalTargets * 0.008 + s.elapsed * 0.0003);
+    s.targets.push({ id: s.nextId++, mesh, phase: Math.random() * Math.PI * 2, speed, yPos, isGolden, flashTimer: 0, reloadTimer: 0 });
+  }, []);
 
   const startLoop = useCallback(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
+    const mount = mountRef.current;
+    if (!mount) return;
     const s = stateRef.current;
+    const W = mount.clientWidth || window.innerWidth;
+    const H = mount.clientHeight || window.innerHeight;
 
-    // ── Reset all state ──
-    s.running       = true;
-    s.timeLeft      = DURATION;
-    s.elapsedMs     = 0;
-    s.sig           = makeSig();
-    s.progressPhase = 0;
-    s.bullseyePulse = 0;
-    s.petalTimer    = 0;
-    s.particles     = [];
-    s.floats        = [];
-    s.arrows        = [];
-    s.targets       = makeTargets();
-    s.lastTs        = 0;
-    warningFiredRef.current = false;
+    s.running = true; s.timeLeft = DURATION; s.frame = 0; s.elapsed = 0;
+    s.sig = { totalShots: 0, cupidHits: 0, loveHits: 0, misses: 0, maxStreak: 0, streakCurrent: 0, score: 0 };
+    s.targets = []; s.nextId = 0; s.particles = [];
+    setScoreDisplay(0); setTimeLeft(DURATION); setPhase('playing');
 
-    setScoreDisplay(0);
-    setArrowsDisplay(0);
-    setTimeLeft(DURATION);
-    setGamePhase('playing');
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(W, H);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setClearColor(0x0d0014);
+    mount.innerHTML = '';
+    mount.appendChild(renderer.domElement);
+    s.renderer = renderer;
 
-    stopMusicRef.current = startMusic('calm');
+    const scene = new THREE.Scene();
+    scene.fog = new THREE.Fog(0x0d0014, 10, 20);
+    s.scene = scene;
 
-    // 1-second countdown via setInterval (animation via rAF only)
-    timerRef.current = setInterval(() => {
-      const st = stateRef.current;
-      st.timeLeft--;
-      setTimeLeft(st.timeLeft);
-      // Timer warning: audio + haptic at 10s remaining
-      if (st.timeLeft === 10 && !warningFiredRef.current) {
-        warningFiredRef.current = true;
-        sfx.warning();
-        haptic([50, 30, 50]);
-      }
-      if (st.timeLeft <= 0) {
-        sfx.fail();
-        haptic([300]);
-        endGame();
-      }
+    const camera = new THREE.PerspectiveCamera(55, W / H, 0.1, 30);
+    camera.position.set(0, 0, 12);
+    camera.lookAt(0, 0, 0);
+    s.camera = camera;
+
+    // Lighting
+    scene.add(new THREE.AmbientLight(0x441133, 2.5));
+    const centerLight = new THREE.PointLight(0xff4488, 3, 15);
+    centerLight.position.set(0, 0, 4);
+    scene.add(centerLight);
+    s.centerLight = centerLight;
+    const rimLight = new THREE.PointLight(0xffaacc, 1.2, 20);
+    rimLight.position.set(-5, 5, 3);
+    scene.add(rimLight);
+
+    // Bullseye target rings
+    const bullseyeGroup = new THREE.Group();
+    const rings = [3.5, 2.5, 1.5, 0.7];
+    const ringColors = [0x331122, 0x661133, 0xcc2255, 0xf43f5e];
+    rings.forEach((r, i) => {
+      const geo = new THREE.TorusGeometry(r, 0.06, 8, 40);
+      const mat = new THREE.MeshStandardMaterial({ color: ringColors[i], emissive: ringColors[i], emissiveIntensity: i === rings.length - 1 ? 0.8 : 0.2 });
+      bullseyeGroup.add(new THREE.Mesh(geo, mat));
+    });
+    // Center dot
+    const dotGeo = new THREE.SphereGeometry(0.2, 12, 12);
+    const dotMat = new THREE.MeshStandardMaterial({ color: 0xfbbf24, emissive: 0xfbbf24, emissiveIntensity: 1 });
+    const dot = new THREE.Mesh(dotGeo, dotMat);
+    bullseyeGroup.add(dot);
+    bullseyeGroup.position.set(0, 0, -1);
+    scene.add(bullseyeGroup);
+    s.bullseye = dot;
+    s.bullseyeX = 0;
+
+    // Stars background
+    const starCount = 200;
+    const starGeo = new THREE.BufferGeometry();
+    const starPos = new Float32Array(starCount * 3);
+    for (let i = 0; i < starCount; i++) {
+      starPos[i * 3] = (Math.random() - 0.5) * 20;
+      starPos[i * 3 + 1] = (Math.random() - 0.5) * 12;
+      starPos[i * 3 + 2] = (Math.random() - 0.5) * 8 - 3;
+    }
+    starGeo.setAttribute('position', new THREE.BufferAttribute(starPos, 3));
+    scene.add(new THREE.Points(starGeo, new THREE.PointsMaterial({ color: 0xffaacc, size: 0.04, transparent: true, opacity: 0.6 })));
+
+    const onResize = () => {
+      const W2 = mount.clientWidth || window.innerWidth;
+      const H2 = mount.clientHeight || window.innerHeight;
+      renderer.setSize(W2, H2);
+      camera.aspect = W2 / H2;
+      camera.updateProjectionMatrix();
+    };
+    window.addEventListener('resize', onResize);
+    (s as unknown as { _resizeCleanup: () => void })._resizeCleanup = () => window.removeEventListener('resize', onResize);
+
+    s.stopMusic = startMusic('chill' as import('@/lib/audio').MusicPattern);
+    s.intervalId = setInterval(() => {
+      s.timeLeft--; s.elapsed++; setTimeLeft(s.timeLeft);
+      // Spawn extra hearts over time
+      if (s.scene && s.elapsed === 15 && s.targets.length < 2) spawnTarget(s.scene, s);
+      if (s.scene && s.elapsed === 30 && s.targets.length < 3) spawnTarget(s.scene, s);
+      if (s.timeLeft <= 0) { sfx.fail(); haptic([300]); endGame(); }
     }, 1000);
 
-    // ─── rAF LOOP ──────────────────────────────────────────────────────────
-    const loop = (ts: number) => {
+    spawnTarget(scene, s);
+
+    const loop = () => {
       if (!s.running) return;
+      s.frame++;
 
-      const dt = s.lastTs > 0 ? Math.min(ts - s.lastTs, 50) : 16.67;
-      s.lastTs     = ts;
-      s.elapsedMs += dt;
+      // Center light pulse
+      if (s.centerLight) s.centerLight.intensity = 2.5 + Math.sin(s.frame * 0.08) * 0.8;
 
-      const W           = window.innerWidth;
-      const H           = window.innerHeight;
-      const elapsedSec  = s.elapsedMs / 1000;
-      const bullseyeX   = W / 2;
-      const bullseyeY   = H * 0.42;
-      const amplitude   = (W / 2) * 0.76;
-
-      // ── Progression phase check ────────────────────────────────────────
-      let curPhase = 0;
-      for (let i = PROGRESSION.length - 1; i >= 0; i--) {
-        if (elapsedSec >= PROGRESSION[i].atSecond) { curPhase = i; break; }
-      }
-      if (curPhase !== s.progressPhase) {
-        s.progressPhase = curPhase;
-        const prog = PROGRESSION[curPhase];
-        for (let i = 0; i < s.targets.length; i++) {
-          const wasActive = s.targets[i].active;
-          s.targets[i].active    = i < prog.count;
-          s.targets[i].baseSpeed = prog.speed;
-          // New targets that just unlocked: randomize golden
-          if (!wasActive && s.targets[i].active) {
-            s.targets[i].isGolden    = Math.random() < GOLDEN_CHANCE;
-            s.targets[i].reloadUntil = 0;
-            s.targets[i].trail       = [];
-          }
+      // Move targets
+      s.targets.forEach(t => {
+        t.phase += t.speed;
+        const x = Math.sin(t.phase) * 4.5;
+        t.mesh.position.set(x, t.yPos + Math.cos(t.phase * 0.7) * 0.3, 0);
+        t.mesh.rotation.z = Math.sin(t.phase * 0.5) * 0.2;
+        t.mesh.scale.setScalar(0.9 + Math.sin(s.frame * 0.1 + t.id) * 0.05);
+        if (t.flashTimer > 0) {
+          t.flashTimer--;
+          t.mesh.children.forEach(c => {
+            (c as THREE.Mesh).material && ((c as THREE.Mesh).material as THREE.MeshStandardMaterial).emissiveIntensity > 0 &&
+            (((c as THREE.Mesh).material as THREE.MeshStandardMaterial).emissiveIntensity = 1.5 - t.flashTimer * 0.05);
+          });
         }
-      }
+      });
 
-      // ── Update target positions ────────────────────────────────────────
-      const now = Date.now();
-      for (const t of s.targets) {
-        if (!t.active) continue;
-        const speedMult = t.isGolden ? 1.6 : 1.0;
-        t.x = bullseyeX + Math.sin(elapsedSec * t.baseSpeed * speedMult + t.phase) * amplitude;
-        t.y = H * t.yFrac;
-        // Trail
-        t.trail.unshift({ x: t.x, y: t.y });
-        if (t.trail.length > TRAIL_LENGTH) t.trail.pop();
-      }
+      // Particles
+      s.particles = s.particles.filter(p => {
+        p.mesh.position.x += p.vx;
+        p.mesh.position.y += p.vy;
+        p.mesh.position.z += p.vz;
+        p.vy -= 0.004;
+        p.life--;
+        (p.mesh.material as THREE.MeshStandardMaterial).opacity = Math.max(0, p.life / 25);
+        if (p.life <= 0) { scene.remove(p.mesh); return false; }
+        return true;
+      });
 
-      // ── Bullseye pulse ─────────────────────────────────────────────────
-      s.bullseyePulse = (s.bullseyePulse + dt * 0.004) % (Math.PI * 2);
-
-      // ── Rose petal spawn ───────────────────────────────────────────────
-      s.petalTimer -= dt;
-      if (s.petalTimer <= 0) {
-        const petalCount = s.particles.filter(p => p.type === 'petal').length;
-        if (petalCount < 28) {
-          s.particles.push(spawnPetal(W));
-        }
-        s.petalTimer = 500 + Math.random() * 400;
-      }
-
-      // ── Update particles ───────────────────────────────────────────────
-      for (let i = s.particles.length - 1; i >= 0; i--) {
-        const p = s.particles[i];
-        p.x        += p.vx;
-        p.y        += p.vy;
-        p.rotation += p.rotSpeed;
-        p.life     -= p.decay;
-        if (p.life <= 0 || p.y > H + 40) {
-          s.particles.splice(i, 1);
-        }
-      }
-      if (s.particles.length > MAX_PARTICLES) {
-        s.particles.splice(0, s.particles.length - MAX_PARTICLES);
-      }
-
-      // ── Update float texts ─────────────────────────────────────────────
-      for (let i = s.floats.length - 1; i >= 0; i--) {
-        const f = s.floats[i];
-        f.y    += f.vy;
-        f.life -= 0.016;
-        if (f.life <= 0) s.floats.splice(i, 1);
-      }
-
-      // ── Update arrow animations ────────────────────────────────────────
-      for (let i = s.arrows.length - 1; i >= 0; i--) {
-        s.arrows[i].progress += dt / 260;
-        if (s.arrows[i].progress >= 1) s.arrows.splice(i, 1);
-      }
-
-      // ════════════════════════════════════════════════════════════════════
-      //  DRAW
-      // ════════════════════════════════════════════════════════════════════
-
-      ctx.imageSmoothingEnabled = true;
-
-      // ── Background — deep rose/valentine gradient ─────────────────────
-      const csBg = ctx.createRadialGradient(W * 0.5, H * 0.35, 0, W * 0.5, H * 0.65, Math.max(W, H) * 0.9);
-      csBg.addColorStop(0,   '#1a0814');
-      csBg.addColorStop(0.55, '#0e0409');
-      csBg.addColorStop(1,   '#060205');
-      ctx.fillStyle = csBg;
-      ctx.fillRect(0, 0, W, H);
-
-      // Vignette
-      const csVig = ctx.createRadialGradient(W * 0.5, H * 0.5, H * 0.2, W * 0.5, H * 0.5, H * 0.85);
-      csVig.addColorStop(0, 'rgba(0,0,0,0)');
-      csVig.addColorStop(1, 'rgba(0,0,0,0.5)');
-      ctx.fillStyle = csVig;
-      ctx.fillRect(0, 0, W, H);
-
-      // Pink radial glow centered at bullseye
-      const glow = ctx.createRadialGradient(bullseyeX, bullseyeY, 0, bullseyeX, bullseyeY, W * 0.65);
-      glow.addColorStop(0,   'rgba(244, 63, 94, 0.13)');
-      glow.addColorStop(0.5, 'rgba(244, 63, 94, 0.05)');
-      glow.addColorStop(1,   'rgba(15, 5, 8, 0)');
-      ctx.fillStyle = glow;
-      ctx.fillRect(0, 0, W, H);
-
-      // ── Rose petals (background layer) ────────────────────────────────
-      for (const p of s.particles) {
-        if (p.type !== 'petal') continue;
-        ctx.save();
-        ctx.globalAlpha = p.life * 0.65;
-        ctx.translate(p.x, p.y);
-        ctx.rotate(p.rotation);
-        ctx.fillStyle   = p.color;
-        ctx.shadowBlur  = 4;
-        ctx.shadowColor = p.color;
-        // Draw as a small elongated ellipse (petal shape)
-        ctx.beginPath();
-        ctx.ellipse(0, 0, p.size * 0.35, p.size, 0, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.restore();
-      }
-
-      // ── Bullseye (fixed at center) ─────────────────────────────────────
-      const pulse = 1 + Math.sin(s.bullseyePulse) * 0.05;
-      // Three concentric heart rings
-      for (let ring = 3; ring >= 1; ring--) {
-        const ringR   = ring * 24 * pulse;
-        const alpha   = ring === 1 ? 0.85 : ring === 2 ? 0.5 : 0.22;
-        const lWidth  = ring === 1 ? 2.5 : 1.5;
-        const blur    = ring === 1 ? 14 : 7;
-        ctx.save();
-        ctx.globalAlpha  = alpha;
-        ctx.strokeStyle  = '#f43f5e';
-        ctx.lineWidth    = lWidth;
-        ctx.shadowBlur   = blur;
-        ctx.shadowColor  = '#f43f5e';
-        heartPath(ctx, bullseyeX, bullseyeY, ringR);
-        ctx.stroke();
-        ctx.restore();
-      }
-      // Center dot
-      ctx.save();
-      ctx.fillStyle   = '#fbbf24';
-      ctx.shadowBlur  = 18;
-      ctx.shadowColor = '#fbbf24';
-      ctx.beginPath();
-      ctx.arc(bullseyeX, bullseyeY, 4.5, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.restore();
-
-      // ── Target trails ──────────────────────────────────────────────────
-      for (const t of s.targets) {
-        if (!t.active || t.trail.length < 2) continue;
-        for (let i = 1; i < t.trail.length; i++) {
-          const frac  = 1 - i / t.trail.length;
-          const alpha = frac * 0.45;
-          const size  = HEART_SIZE * 0.5 * frac;
-          ctx.save();
-          ctx.globalAlpha  = alpha;
-          ctx.fillStyle    = t.isGolden ? '#fbbf24' : '#f43f5e';
-          ctx.shadowBlur   = 6;
-          ctx.shadowColor  = t.isGolden ? '#fde68a' : '#f43f5e';
-          heartPath(ctx, t.trail[i].x, t.trail[i].y, size);
-          ctx.fill();
-          ctx.restore();
-        }
-      }
-
-      // ── Heart targets ──────────────────────────────────────────────────
-      for (const t of s.targets) {
-        if (!t.active) continue;
-
-        const isReloading = now < t.reloadUntil;
-        const isFlashing  = now < t.flashUntil;
-
-        // During reload (after flash), hide the heart
-        if (isReloading && !isFlashing) continue;
-
-        // Compute flash alpha oscillation
-        let alpha = 1.0;
-        if (isFlashing) {
-          const elapsed = now - (t.flashUntil - 350);
-          alpha = 0.35 + 0.65 * Math.abs(Math.sin((elapsed / 350) * Math.PI * 3));
-        }
-
-        const heartColor = t.isGolden ? '#fbbf24' : '#f43f5e';
-        const glowColor  = t.isGolden ? '#fde68a' : '#fda4af';
-
-        ctx.save();
-        ctx.globalAlpha  = alpha;
-        ctx.shadowBlur   = t.isGolden ? 28 : 20;
-        ctx.shadowColor  = glowColor;
-        ctx.fillStyle    = heartColor;
-        heartPath(ctx, t.x, t.y, HEART_SIZE);
-        ctx.fill();
-
-        // Extra glow pass for golden hearts (sparkle feel)
-        if (t.isGolden) {
-          ctx.shadowBlur  = 40;
-          ctx.shadowColor = '#fbbf24';
-          ctx.globalAlpha = alpha * 0.4;
-          heartPath(ctx, t.x, t.y, HEART_SIZE * 1.15);
-          ctx.fill();
-        }
-        ctx.restore();
-      }
-
-      // ── Burst & shard particles (foreground) ──────────────────────────
-      for (const p of s.particles) {
-        if (p.type === 'petal') continue;
-        ctx.save();
-        ctx.globalAlpha = p.life;
-        ctx.translate(p.x, p.y);
-        ctx.rotate(p.rotation);
-
-        if (p.type === 'burst') {
-          ctx.fillStyle   = p.color;
-          ctx.shadowBlur  = 8;
-          ctx.shadowColor = p.color;
-          heartPath(ctx, 0, 0, p.size);
-          ctx.fill();
-        } else {
-          // shard: small triangle fragment
-          ctx.fillStyle = p.color;
-          ctx.beginPath();
-          ctx.moveTo(0, -p.size);
-          ctx.lineTo(p.size * 0.65, p.size * 0.55);
-          ctx.lineTo(-p.size * 0.65, p.size * 0.55);
-          ctx.closePath();
-          ctx.fill();
-        }
-        ctx.restore();
-      }
-
-      // ── Arrow animations ───────────────────────────────────────────────
-      for (const a of s.arrows) {
-        const t    = Math.min(a.progress, 1);
-        const ex   = a.fromX + (a.toX - a.fromX) * t;
-        const ey   = a.fromY + (a.toY - a.fromY) * t;
-        const fade = 1 - a.progress * 0.55;
-
-        ctx.save();
-        ctx.globalAlpha  = fade;
-        ctx.strokeStyle  = a.color;
-        ctx.lineWidth    = 2.5;
-        ctx.shadowBlur   = 10;
-        ctx.shadowColor  = a.color;
-        ctx.lineCap      = 'round';
-
-        // Shaft
-        ctx.beginPath();
-        ctx.moveTo(a.fromX, a.fromY);
-        ctx.lineTo(ex, ey);
-        ctx.stroke();
-
-        // Arrowhead
-        if (a.progress > 0.05) {
-          const angle   = Math.atan2(a.toY - a.fromY, a.toX - a.fromX);
-          const headLen = 14;
-          ctx.fillStyle    = a.color;
-          ctx.shadowBlur   = 14;
-          ctx.shadowColor  = a.color;
-          ctx.beginPath();
-          ctx.moveTo(ex, ey);
-          ctx.lineTo(
-            ex - headLen * Math.cos(angle - 0.42),
-            ey - headLen * Math.sin(angle - 0.42),
-          );
-          ctx.lineTo(
-            ex - headLen * Math.cos(angle + 0.42),
-            ey - headLen * Math.sin(angle + 0.42),
-          );
-          ctx.closePath();
-          ctx.fill();
-        }
-        ctx.restore();
-      }
-
-      // ── Floating score texts ───────────────────────────────────────────
-      for (const f of s.floats) {
-        ctx.save();
-        ctx.globalAlpha  = f.life;
-        ctx.fillStyle    = f.color;
-        ctx.shadowBlur   = 10;
-        ctx.shadowColor  = f.color;
-        ctx.font         = `900 ${Math.round(16 * f.scale)}px system-ui, sans-serif`;
-        ctx.textAlign    = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(f.text, f.x, f.y);
-        ctx.restore();
-      }
-
-      animRef.current = requestAnimationFrame(loop);
+      renderer.render(scene, camera);
+      s.animId = requestAnimationFrame(loop);
     };
-
-    animRef.current = requestAnimationFrame(loop);
-  }, [endGame]);
-
-  // ─── TAP HANDLER ─────────────────────────────────────────────────────────
+    s.animId = requestAnimationFrame(loop);
+  }, [endGame, spawnTarget]);
 
   const handleTap = useCallback(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
     const s = stateRef.current;
     if (!s.running) return;
+    s.sig.totalShots++;
 
-    const W          = window.innerWidth;
-    const H          = window.innerHeight;
-    const bullseyeX  = W / 2;
-    const now        = Date.now();
-
-    s.sig.shotsTotal++;
-
-    let bestTierIdx: number = TIERS.length - 1;   // default = miss
     let bestTarget: HeartTarget | null = null;
-    let anyHit = false;
-    let goldenHit = false;  // set when a golden heart is scored — overrides tier audio
+    let bestDist = Infinity;
+    s.targets.forEach(t => {
+      if (t.reloadTimer > 0) return;
+      const dx = t.mesh.position.x - 0;
+      const dy = t.mesh.position.y - 0;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist < bestDist) { bestDist = dist; bestTarget = t; }
+    });
 
-    // Evaluate all active, non-reloading targets
-    for (const t of s.targets) {
-      if (!t.active)          continue;
-      if (now < t.reloadUntil) continue;  // still cooling down
-
-      const dist = Math.abs(t.x - bullseyeX);
-
-      // Find score tier
-      let tierIdx = TIERS.length - 1;
-      for (let i = 0; i < TIERS.length; i++) {
-        if (dist <= TIERS[i].maxDist) { tierIdx = i; break; }
-      }
-
-      const tier       = TIERS[tierIdx];
-      const multiplier = t.isGolden ? 3 : 1;
-      const pts        = tier.pts * multiplier;
-
-      if (pts > 0) {
-        s.sig.score  += pts;
-        s.sig.hitShots++;
-        anyHit = true;
-
-        if (tier.pts === 5)               s.sig.bullseyes++;
-        if (t.isGolden && tier.pts >= 3) {
-          s.sig.goldenHearts++;
-          goldenHit = true;  // triggers sfx.defuse() per spec audio.goldenHeartSound
-        }
-
-        // Hit burst particles
-        const bursts = spawnBurst(t.x, t.y, t.isGolden);
-        s.particles.push(...bursts);
-      } else {
-        // Miss shard particles
-        const shards = spawnShards(t.x, t.y);
-        s.particles.push(...shards);
-      }
-
-      // Floating score label
-      s.floats.push({
-        x:     t.x,
-        y:     t.y - 45,
-        text:  t.isGolden && pts > 0 ? `TRUE LOVE 💛 ×${multiplier}` : tier.label,
-        color: t.isGolden && pts > 0 ? '#fbbf24' : tier.color,
-        life:  1,
-        vy:    -1.3,
-        scale: pts >= 5 ? 1.35 : 1,
-      });
-
-      // Set reload cooldown + flash
-      t.reloadUntil = now + RELOAD_MS;
-      t.flashUntil  = now + 350;
-
-      // Track best-scoring target for the arrow
-      if (bestTarget === null || tierIdx < bestTierIdx) {
-        bestTierIdx = tierIdx;
-        bestTarget  = t;
-      }
-    }
-
-    // Streak tracking
-    if (anyHit) {
+    const tier = TIERS.find(tr => bestDist <= tr.maxDist) || TIERS[TIERS.length - 1];
+    if (tier.pts > 0 && bestTarget) {
+      const bt = bestTarget as HeartTarget;
+      bt.flashTimer = 20;
+      bt.reloadTimer = 30;
+      if (tier.pts === 5) s.sig.cupidHits++;
+      else if (tier.pts >= 3) s.sig.loveHits++;
       s.sig.streakCurrent++;
-      if (s.sig.streakCurrent > s.sig.maxStreak) {
-        s.sig.maxStreak = s.sig.streakCurrent;
+      if (s.sig.streakCurrent > s.sig.maxStreak) s.sig.maxStreak = s.sig.streakCurrent;
+      s.sig.score += tier.pts; setScoreDisplay(s.sig.score);
+      sfx.success(); hapticScore();
+      // Burst
+      if (s.scene) {
+        for (let i = 0; i < 10; i++) {
+          const pGeo = new THREE.SphereGeometry(0.06, 6, 6);
+          const pMat = new THREE.MeshStandardMaterial({ color: 0xf43f5e, emissive: 0xf43f5e, emissiveIntensity: 1.5, transparent: true, opacity: 1 });
+          const pMesh = new THREE.Mesh(pGeo, pMat);
+          pMesh.position.copy(bt.mesh.position);
+          s.scene.add(pMesh);
+          const angle = (i / 10) * Math.PI * 2;
+          s.particles.push({ mesh: pMesh, vx: Math.cos(angle) * 0.1, vy: 0.12 + Math.random() * 0.08, vz: 0, life: 25 });
+        }
       }
     } else {
-      s.sig.streakCurrent = 0;
-    }
-
-    setScoreDisplay(s.sig.score);
-    setArrowsDisplay(s.sig.shotsTotal);
-
-    // Arrow animation from bottom-center toward the best-scoring target
-    const arrowTarget = bestTarget ?? (s.targets.find(t => t.active) ?? null);
-    if (arrowTarget) {
-      s.arrows.push({
-        fromX:    bullseyeX,
-        fromY:    H,
-        toX:      arrowTarget.x,
-        toY:      arrowTarget.y,
-        progress: 0,
-        color:    TIERS[bestTierIdx].color,
-      });
-    }
-
-    // Audio & haptics
-    // Spec: goldenHeartSound = "defuse" — overrides tier audio when a golden heart is hit
-    if (goldenHit) {
-      sfx.defuse();
-      haptic([30, 50, 30, 50, 100]);
-    } else if (bestTierIdx === 0) {
-      // Bullseye — best shot
-      sfx.success();
-    hapticVictory();
-    playVictoryFanfare();
-    } else if (bestTierIdx <= 2) {
-      // Partial hit
-      sfx.collect();
-      haptic([30]);
-    } else {
-      // Miss
-      sfx.nearMiss();
-      haptic([40]);
+      s.sig.misses++; s.sig.streakCurrent = 0;
+      sfx.collision(); hapticFail();
     }
   }, []);
 
-  // ─── CANVAS SETUP & RESIZE ───────────────────────────────────────────────
-
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    const resize = () => {
-      const dpr = window.devicePixelRatio || 1;
-      const w = window.innerWidth;
-      const h = window.innerHeight;
-      canvas.style.width  = w + 'px';
-      canvas.style.height = h + 'px';
-      canvas.width  = w * dpr;
-      canvas.height = h * dpr;
-      const ctx2 = canvas.getContext('2d');
-      if (ctx2) ctx2.setTransform(dpr, 0, 0, dpr, 0, 0);
-    };
-    resize();
-    window.addEventListener('resize', resize);
-
+    const mount = mountRef.current;
+    if (!mount) return;
     const onPointerDown = (e: PointerEvent) => {
-      if (phaseRef.current !== 'playing') return;
+      if (phase !== 'playing') return;
       e.preventDefault();
       handleTap();
     };
-    canvas.addEventListener('pointerdown', onPointerDown);
+    mount.addEventListener('pointerdown', onPointerDown);
+    return () => mount.removeEventListener('pointerdown', onPointerDown);
+  }, [phase, handleTap]);
 
-    return () => {
-      window.removeEventListener('resize', resize);
-      canvas.removeEventListener('pointerdown', onPointerDown);
-    };
-  }, [handleTap]);
-
-  // ─── CLEANUP ON UNMOUNT ──────────────────────────────────────────────────
-
-  useEffect(() => {
-    return () => {
-      cancelAnimationFrame(animRef.current);
-      if (timerRef.current) clearInterval(timerRef.current);
-      if (stopMusicRef.current) stopMusicRef.current();
-    };
+  useEffect(() => () => {
+    const s = stateRef.current;
+    cancelAnimationFrame(s.animId);
+    if (s.intervalId) clearInterval(s.intervalId);
+    if (s.stopMusic) s.stopMusic();
+    if (s.renderer) s.renderer.dispose();
+    (s as unknown as { _resizeCleanup?: () => void })._resizeCleanup?.();
   }, []);
 
-  // ─── PHASE TRANSITIONS ───────────────────────────────────────────────────
-
-  const handleStart = useCallback(async (name: string, avatar: string) => {
-    setPlayerName(name);
-    setPlayerAvatar(avatar);
-    await initAudio();
-    sfx.click();
-    playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar);
-    setGamePhase('countdown');
+  const handleStart = useCallback((name: string, avatar: string) => {
+    initAudio(); playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar); setPhase('countdown');
   }, []);
+  const handleCountdownDone = useCallback(() => { startLoop(); }, [startLoop]);
+  const handlePlayAgain = useCallback(() => { setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null); }, []);
 
-  const handleCountdownDone = useCallback(() => {
-    startLoop();
-  }, [startLoop]);
-
-  const handlePlayAgain = useCallback(() => {
-    setGamePhase('start');
-    setScoreDisplay(0);
-    setArrowsDisplay(0);
-    setTimeLeft(DURATION);
-    setFinalSig(null);
-  
-    setIsNewBest(false);
-    setStreak(0);
-    prevScoreRef.current = 0;
-  }, []);
-
-  // ─── INSIGHTS ────────────────────────────────────────────────────────────
-
-  function buildInsights(sig: Signals) {
-    const acc = sig.shotsTotal > 0
-      ? Math.round((sig.hitShots / sig.shotsTotal) * 100)
-      : 0;
+  const buildInsights = (sig: Signals) => {
+    const acc = sig.totalShots > 0 ? Math.round((sig.cupidHits + sig.loveHits) / sig.totalShots * 100) : 0;
     return [
-      {
-        label: "Cupid's Arrows",
-        value: String(sig.bullseyes),
-        color: sig.bullseyes >= 5 ? '#fbbf24' : ACCENT,
-      },
-      {
-        label: 'Accuracy',
-        value: `${acc}%`,
-        color: acc >= 70 ? '#4ade80' : acc >= 40 ? '#facc15' : '#ef4444',
-      },
-      {
-        label: 'Love Score',
-        value: String(sig.score),
-        color: theme.colors.accent ?? ACCENT,
-      },
-      {
-        label: 'Golden Hearts',
-        value: String(sig.goldenHearts),
-        color: sig.goldenHearts > 0 ? '#fbbf24' : 'rgba(255,255,255,0.4)',
-      },
+      { label: 'Accuracy', value: `${acc}%`, color: acc >= 60 ? '#4ade80' : '#facc15' },
+      { label: "Cupid's Arrows", value: String(sig.cupidHits), color: '#fbbf24' },
+      { label: 'Love Shots', value: String(sig.loveHits), color: ACCENT },
+      { label: 'Best Streak', value: `×${sig.maxStreak}`, color: ACCENT },
     ];
-  }
-
-  // ─── RENDER ──────────────────────────────────────────────────────────────
-
-  const accent = theme.colors.accent ?? ACCENT;
+  };
 
   return (
-    <>
-      {gamePhase === 'start' && showInstructions && (
-        <SwipeInstructions
-          gameId="cupid-shot"
-          steps={[{ icon: "💘", title: "Aim with Cupid", body: "Tilt or swipe to aim Cupid's arrow." }, { icon: "❤️", title: "Hit the hearts", body: "Shoot your arrow to hit floating hearts." }, { icon: "🔥", title: "Chain shots", body: "Hit multiple hearts in a row for a combo bonus." }]}
-          onDone={() => setShowInstructions(false)}
-        />
+    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
+      {phase === 'start' && (
+        <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description={GAME_TAGLINE}
+          ctaLabel="Shoot for Love!" accentColor={theme.colors.accent ?? ACCENT} onStart={handleStart} />
       )}
-    <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accent}
-      background="linear-gradient(180deg, #87cefa 0%, #a8d8f0 25%, #c5e8f8 50%, #dff0fa 70%, #eef8ff 90%, #f8fdff 100%), radial-gradient(ellipse at 30% 40%, rgba(255,255,255,0.5) 0%, transparent 30%), radial-gradient(ellipse at 70% 65%, rgba(255,255,255,0.4) 0%, transparent 25%)">
-
-      {/* ── Start Screen ─────────────────────────────────────────────────── */}
-      {gamePhase === 'start' && (
-        <GameStartScreen
-          emoji={GAME_EMOJI}
-          title={GAME_TITLE}
-          description={GAME_TAGLINE}
-          ctaLabel="Shoot Your Shot 🏹"
-          accentColor={accent}
-          onStart={handleStart}
-          gradient="radial-gradient(ellipse 80% 70% at 50% 30%, #1a0814 0%, #0e0409 55%, #060206 100%)"
-        />
-      )}
-
-      {/* ── Countdown ────────────────────────────────────────────────────── */}
-      {gamePhase === 'countdown' && (
-        <Countdown onComplete={handleCountdownDone} accentColor={accent} />
-      )}
-
-      {/* ── Playing (canvas + HUD) ────────────────────────────────────────── */}
-      {(gamePhase === 'playing' || gamePhase === 'countdown') && (
+      {phase === 'countdown' && <Countdown onComplete={handleCountdownDone} accentColor={theme.colors.accent ?? ACCENT} />}
+      {(phase === 'playing' || phase === 'countdown') && (
         <>
-          <canvas
-            ref={canvasRef}
-            style={{
-              position:    'absolute',
-              inset:       0,
-              width:       '100%',
-              height:      '100%',
-              touchAction: 'none',
-              cursor:      'crosshair',
-            }}
-          />
-          {gamePhase === 'playing' && (
-            <GameHUD
-              accentColor={accent}
-              items={[
-                { label: 'TIME',          value: timeLeft,      danger: timeLeft <= 10, testId: 'timer' },
-                { label: 'LOVE SCORE 💕', value: scoreDisplay,  testId: 'score' },
-                { label: 'ARROWS 🏹',     value: arrowsDisplay },
-              ]}
-            />
+          <div ref={mountRef} style={{ position: 'absolute', inset: 0, touchAction: 'none' }} />
+          {phase === 'playing' && (
+            <GameHUD accentColor={theme.colors.accent ?? ACCENT} items={[
+              { label: 'TIME', value: timeLeft, danger: timeLeft <= 10 },
+              { label: 'SCORE', value: scoreDisplay },
+            ]} />
           )}
         </>
       )}
-      {/* New best banner */}
-      <AnimatePresence>
-        {isNewBest && (
-          <motion.div
-            key="new-best"
-            initial={{ opacity: 0, y: -20, scale: 0.8 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -20 }}
-            transition={{ duration: 0.4, delay: 0.5 }}
-            style={{
-              position: 'fixed', top: '10%', left: '50%', transform: 'translateX(-50%)',
-              zIndex: 90, pointerEvents: 'none',
-              background: 'linear-gradient(135deg, #fbbf24, #f59e0b)',
-              borderRadius: 20, padding: '8px 20px', fontSize: 20,
-              fontWeight: 900, color: '#000', whiteSpace: 'nowrap',
-              boxShadow: '0 4px 20px rgba(251,191,36,0.5)',
-            }}
-          >
-            🏆 New Best!
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-
-
-      {/* ── End Screen ───────────────────────────────────────────────────── */}
-      {gamePhase === 'done' && finalSig && (
-        <EndScreen
-          gameId={GAME_ID}
-          title={getPersonality(finalSig)}
-          emoji={GAME_EMOJI}
-          score={String(finalSig.score)}
-          personality={getPersonality(finalSig)}
-          insights={buildInsights(finalSig)}
-          accentColor={accent}
-          onPlayAgain={handlePlayAgain}
-          didWin={finalSig.score >= 30}
-        />
-      )}
-
-      {/* ── Webhook emitter ───────────────────────────────────────────────── */}
-      {gamePhase === 'done' && finalSig && (
-        <WebhookEmitter
-          theme={theme}
-          gameId={GAME_ID}
-          sig={finalSig}
-          personality={getPersonality(finalSig)}
-          player={playerSessionRef.current}
-        />
-      )}
-
-      {gamePhase === 'playing' && (
+      {phase === 'done' && finalSig && (
         <>
-          <ScorePopEffect pops={pops} accentColor={CATEGORY_ACCENT} />
-          <StreakBadge streak={streak} accentColor={CATEGORY_ACCENT} />
+          <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI}
+            score={String(finalSig.score)} personality={getPersonality(finalSig)}
+            insights={buildInsights(finalSig)} accentColor={theme.colors.accent ?? ACCENT}
+            onPlayAgain={handlePlayAgain} didWin={finalSig.cupidHits >= 3} />
+          <WebhookEmitter theme={theme} sig={finalSig} personality={getPersonality(finalSig)} player={playerSessionRef.current} />
         </>
       )}
     </GameShell>
-    </>
   );
 }
 
-// ─── WEBHOOK EMITTER ─────────────────────────────────────────────────────────
-// Isolated component — postWebhook fires exactly once on mount.
-
-function WebhookEmitter({
-  theme,
-  gameId,
-  sig,
-  personality,
-  player,
-}: {
-  theme: ReturnType<typeof useBrandTheme>;
-  gameId: string;
-  sig: Signals;
-  personality: string;
-  player: PlayerSession | null;
+function WebhookEmitter({ theme, sig, personality, player }: {
+  theme: ReturnType<typeof useBrandTheme>; sig: Signals; personality: string; player: PlayerSession | null;
 }) {
   const fired = useRef(false);
-
   useEffect(() => {
-    if (fired.current) return;
-    fired.current = true;
-
-    const acc = sig.shotsTotal > 0
-      ? parseFloat((sig.hitShots / sig.shotsTotal).toFixed(3))
-      : 0;
-
-    postWebhook(
-      theme,
-      gameId,
-      {
-        personality,
-        score:       sig.score,
-        bullseyes:   sig.bullseyes,
-        shotsTotal:  sig.shotsTotal,
-        hitShots:    sig.hitShots,
-        accuracy:    acc,
-        maxStreak:   sig.maxStreak,
-        goldenHearts: sig.goldenHearts,
-      },
-      player,
-    );
-  }, [theme, gameId, sig, personality, player]);
-
+    if (fired.current) return; fired.current = true;
+    postWebhook(theme, GAME_ID, { personality, score: sig.score, cupidHits: sig.cupidHits }, player);
+  }, [theme, sig, personality, player]);
   return null;
 }
