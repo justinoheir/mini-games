@@ -162,6 +162,9 @@ export default function BBQMasterGame() {
     s.renderer = renderer;
 
     const scene = new THREE.Scene();
+    // === POLISH: Scene fog for atmospheric depth ===
+    scene.fog = new THREE.Fog(scene.background instanceof THREE.Color ? (scene.background as THREE.Color).getHex() : 0x0a0a1a, 15, 35);
+    // === END POLISH ===
     s.scene = scene;
     const camera = new THREE.PerspectiveCamera(60, W / H, 0.1, 100);
     camera.position.set(0, 5, 7);

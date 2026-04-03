@@ -151,6 +151,9 @@ export default function GymnastBeamGame() {
     mount.innerHTML = ''; mount.appendChild(renderer.domElement);
 
     const scene = new THREE.Scene();
+    // === POLISH: Scene fog for atmospheric depth ===
+    scene.fog = new THREE.Fog(scene.background instanceof THREE.Color ? (scene.background as THREE.Color).getHex() : 0x0a0a1a, 15, 35);
+    // === END POLISH ===
     scene.background = new THREE.Color(0x1a0030);
     const camera = new THREE.PerspectiveCamera(65, W / H, 0.1, 100);
     camera.position.set(0, 1, 10);
