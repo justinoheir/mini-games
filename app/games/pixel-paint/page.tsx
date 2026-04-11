@@ -41,7 +41,7 @@ function getPersonality(sig: Signals): string {
 interface VoxelCell { mesh: THREE.Mesh; row: number; col: number; painted: boolean; }
 interface TargetVoxel { mesh: THREE.Mesh; row: number; col: number; }
 
-export default function PixelPaint() {
+function PixelPaintInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
@@ -331,3 +331,8 @@ export default function PixelPaint() {
     </GameShell>
   );
 }
+
+// Dynamic import wrapper — prevents Three.js from running during SSR/hydration on mobile
+import dynamic from 'next/dynamic';
+const PixelPaint = dynamic(() => Promise.resolve(PixelPaintInner), { ssr: false });
+export default PixelPaint;
