@@ -123,6 +123,17 @@ export default function PixelPaint() {
 
   const startLoop = useCallback(() => {
     const mount = mountRef.current; if (!mount) return;
+
+    // Guard: check WebGL support before attempting renderer creation
+    try {
+      const testCanvas = document.createElement('canvas');
+      const gl = testCanvas.getContext('webgl') || testCanvas.getContext('experimental-webgl');
+      if (!gl) {
+        alert('WebGL is not supported on this device. Please try a different browser.');
+        return;
+      }
+    } catch { /* ignore */ }
+
     const s = stateRef.current;
     s.running = true; s.timeLeft = DURATION; s.patternIndex = -1;
     s.sig = { totalPatterns: 0, completed: 0, perfectCompletions: 0, accuracy: 0, maxStreak: 0, streakCurrent: 0, score: 0, totalCells: 0, correctCells: 0 };
@@ -138,7 +149,9 @@ export default function PixelPaint() {
     camera.lookAt(0, 0, 0);
     cameraRef.current = camera;
 
-    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    // Use antialias only on non-mobile or high-end devices to avoid WebGL crashes
+    const isMobileDev = /Android|iPhone|iPad/i.test(navigator.userAgent);
+    const renderer = new THREE.WebGLRenderer({ antialias: !isMobileDev, powerPreference: 'default' });
     renderer.setSize(W, H);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.shadowMap.enabled = true;
