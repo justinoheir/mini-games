@@ -33,7 +33,7 @@ function getPersonality(sig: Signals): string {
   return '⚽ Striker';
 }
 
-export default function PenaltyKick() {
+function PenaltyKickInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
@@ -394,3 +394,7 @@ function WebhookEmitter({ theme, sig, personality, player }: { theme: ReturnType
   }, [theme, sig, personality, player]);
   return null;
 }
+
+import dynamic from 'next/dynamic';
+const PenaltyKick = dynamic(() => Promise.resolve({ default: PenaltyKickInner }), { ssr: false });
+export default PenaltyKick;

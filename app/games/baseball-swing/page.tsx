@@ -66,7 +66,7 @@ interface GS {
   textSprites: Array<{ sprite: THREE.Sprite; life: number; vy: number }>;
 }
 
-export default function BaseballSwingGame() {
+function BaseballSwingGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const swipeStartRef = useRef<{ x: number; y: number; t: number } | null>(null);
@@ -476,3 +476,7 @@ function WebhookEmitter({ theme, sig, personality, player }: {
   }, [theme, sig, personality, player]);
   return null;
 }
+
+import dynamic from 'next/dynamic';
+const BaseballSwingGame = dynamic(() => Promise.resolve({ default: BaseballSwingGameInner }), { ssr: false });
+export default BaseballSwingGame;

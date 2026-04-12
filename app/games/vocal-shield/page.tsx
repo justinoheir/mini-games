@@ -42,7 +42,7 @@ function WebhookEmitter({ theme, sig, personality, player }: { theme: ReturnType
 
 interface Enemy3D { mesh: THREE.Mesh; x: number; y: number; vx: number; vy: number; speed: number; r: number; color: number; }
 
-export default function VocalShield() {
+function VocalShieldInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const stopMusicRef = useRef<(() => void) | null>(null);
@@ -338,3 +338,7 @@ export default function VocalShield() {
     </GameShell>
   );
 }
+
+import dynamic from 'next/dynamic';
+const VocalShield = dynamic(() => Promise.resolve({ default: VocalShieldInner }), { ssr: false });
+export default VocalShield;

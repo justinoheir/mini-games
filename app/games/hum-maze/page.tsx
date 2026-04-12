@@ -69,7 +69,7 @@ function getPersonality(s: Signals): string {
 
 type Phase = 'start' | 'permission' | 'countdown' | 'playing' | 'done';
 
-export default function HumMazeGame() {
+function HumMazeGameInner() {
   const theme = useBrandTheme();
   const accent = theme.colors.accent ?? ACCENT;
   const mountRef = useRef<HTMLDivElement>(null);
@@ -449,3 +449,7 @@ function WebhookEmitter({ theme, sig, personality, player }: { theme: ReturnType
   }, [theme, sig, personality, player]);
   return null;
 }
+
+import dynamic from 'next/dynamic';
+const HumMazeGame = dynamic(() => Promise.resolve({ default: HumMazeGameInner }), { ssr: false });
+export default HumMazeGame;

@@ -42,7 +42,7 @@ interface GS {
   resultFlash:number; frame:number;
 }
 
-export default function GameDartboard() {
+function GameDartboardInner() {
   const theme = useBrandTheme();
   const accent = theme.colors.accent ?? ACCENT;
 
@@ -340,3 +340,7 @@ export default function GameDartboard() {
     </GameShell>
   );
 }
+
+import dynamic from 'next/dynamic';
+const GameDartboard = dynamic(() => Promise.resolve({ default: GameDartboardInner }), { ssr: false });
+export default GameDartboard;

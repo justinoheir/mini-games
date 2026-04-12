@@ -66,7 +66,7 @@ function getPersonality(sig: Signals): string {
 }
 type Phase = 'start' | 'countdown' | 'playing' | 'done';
 
-export default function SpeedSortGame() {
+function SpeedSortGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const animRef = useRef(0);
@@ -329,3 +329,7 @@ export default function SpeedSortGame() {
     </GameShell>
   );
 }
+
+import dynamic from 'next/dynamic';
+const SpeedSortGame = dynamic(() => Promise.resolve({ default: SpeedSortGameInner }), { ssr: false });
+export default SpeedSortGame;

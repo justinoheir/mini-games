@@ -32,7 +32,7 @@ type Phase = 'start' | 'countdown' | 'playing' | 'done';
 
 interface SearchItem3D { mesh: THREE.Mesh; isTarget: boolean; }
 
-export default function VisualSearchGame() {
+function VisualSearchGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const stateRef = useRef({
@@ -309,3 +309,7 @@ export default function VisualSearchGame() {
     </GameShell>
   );
 }
+
+import dynamic from 'next/dynamic';
+const VisualSearchGame = dynamic(() => Promise.resolve({ default: VisualSearchGameInner }), { ssr: false });
+export default VisualSearchGame;

@@ -35,7 +35,7 @@ function getPersonality(sig: Signals): string {
 
 interface NumberSphere { mesh: THREE.Mesh; value: number; tapped: boolean; isCurrent: boolean; }
 
-export default function NumberPathGame() {
+function NumberPathGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
@@ -311,3 +311,7 @@ export default function NumberPathGame() {
     </GameShell>
   );
 }
+
+import dynamic from 'next/dynamic';
+const NumberPathGame = dynamic(() => Promise.resolve({ default: NumberPathGameInner }), { ssr: false });
+export default NumberPathGame;

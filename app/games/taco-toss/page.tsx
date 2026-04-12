@@ -35,7 +35,7 @@ function getPersonality(s: Signals): string {
 }
 type Phase = 'start' | 'countdown' | 'playing' | 'done';
 
-export default function TacoTossGame() {
+function TacoTossGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const stateRef = useRef({
@@ -299,3 +299,7 @@ export default function TacoTossGame() {
     </GameShell>
   );
 }
+
+import dynamic from 'next/dynamic';
+const TacoTossGame = dynamic(() => Promise.resolve({ default: TacoTossGameInner }), { ssr: false });
+export default TacoTossGame;

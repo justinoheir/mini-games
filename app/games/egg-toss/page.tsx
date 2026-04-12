@@ -37,7 +37,7 @@ interface GS {
   catcherX: number; tiltX: number; throwTime: number;
 }
 
-export default function EggTossGame() {
+function EggTossGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -304,3 +304,7 @@ function WebhookEmitter({ theme, sig, personality, player }: { theme: ReturnType
   }, [theme, sig, personality, player]);
   return null;
 }
+
+import dynamic from 'next/dynamic';
+const EggTossGame = dynamic(() => Promise.resolve({ default: EggTossGameInner }), { ssr: false });
+export default EggTossGame;

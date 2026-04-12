@@ -54,7 +54,7 @@ function genProblem(difficulty: number): Problem {
   return { question: `${a} ${op} ${b} = ?`, answer, choices, timeLimit: Math.max(3000, 6000 - difficulty * 400) };
 }
 
-export default function NumberCrunchGame() {
+function NumberCrunchGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
@@ -365,3 +365,7 @@ function WebhookEmitter({ theme, sig, personality, player }: { theme: ReturnType
   }, [theme, sig, personality, player]);
   return null;
 }
+
+import dynamic from 'next/dynamic';
+const NumberCrunchGame = dynamic(() => Promise.resolve({ default: NumberCrunchGameInner }), { ssr: false });
+export default NumberCrunchGame;

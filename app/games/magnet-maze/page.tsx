@@ -64,7 +64,7 @@ function generateMaze(rows: number, cols: number): MazeCell[][] {
   return grid;
 }
 
-export default function MagnetMazeGame() {
+function MagnetMazeGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const animRef = useRef(0);
@@ -442,3 +442,7 @@ function WebhookEmitter({ theme, sig, personality, player }: { theme: ReturnType
   }, [theme, sig, personality, player]);
   return null;
 }
+
+import dynamic from 'next/dynamic';
+const MagnetMazeGame = dynamic(() => Promise.resolve({ default: MagnetMazeGameInner }), { ssr: false });
+export default MagnetMazeGame;

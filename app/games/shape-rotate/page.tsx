@@ -129,7 +129,7 @@ interface GS {
   viewW: number; viewH: number;
 }
 
-export default function ShapeRotateGame() {
+function ShapeRotateGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const stateRef = useRef<GS>({
@@ -465,3 +465,7 @@ export default function ShapeRotateGame() {
     </GameShell>
   );
 }
+
+import dynamic from 'next/dynamic';
+const ShapeRotateGame = dynamic(() => Promise.resolve({ default: ShapeRotateGameInner }), { ssr: false });
+export default ShapeRotateGame;

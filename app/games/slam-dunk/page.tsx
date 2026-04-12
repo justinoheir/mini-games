@@ -29,7 +29,7 @@ function getPersonality(sig: Signals): string {
 }
 type Phase = 'start' | 'countdown' | 'playing' | 'done';
 
-export default function SlamDunk() {
+function SlamDunkInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const animRef = useRef(0);
@@ -343,3 +343,7 @@ export default function SlamDunk() {
     </GameShell>
   );
 }
+
+import dynamic from 'next/dynamic';
+const SlamDunk = dynamic(() => Promise.resolve({ default: SlamDunkInner }), { ssr: false });
+export default SlamDunk;

@@ -32,7 +32,7 @@ function getPersonality(sig: Signals): string {
 }
 type Phase = 'start' | 'countdown' | 'playing' | 'done';
 
-export default function SpringLeapGame() {
+function SpringLeapGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const animRef = useRef(0);
@@ -338,3 +338,7 @@ export default function SpringLeapGame() {
     </GameShell>
   );
 }
+
+import dynamic from 'next/dynamic';
+const SpringLeapGame = dynamic(() => Promise.resolve({ default: SpringLeapGameInner }), { ssr: false });
+export default SpringLeapGame;

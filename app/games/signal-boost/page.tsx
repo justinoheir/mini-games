@@ -32,7 +32,7 @@ function getPersonality(sig: Signals): string {
 
 type Phase = 'start' | 'countdown' | 'playing' | 'done';
 
-export default function SignalBoostGame() {
+function SignalBoostGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const animRef = useRef(0);
@@ -377,3 +377,7 @@ function WebhookHelper({ theme, sig, personality, player }: { theme: ReturnType<
   useEffect(() => { if (fired.current) return; fired.current = true; postWebhook(theme, GAME_ID, { personality, score: sig.score, timeInZone: sig.timeInZone, maxConsecutive: sig.maxConsecutive, totalDrops: sig.totalDrops }, player); }, [theme, sig, personality, player]);
   return null;
 }
+
+import dynamic from 'next/dynamic';
+const SignalBoostGame = dynamic(() => Promise.resolve({ default: SignalBoostGameInner }), { ssr: false });
+export default SignalBoostGame;

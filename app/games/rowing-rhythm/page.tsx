@@ -48,7 +48,7 @@ function getPersonality(sig: Signals): string {
   return 'Learning the Catch 🚣';
 }
 
-export default function RowingRhythmGame() {
+function RowingRhythmGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const animRef = useRef(0);
@@ -444,3 +444,7 @@ export default function RowingRhythmGame() {
     </GameShell>
   );
 }
+
+import dynamic from 'next/dynamic';
+const RowingRhythmGame = dynamic(() => Promise.resolve({ default: RowingRhythmGameInner }), { ssr: false });
+export default RowingRhythmGame;

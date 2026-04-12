@@ -43,7 +43,7 @@ type Phase = 'start' | 'countdown' | 'playing' | 'done';
 
 interface PuzzleState { letter: string; options: string[]; feedback: number | null; shownAt: number; flashing: boolean; flashIdx: number; flashTimer: number; }
 
-export default function MorseDecodeGame() {
+function MorseDecodeGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const bgAnimRef = useRef(0);
@@ -319,3 +319,7 @@ function WebhookEmitter({ theme, sig, personality, player }: { theme: ReturnType
   }, [theme, sig, personality, player]);
   return null;
 }
+
+import dynamic from 'next/dynamic';
+const MorseDecodeGame = dynamic(() => Promise.resolve({ default: MorseDecodeGameInner }), { ssr: false });
+export default MorseDecodeGame;

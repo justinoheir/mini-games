@@ -27,7 +27,7 @@ function getPersonality(sig: Signals) {
 }
 type Phase = 'start' | 'countdown' | 'playing' | 'done';
 
-export default function SwimmingStroke() {
+function SwimmingStrokeInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const stateRef = useRef({
@@ -291,3 +291,7 @@ export default function SwimmingStroke() {
     </GameShell>
   );
 }
+
+import dynamic from 'next/dynamic';
+const SwimmingStroke = dynamic(() => Promise.resolve({ default: SwimmingStrokeInner }), { ssr: false });
+export default SwimmingStroke;

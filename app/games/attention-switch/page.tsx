@@ -87,7 +87,7 @@ function makeTextSprite(text: string, color: string, size = 120): THREE.Sprite {
   return sprite;
 }
 
-export default function AttentionSwitchGame() {
+function AttentionSwitchGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const stateRef = useRef<GS>({
@@ -369,3 +369,7 @@ export default function AttentionSwitchGame() {
     </GameShell>
   );
 }
+
+import dynamic from 'next/dynamic';
+const AttentionSwitchGame = dynamic(() => Promise.resolve({ default: AttentionSwitchGameInner }), { ssr: false });
+export default AttentionSwitchGame;

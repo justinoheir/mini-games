@@ -36,7 +36,7 @@ interface GS {
   goalX: number; goalY: number; goalActive: boolean;
 }
 
-export default function GravityWell() {
+function GravityWellInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -333,3 +333,7 @@ export default function GravityWell() {
     </GameShell>
   );
 }
+
+import dynamic from 'next/dynamic';
+const GravityWell = dynamic(() => Promise.resolve({ default: GravityWellInner }), { ssr: false });
+export default GravityWell;

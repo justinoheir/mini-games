@@ -36,7 +36,7 @@ const WORD_POOL = [
   'BLOOM', 'COMET', 'ORBIT', 'PULSE', 'QUARTZ', 'RAVEN', 'SOLAR', 'TITAN', 'ULTRA', 'VIVID',
 ];
 
-export default function WordFlashGame() {
+function WordFlashGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -329,3 +329,7 @@ export default function WordFlashGame() {
     </GameShell>
   );
 }
+
+import dynamic from 'next/dynamic';
+const WordFlashGame = dynamic(() => Promise.resolve({ default: WordFlashGameInner }), { ssr: false });
+export default WordFlashGame;

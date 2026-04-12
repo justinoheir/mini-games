@@ -47,7 +47,7 @@ function generateHole(index: number): HoleConfig {
 
 interface Confetti3D { mesh: THREE.Mesh; vx: number; vy: number; vz: number; life: number; }
 
-export default function PrecisionPutt() {
+function PrecisionPuttInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
@@ -403,3 +403,7 @@ export default function PrecisionPutt() {
     </GameShell>
   );
 }
+
+import dynamic from 'next/dynamic';
+const PrecisionPutt = dynamic(() => Promise.resolve({ default: PrecisionPuttInner }), { ssr: false });
+export default PrecisionPutt;

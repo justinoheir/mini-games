@@ -40,7 +40,7 @@ function WebhookEmitter({ theme, sig, personality, player }: { theme: ReturnType
 
 interface Wall3D { mesh: THREE.Group; z: number; gapCY: number; passed: boolean; }
 
-export default function VoiceSculptGame() {
+function VoiceSculptGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const stopMusicRef = useRef<(() => void) | null>(null);
@@ -348,3 +348,7 @@ export default function VoiceSculptGame() {
     </GameShell>
   );
 }
+
+import dynamic from 'next/dynamic';
+const VoiceSculptGame = dynamic(() => Promise.resolve({ default: VoiceSculptGameInner }), { ssr: false });
+export default VoiceSculptGame;

@@ -44,7 +44,7 @@ function getPersonality(sig: Signals): string {
 
 type Phase = 'start' | 'countdown' | 'playing' | 'done';
 
-export default function MorseTapGame() {
+function MorseTapGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const bgAnimRef = useRef(0);
@@ -324,3 +324,7 @@ function WebhookEmitter({ theme, sig, personality, player }: { theme: ReturnType
   }, [theme, sig, personality, player]);
   return null;
 }
+
+import dynamic from 'next/dynamic';
+const MorseTapGame = dynamic(() => Promise.resolve({ default: MorseTapGameInner }), { ssr: false });
+export default MorseTapGame;

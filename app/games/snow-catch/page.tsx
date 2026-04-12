@@ -63,7 +63,7 @@ interface GS {
   difficultyLevel: number;
 }
 
-export default function SnowCatchGame() {
+function SnowCatchGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const stateRef = useRef<GS>({
@@ -450,3 +450,7 @@ function WebhookEmitter({ theme, sig, personality, player }: {
   }, [theme, sig, personality, player]);
   return null;
 }
+
+import dynamic from 'next/dynamic';
+const SnowCatchGame = dynamic(() => Promise.resolve({ default: SnowCatchGameInner }), { ssr: false });
+export default SnowCatchGame;

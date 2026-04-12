@@ -99,7 +99,7 @@ function makeFoodMesh(type: FoodType): THREE.Group {
   return g;
 }
 
-export default function BBQMasterGame() {
+function BBQMasterGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const stateRef = useRef<GS>({
@@ -393,3 +393,7 @@ export default function BBQMasterGame() {
     </GameShell>
   );
 }
+
+import dynamic from 'next/dynamic';
+const BBQMasterGame = dynamic(() => Promise.resolve({ default: BBQMasterGameInner }), { ssr: false });
+export default BBQMasterGame;

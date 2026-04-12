@@ -42,7 +42,7 @@ type Phase = 'start' | 'countdown' | 'playing' | 'done';
 
 const RIPPLE_COLORS_HEX = [0x06b6d4, 0x3b82f6, 0x8b5cf6, 0xec4899, 0x10b981];
 
-export default function RippleTap() {
+function RippleTapInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const animRef = useRef(0);
@@ -338,3 +338,7 @@ export default function RippleTap() {
     </GameShell>
   );
 }
+
+import dynamic from 'next/dynamic';
+const RippleTap = dynamic(() => Promise.resolve({ default: RippleTapInner }), { ssr: false });
+export default RippleTap;

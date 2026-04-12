@@ -41,7 +41,7 @@ function WebhookEmitter({ theme, sig, personality, player }: { theme: ReturnType
 interface Target3D { mesh: THREE.Mesh; glowMesh: THREE.Mesh; x: number; y: number; r: number; hp: number; hitAt: number; }
 interface Projectile3D { mesh: THREE.Mesh; x: number; y: number; vx: number; vy: number; }
 
-export default function WhistleLaunchGame() {
+function WhistleLaunchGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const stopMusicRef = useRef<(() => void) | null>(null);
@@ -354,3 +354,7 @@ export default function WhistleLaunchGame() {
     </GameShell>
   );
 }
+
+import dynamic from 'next/dynamic';
+const WhistleLaunchGame = dynamic(() => Promise.resolve({ default: WhistleLaunchGameInner }), { ssr: false });
+export default WhistleLaunchGame;

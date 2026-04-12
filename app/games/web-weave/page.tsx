@@ -37,7 +37,7 @@ interface Anchor3D { mesh: THREE.Mesh; x: number; y: number; id: number; }
 interface Strand3D { line: THREE.Line; a: number; b: number; }
 interface Fly3D { mesh: THREE.Mesh; x: number; y: number; vx: number; vy: number; id: number; caught: boolean; }
 
-export default function WebWeaveGame() {
+function WebWeaveGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const stopMusicRef = useRef<(() => void) | null>(null);
@@ -336,3 +336,7 @@ export default function WebWeaveGame() {
     </GameShell>
   );
 }
+
+import dynamic from 'next/dynamic';
+const WebWeaveGame = dynamic(() => Promise.resolve({ default: WebWeaveGameInner }), { ssr: false });
+export default WebWeaveGame;

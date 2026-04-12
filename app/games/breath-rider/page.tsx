@@ -73,7 +73,7 @@ function makeBird(): THREE.Group {
   return g;
 }
 
-export default function BreathRiderGame() {
+function BreathRiderGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const stateRef = useRef<GS>({
@@ -410,3 +410,7 @@ export default function BreathRiderGame() {
     </GameShell>
   );
 }
+
+import dynamic from 'next/dynamic';
+const BreathRiderGame = dynamic(() => Promise.resolve({ default: BreathRiderGameInner }), { ssr: false });
+export default BreathRiderGame;

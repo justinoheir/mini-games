@@ -47,7 +47,7 @@ interface GS {
   lightFlash:number; overflowFlash:number; accentColor:string;
 }
 
-export default function DiyaLightGame() {
+function DiyaLightGameInner() {
   const theme = useBrandTheme();
   const accentColor = theme.id!=='ether'?theme.colors.accent:ACCENT;
   const accent = accentColor??ACCENT;
@@ -387,3 +387,7 @@ function WebhookEmitter({theme,sig,personality,player}:{theme:ReturnType<typeof 
   useEffect(()=>{if(fired.current)return;fired.current=true;postWebhook(theme,GAME_ID,{personality,score:sig.score},player);},[theme,sig,personality,player]);
   return null;
 }
+
+import dynamic from 'next/dynamic';
+const DiyaLightGame = dynamic(() => Promise.resolve({ default: DiyaLightGameInner }), { ssr: false });
+export default DiyaLightGame;

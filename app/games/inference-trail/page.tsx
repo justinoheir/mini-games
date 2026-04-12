@@ -83,7 +83,7 @@ function makePuzzle(level: number): InferencePuzzle {
   return makeConditionalPuzzle(level);
 }
 
-export default function InferenceTrailGame() {
+function InferenceTrailGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const bgAnimRef = useRef(0);
@@ -351,3 +351,7 @@ export default function InferenceTrailGame() {
     </GameShell>
   );
 }
+
+import dynamic from 'next/dynamic';
+const InferenceTrailGame = dynamic(() => Promise.resolve({ default: InferenceTrailGameInner }), { ssr: false });
+export default InferenceTrailGame;

@@ -50,7 +50,7 @@ interface GS {
   resizeCleanup: (() => void) | null;
 }
 
-export default function BeadCatch() {
+function BeadCatchInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const stateRef = useRef<GS>({
@@ -361,3 +361,7 @@ export default function BeadCatch() {
     </GameShell>
   );
 }
+
+import dynamic from 'next/dynamic';
+const BeadCatch = dynamic(() => Promise.resolve({ default: BeadCatchInner }), { ssr: false });
+export default BeadCatch;

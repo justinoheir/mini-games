@@ -30,7 +30,7 @@ function getPersonality(sig: Signals): string {
 type Phase = 'start' | 'countdown' | 'playing' | 'done';
 const BLOCK_COLORS = [0xfb923c, 0xf97316, 0xea580c, 0xfbbf24, 0xf59e0b, 0xef4444, 0xdc2626];
 
-export default function WobbleStack() {
+function WobbleStackInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const stateRef = useRef({
@@ -283,3 +283,7 @@ export default function WobbleStack() {
     </GameShell>
   );
 }
+
+import dynamic from 'next/dynamic';
+const WobbleStack = dynamic(() => Promise.resolve({ default: WobbleStackInner }), { ssr: false });
+export default WobbleStack;

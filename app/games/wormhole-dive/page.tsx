@@ -32,7 +32,7 @@ const RING_COLORS = [0x7c3aed, 0xa855f7, 0x00ffff, 0x818cf8, 0xc084fc];
 
 interface Ring3D { mesh: THREE.Mesh; z: number; cx: number; cy: number; outerR: number; innerR: number; color: number; passed: boolean; }
 
-export default function WormholeDive() {
+function WormholeDiveInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const stateRef = useRef({
@@ -306,3 +306,7 @@ export default function WormholeDive() {
     </GameShell>
   );
 }
+
+import dynamic from 'next/dynamic';
+const WormholeDive = dynamic(() => Promise.resolve({ default: WormholeDiveInner }), { ssr: false });
+export default WormholeDive;

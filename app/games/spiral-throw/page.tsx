@@ -64,7 +64,7 @@ function makeRoutePoints(route: Route): THREE.Vector3[] {
   return pts;
 }
 
-export default function SpiralThrowGame() {
+function SpiralThrowGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const animRef = useRef(0);
@@ -440,3 +440,7 @@ function WebhookHelper({ theme, sig, personality, player }: { theme: ReturnType<
   useEffect(() => { if (fired.current) return; fired.current = true; postWebhook(theme, GAME_ID, { personality, score: sig.score, completions: sig.completions, attempts: sig.attempts }, player); }, [theme, sig, personality, player]);
   return null;
 }
+
+import dynamic from 'next/dynamic';
+const SpiralThrowGame = dynamic(() => Promise.resolve({ default: SpiralThrowGameInner }), { ssr: false });
+export default SpiralThrowGame;

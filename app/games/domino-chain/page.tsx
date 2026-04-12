@@ -54,7 +54,7 @@ interface GS {
   feedbackText:string; feedbackAlpha:number; fallSpeed:number;
 }
 
-export default function DominoChainGame() {
+function DominoChainGameInner() {
   const theme = useBrandTheme();
   const accent = theme.colors.accent ?? ACCENT;
 
@@ -327,3 +327,7 @@ function WebhookEmitter({theme,sig,personality,player}:{theme:ReturnType<typeof 
   useEffect(()=>{if(fired.current)return;fired.current=true;postWebhook(theme,GAME_ID,{personality,score:sig.score},player);},[theme,sig,personality,player]);
   return null;
 }
+
+import dynamic from 'next/dynamic';
+const DominoChainGame = dynamic(() => Promise.resolve({ default: DominoChainGameInner }), { ssr: false });
+export default DominoChainGame;

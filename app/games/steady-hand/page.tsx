@@ -43,7 +43,7 @@ function getPersonality(sig: Signals): string {
 }
 type Phase = 'start' | 'countdown' | 'playing' | 'done';
 
-export default function SteadyHandGame() {
+function SteadyHandGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const animRef = useRef(0);
@@ -392,3 +392,7 @@ function WebhookHelper({ theme, sig, personality, player }: { theme: ReturnType<
   useEffect(() => { if (fired.current) return; fired.current = true; postWebhook(theme, GAME_ID, { personality, score: sig.score, onTargetMs: sig.onTargetMs, stability: sig.stability }, player); }, [theme, sig, personality, player]);
   return null;
 }
+
+import dynamic from 'next/dynamic';
+const SteadyHandGame = dynamic(() => Promise.resolve({ default: SteadyHandGameInner }), { ssr: false });
+export default SteadyHandGame;

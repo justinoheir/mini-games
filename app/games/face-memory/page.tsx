@@ -149,7 +149,7 @@ interface GS {
   nextId: number;
 }
 
-export default function FaceMemory() {
+function FaceMemoryInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -405,3 +405,7 @@ export default function FaceMemory() {
     </GameShell>
   );
 }
+
+import dynamic from 'next/dynamic';
+const FaceMemory = dynamic(() => Promise.resolve({ default: FaceMemoryInner }), { ssr: false });
+export default FaceMemory;

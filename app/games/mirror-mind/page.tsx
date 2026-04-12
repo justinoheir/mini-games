@@ -43,7 +43,7 @@ interface CellObj {
   isPattern: boolean; tapped: boolean; correct: boolean;
 }
 
-export default function MirrorMindGame() {
+function MirrorMindGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const animRef = useRef(0);
@@ -329,3 +329,7 @@ function WebhookEmitter({ theme, sig, personality, player }: { theme: ReturnType
   }, [theme, sig, personality, player]);
   return null;
 }
+
+import dynamic from 'next/dynamic';
+const MirrorMindGame = dynamic(() => Promise.resolve({ default: MirrorMindGameInner }), { ssr: false });
+export default MirrorMindGame;

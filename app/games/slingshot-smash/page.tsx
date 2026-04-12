@@ -30,7 +30,7 @@ function getPersonality(sig: Signals): string {
 }
 type Phase = 'start' | 'countdown' | 'playing' | 'done';
 
-export default function SlingshotSmash() {
+function SlingshotSmashInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const animRef = useRef(0);
@@ -376,3 +376,7 @@ export default function SlingshotSmash() {
     </GameShell>
   );
 }
+
+import dynamic from 'next/dynamic';
+const SlingshotSmash = dynamic(() => Promise.resolve({ default: SlingshotSmashInner }), { ssr: false });
+export default SlingshotSmash;

@@ -63,7 +63,7 @@ function WebhookEmitter({ theme, sig, personality, player }: { theme: ReturnType
 const CELL_SIZE = 1.8;
 const WALL_H = 0.6, WALL_T = 0.12;
 
-export default function TiltMazeGame() {
+function TiltMazeGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const tiltCtrlRef = useRef<ReturnType<typeof createTiltController> | null>(null);
@@ -360,3 +360,7 @@ export default function TiltMazeGame() {
     </GameShell>
   );
 }
+
+import dynamic from 'next/dynamic';
+const TiltMazeGame = dynamic(() => Promise.resolve({ default: TiltMazeGameInner }), { ssr: false });
+export default TiltMazeGame;

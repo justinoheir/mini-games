@@ -69,7 +69,7 @@ function getPersonality(sig: Signals): string {
   return 'Finding the Line 🌱';
 }
 
-export default function PathTraceGame() {
+function PathTraceGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
@@ -347,3 +347,7 @@ function WebhookEmitter({ theme, sig, personality, player }: { theme: ReturnType
   }, [theme, sig, personality, player]);
   return null;
 }
+
+import dynamic from 'next/dynamic';
+const PathTraceGame = dynamic(() => Promise.resolve({ default: PathTraceGameInner }), { ssr: false });
+export default PathTraceGame;

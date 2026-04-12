@@ -51,7 +51,7 @@ function WebhookEmitter({ theme, sig, personality, player }: { theme: ReturnType
   return null;
 }
 
-export default function TypeSpeedGame() {
+function TypeSpeedGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -360,3 +360,7 @@ export default function TypeSpeedGame() {
     </GameShell>
   );
 }
+
+import dynamic from 'next/dynamic';
+const TypeSpeedGame = dynamic(() => Promise.resolve({ default: TypeSpeedGameInner }), { ssr: false });
+export default TypeSpeedGame;

@@ -36,7 +36,7 @@ type GameSubPhase = 'showing' | 'input' | 'result';
 const NODE_COLORS_HEX = [0xa855f7, 0x3b82f6, 0x22c55e, 0xf43f5e, 0xfbbf24, 0x06b6d4];
 const NODE_COUNT = 5;
 
-export default function SequenceUnlockGame() {
+function SequenceUnlockGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const animRef = useRef(0);
@@ -346,3 +346,7 @@ export default function SequenceUnlockGame() {
     </GameShell>
   );
 }
+
+import dynamic from 'next/dynamic';
+const SequenceUnlockGame = dynamic(() => Promise.resolve({ default: SequenceUnlockGameInner }), { ssr: false });
+export default SequenceUnlockGame;

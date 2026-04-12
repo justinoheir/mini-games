@@ -43,7 +43,7 @@ function getPersonality(sig: Signals): string {
 
 type Phase = 'start' | 'countdown' | 'playing' | 'done';
 
-export default function JigsawRushGame() {
+function JigsawRushGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const animRef = useRef(0);
@@ -367,3 +367,7 @@ function WebhookEmitter({ theme, sig, personality, player }: { theme: ReturnType
   }, [theme, sig, personality, player]);
   return null;
 }
+
+import dynamic from 'next/dynamic';
+const JigsawRushGame = dynamic(() => Promise.resolve({ default: JigsawRushGameInner }), { ssr: false });
+export default JigsawRushGame;

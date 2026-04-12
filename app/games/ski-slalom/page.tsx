@@ -47,7 +47,7 @@ function getPersonality(sig: Signals): string {
   return 'Snow Rookie 🎿';
 }
 
-export default function SkiSlalomGame() {
+function SkiSlalomGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const animRef = useRef(0);
@@ -412,3 +412,7 @@ function WebhookHelper({ theme, sig, personality, player }: { theme: ReturnType<
   useEffect(() => { if (fired.current) return; fired.current = true; postWebhook(theme, GAME_ID, { personality, score: sig.gatesPassed, gatesPassed: sig.gatesPassed, collisions: sig.collisions, maxStreak: sig.maxStreak }, player); }, [theme, sig, personality, player]);
   return null;
 }
+
+import dynamic from 'next/dynamic';
+const SkiSlalomGame = dynamic(() => Promise.resolve({ default: SkiSlalomGameInner }), { ssr: false });
+export default SkiSlalomGame;

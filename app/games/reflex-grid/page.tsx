@@ -41,7 +41,7 @@ function WebhookEmitter({ theme, sig, personality, player }: { theme: ReturnType
   return null;
 }
 
-export default function ReflexGridGame() {
+function ReflexGridGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
@@ -340,3 +340,7 @@ export default function ReflexGridGame() {
     </GameShell>
   );
 }
+
+import dynamic from 'next/dynamic';
+const ReflexGridGame = dynamic(() => Promise.resolve({ default: ReflexGridGameInner }), { ssr: false });
+export default ReflexGridGame;

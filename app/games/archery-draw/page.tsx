@@ -55,7 +55,7 @@ interface GS {
   frame: number;
 }
 
-export default function ArcheryDraw() {
+function ArcheryDrawInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const stateRef = useRef<GS>({
@@ -427,3 +427,7 @@ export default function ArcheryDraw() {
     </GameShell>
   );
 }
+
+import dynamic from 'next/dynamic';
+const ArcheryDraw = dynamic(() => Promise.resolve({ default: ArcheryDrawInner }), { ssr: false });
+export default ArcheryDraw;

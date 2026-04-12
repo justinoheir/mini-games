@@ -104,7 +104,7 @@ interface GS {
   viewH: number; viewW: number;
 }
 
-export default function PitchMatchGame() {
+function PitchMatchGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const stateRef = useRef<GS>({
@@ -447,3 +447,7 @@ function WebhookEmitter({ theme, sig, personality, player }: {
   }, [theme, sig, personality, player]);
   return null;
 }
+
+import dynamic from 'next/dynamic';
+const PitchMatchGame = dynamic(() => Promise.resolve({ default: PitchMatchGameInner }), { ssr: false });
+export default PitchMatchGame;

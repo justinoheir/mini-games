@@ -35,7 +35,7 @@ function WebhookEmitter({ theme, sig, personality, player }: { theme: ReturnType
   return null;
 }
 
-export default function WireCrossGame() {
+function WireCrossGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const stateRef = useRef({
@@ -316,3 +316,7 @@ export default function WireCrossGame() {
     </GameShell>
   );
 }
+
+import dynamic from 'next/dynamic';
+const WireCrossGame = dynamic(() => Promise.resolve({ default: WireCrossGameInner }), { ssr: false });
+export default WireCrossGame;

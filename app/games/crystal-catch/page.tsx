@@ -52,7 +52,7 @@ interface GS {
   floats:Array<{x:number;y:number;text:string;alpha:number;vy:number}>;
 }
 
-export default function CrystalCatch() {
+function CrystalCatchInner() {
   const theme = useBrandTheme();
   const accent = theme.colors.accent ?? ACCENT;
 
@@ -322,3 +322,7 @@ export default function CrystalCatch() {
     </GameShell>
   );
 }
+
+import dynamic from 'next/dynamic';
+const CrystalCatch = dynamic(() => Promise.resolve({ default: CrystalCatchInner }), { ssr: false });
+export default CrystalCatch;

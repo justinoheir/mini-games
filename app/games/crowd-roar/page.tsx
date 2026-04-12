@@ -54,7 +54,7 @@ interface CrowdMember3D {
 
 type Phase = 'start'|'permission'|'countdown'|'playing'|'done';
 
-export default function CrowdRoarGame() {
+function CrowdRoarGameInner() {
   const theme = useBrandTheme();
   const accent = theme.colors.accent ?? ACCENT;
 
@@ -390,3 +390,7 @@ function WebhookEmitter({theme,sig,personality,player}:{theme:ReturnType<typeof 
   useEffect(()=>{if(fired.current)return;fired.current=true;postWebhook(theme,GAME_ID,{personality,score:sig.score,peakVolume:sig.peakVolume,sustainedRoarTime:sig.sustainedRoarTime,silenceEvents:sig.silenceEvents,roarBursts:sig.roarBursts},player);},[theme,sig,personality,player]);
   return null;
 }
+
+import dynamic from 'next/dynamic';
+const CrowdRoarGame = dynamic(() => Promise.resolve({ default: CrowdRoarGameInner }), { ssr: false });
+export default CrowdRoarGame;

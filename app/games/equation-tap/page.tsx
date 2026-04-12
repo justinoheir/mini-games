@@ -50,7 +50,7 @@ interface GS {
   qTimeout: ReturnType<typeof setTimeout> | null;
 }
 
-export default function EquationTapGame() {
+function EquationTapGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -365,3 +365,7 @@ function WebhookEmitter({ theme, sig, personality, player }: { theme: ReturnType
   }, [theme, sig, personality, player]);
   return null;
 }
+
+import dynamic from 'next/dynamic';
+const EquationTapGame = dynamic(() => Promise.resolve({ default: EquationTapGameInner }), { ssr: false });
+export default EquationTapGame;

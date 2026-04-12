@@ -40,7 +40,7 @@ function getPersonality(sig: Signals): string {
 }
 type Phase = 'start' | 'countdown' | 'playing' | 'done';
 
-export default function StackDropGame() {
+function StackDropGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const animRef = useRef(0);
@@ -355,3 +355,7 @@ function WebhookHelper({ theme, sig, personality, player }: { theme: ReturnType<
   useEffect(() => { if (fired.current) return; fired.current = true; postWebhook(theme, GAME_ID, { personality, score: sig.score, maxStack: sig.maxStack, perfectDrops: sig.perfectDrops }, player); }, [theme, sig, personality, player]);
   return null;
 }
+
+import dynamic from 'next/dynamic';
+const StackDropGame = dynamic(() => Promise.resolve({ default: StackDropGameInner }), { ssr: false });
+export default StackDropGame;

@@ -78,7 +78,7 @@ function generatePuzzle(level: number): PuzzleItem[] {
   return items;
 }
 
-export default function OddOneOutGame() {
+function OddOneOutGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
@@ -305,3 +305,7 @@ export default function OddOneOutGame() {
     </GameShell>
   );
 }
+
+import dynamic from 'next/dynamic';
+const OddOneOutGame = dynamic(() => Promise.resolve({ default: OddOneOutGameInner }), { ssr: false });
+export default OddOneOutGame;

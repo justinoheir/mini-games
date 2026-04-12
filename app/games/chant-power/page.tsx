@@ -52,7 +52,7 @@ interface GS {
 }
 type Phase = 'start'|'permission'|'countdown'|'playing'|'done';
 
-export default function ChantPowerGame() {
+function ChantPowerGameInner() {
   const theme   = useBrandTheme();
   const accent  = theme.colors.accent ?? ACCENT;
 
@@ -439,3 +439,7 @@ function WebhookEmitter({ theme, sig, personality, player }: { theme: ReturnType
   useEffect(() => { if (fired.current) return; fired.current = true; postWebhook(theme, GAME_ID, { personality, score: sig.score, charges: sig.charges, peakVolume: sig.peakVolume }, player); }, [theme, sig, personality, player]);
   return null;
 }
+
+import dynamic from 'next/dynamic';
+const ChantPowerGame = dynamic(() => Promise.resolve({ default: ChantPowerGameInner }), { ssr: false });
+export default ChantPowerGame;

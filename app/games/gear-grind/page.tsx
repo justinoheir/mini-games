@@ -72,7 +72,7 @@ function createGearMesh(r: number, color: number, teeth: number): THREE.Group {
   return group;
 }
 
-export default function GearGrindGame() {
+function GearGrindGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -368,3 +368,7 @@ function WebhookEmitter({ theme, sig, personality, player }: { theme: ReturnType
   }, [theme, sig, personality, player]);
   return null;
 }
+
+import dynamic from 'next/dynamic';
+const GearGrindGame = dynamic(() => Promise.resolve({ default: GearGrindGameInner }), { ssr: false });
+export default GearGrindGame;

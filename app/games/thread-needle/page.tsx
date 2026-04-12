@@ -36,7 +36,7 @@ function WebhookEmitter({ theme, sig, personality, player }: { theme: ReturnType
   return null;
 }
 
-export default function ThreadNeedleGame() {
+function ThreadNeedleGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const stopMusicRef = useRef<(() => void) | null>(null);
@@ -334,3 +334,7 @@ export default function ThreadNeedleGame() {
     </GameShell>
   );
 }
+
+import dynamic from 'next/dynamic';
+const ThreadNeedleGame = dynamic(() => Promise.resolve({ default: ThreadNeedleGameInner }), { ssr: false });
+export default ThreadNeedleGame;

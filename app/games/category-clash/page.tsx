@@ -77,7 +77,7 @@ function makeEmojiSprite(emoji: string, size = 100): THREE.Sprite {
   return sp;
 }
 
-export default function CategoryClashGame() {
+function CategoryClashGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const stateRef = useRef<GS>({
@@ -363,3 +363,7 @@ export default function CategoryClashGame() {
     </GameShell>
   );
 }
+
+import dynamic from 'next/dynamic';
+const CategoryClashGame = dynamic(() => Promise.resolve({ default: CategoryClashGameInner }), { ssr: false });
+export default CategoryClashGame;

@@ -44,7 +44,7 @@ function getPersonality(sig:Signals):string {
 type Phase='start'|'countdown'|'playing'|'done';
 type SpinState='idle'|'spinning'|'braking'|'stopped';
 
-export default function DreidelSpinGame() {
+function DreidelSpinGameInner() {
   const theme = useBrandTheme();
   const accent = theme.colors.accent ?? ACCENT;
 
@@ -351,3 +351,7 @@ function WebhookEmitter({theme,sig,personality,player}:{theme:ReturnType<typeof 
   useEffect(()=>{if(fired.current)return;fired.current=true;postWebhook(theme,GAME_ID,{personality,score:sig.score},player);},[theme,sig,personality,player]);
   return null;
 }
+
+import dynamic from 'next/dynamic';
+const DreidelSpinGame = dynamic(() => Promise.resolve({ default: DreidelSpinGameInner }), { ssr: false });
+export default DreidelSpinGame;

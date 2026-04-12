@@ -50,7 +50,7 @@ interface GS {
   swipeStartY: number; swipeActive: boolean;
 }
 
-export default function FireworkLaunchGame() {
+function FireworkLaunchGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -378,3 +378,7 @@ function WebhookEmitter({ theme, gameId, sig, personality, player }: {
   }, [theme, gameId, sig, personality, player]);
   return null;
 }
+
+import dynamic from 'next/dynamic';
+const FireworkLaunchGame = dynamic(() => Promise.resolve({ default: FireworkLaunchGameInner }), { ssr: false });
+export default FireworkLaunchGame;

@@ -54,7 +54,7 @@ function getPersonality(sig: Signals): string {
 
 type Phase = 'start' | 'countdown' | 'playing' | 'done';
 
-export default function LogicGateGame() {
+function LogicGateGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const bgAnimRef = useRef(0);
@@ -326,3 +326,7 @@ export default function LogicGateGame() {
     </GameShell>
   );
 }
+
+import dynamic from 'next/dynamic';
+const LogicGateGame = dynamic(() => Promise.resolve({ default: LogicGateGameInner }), { ssr: false });
+export default LogicGateGame;

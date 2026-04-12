@@ -49,7 +49,7 @@ function makePattern(level: number): Beat[] {
   return beats;
 }
 
-export default function RhythmRepeatGame() {
+function RhythmRepeatGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const animRef = useRef(0);
@@ -433,3 +433,7 @@ export default function RhythmRepeatGame() {
     </GameShell>
   );
 }
+
+import dynamic from 'next/dynamic';
+const RhythmRepeatGame = dynamic(() => Promise.resolve({ default: RhythmRepeatGameInner }), { ssr: false });
+export default RhythmRepeatGame;

@@ -54,7 +54,7 @@ interface CellMesh {
   baseColor: number; glowColor: number;
 }
 
-export default function MemoryGridGame() {
+function MemoryGridGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const animRef = useRef(0);
@@ -392,3 +392,7 @@ function WebhookEmitter({ theme, sig, personality, player }: { theme: ReturnType
   }, [theme, sig, personality, player]);
   return null;
 }
+
+import dynamic from 'next/dynamic';
+const MemoryGridGame = dynamic(() => Promise.resolve({ default: MemoryGridGameInner }), { ssr: false });
+export default MemoryGridGame;

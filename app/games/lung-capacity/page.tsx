@@ -39,7 +39,7 @@ function getPersonality(sig: Signals): string {
 
 type Phase = 'start' | 'countdown' | 'playing' | 'done';
 
-export default function LungCapacityGame() {
+function LungCapacityGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const animRef = useRef(0);
@@ -358,3 +358,7 @@ function WebhookEmitter({ theme, sig, personality, player }: { theme: ReturnType
   }, [theme, sig, personality, player]);
   return null;
 }
+
+import dynamic from 'next/dynamic';
+const LungCapacityGame = dynamic(() => Promise.resolve({ default: LungCapacityGameInner }), { ssr: false });
+export default LungCapacityGame;

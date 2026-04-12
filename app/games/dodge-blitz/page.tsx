@@ -63,7 +63,7 @@ interface GS {
   accentColor:string;
 }
 
-export default function DodgeBlitzGame() {
+function DodgeBlitzGameInner() {
   const theme        = useBrandTheme();
   const accent       = theme.colors.accent ?? ACCENT;
 
@@ -396,3 +396,7 @@ function WebhookEmitter({theme,gameId,sig,personality,player}:{theme:ReturnType<
   },[theme,gameId,sig,personality,player]);
   return null;
 }
+
+import dynamic from 'next/dynamic';
+const DodgeBlitzGame = dynamic(() => Promise.resolve({ default: DodgeBlitzGameInner }), { ssr: false });
+export default DodgeBlitzGame;

@@ -35,7 +35,7 @@ function getPersonality(sig: Signals): string {
   return '🎯 Learning to Fly';
 }
 
-export default function PoleVaultGame() {
+function PoleVaultGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
@@ -388,3 +388,7 @@ function WebhookEmitter({ theme, sig, personality, player }: { theme: ReturnType
   }, [theme, sig, personality, player]);
   return null;
 }
+
+import dynamic from 'next/dynamic';
+const PoleVaultGame = dynamic(() => Promise.resolve({ default: PoleVaultGameInner }), { ssr: false });
+export default PoleVaultGame;

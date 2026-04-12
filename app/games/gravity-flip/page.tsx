@@ -35,7 +35,7 @@ interface GS {
   obstacleZs: Array<{ z: number; topY: number; botY: number; passed: boolean }>;
 }
 
-export default function GravityFlipGame() {
+function GravityFlipGameInner() {
   const theme        = useBrandTheme();
   const mountRef     = useRef<HTMLDivElement>(null);
   const timerRef     = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -307,3 +307,7 @@ function WebhookEmitter({ theme, gameId, sig, personality, player }: {
   }, [theme, gameId, sig, personality, player]);
   return null;
 }
+
+import dynamic from 'next/dynamic';
+const GravityFlipGame = dynamic(() => Promise.resolve({ default: GravityFlipGameInner }), { ssr: false });
+export default GravityFlipGame;

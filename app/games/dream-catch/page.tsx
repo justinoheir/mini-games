@@ -59,7 +59,7 @@ interface GS {
   accentColor:string;
 }
 
-export default function DreamCatchGame() {
+function DreamCatchGameInner() {
   const theme = useBrandTheme();
   const accent = theme.colors.accent ?? ACCENT;
 
@@ -319,3 +319,7 @@ export default function DreamCatchGame() {
     </GameShell>
   );
 }
+
+import dynamic from 'next/dynamic';
+const DreamCatchGame = dynamic(() => Promise.resolve({ default: DreamCatchGameInner }), { ssr: false });
+export default DreamCatchGame;

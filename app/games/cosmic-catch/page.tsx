@@ -55,7 +55,7 @@ interface GS {
   accentColor:string;
 }
 
-export default function CosmicCatchGame() {
+function CosmicCatchGameInner() {
   const theme = useBrandTheme();
   const accent = theme.colors.accent ?? ACCENT;
 
@@ -333,3 +333,7 @@ export default function CosmicCatchGame() {
     </GameShell>
   );
 }
+
+import dynamic from 'next/dynamic';
+const CosmicCatchGame = dynamic(() => Promise.resolve({ default: CosmicCatchGameInner }), { ssr: false });
+export default CosmicCatchGame;

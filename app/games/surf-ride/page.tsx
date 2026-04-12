@@ -39,7 +39,7 @@ function WebhookEmitter({ theme, sig, personality, player }: { theme: ReturnType
   return null;
 }
 
-export default function SurfRideGame() {
+function SurfRideGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const tiltCtrlRef = useRef<ReturnType<typeof createTiltController> | null>(null);
@@ -320,3 +320,7 @@ export default function SurfRideGame() {
     </GameShell>
   );
 }
+
+import dynamic from 'next/dynamic';
+const SurfRideGame = dynamic(() => Promise.resolve({ default: SurfRideGameInner }), { ssr: false });
+export default SurfRideGame;

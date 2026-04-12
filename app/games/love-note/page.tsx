@@ -71,7 +71,7 @@ function createHeart3D(color: number, emissive: number): THREE.Group {
   return group;
 }
 
-export default function LoveNoteGame() {
+function LoveNoteGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const animRef = useRef(0);
@@ -390,3 +390,7 @@ function WebhookEmitter({ theme, sig, personality, player }: { theme: ReturnType
   }, [theme, sig, personality, player]);
   return null;
 }
+
+import dynamic from 'next/dynamic';
+const LoveNoteGame = dynamic(() => Promise.resolve({ default: LoveNoteGameInner }), { ssr: false });
+export default LoveNoteGame;

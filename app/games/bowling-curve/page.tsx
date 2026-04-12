@@ -62,7 +62,7 @@ function makePins(scene: THREE.Scene): Pin3D[] {
   return pins;
 }
 
-export default function BowlingCurveGame() {
+function BowlingCurveGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const stateRef = useRef<GS>({
@@ -397,3 +397,7 @@ export default function BowlingCurveGame() {
     </GameShell>
   );
 }
+
+import dynamic from 'next/dynamic';
+const BowlingCurveGame = dynamic(() => Promise.resolve({ default: BowlingCurveGameInner }), { ssr: false });
+export default BowlingCurveGame;

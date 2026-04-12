@@ -39,7 +39,7 @@ interface GS {
   scrollX: number;
 }
 
-export default function FrogLeapGame() {
+function FrogLeapGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -372,3 +372,7 @@ function WebhookEmitter({ theme, gameId, sig, personality, player }: {
   }, [theme, gameId, sig, personality, player]);
   return null;
 }
+
+import dynamic from 'next/dynamic';
+const FrogLeapGame = dynamic(() => Promise.resolve({ default: FrogLeapGameInner }), { ssr: false });
+export default FrogLeapGame;

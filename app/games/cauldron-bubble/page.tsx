@@ -51,7 +51,7 @@ interface GS {
 
 const BREW_COLORS = [0x22c55e, 0x4ade80, 0x86efac, 0xa3e635, 0xfbbf24, 0x34d399, 0x67e8f9];
 
-export default function CauldronBubbleGame() {
+function CauldronBubbleGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const stateRef = useRef<GS>({
@@ -382,3 +382,7 @@ function WebhookEmitter({ theme, sig, personality, player }: { theme: ReturnType
   }, [theme, sig, personality, player]);
   return null;
 }
+
+import dynamic from 'next/dynamic';
+const CauldronBubbleGame = dynamic(() => Promise.resolve({ default: CauldronBubbleGameInner }), { ssr: false });
+export default CauldronBubbleGame;

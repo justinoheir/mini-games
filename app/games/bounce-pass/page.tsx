@@ -66,7 +66,7 @@ interface GS {
   targetMesh: THREE.Mesh | null;
 }
 
-export default function BouncePassGame() {
+function BouncePassGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const stateRef = useRef<GS>({
@@ -471,3 +471,7 @@ function WebhookEmitter({ theme, sig, personality, player }: {
   }, [theme, sig, personality, player]);
   return null;
 }
+
+import dynamic from 'next/dynamic';
+const BouncePassGame = dynamic(() => Promise.resolve({ default: BouncePassGameInner }), { ssr: false });
+export default BouncePassGame;

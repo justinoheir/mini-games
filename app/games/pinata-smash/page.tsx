@@ -34,7 +34,7 @@ function getPersonality(sig: Signals): string {
 
 interface CandyParticle { mesh: THREE.Mesh; vx: number; vy: number; vz: number; life: number; }
 
-export default function PinataSmashGame() {
+function PinataSmashGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
@@ -328,3 +328,7 @@ function WebhookEmitter({ theme, sig, personality, player }: { theme: ReturnType
   }, [theme, sig, personality, player]);
   return null;
 }
+
+import dynamic from 'next/dynamic';
+const PinataSmashGame = dynamic(() => Promise.resolve({ default: PinataSmashGameInner }), { ssr: false });
+export default PinataSmashGame;

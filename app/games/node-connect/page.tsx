@@ -47,7 +47,7 @@ function linesIntersect(ax: number, ay: number, bx: number, by: number, cx: numb
   return t > 0.01 && t < 0.99 && u > 0.01 && u < 0.99;
 }
 
-export default function NodeConnectGame() {
+function NodeConnectGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const animRef = useRef(0);
@@ -390,3 +390,7 @@ export default function NodeConnectGame() {
     </GameShell>
   );
 }
+
+import dynamic from 'next/dynamic';
+const NodeConnectGame = dynamic(() => Promise.resolve({ default: NodeConnectGameInner }), { ssr: false });
+export default NodeConnectGame;

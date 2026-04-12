@@ -43,7 +43,7 @@ function WebhookEmitter({ theme, gameId, sig, personality, player }: { theme: Re
   return null;
 }
 
-export default function TreasureDiveGame() {
+function TreasureDiveGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const stopMusicRef = useRef<(() => void) | null>(null);
@@ -375,3 +375,7 @@ export default function TreasureDiveGame() {
     </GameShell>
   );
 }
+
+import dynamic from 'next/dynamic';
+const TreasureDiveGame = dynamic(() => Promise.resolve({ default: TreasureDiveGameInner }), { ssr: false });
+export default TreasureDiveGame;

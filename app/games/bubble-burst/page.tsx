@@ -47,7 +47,7 @@ interface GS {
   resizeCleanup: (() => void) | null;
 }
 
-export default function BubbleBurst() {
+function BubbleBurstInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const stateRef = useRef<GS>({
@@ -357,3 +357,7 @@ function WebhookEmitter({ theme, sig, personality, player }: { theme: ReturnType
   }, [theme, sig, personality, player]);
   return null;
 }
+
+import dynamic from 'next/dynamic';
+const BubbleBurst = dynamic(() => Promise.resolve({ default: BubbleBurstInner }), { ssr: false });
+export default BubbleBurst;

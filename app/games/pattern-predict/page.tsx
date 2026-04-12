@@ -59,7 +59,7 @@ function makeGeometry(type: string): THREE.BufferGeometry {
   }
 }
 
-export default function PatternPredict() {
+function PatternPredictInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
@@ -293,3 +293,7 @@ export default function PatternPredict() {
     </GameShell>
   );
 }
+
+import dynamic from 'next/dynamic';
+const PatternPredict = dynamic(() => Promise.resolve({ default: PatternPredictInner }), { ssr: false });
+export default PatternPredict;

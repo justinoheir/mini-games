@@ -44,7 +44,7 @@ function getPersonality(sig: Signals): string {
 
 type Phase = 'start' | 'countdown' | 'playing' | 'done';
 
-export default function IceSculptorGame() {
+function IceSculptorGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const animRef = useRef(0);
@@ -366,3 +366,7 @@ function WebhookEmitter({ theme, sig, personality, player }: { theme: ReturnType
   }, [theme, sig, personality, player]);
   return null;
 }
+
+import dynamic from 'next/dynamic';
+const IceSculptorGame = dynamic(() => Promise.resolve({ default: IceSculptorGameInner }), { ssr: false });
+export default IceSculptorGame;

@@ -82,7 +82,7 @@ function createFlowerMesh(color: number, isWeed: boolean): THREE.Group {
   return group;
 }
 
-export default function FlowerBouquetGame() {
+function FlowerBouquetGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -329,3 +329,7 @@ function WebhookEmitter({ theme, sig, personality, player }: { theme: ReturnType
   }, [theme, sig, personality, player]);
   return null;
 }
+
+import dynamic from 'next/dynamic';
+const FlowerBouquetGame = dynamic(() => Promise.resolve({ default: FlowerBouquetGameInner }), { ssr: false });
+export default FlowerBouquetGame;

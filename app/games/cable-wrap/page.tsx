@@ -44,7 +44,7 @@ interface GS {
   resizeCleanup: (() => void) | null;
 }
 
-export default function CableWrapGame() {
+function CableWrapGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const stateRef = useRef<GS>({
@@ -356,3 +356,7 @@ export default function CableWrapGame() {
     </GameShell>
   );
 }
+
+import dynamic from 'next/dynamic';
+const CableWrapGame = dynamic(() => Promise.resolve({ default: CableWrapGameInner }), { ssr: false });
+export default CableWrapGame;

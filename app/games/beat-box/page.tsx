@@ -49,7 +49,7 @@ interface GS {
 
 const LANE_SPACING = 1.8;
 
-export default function BeatBoxGame() {
+function BeatBoxGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const stateRef = useRef<GS>({
@@ -354,3 +354,7 @@ export default function BeatBoxGame() {
     </GameShell>
   );
 }
+
+import dynamic from 'next/dynamic';
+const BeatBoxGame = dynamic(() => Promise.resolve({ default: BeatBoxGameInner }), { ssr: false });
+export default BeatBoxGame;

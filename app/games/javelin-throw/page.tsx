@@ -45,7 +45,7 @@ function getPersonality(sig: Signals): string {
   return 'Javelin Rookie 🏃';
 }
 
-export default function JavelinThrowGame() {
+function JavelinThrowGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const animRef = useRef(0);
@@ -492,3 +492,7 @@ function WebhookEmitter({ theme, sig, personality, player }: { theme: ReturnType
   }, [theme, sig, personality, player]);
   return null;
 }
+
+import dynamic from 'next/dynamic';
+const JavelinThrowGame = dynamic(() => Promise.resolve({ default: JavelinThrowGameInner }), { ssr: false });
+export default JavelinThrowGame;

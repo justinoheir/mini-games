@@ -35,7 +35,7 @@ function getPersonality(sig: Signals): string {
 
 interface TrailPoint3D { mesh: THREE.Mesh; life: number; }
 
-export default function ReflexRally() {
+function ReflexRallyInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
@@ -345,3 +345,7 @@ export default function ReflexRally() {
     </GameShell>
   );
 }
+
+import dynamic from 'next/dynamic';
+const ReflexRally = dynamic(() => Promise.resolve({ default: ReflexRallyInner }), { ssr: false });
+export default ReflexRally;

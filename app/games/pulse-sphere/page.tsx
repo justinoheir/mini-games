@@ -78,7 +78,7 @@ function RadarChart({ voice, movement, touch }: { voice: number; movement: numbe
   );
 }
 
-export default function PulseSphere() {
+function PulseSphereInner() {
   // Haptics gate — respects ?haptics=off URL param (accessibility B-M3)
   // Declared first so all callbacks below can close over it correctly.
   const hapticsEnabled = typeof window !== 'undefined'
@@ -675,3 +675,7 @@ export default function PulseSphere() {
     </>
   );
 }
+
+import dynamic from 'next/dynamic';
+const PulseSphere = dynamic(() => Promise.resolve({ default: PulseSphereInner }), { ssr: false });
+export default PulseSphere;

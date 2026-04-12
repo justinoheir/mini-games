@@ -87,7 +87,7 @@ function createLanternMesh(colorHex: number): THREE.Group {
   return group;
 }
 
-export default function LanternFloatGame() {
+function LanternFloatGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const animRef = useRef(0);
@@ -414,3 +414,7 @@ export default function LanternFloatGame() {
     </GameShell>
   );
 }
+
+import dynamic from 'next/dynamic';
+const LanternFloatGame = dynamic(() => Promise.resolve({ default: LanternFloatGameInner }), { ssr: false });
+export default LanternFloatGame;

@@ -70,7 +70,7 @@ interface GS {
 
 type Phase = 'start' | 'countdown' | 'playing' | 'done';
 
-export default function VolcanoTapGame() {
+function VolcanoTapGameInner() {
   const theme        = useBrandTheme();
   const mountRef     = useRef<HTMLDivElement>(null);
   const stateRef     = useRef<GS>({
@@ -439,3 +439,7 @@ function WebhookEmitter({ theme, gameId, sig, personality, player }: {
   }, [theme, gameId, sig, personality, player]);
   return null;
 }
+
+import dynamic from 'next/dynamic';
+const VolcanoTapGame = dynamic(() => Promise.resolve({ default: VolcanoTapGameInner }), { ssr: false });
+export default VolcanoTapGame;

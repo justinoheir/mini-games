@@ -40,7 +40,7 @@ function reflectDir(dx: number, dy: number, angle: number): [number, number] {
   return [dx - 2 * dot * nx, dy - 2 * dot * ny];
 }
 
-export default function LaserGuideGame() {
+function LaserGuideGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const animRef = useRef(0);
@@ -414,3 +414,7 @@ export default function LaserGuideGame() {
     </GameShell>
   );
 }
+
+import dynamic from 'next/dynamic';
+const LaserGuideGame = dynamic(() => Promise.resolve({ default: LaserGuideGameInner }), { ssr: false });
+export default LaserGuideGame;

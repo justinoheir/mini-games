@@ -34,7 +34,7 @@ function WebhookEmitter({ theme, sig, personality, player }: { theme: ReturnType
   return null;
 }
 
-export default function TableTennisGame() {
+function TableTennisGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const stopMusicRef = useRef<(() => void) | null>(null);
@@ -331,3 +331,7 @@ export default function TableTennisGame() {
     </GameShell>
   );
 }
+
+import dynamic from 'next/dynamic';
+const TableTennisGame = dynamic(() => Promise.resolve({ default: TableTennisGameInner }), { ssr: false });
+export default TableTennisGame;

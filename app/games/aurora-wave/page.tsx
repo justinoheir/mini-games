@@ -50,7 +50,7 @@ interface GS {
   resizeCleanup: (() => void) | null;
 }
 
-export default function AuroraWaveGame() {
+function AuroraWaveGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const stateRef = useRef<GS>({
@@ -369,3 +369,7 @@ function WebhookEmitter({ theme, gameId, sig, personality, player }: {
   }, [theme, gameId, sig, personality, player]);
   return null;
 }
+
+import dynamic from 'next/dynamic';
+const AuroraWaveGame = dynamic(() => Promise.resolve({ default: AuroraWaveGameInner }), { ssr: false });
+export default AuroraWaveGame;

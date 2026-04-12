@@ -102,7 +102,7 @@ function makeGhostMesh(isBomb: boolean): THREE.Group {
   return g;
 }
 
-export default function BooBlast() {
+function BooBlastInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const stateRef = useRef<GS>({
@@ -419,3 +419,7 @@ export default function BooBlast() {
     </GameShell>
   );
 }
+
+import dynamic from 'next/dynamic';
+const BooBlast = dynamic(() => Promise.resolve({ default: BooBlastInner }), { ssr: false });
+export default BooBlast;

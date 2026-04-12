@@ -45,7 +45,7 @@ function starPoints3D(n: number, outerR: number, innerR: number): THREE.Vector3[
   return pts;
 }
 
-export default function SparklerDrawGame() {
+function SparklerDrawGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const animRef = useRef(0);
@@ -348,3 +348,7 @@ function WebhookHelper({ theme, sig, personality, player }: { theme: ReturnType<
   useEffect(() => { if (fired.current) return; fired.current = true; postWebhook(theme, GAME_ID, { personality, score: sig.score, accuracy: sig.accuracy }, player); }, [theme, sig, personality, player]);
   return null;
 }
+
+import dynamic from 'next/dynamic';
+const SparklerDrawGame = dynamic(() => Promise.resolve({ default: SparklerDrawGameInner }), { ssr: false });
+export default SparklerDrawGame;

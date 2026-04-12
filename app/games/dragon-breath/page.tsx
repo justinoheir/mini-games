@@ -48,7 +48,7 @@ interface GS {
   nextEnemyIn:number; enemyCounter:number; lives:number; flashUntil:number; smoothVol:number;
 }
 
-export default function DragonBreath() {
+function DragonBreathInner() {
   const theme = useBrandTheme();
   const accent = theme.colors.accent ?? ACCENT;
 
@@ -354,3 +354,7 @@ function WebhookEmitter({theme,sig,personality,player}:{theme:ReturnType<typeof 
   useEffect(()=>{if(fired.current)return;fired.current=true;postWebhook(theme,GAME_ID,{personality,score:sig.score},player);},[theme,sig,personality,player]);
   return null;
 }
+
+import dynamic from 'next/dynamic';
+const DragonBreath = dynamic(() => Promise.resolve({ default: DragonBreathInner }), { ssr: false });
+export default DragonBreath;

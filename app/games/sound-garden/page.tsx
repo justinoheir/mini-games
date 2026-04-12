@@ -39,7 +39,7 @@ function getPersonality(sig: Signals): string {
 }
 type Phase = 'start' | 'countdown' | 'playing' | 'done';
 
-export default function SoundGardenGame() {
+function SoundGardenGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const animRef = useRef(0);
@@ -309,3 +309,7 @@ export default function SoundGardenGame() {
     </GameShell>
   );
 }
+
+import dynamic from 'next/dynamic';
+const SoundGardenGame = dynamic(() => Promise.resolve({ default: SoundGardenGameInner }), { ssr: false });
+export default SoundGardenGame;

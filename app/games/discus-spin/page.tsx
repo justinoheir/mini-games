@@ -41,7 +41,7 @@ interface GS {
   spinAngle:number; frame:number;
 }
 
-export default function GameDiscusSpin() {
+function GameDiscusSpinInner() {
   const theme = useBrandTheme();
   const accent = theme.colors.accent ?? ACCENT;
 
@@ -269,3 +269,7 @@ export default function GameDiscusSpin() {
     </GameShell>
   );
 }
+
+import dynamic from 'next/dynamic';
+const GameDiscusSpin = dynamic(() => Promise.resolve({ default: GameDiscusSpinInner }), { ssr: false });
+export default GameDiscusSpin;

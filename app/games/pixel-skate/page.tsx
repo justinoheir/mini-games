@@ -38,7 +38,7 @@ function getPersonality(s: Signals): string {
 interface Obstacle3D { mesh: THREE.Mesh; type: string; passed: boolean; }
 interface Particle3D { mesh: THREE.Mesh; vx: number; vy: number; vz: number; life: number; }
 
-export default function PixelSkateGame() {
+function PixelSkateGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
@@ -364,3 +364,7 @@ export default function PixelSkateGame() {
     </GameShell>
   );
 }
+
+import dynamic from 'next/dynamic';
+const PixelSkateGame = dynamic(() => Promise.resolve({ default: PixelSkateGameInner }), { ssr: false });
+export default PixelSkateGame;

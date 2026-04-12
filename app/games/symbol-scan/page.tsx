@@ -33,7 +33,7 @@ type Phase = 'start' | 'countdown' | 'playing' | 'done';
 const SHAPES = ['sphere', 'box', 'cone', 'torus', 'octahedron', 'tetrahedron', 'cylinder', 'ring'];
 const SHAPE_COLORS = [0x818cf8, 0xa855f7, 0x38bdf8, 0x34d399, 0xfbbf24, 0xf97316, 0xef4444, 0xec4899];
 
-export default function SymbolScanGame() {
+function SymbolScanGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const stateRef = useRef({
@@ -330,3 +330,7 @@ export default function SymbolScanGame() {
     </GameShell>
   );
 }
+
+import dynamic from 'next/dynamic';
+const SymbolScanGame = dynamic(() => Promise.resolve({ default: SymbolScanGameInner }), { ssr: false });
+export default SymbolScanGame;

@@ -60,7 +60,7 @@ interface GS {
   questionTimeout: ReturnType<typeof setTimeout> | null;
 }
 
-export default function FrequencyTuneGame() {
+function FrequencyTuneGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -339,3 +339,7 @@ function WebhookEmitter({ theme, sig, personality, player }: { theme: ReturnType
   }, [theme, sig, personality, player]);
   return null;
 }
+
+import dynamic from 'next/dynamic';
+const FrequencyTuneGame = dynamic(() => Promise.resolve({ default: FrequencyTuneGameInner }), { ssr: false });
+export default FrequencyTuneGame;

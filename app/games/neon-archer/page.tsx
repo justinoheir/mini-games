@@ -192,7 +192,7 @@ function buildCrossbow(scene: THREE.Scene): THREE.Group {
   return xbow;
 }
 
-export default function NeonArcherGame() {
+function NeonArcherGameInner() {
   const theme = useBrandTheme();
   const mountRef   = useRef<HTMLDivElement>(null);
   const animRef    = useRef(0);
@@ -658,3 +658,7 @@ function WebhookEmitter({ theme, sig, personality, player }: {
   }, [theme, sig, personality, player]);
   return null;
 }
+
+import dynamic from 'next/dynamic';
+const NeonArcherGame = dynamic(() => Promise.resolve({ default: NeonArcherGameInner }), { ssr: false });
+export default NeonArcherGame;

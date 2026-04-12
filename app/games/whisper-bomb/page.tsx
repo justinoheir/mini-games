@@ -24,7 +24,7 @@ function getProfile(b: BehaviorData) {
   return 'Reactive ⚡';
 }
 
-export default function WhisperBomb() {
+function WhisperBombInner() {
   const theme = useBrandTheme();
   const accent = theme.id !== 'ether' ? theme.colors.accent : GAME_ACCENT;
   const mountRef = useRef<HTMLDivElement>(null);
@@ -351,3 +351,7 @@ export default function WhisperBomb() {
     </GameShell>
   );
 }
+
+import dynamic from 'next/dynamic';
+const WhisperBomb = dynamic(() => Promise.resolve({ default: WhisperBombInner }), { ssr: false });
+export default WhisperBomb;

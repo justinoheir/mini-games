@@ -51,7 +51,7 @@ function getShapeWindowMs(elapsedMs: number): number {
 type Phase = 'start' | 'countdown' | 'playing' | 'done';
 type ShapePhase = 'visible' | 'dark';
 
-export default function ShadowTapGame() {
+function ShadowTapGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const animRef = useRef(0);
@@ -360,3 +360,7 @@ function WebhookEmitter({ theme, sig, personality, player }: { theme: ReturnType
   }, [theme, sig, personality, player]);
   return null;
 }
+
+import dynamic from 'next/dynamic';
+const ShadowTapGame = dynamic(() => Promise.resolve({ default: ShadowTapGameInner }), { ssr: false });
+export default ShadowTapGame;

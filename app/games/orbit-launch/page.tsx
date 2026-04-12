@@ -32,7 +32,7 @@ function getPersonality(sig: Signals): string {
   return 'Gravity Student 📚';
 }
 
-export default function OrbitLaunch() {
+function OrbitLaunchInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
@@ -391,3 +391,7 @@ export default function OrbitLaunch() {
     </GameShell>
   );
 }
+
+import dynamic from 'next/dynamic';
+const OrbitLaunch = dynamic(() => Promise.resolve({ default: OrbitLaunchInner }), { ssr: false });
+export default OrbitLaunch;

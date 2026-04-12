@@ -63,7 +63,7 @@ function makeTextSprite(text: string, color: string): THREE.Sprite {
   return sp;
 }
 
-export default function BinaryDecodeGame() {
+function BinaryDecodeGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const stateRef = useRef<GS>({
@@ -358,3 +358,7 @@ export default function BinaryDecodeGame() {
     </GameShell>
   );
 }
+
+import dynamic from 'next/dynamic';
+const BinaryDecodeGame = dynamic(() => Promise.resolve({ default: BinaryDecodeGameInner }), { ssr: false });
+export default BinaryDecodeGame;

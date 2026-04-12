@@ -73,7 +73,7 @@ function getPersonality(sig: Signals): string {
 type GamePhase = 'start' | 'countdown' | 'playing' | 'done';
 type CardPhase = 'entering' | 'idle' | 'exiting-right' | 'exiting-left';
 
-export default function GiftRushGame() {
+function GiftRushGameInner() {
   const theme       = useBrandTheme();
   const bgRef       = useRef<HTMLDivElement>(null);
   const stopMusicRef = useRef<(() => void) | null>(null);
@@ -386,3 +386,7 @@ function WebhookEmitter({ theme, sig, personality, player }: { theme: ReturnType
   }, [theme, sig, personality, player]);
   return null;
 }
+
+import dynamic from 'next/dynamic';
+const GiftRushGame = dynamic(() => Promise.resolve({ default: GiftRushGameInner }), { ssr: false });
+export default GiftRushGame;

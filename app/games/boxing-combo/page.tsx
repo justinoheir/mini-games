@@ -42,7 +42,7 @@ interface GS {
   resizeCleanup: (() => void) | null;
 }
 
-export default function BoxingComboGame() {
+function BoxingComboGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const stateRef = useRef<GS>({
@@ -366,3 +366,7 @@ export default function BoxingComboGame() {
     </GameShell>
   );
 }
+
+import dynamic from 'next/dynamic';
+const BoxingComboGame = dynamic(() => Promise.resolve({ default: BoxingComboGameInner }), { ssr: false });
+export default BoxingComboGame;

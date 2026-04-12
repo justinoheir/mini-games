@@ -49,7 +49,7 @@ interface GS {
   steadyTicks:number;
 }
 
-export default function CrystalGrowGame() {
+function CrystalGrowGameInner() {
   const theme        = useBrandTheme();
   const accent       = theme.colors.accent ?? ACCENT;
 
@@ -350,3 +350,7 @@ function WebhookEmitter({theme,sig,personality,player}:{theme:ReturnType<typeof 
   useEffect(()=>{if(fired.current)return;fired.current=true;postWebhook(theme,GAME_ID,{personality,score:sig.score,maxCrystalSize:sig.maxCrystalSize,shatters:sig.shatters,steadyBreathSeconds:sig.steadyBreathSeconds},player);},[theme,sig,personality,player]);
   return null;
 }
+
+import dynamic from 'next/dynamic';
+const CrystalGrowGame = dynamic(() => Promise.resolve({ default: CrystalGrowGameInner }), { ssr: false });
+export default CrystalGrowGame;

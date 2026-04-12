@@ -243,7 +243,7 @@ function checkNearMiss(px: number, py: number, pz: number, obstacle: ObstacleInf
   return false;
 }
 
-export default function TunnelGame() {
+function TunnelGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const stopMusicRef = useRef<(() => void) | null>(null);
@@ -856,3 +856,7 @@ export default function TunnelGame() {
     </>
   );
 }
+
+import dynamic from 'next/dynamic';
+const TunnelGame = dynamic(() => Promise.resolve({ default: TunnelGameInner }), { ssr: false });
+export default TunnelGame;

@@ -53,7 +53,7 @@ function makePotato(speedLevel: number): PotatoState {
   };
 }
 
-export default function HotPotatoGame() {
+function HotPotatoGameInner() {
   const theme        = useBrandTheme();
   const mountRef     = useRef<HTMLDivElement>(null);
   const timerRef     = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -282,3 +282,7 @@ function WebhookEmitter({ theme, gameId, sig, personality, player }: {
   }, [theme, gameId, sig, personality, player]);
   return null;
 }
+
+import dynamic from 'next/dynamic';
+const HotPotatoGame = dynamic(() => Promise.resolve({ default: HotPotatoGameInner }), { ssr: false });
+export default HotPotatoGame;

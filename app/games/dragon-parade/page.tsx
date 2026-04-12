@@ -52,7 +52,7 @@ interface GS {
 
 const BODY_COLORS=[0xef4444,0xfbbf24,0xf97316,0xdc2626,0xfde68a];
 
-export default function DragonParadeGame() {
+function DragonParadeGameInner() {
   const theme = useBrandTheme();
   const accent = theme.colors.accent ?? ACCENT;
 
@@ -325,3 +325,7 @@ export default function DragonParadeGame() {
     </GameShell>
   );
 }
+
+import dynamic from 'next/dynamic';
+const DragonParadeGame = dynamic(() => Promise.resolve({ default: DragonParadeGameInner }), { ssr: false });
+export default DragonParadeGame;

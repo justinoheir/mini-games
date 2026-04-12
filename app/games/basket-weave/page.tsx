@@ -47,7 +47,7 @@ interface GS {
 
 const STRAND_COLORS = [0xd97706, 0xa16207, 0xf59e0b, 0x92400e, 0xd97706, 0xb45309];
 
-export default function BasketWeaveGame() {
+function BasketWeaveGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const stateRef = useRef<GS>({
@@ -324,3 +324,7 @@ export default function BasketWeaveGame() {
     </GameShell>
   );
 }
+
+import dynamic from 'next/dynamic';
+const BasketWeaveGame = dynamic(() => Promise.resolve({ default: BasketWeaveGameInner }), { ssr: false });
+export default BasketWeaveGame;

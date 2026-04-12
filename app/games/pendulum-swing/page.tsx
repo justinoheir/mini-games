@@ -33,7 +33,7 @@ function getPersonality(sig: Signals): string {
   return 'Finding the Rhythm 🎶';
 }
 
-export default function PendulumSwing() {
+function PendulumSwingInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
@@ -336,3 +336,7 @@ export default function PendulumSwing() {
     </GameShell>
   );
 }
+
+import dynamic from 'next/dynamic';
+const PendulumSwing = dynamic(() => Promise.resolve({ default: PendulumSwingInner }), { ssr: false });
+export default PendulumSwing;

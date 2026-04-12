@@ -65,7 +65,7 @@ interface GS {
   accentColor: string;
 }
 
-export default function ColorCascadeGame() {
+function ColorCascadeGameInner() {
   const theme = useBrandTheme();
   const accent = theme.colors.accent ?? ACCENT;
 
@@ -360,3 +360,7 @@ function WebhookEmitter({theme,sig,personality,player}:{theme:ReturnType<typeof 
   useEffect(()=>{if(fired.current)return;fired.current=true;postWebhook(theme,GAME_ID,{personality,score:sig.score,correctTaps:sig.correctTaps,accuracy:sig.accuracy},player);},[theme,sig,personality,player]);
   return null;
 }
+
+import dynamic from 'next/dynamic';
+const ColorCascadeGame = dynamic(() => Promise.resolve({ default: ColorCascadeGameInner }), { ssr: false });
+export default ColorCascadeGame;

@@ -38,7 +38,7 @@ function WebhookEmitter({ theme, sig, personality, player }: { theme: ReturnType
 
 interface Block3D { mesh: THREE.Mesh; x: number; width: number; color: number; }
 
-export default function TowerStackGame() {
+function TowerStackGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const stopMusicRef = useRef<(() => void) | null>(null);
@@ -289,3 +289,7 @@ export default function TowerStackGame() {
     </GameShell>
   );
 }
+
+import dynamic from 'next/dynamic';
+const TowerStackGame = dynamic(() => Promise.resolve({ default: TowerStackGameInner }), { ssr: false });
+export default TowerStackGame;

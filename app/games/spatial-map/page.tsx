@@ -35,7 +35,7 @@ function getPersonality(sig: Signals): string {
 type Phase = 'start' | 'countdown' | 'playing' | 'done';
 type SubPhase = 'show' | 'input' | 'result';
 
-export default function SpatialMapGame() {
+function SpatialMapGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const animRef = useRef(0);
@@ -362,3 +362,7 @@ function WebhookHelper({ theme, sig, personality, player }: { theme: ReturnType<
   useEffect(() => { if (fired.current) return; fired.current = true; postWebhook(theme, GAME_ID, { personality, score: sig.score, maxPathLength: sig.maxPathLength, wrongTaps: sig.wrongTaps }, player); }, [theme, sig, personality, player]);
   return null;
 }
+
+import dynamic from 'next/dynamic';
+const SpatialMapGame = dynamic(() => Promise.resolve({ default: SpatialMapGameInner }), { ssr: false });
+export default SpatialMapGame;

@@ -35,7 +35,7 @@ type Phase = 'start' | 'countdown' | 'playing' | 'done';
 
 interface PadObj { mesh: THREE.Mesh; light: THREE.PointLight; idx: number; }
 
-export default function KarateChopGame() {
+function KarateChopGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const animRef = useRef(0);
@@ -345,3 +345,7 @@ function WebhookEmitter({ theme, sig, personality, player }: { theme: ReturnType
   }, [theme, sig, personality, player]);
   return null;
 }
+
+import dynamic from 'next/dynamic';
+const KarateChopGame = dynamic(() => Promise.resolve({ default: KarateChopGameInner }), { ssr: false });
+export default KarateChopGame;

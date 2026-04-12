@@ -44,7 +44,7 @@ const ZONE_DEFS = [
   { pts: 1, color: 0x3b82f6, label: 'OK' },
 ];
 
-export default function DropZone() {
+function DropZoneInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -310,3 +310,7 @@ export default function DropZone() {
     </GameShell>
   );
 }
+
+import dynamic from 'next/dynamic';
+const DropZone = dynamic(() => Promise.resolve({ default: DropZoneInner }), { ssr: false });
+export default DropZone;

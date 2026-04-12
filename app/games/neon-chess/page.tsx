@@ -95,7 +95,7 @@ function getPieceLabel(p: PieceType): string {
   return labels[p] ?? p;
 }
 
-export default function NeonChessGame() {
+function NeonChessGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const animRef = useRef(0);
@@ -419,3 +419,7 @@ export default function NeonChessGame() {
     </GameShell>
   );
 }
+
+import dynamic from 'next/dynamic';
+const NeonChessGame = dynamic(() => Promise.resolve({ default: NeonChessGameInner }), { ssr: false });
+export default NeonChessGame;

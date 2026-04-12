@@ -41,7 +41,7 @@ interface GS {
   targetZ: number;
 }
 
-export default function FrictionSlide() {
+function FrictionSlideInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -306,3 +306,7 @@ export default function FrictionSlide() {
     </GameShell>
   );
 }
+
+import dynamic from 'next/dynamic';
+const FrictionSlide = dynamic(() => Promise.resolve({ default: FrictionSlideInner }), { ssr: false });
+export default FrictionSlide;

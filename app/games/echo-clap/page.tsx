@@ -40,7 +40,7 @@ interface GS {
   patternLength: number;
 }
 
-export default function EchoClapGame() {
+function EchoClapGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -372,3 +372,7 @@ function WebhookEmitter({ theme, sig, personality, player }: { theme: ReturnType
   }, [theme, sig, personality, player]);
   return null;
 }
+
+import dynamic from 'next/dynamic';
+const EchoClapGame = dynamic(() => Promise.resolve({ default: EchoClapGameInner }), { ssr: false });
+export default EchoClapGame;

@@ -40,7 +40,7 @@ interface GS {
   wolfScale: number; mouthOpen: number;
 }
 
-export default function HowlWolfGame() {
+function HowlWolfGameInner() {
   const theme   = useBrandTheme();
   const accent  = theme.colors.accent ?? ACCENT;
   const mountRef = useRef<HTMLDivElement>(null);
@@ -360,3 +360,7 @@ function WebhookEmitter({ theme, sig, personality, player }: { theme: ReturnType
   }, [theme, sig, personality, player]);
   return null;
 }
+
+import dynamic from 'next/dynamic';
+const HowlWolfGame = dynamic(() => Promise.resolve({ default: HowlWolfGameInner }), { ssr: false });
+export default HowlWolfGame;

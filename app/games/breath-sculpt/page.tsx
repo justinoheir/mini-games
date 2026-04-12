@@ -51,7 +51,7 @@ interface GS {
   resizeCleanup: (() => void) | null;
 }
 
-export default function BreathSculptGame() {
+function BreathSculptGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const stateRef = useRef<GS>({
@@ -333,3 +333,7 @@ export default function BreathSculptGame() {
     </GameShell>
   );
 }
+
+import dynamic from 'next/dynamic';
+const BreathSculptGame = dynamic(() => Promise.resolve({ default: BreathSculptGameInner }), { ssr: false });
+export default BreathSculptGame;

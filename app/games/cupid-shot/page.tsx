@@ -88,7 +88,7 @@ function buildHeartMesh(color: number, size = 0.5): THREE.Group {
   return group;
 }
 
-export default function CupidShotGame() {
+function CupidShotGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const stateRef = useRef<GS>({
@@ -384,3 +384,7 @@ function WebhookEmitter({ theme, sig, personality, player }: {
   }, [theme, sig, personality, player]);
   return null;
 }
+
+import dynamic from 'next/dynamic';
+const CupidShotGame = dynamic(() => Promise.resolve({ default: CupidShotGameInner }), { ssr: false });
+export default CupidShotGame;

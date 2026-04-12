@@ -45,7 +45,7 @@ function getPersonality(sig: Signals): string {
 
 interface PencilMesh { mesh: THREE.Group; len: number; colorIdx: number; placed: boolean; row: number; trayIdx: number; }
 
-export default function PencilPackGame() {
+function PencilPackGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
@@ -389,3 +389,7 @@ function WebhookEmitter({ theme, sig, personality, player }: { theme: ReturnType
   }, [theme, sig, personality, player]);
   return null;
 }
+
+import dynamic from 'next/dynamic';
+const PencilPackGame = dynamic(() => Promise.resolve({ default: PencilPackGameInner }), { ssr: false });
+export default PencilPackGame;

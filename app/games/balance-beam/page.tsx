@@ -63,7 +63,7 @@ interface GS {
   resizeCleanup: (() => void) | null;
 }
 
-export default function BalanceBeamGame() {
+function BalanceBeamGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const tiltCtrlRef = useRef<ReturnType<typeof createTiltController> | null>(null);
@@ -418,3 +418,7 @@ export default function BalanceBeamGame() {
     </GameShell>
   );
 }
+
+import dynamic from 'next/dynamic';
+const BalanceBeamGame = dynamic(() => Promise.resolve({ default: BalanceBeamGameInner }), { ssr: false });
+export default BalanceBeamGame;

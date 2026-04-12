@@ -51,7 +51,7 @@ interface GS {
 const RINGS = [0.22,0.16,0.10,0.05];
 const RING_COLORS = [0xef4444,0xffffff,0xef4444,0x1d4ed8];
 
-export default function CurlingSweepGame() {
+function CurlingSweepGameInner() {
   const theme = useBrandTheme();
   const accent = theme.colors.accent ?? ACCENT;
 
@@ -380,3 +380,7 @@ function WebhookEmitter({theme,sig,personality,player}:{theme:ReturnType<typeof 
   useEffect(()=>{if(fired.current)return;fired.current=true;postWebhook(theme,GAME_ID,{personality,score:sig.score},player);},[theme,sig,personality,player]);
   return null;
 }
+
+import dynamic from 'next/dynamic';
+const CurlingSweepGame = dynamic(() => Promise.resolve({ default: CurlingSweepGameInner }), { ssr: false });
+export default CurlingSweepGame;

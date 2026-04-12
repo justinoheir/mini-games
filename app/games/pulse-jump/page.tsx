@@ -36,7 +36,7 @@ function getPersonality(sig: Signals): string {
 interface Obstacle3D { mesh: THREE.Mesh; passed: boolean; }
 interface Particle3D { mesh: THREE.Mesh; vy: number; vx: number; life: number; }
 
-export default function PulseJumpGame() {
+function PulseJumpGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
@@ -364,3 +364,7 @@ function WebhookEmitter({ theme, gameId, sig, personality, player }: { theme: Re
   }, [theme, gameId, sig, personality, player]);
   return null;
 }
+
+import dynamic from 'next/dynamic';
+const PulseJumpGame = dynamic(() => Promise.resolve({ default: PulseJumpGameInner }), { ssr: false });
+export default PulseJumpGame;

@@ -49,7 +49,7 @@ interface GS {
   accentColor:string;
 }
 
-export default function CloverPathGame() {
+function CloverPathGameInner() {
   const theme = useBrandTheme();
   const accent = theme.colors.accent ?? ACCENT;
 
@@ -409,3 +409,7 @@ export default function CloverPathGame() {
     </GameShell>
   );
 }
+
+import dynamic from 'next/dynamic';
+const CloverPathGame = dynamic(() => Promise.resolve({ default: CloverPathGameInner }), { ssr: false });
+export default CloverPathGame;

@@ -60,7 +60,7 @@ function genQuestion(prevInkIdx: number): Question {
   return { wordIdx, inkIdx, spawnMs: Date.now() };
 }
 
-export default function ColorWordGame() {
+function ColorWordGameInner() {
   const theme        = useBrandTheme();
   const accent       = theme.colors.accent ?? ACCENT;
   const timerRef     = useRef<ReturnType<typeof setInterval>|null>(null);
@@ -305,3 +305,7 @@ function WebhookEmitter({theme,sig,personality,player}:{theme:ReturnType<typeof 
   useEffect(()=>{if(fired.current)return;fired.current=true;postWebhook(theme,GAME_ID,{personality,score:sig.score,avgReactionMs:sig.avgReactionMs,maxStreak:sig.maxStreak},player);},[theme,sig,personality,player]);
   return null;
 }
+
+import dynamic from 'next/dynamic';
+const ColorWordGame = dynamic(() => Promise.resolve({ default: ColorWordGameInner }), { ssr: false });
+export default ColorWordGame;

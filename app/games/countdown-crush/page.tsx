@@ -59,7 +59,7 @@ const ORB_COLORS = [
   0xa855f7, 0x3b82f6, 0x22c55e, 0xf97316, 0xffffff,
 ];
 
-export default function CountdownCrushGame() {
+function CountdownCrushGameInner() {
   const theme = useBrandTheme();
   const accent = theme.colors.accent ?? ACCENT;
 
@@ -372,3 +372,7 @@ function WebhookEmitter({theme,sig,personality,player}:{theme:ReturnType<typeof 
   useEffect(()=>{if(fired.current)return;fired.current=true;postWebhook(theme,GAME_ID,{personality,score:sig.score,roundsCompleted:sig.roundsCompleted},player);},[theme,sig,personality,player]);
   return null;
 }
+
+import dynamic from 'next/dynamic';
+const CountdownCrushGame = dynamic(() => Promise.resolve({ default: CountdownCrushGameInner }), { ssr: false });
+export default CountdownCrushGame;

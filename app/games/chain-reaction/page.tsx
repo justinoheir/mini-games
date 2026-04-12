@@ -69,7 +69,7 @@ function buildGrid(scene: THREE.Scene): Cell3D[] {
   return cells;
 }
 
-export default function ChainReactionGame() {
+function ChainReactionGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const stateRef = useRef<GS>({
@@ -364,3 +364,7 @@ export default function ChainReactionGame() {
     </GameShell>
   );
 }
+
+import dynamic from 'next/dynamic';
+const ChainReactionGame = dynamic(() => Promise.resolve({ default: ChainReactionGameInner }), { ssr: false });
+export default ChainReactionGame;

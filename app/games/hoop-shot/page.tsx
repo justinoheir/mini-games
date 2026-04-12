@@ -60,7 +60,7 @@ interface GS {
   powerBarLight: THREE.PointLight | null;
 }
 
-export default function HoopShot() {
+function HoopShotInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const stateRef = useRef<GS>({
@@ -444,3 +444,7 @@ function WebhookEmitter({ theme, sig, personality, player }: {
   }, [theme, sig, personality, player]);
   return null;
 }
+
+import dynamic from 'next/dynamic';
+const HoopShot = dynamic(() => Promise.resolve({ default: HoopShotInner }), { ssr: false });
+export default HoopShot;

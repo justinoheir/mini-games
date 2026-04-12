@@ -38,7 +38,7 @@ function getPersonality(sig: Signals): string {
   return 'Steady Reactor 🎯';
 }
 
-export default function ReactionChain() {
+function ReactionChainInner() {
   const theme = useBrandTheme();
   const accentColor = (theme.id !== 'ether') ? theme.colors.accent : ACCENT;
   const mountRef = useRef<HTMLDivElement>(null);
@@ -362,3 +362,7 @@ function WebhookEmitter({ theme, gameId, sig, personality, player }: { theme: Re
   }, [theme, gameId, sig, personality, player]);
   return null;
 }
+
+import dynamic from 'next/dynamic';
+const ReactionChain = dynamic(() => Promise.resolve({ default: ReactionChainInner }), { ssr: false });
+export default ReactionChain;

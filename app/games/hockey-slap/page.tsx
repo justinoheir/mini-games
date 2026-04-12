@@ -30,7 +30,7 @@ interface GS {
   frame: number;
 }
 
-export default function HockeySlap() {
+function HockeySlapInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -318,3 +318,7 @@ export default function HockeySlap() {
     </GameShell>
   );
 }
+
+import dynamic from 'next/dynamic';
+const HockeySlap = dynamic(() => Promise.resolve({ default: HockeySlapInner }), { ssr: false });
+export default HockeySlap;

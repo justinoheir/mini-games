@@ -59,7 +59,7 @@ function generateCode(length: number): number[] {
   return Array.from({ length }, () => Math.floor(Math.random() * 10));
 }
 
-export default function CodeBreakerGame() {
+function CodeBreakerGameInner() {
   const theme        = useBrandTheme();
   const accent       = theme.colors.accent ?? ACCENT;
 
@@ -456,3 +456,7 @@ function WebhookEmitter({ theme, sig, personality, player }: { theme: ReturnType
   }, [theme, sig, personality, player]);
   return null;
 }
+
+import dynamic from 'next/dynamic';
+const CodeBreakerGame = dynamic(() => Promise.resolve({ default: CodeBreakerGameInner }), { ssr: false });
+export default CodeBreakerGame;

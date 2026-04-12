@@ -42,7 +42,7 @@ interface GS {
   jumpOffset: number; jumping: boolean; jumpVy: number;
 }
 
-export default function GymnastBeamGame() {
+function GymnastBeamGameInner() {
   const theme      = useBrandTheme();
   const mountRef   = useRef<HTMLDivElement>(null);
   const timerRef   = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -368,3 +368,7 @@ function WebhookEmitter({ theme, sig, personality, player }: { theme: ReturnType
   }, [theme, sig, personality, player]);
   return null;
 }
+
+import dynamic from 'next/dynamic';
+const GymnastBeamGame = dynamic(() => Promise.resolve({ default: GymnastBeamGameInner }), { ssr: false });
+export default GymnastBeamGame;

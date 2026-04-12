@@ -33,7 +33,7 @@ function getPersonality(sig: Signals): string {
 
 interface SplashBlob { mesh: THREE.Mesh; life: number; vx: number; vy: number; vz: number; }
 
-export default function PaintSplashGame() {
+function PaintSplashGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
@@ -310,3 +310,7 @@ function WebhookEmitter({ theme, sig, personality, player }: { theme: ReturnType
   }, [theme, sig, personality, player]);
   return null;
 }
+
+import dynamic from 'next/dynamic';
+const PaintSplashGame = dynamic(() => Promise.resolve({ default: PaintSplashGameInner }), { ssr: false });
+export default PaintSplashGame;

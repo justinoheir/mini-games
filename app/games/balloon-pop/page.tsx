@@ -50,7 +50,7 @@ interface GS {
   resizeCleanup: (() => void) | null;
 }
 
-export default function BalloonPop() {
+function BalloonPopInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const stateRef = useRef<GS>({
@@ -344,3 +344,7 @@ export default function BalloonPop() {
     </GameShell>
   );
 }
+
+import dynamic from 'next/dynamic';
+const BalloonPop = dynamic(() => Promise.resolve({ default: BalloonPopInner }), { ssr: false });
+export default BalloonPop;

@@ -41,7 +41,7 @@ function WebhookEmitter({ theme, sig, personality, player }: { theme: ReturnType
   return null;
 }
 
-export default function TurkeyTrotGame() {
+function TurkeyTrotGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const stopMusicRef = useRef<(() => void) | null>(null);
@@ -414,3 +414,7 @@ export default function TurkeyTrotGame() {
     </GameShell>
   );
 }
+
+import dynamic from 'next/dynamic';
+const TurkeyTrotGame = dynamic(() => Promise.resolve({ default: TurkeyTrotGameInner }), { ssr: false });
+export default TurkeyTrotGame;

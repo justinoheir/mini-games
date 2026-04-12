@@ -27,7 +27,7 @@ function getPersonality(sig: Signals) {
 }
 type Phase = 'start' | 'countdown' | 'playing' | 'done';
 
-export default function TrackSprint() {
+function TrackSprintInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const stateRef = useRef({
@@ -275,3 +275,7 @@ export default function TrackSprint() {
     </GameShell>
   );
 }
+
+import dynamic from 'next/dynamic';
+const TrackSprint = dynamic(() => Promise.resolve({ default: TrackSprintInner }), { ssr: false });
+export default TrackSprint;
