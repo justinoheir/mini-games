@@ -281,15 +281,8 @@ function CableWrapGameInner() {
         updateCableLine(s.scene, s);
       }
 
-      // Tangle detection: if line crosses itself significantly
-      if (s.cablePath.length > 20 && Math.random() < 0.01) {
-        s.sig.tangles++;
-        s.sig.streakCurrent = 0;
-        sfx.collision?.(); haptic([30]);
-        // Reset cable
-        s.cablePath = [new THREE.Vector2(s.cableEndX, s.cableEndY)];
-        updateCableLine(s.scene, s);
-      }
+      // Tangle detection removed — was a random 1% penalty per pointer-move event,
+      // not actual crossing detection. Unfairly punished players with no real feedback.
     };
 
     const onPointerUp = () => {

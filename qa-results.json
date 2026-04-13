@@ -1,0 +1,101 @@
+[
+  {
+    "game_id": "paint-splash",
+    "verdict": "POOR",
+    "errors": [],
+    "warnings": [],
+    "canvas_visible": false,
+    "game_changed": false,
+    "start_clicked": true,
+    "is_error_page": false,
+    "notes": "No canvas and no game elements found"
+  },
+  {
+    "game_id": "web-weave",
+    "verdict": "POOR",
+    "errors": [],
+    "warnings": [],
+    "canvas_visible": false,
+    "game_changed": false,
+    "start_clicked": true,
+    "is_error_page": false,
+    "notes": "No canvas and no game elements found"
+  },
+  {
+    "game_id": "treasure-dive",
+    "verdict": "POOR",
+    "errors": [],
+    "warnings": [],
+    "canvas_visible": false,
+    "game_changed": false,
+    "start_clicked": true,
+    "is_error_page": false,
+    "notes": "No canvas and no game elements found"
+  },
+  {
+    "game_id": "frog-leap",
+    "verdict": "POOR",
+    "errors": [],
+    "warnings": [],
+    "canvas_visible": false,
+    "game_changed": false,
+    "start_clicked": true,
+    "is_error_page": false,
+    "notes": "No canvas and no game elements found"
+  },
+  {
+    "game_id": "wire-cross",
+    "verdict": "POOR",
+    "errors": [],
+    "warnings": [],
+    "canvas_visible": false,
+    "game_changed": false,
+    "start_clicked": true,
+    "is_error_page": false,
+    "notes": "No canvas and no game elements found"
+  },
+  {
+    "game_id": "balloon-pop",
+    "verdict": "POOR",
+    "errors": [],
+    "warnings": [],
+    "canvas_visible": false,
+    "game_changed": false,
+    "start_clicked": true,
+    "is_error_page": false,
+    "notes": "No canvas and no game elements found"
+  },
+  {
+    "game_id": "slingshot-smash",
+    "verdict": "POOR",
+    "errors": [],
+    "warnings": [],
+    "canvas_visible": false,
+    "game_changed": false,
+    "start_clicked": true,
+    "is_error_page": false,
+    "notes": "No canvas and no game elements found"
+  },
+  {
+    "game_id": "ripple-tap",
+    "verdict": "POOR",
+    "errors": [],
+    "warnings": [],
+    "canvas_visible": false,
+    "game_changed": false,
+    "start_clicked": true,
+    "is_error_page": false,
+    "notes": "No canvas and no game elements found"
+  },
+  {
+    "game_id": "pendulum-swing",
+    "verdict": "POOR",
+    "errors": [],
+    "warnings": [],
+    "canvas_visible": false,
+    "game_changed": false,
+    "start_clicked": true,
+    "is_error_page": false,
+    "notes": "No canvas and no game elements found"
+  }
+]

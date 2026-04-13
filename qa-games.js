@@ -1,0 +1,37 @@
+// List of all game IDs to test
+const GAME_IDS = [
+  'paint-splash','web-weave','treasure-dive','frog-leap','wire-cross',
+  'balloon-pop','slingshot-smash','ripple-tap','pendulum-swing','node-connect',
+  'orbit-launch','speed-sort','spring-leap','crystal-catch','wobble-stack',
+  'chain-reaction','pixel-paint','drop-zone','laser-guide','friction-slide',
+  'gravity-well','tilt-maze','whisper-bomb','breath-rider','steady-hand',
+  'tunnel','pulse-sphere','shadow-tap','color-cascade','equation-tap',
+  'color-word','visual-search','odd-one-out','pattern-predict','reflex-grid',
+  'sequence-unlock','word-flash','rhythm-repeat','category-clash','memory-grid',
+  'reaction-chain','stack-drop','dodge-blitz','crowd-roar','balance-beam',
+  'path-trace','pitch-match','symbol-scan','neon-archer','ice-sculptor',
+  'gravity-flip','volcano-tap','marathon-pace','hot-potato','slam-dunk',
+  'archery-draw','hockey-slap','javelin-throw','bowling-curve','swimming-stroke',
+  'dart-board','track-sprint','discus-spin','boxing-combo','hoop-shot',
+  'penalty-kick','spiral-throw','reflex-rally','precision-putt','gift-rush',
+  'snow-catch','boo-blast','cauldron-bubble','firework-launch','countdown-crush',
+  'cupid-shot','love-note','turkey-trot','harvest-catch','shamrock-shuffle',
+  'egg-toss','pinata-smash','flower-bouquet','bbq-master','sparkler-draw',
+  'pencil-pack','diya-light','dreidel-spin','dragon-parade','bead-catch',
+  'lantern-float','taco-toss','basket-weave','clover-path','signal-boost',
+  'crystal-grow','echo-clap','solar-charge','aurora-wave','dragon-breath',
+  'voice-sculpt','echo-match','howl-wolf','beat-box','hum-maze',
+  'chant-power','whistle-launch','vocal-shield','breath-sculpt','frequency-tune',
+  'lung-capacity','sound-waves','sing-along','morse-tap','morse-decode',
+  'code-breaker','pulse-jump','domino-chain','number-crunch','mirror-mind',
+  'number-path','logic-gate','binary-decode','attention-switch','face-memory',
+  'inference-trail','spatial-map','neon-chess','shape-rotate','type-speed',
+  'bubble-burst','tower-stack','bounce-pass','gear-grind','thread-needle',
+  'jigsaw-rush','cable-wrap','magnet-maze','cosmic-catch','wormhole-dive',
+  'dream-catch','sound-garden','curling-sweep','rowing-rhythm','baseball-swing',
+  'karate-chop','pole-vault','table-tennis','gymnast-beam','pixel-skate',
+  'surf-ride','ski-slalom','mirror-dance','sand-pour','color-blend',
+  'echo-tap','heat-map','trust-fall','spark-chain','crowd-pulse'
+];
+
+module.exports = { GAME_IDS };
