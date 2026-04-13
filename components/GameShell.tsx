@@ -7,6 +7,7 @@ import { BrandTheme, DEFAULT_THEME, buildDynamicTheme } from '@/lib/brands';
 import { applyTheme } from '@/lib/theme';
 import MuteButton from './MuteButton';
 import MobileGate from './MobileGate';
+import InstructionsButton from './InstructionsButton';
 
 interface GameShellProps {
   title: string;
@@ -180,6 +181,9 @@ export default function GameShell({ title, emoji, titleIcon, accentColor, childr
             <MuteButton />
           </div>
         </div>
+
+        {/* Instructions button — shown when gameId is provided */}
+        {gameId && <InstructionsButton gameId={gameId} />}
 
         {children}
 
