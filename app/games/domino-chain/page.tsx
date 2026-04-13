@@ -109,7 +109,7 @@ function DominoChainGameInner() {
     // Table surface
     const tableGeo=new THREE.BoxGeometry(20,0.15,4);
     const tableMat=new THREE.MeshStandardMaterial({color:0x1a0a00,metalness:0.2,roughness:0.8});
-    scene.add(Object.assign(new THREE.Mesh(tableGeo,tableMat),{position:{x:0,y:-0.8,z:0,set:()=>{}}}));
+    { const _table = new THREE.Mesh(tableGeo, tableMat); _table.position.set(0, -0.8, 0); scene.add(_table); }
     const tableM=new THREE.Mesh(tableGeo,tableMat);tableM.position.y=-0.8;scene.add(tableM);
 
     // Create dominoes

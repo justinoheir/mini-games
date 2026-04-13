@@ -165,7 +165,7 @@ function GameDartboardInner() {
     const playerGroup=new THREE.Group();
     const bodyMat2=new THREE.MeshStandardMaterial({color:0xfed7aa});
     // body
-    playerGroup.add(Object.assign(new THREE.Mesh(new THREE.CylinderGeometry(0.3,0.3,1.4,8),bodyMat2),{position:{set:()=>{}}}) );
+    { const _body2 = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 1.4, 8), bodyMat2); playerGroup.add(_body2); }
     playerGroup.position.set(-2.5,0,3);
     scene.add(playerGroup);
     playerRef.current=playerGroup;

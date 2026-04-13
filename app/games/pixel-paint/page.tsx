@@ -162,7 +162,7 @@ function PixelPaintInner() {
     const pLight = new THREE.PointLight(0xf472b6, 60, 25);
     pLight.position.set(0, 8, 8);
     scene.add(pLight);
-    scene.add(Object.assign(new THREE.PointLight(0x818cf8, 40, 20), { position: new THREE.Vector3(-5, 4, 5) }));
+    { const _pl2 = new THREE.PointLight(0x818cf8, 40, 20); _pl2.position.set(-5, 4, 5); scene.add(_pl2); }
 
     // Stars
     const sg = new THREE.BufferGeometry();

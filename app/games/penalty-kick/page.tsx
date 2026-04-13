@@ -131,7 +131,7 @@ function PenaltyKickInner() {
 
     // Lights
     scene.add(new THREE.AmbientLight(0x1a2a1a, 2));
-    scene.add(Object.assign(new THREE.DirectionalLight(0xffffff, 0.8), { position: new THREE.Vector3(5, 10, 5), castShadow: true }));
+    { const _dl = new THREE.DirectionalLight(0xffffff, 0.8); _dl.position.set(5, 10, 5); _dl.castShadow = true; scene.add(_dl); }
     const aLight = new THREE.PointLight(0x22c55e, 40, 20);
     aLight.position.set(0, 4, 5);
     scene.add(aLight);

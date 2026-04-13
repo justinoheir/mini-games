@@ -206,9 +206,9 @@ function SpiralThrowGameInner() {
     // Goal posts
     const postMat = new THREE.MeshStandardMaterial({ color: 0xfbbf24, emissive: 0xfbbf24, emissiveIntensity: 0.4 });
     const postGroup = new THREE.Group();
-    postGroup.add(Object.assign(new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 6, 6), postMat), { position: new THREE.Vector3(0, 3, -35) }));
-    postGroup.add(Object.assign(new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 2.5, 6), postMat), { position: new THREE.Vector3(-1.25, 6, -35), rotation: new THREE.Euler(0, 0, Math.PI/2) }));
-    postGroup.add(Object.assign(new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 2.5, 6), postMat), { position: new THREE.Vector3(1.25, 6, -35), rotation: new THREE.Euler(0, 0, Math.PI/2) }));
+    { const _post1 = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 6, 6), postMat); _post1.position.set(0, 3, -35); postGroup.add(_post1); }
+    { const _bar1 = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 2.5, 6), postMat); _bar1.position.set(-1.25, 6, -35); _bar1.rotation.set(0, 0, Math.PI/2); postGroup.add(_bar1); }
+    { const _bar2 = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 2.5, 6), postMat); _bar2.position.set(1.25, 6, -35); _bar2.rotation.set(0, 0, Math.PI/2); postGroup.add(_bar2); }
     fieldGroup.add(postGroup);
     scene.add(fieldGroup);
     s.fieldGroup = fieldGroup;

@@ -319,7 +319,7 @@ function NeonArcherGameInner() {
     neonLight.position.set(0, 5, 0);
     scene.add(neonLight);
     s.neonLight = neonLight;
-    scene.add(Object.assign(new THREE.PointLight(0x0066ff, 2, 30), { position: { x: 0, y: -2, z: 0 } }));
+    { const _pl2 = new THREE.PointLight(0x0066ff, 2, 30); _pl2.position.set(0, -2, 0); scene.add(_pl2); }
 
     // Ground
     const ground = new THREE.Mesh(

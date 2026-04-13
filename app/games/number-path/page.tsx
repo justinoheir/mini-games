@@ -132,8 +132,8 @@ function NumberPathGameInner() {
     rendererRef.current = renderer;
 
     scene.add(new THREE.AmbientLight(0x0a1f10, 3));
-    scene.add(Object.assign(new THREE.PointLight(0x22c55e, 60, 20), { position: new THREE.Vector3(2, 3, 8) }));
-    scene.add(Object.assign(new THREE.PointLight(0x14b8a6, 40, 15), { position: new THREE.Vector3(-3, -2, 6) }));
+    { const _pl1 = new THREE.PointLight(0x22c55e, 60, 20); _pl1.position.set(2, 3, 8); scene.add(_pl1); }
+    { const _pl2 = new THREE.PointLight(0x14b8a6, 40, 15); _pl2.position.set(-3, -2, 6); scene.add(_pl2); }
 
     // Stars
     const sg = new THREE.BufferGeometry();

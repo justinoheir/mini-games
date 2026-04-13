@@ -122,7 +122,7 @@ function ReflexRallyInner() {
     pLight.position.set(0, 4, 7);
     scene.add(pLight);
     accentLightRef.current = pLight;
-    scene.add(Object.assign(new THREE.PointLight(0xfde047, 40, 15), { position: new THREE.Vector3(2, 2, 5) }));
+    { const _pl2 = new THREE.PointLight(0xfde047, 40, 15); _pl2.position.set(2, 2, 5); scene.add(_pl2); }
 
     // Court surface (clay)
     const court = new THREE.Mesh(new THREE.PlaneGeometry(12, 8), new THREE.MeshStandardMaterial({ color: 0x3d1a08, roughness: 0.9 }));

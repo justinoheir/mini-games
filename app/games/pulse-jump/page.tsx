@@ -141,7 +141,7 @@ function PulseJumpGameInner() {
     const pLight = new THREE.PointLight(0xa855f7, 80, 20);
     pLight.position.set(-2, 3, 6);
     scene.add(pLight);
-    scene.add(Object.assign(new THREE.PointLight(0x6366f1, 40, 15), { position: new THREE.Vector3(3, 1, 5) }));
+    { const _pl2 = new THREE.PointLight(0x6366f1, 40, 15); _pl2.position.set(3, 1, 5); scene.add(_pl2); }
 
     // Stars
     const sg = new THREE.BufferGeometry();

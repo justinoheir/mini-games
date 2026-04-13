@@ -122,9 +122,9 @@ function TableTennisGameInner() {
     // Table lines
     const lineGeo = new THREE.BoxGeometry(8, 0.01, 0.05);
     const lineMat = new THREE.MeshStandardMaterial({ color: 0xffffff, transparent: true, opacity: 0.4 });
-    scene.add(Object.assign(new THREE.Mesh(lineGeo, lineMat), { position: new THREE.Vector3(0, -0.42, 0) }));
+    { const _line = new THREE.Mesh(lineGeo, lineMat); _line.position.set(0, -0.42, 0); scene.add(_line); }
     const centerLineGeo = new THREE.BoxGeometry(0.05, 0.01, 12);
-    scene.add(Object.assign(new THREE.Mesh(centerLineGeo, lineMat), { position: new THREE.Vector3(0, -0.42, 0) }));
+    { const _cline = new THREE.Mesh(centerLineGeo, lineMat); _cline.position.set(0, -0.42, 0); scene.add(_cline); }
 
     // Ball
     const ballGeo = new THREE.SphereGeometry(0.15, 16, 16);

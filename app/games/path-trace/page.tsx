@@ -158,8 +158,8 @@ function PathTraceGameInner() {
     rendererRef.current = renderer;
 
     scene.add(new THREE.AmbientLight(0x082010, 3));
-    scene.add(Object.assign(new THREE.PointLight(0x059669, 50, 20), { position: new THREE.Vector3(0, 3, 7) }));
-    scene.add(Object.assign(new THREE.PointLight(0x22d3ee, 30, 15), { position: new THREE.Vector3(-3, -2, 5) }));
+    { const _pl1 = new THREE.PointLight(0x059669, 50, 20); _pl1.position.set(0, 3, 7); scene.add(_pl1); }
+    { const _pl2 = new THREE.PointLight(0x22d3ee, 30, 15); _pl2.position.set(-3, -2, 5); scene.add(_pl2); }
 
     // Trace line
     const traceGeo = new THREE.BufferGeometry();

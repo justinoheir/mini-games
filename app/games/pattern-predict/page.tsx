@@ -156,8 +156,8 @@ function PatternPredictInner() {
     rendererRef.current = renderer;
 
     scene.add(new THREE.AmbientLight(0x082020, 3));
-    scene.add(Object.assign(new THREE.PointLight(0x14b8a6, 60, 20), { position: new THREE.Vector3(2, 4, 7) }));
-    scene.add(Object.assign(new THREE.PointLight(0xa855f7, 40, 15), { position: new THREE.Vector3(-3, -3, 5) }));
+    { const _pl1 = new THREE.PointLight(0x14b8a6, 60, 20); _pl1.position.set(2, 4, 7); scene.add(_pl1); }
+    { const _pl2 = new THREE.PointLight(0xa855f7, 40, 15); _pl2.position.set(-3, -3, 5); scene.add(_pl2); }
 
     // Stars
     const sg = new THREE.BufferGeometry();

@@ -135,7 +135,7 @@ function PaintSplashGameInner() {
     const pl = new THREE.PointLight(0xf43f5e, 60, 20);
     pl.position.set(2, 3, 7);
     scene.add(pl);
-    scene.add(Object.assign(new THREE.PointLight(0x3b82f6, 40, 15), { position: new THREE.Vector3(-3, -2, 5) }));
+    { const _pl2 = new THREE.PointLight(0x3b82f6, 40, 15); _pl2.position.set(-3, -2, 5); scene.add(_pl2); }
 
     // Canvas plane (target surface)
     const canvasGeo = new THREE.PlaneGeometry(9, 9);

@@ -86,9 +86,9 @@ function MarathonPaceGameInner() {
     const group = new THREE.Group();
     const mat = new THREE.MeshPhongMaterial({ color, emissive: color, emissiveIntensity: 0.3 });
     // Head
-    group.add(Object.assign(new THREE.Mesh(new THREE.SphereGeometry(0.15, 10, 10), mat), { position: { x: 0, y: 1.2, z: 0 } } as any));
+    { const _head = new THREE.Mesh(new THREE.SphereGeometry(0.15, 10, 10), mat); _head.position.set(0, 1.2, 0); group.add(_head); }
     // Body
-    group.add(Object.assign(new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 0.5, 8), mat), { position: { x: 0, y: 0.75, z: 0 } } as any));
+    { const _body = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 0.5, 8), mat); _body.position.set(0, 0.75, 0); group.add(_body); }
     // Legs (2)
     for (let side = -1; side <= 1; side += 2) {
       const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.5, 6), mat);
