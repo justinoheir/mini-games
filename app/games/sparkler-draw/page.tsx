@@ -1,4 +1,4 @@
-﻿'use client';
+﻿﻿﻿'use client';
 /**
  * SPARKLER DRAW — 3D Version
  * Trace a glowing 3D star shape with particle trail sparkles.
@@ -269,6 +269,7 @@ function SparklerDrawGameInner() {
       s2.trackedCount = covered.length;
       if (covered.length >= s2.templatePoints.length * 0.7 && s2.completionMs === null) {
         s2.completionMs = Date.now() - s2.gameStartMs;
+        s2.streak=(s2.streak||0)+1; setStreak(s2.streak);
         sfx.success(); haptic([50, 30, 50]);
       }
       setScoreDisplay(Math.round((s2.totalHits / Math.max(1, s2.totalSamples)) * 100));
@@ -318,6 +319,11 @@ function SparklerDrawGameInner() {
           { label: 'TIME', value: timeLeft, danger: timeLeft <= 10 },
           { label: 'ACC', value: `${scoreDisplay}%` },
         ]} />
+      )}
+      {phase === 'playing' && streak >= 3 && (
+        <div style={{ position: 'fixed', top: 128, left: '50%', transform: 'translateX(-50%)', zIndex: 25, pointerEvents: 'none', fontSize: 20, fontWeight: 900, color: '#fbbf24', textShadow: '0 0 16px #fbbf2488', letterSpacing: 1, whiteSpace: 'nowrap' }} aria-live="polite" aria-atomic="true">
+          ⚡ x{Math.max(1,Math.floor(streak/3)+1)} Streak!
+        </div>
       )}
       <AnimatePresence>
         {isNewBest && phase === 'done' && (

@@ -1,4 +1,4 @@
-'use client';
+﻿﻿'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
 import * as THREE from 'three';
 import GameShell from '@/components/GameShell';
@@ -21,7 +21,7 @@ const PB_KEY  = 'pb_precision-putt';
 const MAX_HOLES = 8;
 const GAME_EMOJI = '🏌️';
 
-interface Signals { holes: number; totalStrokes: number; holesInOne: number; pars: number; bogeys: number; sweetSpotHits: number; avgReadTime: number; readTimes: number[]; powerHistory: number[]; }
+interface Signals { holes: number; score?: number; totalStrokes: number; holesInOne: number; pars: number; bogeys: number; sweetSpotHits: number; avgReadTime: number; readTimes: number[]; powerHistory: number[]; }
 type Phase = 'start' | 'countdown' | 'playing' | 'done';
 
 function getPersonality(sig: Signals): string {
@@ -81,6 +81,7 @@ function PrecisionPuttInner() {
   const [holeDisplay, setHoleDisplay] = useState(1);
   const [finalSig, setFinalSig] = useState<Signals | null>(null);
   const [streak, setStreak] = useState(0);
+  const [scoreDisplay, setScoreDisplay] = useState(0);
 
   useEffect(() => { /* accent sync */ }, [theme]);
 
@@ -115,7 +116,7 @@ function PrecisionPuttInner() {
     const s = stateRef.current;
     s.running = true; s.timeLeft = 60; s.holeIndex = 0;
     s.sig = { holes: 0, totalStrokes: 0, holesInOne: 0, pars: 0, bogeys: 0, sweetSpotHits: 0, avgReadTime: 0, readTimes: [], powerHistory: [] };
-    setHoleDisplay(1); setStreak(0); setTimeLeft(60); setPhase('playing');
+    setScoreDisplay(0); setHoleDisplay(1); setStreak(0); setTimeLeft(60); setPhase('playing');
     stopMusicRef.current = startMusic('minimal');
 
     const W = window.innerWidth, H = window.innerHeight;
@@ -284,6 +285,11 @@ function PrecisionPuttInner() {
               triggerPop('HOLE IN ONE! 🎊', window.innerWidth*0.5, window.innerHeight*0.4);
             } else if (strokes <= par) { s.sig.pars++; sfx.collect(); haptic([60,30,60]); playScoreHit('default', 10); }
             else { s.sig.bogeys++; sfx.nearMiss(); }
+            // Score tracking
+            const _holeScore = strokes === 1 ? 50 : strokes <= par ? 20 : 5;
+            if (!s.sig.score) s.sig.score = 0;
+            s.sig.score += _holeScore;
+            setScoreDisplay(s.sig.score);
             s.holeIndex++;
             setHoleDisplay(Math.min(s.holeIndex + 1, MAX_HOLES));
             setStreak(s.sig.holes);
@@ -368,11 +374,11 @@ function PrecisionPuttInner() {
       {phase === 'countdown' && <Countdown onComplete={handleCountdownDone} accentColor={accent} />}
       {(phase === 'playing' || phase === 'countdown') && (
         <>
-          <div ref={mountRef} style={{ position: 'absolute', inset: 0, touchAction: 'none' }} />
+          <div ref={mountRef} role="application" aria-label="Putting green - swipe to aim and shoot" style={{ position: 'absolute', inset: 0, touchAction: 'none' }} />
           {phase === 'playing' && (
             <>
               <GameHUD items={[
-                { label: 'HOLE', value: `${Math.min(holeDisplay, MAX_HOLES)}/${MAX_HOLES}`, testId: 'score' },
+                { label: 'HOLE', value: `${Math.min(holeDisplay, MAX_HOLES)}/${MAX_HOLES}`, testId: 'score' }, { label: 'SCORE', value: scoreDisplay },
                 { label: 'TIME', value: `${timeLeft}s`, danger: timeLeft <= 10, testId: 'timer' },
               ]} accentColor={accent} />
               <ScorePopEffect pops={pops} accentColor={accent} />

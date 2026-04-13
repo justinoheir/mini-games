@@ -1,4 +1,4 @@
-﻿'use client';
+﻿﻿﻿﻿'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
 import GameShell from '@/components/GameShell';
 import GameHUD from '@/components/GameHUD';
@@ -32,7 +32,7 @@ type Phase = 'start' | 'countdown' | 'playing' | 'done';
 type SubPhase = 'showing' | 'player_turn' | 'success_flash' | 'fail_flash';
 
 interface GState {
-  running: boolean; timeLeft: number; sig: Signals;
+  running: boolean; timeLeft: number; sig: Signals; streak: number;
   sequence: number[]; playerInput: number[];
   subPhase: SubPhase; showIndex: number; showAt: number;
   level: number; lit: number | null; mistakeIndex: number | null;
@@ -245,6 +245,7 @@ function EchoTapInner() {
     const pos = s.playerInput.length - 1;
     if (s.playerInput[pos] !== s.sequence[pos]) {
       // Wrong
+      s.streak=0; setStreak(0);
       s.sig.mistakes++;
       s.mistakeIndex = idx;
       s.flashUntil = Date.now() + 600;
@@ -253,10 +254,12 @@ function EchoTapInner() {
       sfx.fail?.(); hapticFail();
     } else if (s.playerInput.length === s.sequence.length) {
       // Complete!
+      s.streak=(s.streak||0)+1; setStreak(s.streak);
+      const _et=Math.max(1,Math.floor(s.streak/3)+1);
       s.sig.totalRounds++;
       if (!s.roundMistake) s.sig.perfectRounds++;
       s.roundMistake = false;
-      const pts = s.level * 10;
+      const pts = s.level * 10 * _et;
       s.sig.score += pts;
       setScoreDisplay(s.sig.score);
       s.subPhase = 'success_flash';
@@ -328,6 +331,11 @@ function EchoTapInner() {
           <canvas ref={canvasRef} role="application" aria-label="Game canvas - tap to interact" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none' }} />
           {phase === 'playing' && <GameHUD accentColor={theme.colors.accent ?? ACCENT} items={[{ label: 'TIME', value: timeLeft, danger: timeLeft <= 10 }, { label: 'SCORE', value: scoreDisplay }]} />}
         </>
+      )}
+            {phase === 'playing' && streak >= 3 && (
+        <div style={{ position: 'fixed', top: 128, left: '50%', transform: 'translateX(-50%)', zIndex: 25, pointerEvents: 'none', fontSize: 20, fontWeight: 900, color: '#fbbf24', textShadow: '0 0 16px #fbbf2488', letterSpacing: 1, whiteSpace: 'nowrap' }} aria-live="polite" aria-atomic="true">
+          ⚡ x{Math.max(1,Math.floor(streak/3)+1)} Streak!
+        </div>
       )}
       {phase === 'done' && finalSig && (
         <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI}

@@ -1,4 +1,4 @@
-﻿'use client';
+﻿﻿﻿'use client';
 /**
  * LUNG CAPACITY — 3D expanding lung visualization. Hold breath in zone.
  */
@@ -175,8 +175,14 @@ function LungCapacityGameInner() {
     timerRef.current = setInterval(() => {
       s.timeLeft--; setTimeLeft(s.timeLeft);
       const inZ = s.inZone;
-      if (inZ) { s.sig.steadySeconds++; s.sig.score += 3; setScoreDisplay(s.sig.score); hapticScore(); }
-      else if (s.fill > ZONE_HIGH * 100) { s.sig.overBreaths++; sfx.collision(); hapticFail(); }
+      if (inZ) {
+        s.streak=(s.streak||0)+1; setStreak(s.streak);
+        const _lc=Math.max(1,Math.floor(s.streak/5)+1);
+        s.sig.steadySeconds++; s.sig.score += 3*_lc; setScoreDisplay(s.sig.score); hapticScore();
+      } else if (s.fill > ZONE_HIGH * 100) {
+        s.streak=0; setStreak(0);
+        s.sig.overBreaths++; sfx.collision(); hapticFail();
+      }
       else { s.sig.underBreaths++; }
       if (s.sig.score > s.sig.maxFill) s.sig.maxFill = Math.round(s.fill);
       if (s.timeLeft <= 0) endGame();
@@ -334,6 +340,11 @@ function LungCapacityGameInner() {
             </div>
           </div>
         </>
+      )}
+            {phase === 'playing' && streak >= 3 && (
+        <div style={{ position: 'fixed', top: 128, left: '50%', transform: 'translateX(-50%)', zIndex: 25, pointerEvents: 'none', fontSize: 20, fontWeight: 900, color: '#fbbf24', textShadow: '0 0 16px #fbbf2488', letterSpacing: 1, whiteSpace: 'nowrap' }} aria-live="polite" aria-atomic="true">
+          ⚡ x{Math.max(1,Math.floor(streak/3)+1)} Streak!
+        </div>
       )}
       {phase === 'done' && finalSig && (
         <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI}

@@ -1,4 +1,4 @@
-﻿'use client';
+﻿﻿﻿'use client';
 /**
  * SPATIAL MAP — 3D Version
  * 4x4 grid of glowing 3D cubes. Memorize path, then trace it.
@@ -340,6 +340,11 @@ function SpatialMapGameInner() {
           { label: 'TIME', value: timeLeft, danger: timeLeft <= 10 },
           { label: 'SCORE', value: scoreDisplay },
         ]} />
+      )}
+      {phase === 'playing' && streak >= 3 && (
+        <div style={{ position: 'fixed', top: 128, left: '50%', transform: 'translateX(-50%)', zIndex: 25, pointerEvents: 'none', fontSize: 20, fontWeight: 900, color: '#fbbf24', textShadow: '0 0 16px #fbbf2488', letterSpacing: 1, whiteSpace: 'nowrap' }} aria-live="polite" aria-atomic="true">
+          ⚡ x{Math.max(1,Math.floor(streak/3)+1)} Streak!
+        </div>
       )}
       {phase === 'done' && finalSig && (
         <>

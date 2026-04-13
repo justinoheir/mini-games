@@ -1,4 +1,4 @@
-﻿'use client';
+﻿﻿﻿'use client';
 /**
  * ECHO MATCH 3D — Simon Says with 3D glowing tiles and tones.
  * Watch the sequence light up, then repeat it.
@@ -48,6 +48,7 @@ function EchoMatchGameInner() {
   const playerSessionRef = useRef<PlayerSession | null>(null);
 
   const sigRef = useRef<Signals>({ score: 0, rounds: 0, longestSeq: 0, correctTaps: 0, wrongTaps: 0 });
+  const streakRef = useRef(0);
   const seqRef = useRef<number[]>([]);
   const progRef = useRef(0);
   const timeRef = useRef(DURATION);
@@ -144,14 +145,17 @@ function EchoMatchGameInner() {
       hapticScore();
       progRef.current++;
       if (progRef.current === seqRef.current.length) {
+        streakRef.current++; setStreak(streakRef.current);
+        const _em=Math.max(1,Math.floor(streakRef.current/3)+1);
         sigRef.current.rounds++;
-        sigRef.current.score += seqRef.current.length * 2;
+        sigRef.current.score += seqRef.current.length * 2 * _em;
         setScoreDisp(sigRef.current.score);
         subPhaseRef.current = 'correct'; setSubPhase('correct');
         sfx.success?.();
         setTimeout(startSequence, 1200);
       }
     } else {
+      streakRef.current=0; setStreak(0);
       sigRef.current.wrongTaps++;
       hapticFail(); sfx.fail?.();
       subPhaseRef.current = 'wrong'; setSubPhase('wrong');
@@ -165,7 +169,7 @@ function EchoMatchGameInner() {
     cancelledRef.current = false;
     sigRef.current = { score: 0, rounds: 0, longestSeq: 0, correctTaps: 0, wrongTaps: 0 };
     seqRef.current = []; progRef.current = 0; timeRef.current = DURATION;
-    setScoreDisp(0); setStreak(0); setTimeLeft(DURATION); setSubPhase('watching'); setPhase('playing');
+    setScoreDisp(0); setStreak(0); streakRef.current=0; setTimeLeft(DURATION); setSubPhase('watching'); setPhase('playing');
     stopMusicRef.current = startMusic('ambient');
 
     const W = mount.clientWidth, H = mount.clientHeight;
@@ -290,7 +294,7 @@ function EchoMatchGameInner() {
   }, []);
   const handleCountdownDone = useCallback(() => { startLoop(); }, [startLoop]);
   const handlePlayAgain = useCallback(() => {
-    setPhase('start'); setScoreDisp(0); setStreak(0); setTimeLeft(DURATION); setFinalSig(null); setIsNewBest(false);
+    setPhase('start'); setScoreDisp(0); setStreak(0); streakRef.current=0; setTimeLeft(DURATION); setFinalSig(null); setIsNewBest(false);
   }, []);
 
   // Subphase status overlay
@@ -313,6 +317,11 @@ function EchoMatchGameInner() {
             </>
           )}
         </>
+      )}
+            {phase === 'playing' && streak >= 3 && (
+        <div style={{ position: 'fixed', top: 128, left: '50%', transform: 'translateX(-50%)', zIndex: 25, pointerEvents: 'none', fontSize: 20, fontWeight: 900, color: '#fbbf24', textShadow: '0 0 16px #fbbf2488', letterSpacing: 1, whiteSpace: 'nowrap' }} aria-live="polite" aria-atomic="true">
+          ⚡ x{Math.max(1,Math.floor(streak/3)+1)} Streak!
+        </div>
       )}
       {phase === 'done' && finalSig && (
         <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI} score={String(finalSig.score)} personality={getPersonality(finalSig)}

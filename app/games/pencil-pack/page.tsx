@@ -1,4 +1,4 @@
-﻿'use client';
+﻿﻿﻿'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
 import * as THREE from 'three';
 import GameShell from '@/components/GameShell';
@@ -235,7 +235,7 @@ function PencilPackGameInner() {
       }
       const available = ROW_CAP - s.rowFill[rowIdx];
       if (p.len > available) {
-        s.sig.overflowAttempts++;
+        s.sig.overflowAttempts++; s.streak=0; setStreak(0);
         sfx.collision(); haptic([30, 20, 30]);
         setFeedbackMsg('No room! 🚫');
         setTimeout(() => setFeedbackMsg(''), 800);
@@ -261,7 +261,9 @@ function PencilPackGameInner() {
       // Check if all pencils placed
       const allPlaced = pencilMeshesRef.current.every(pp => pp.placed);
       if (allPlaced) {
-        s.sig.roundsCompleted++; s.sig.score += 10; setScoreDisplay(s.sig.score);
+        s.streak=(s.streak||0)+1; setStreak(s.streak);
+        const _pp=Math.max(1,Math.floor(s.streak/3)+1);
+        s.sig.roundsCompleted++; s.sig.score += 10 * _pp; setScoreDisplay(s.sig.score);
         sfx.success(); haptic([30, 20, 30, 20, 60]);
         setFeedbackMsg('Packed! 🎉');
         setTimeout(() => { setFeedbackMsg(''); s.puzzleIdx++; if (s.running) loadPuzzle(); }, 800);
@@ -363,6 +365,11 @@ function PencilPackGameInner() {
             </>
           )}
         </>
+      )}
+            {phase === 'playing' && streak >= 3 && (
+        <div style={{ position: 'fixed', top: 128, left: '50%', transform: 'translateX(-50%)', zIndex: 25, pointerEvents: 'none', fontSize: 20, fontWeight: 900, color: '#fbbf24', textShadow: '0 0 16px #fbbf2488', letterSpacing: 1, whiteSpace: 'nowrap' }} aria-live="polite" aria-atomic="true">
+          ⚡ x{Math.max(1,Math.floor(streak/3)+1)} Streak!
+        </div>
       )}
       {phase === 'done' && finalSig && (
         <>

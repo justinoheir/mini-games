@@ -1,4 +1,4 @@
-﻿'use client';
+﻿﻿﻿'use client';
 /**
  * JIGSAW RUSH — 3D colorful puzzle pieces floating in space. Drag to slot.
  */
@@ -266,11 +266,13 @@ function JigsawRushGameInner() {
 
                 // Check complete
                 if (s.pieces.every(p => p.placed)) {
+                  s.streak=(s.streak||0)+1; setStreak(s.streak);
+                  const _jr=Math.max(1,Math.floor(s.streak/3)+1);
                   const solveMs = Date.now() - s.puzzleStartTime;
                   if (solveMs < s.sig.fastestSolveMs) s.sig.fastestSolveMs = solveMs;
                   s.sig.puzzlesCompleted++;
                   const bonus = Math.max(0, 10 - Math.floor(solveMs / 3000));
-                  s.sig.score += 15 + bonus;
+                  s.sig.score += (15 + bonus) * _jr;
                   s.completionFlash = 1;
                   sfx.success(); haptic([30, 20, 30, 20, 60]);
                   setScoreDisplay(s.sig.score);
@@ -343,6 +345,11 @@ function JigsawRushGameInner() {
       {phase === 'countdown' && <Countdown onComplete={startLoop} accentColor={theme.colors.accent ?? ACCENT} />}
       <div ref={mountRef} role="application" aria-label="Game area - tap to play" style={{ position: 'absolute', inset: 0, display: phase === 'playing' ? 'block' : 'none', touchAction: 'none' }} />
       {phase === 'playing' && <GameHUD accentColor={theme.colors.accent ?? ACCENT} items={[{ label: 'TIME', value: timeLeft, danger: timeLeft <= 5, testId: 'timer' }, { label: 'SCORE', value: scoreDisplay, testId: 'score' }]} />}
+            {phase === 'playing' && streak >= 3 && (
+        <div style={{ position: 'fixed', top: 128, left: '50%', transform: 'translateX(-50%)', zIndex: 25, pointerEvents: 'none', fontSize: 20, fontWeight: 900, color: '#fbbf24', textShadow: '0 0 16px #fbbf2488', letterSpacing: 1, whiteSpace: 'nowrap' }} aria-live="polite" aria-atomic="true">
+          ⚡ x{Math.max(1,Math.floor(streak/3)+1)} Streak!
+        </div>
+      )}
       {phase === 'done' && finalSig && (
         <>
           <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI} score={String(finalSig.score)} personality={getPersonality(finalSig)}

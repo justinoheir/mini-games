@@ -1,4 +1,4 @@
-﻿'use client';
+﻿﻿﻿'use client';
 /**
  * MAGNET MAZE — 3D maze with magnetic particle effects.
  * Tilt or drag to steer a metal ball through a maze with attracting magnets.
@@ -324,6 +324,7 @@ function MagnetMazeGameInner() {
         if (Math.sqrt(gdx * gdx + gdz * gdz) < 0.6) {
           s.sig.completionTime = Date.now() - s.startTime;
           s.sig.score = Math.max(0, 100 - Math.floor(s.sig.completionTime / 500));
+          s.streak=(s.streak||0)+1; setStreak(s.streak);
           setScoreDisplay(s.sig.score);
           sfx.success(); haptic([50, 30, 80]);
           setWonDisplay(true);
@@ -420,6 +421,11 @@ function MagnetMazeGameInner() {
           </motion.div>
         )}
       </AnimatePresence>
+            {phase === 'playing' && streak >= 3 && (
+        <div style={{ position: 'fixed', top: 128, left: '50%', transform: 'translateX(-50%)', zIndex: 25, pointerEvents: 'none', fontSize: 20, fontWeight: 900, color: '#fbbf24', textShadow: '0 0 16px #fbbf2488', letterSpacing: 1, whiteSpace: 'nowrap' }} aria-live="polite" aria-atomic="true">
+          ⚡ x{Math.max(1,Math.floor(streak/3)+1)} Streak!
+        </div>
+      )}
       {phase === 'done' && finalSig && (
         <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI} score={String(finalSig.score)} personality={getPersonality(finalSig)}
           insights={[

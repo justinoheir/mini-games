@@ -1,4 +1,4 @@
-﻿'use client';
+﻿﻿﻿'use client';
 /**
  * DOMINO CHAIN — 3D: tap the first domino at the perfect moment to cascade a full chain.
  * Orange-lit dark room with glowing white 3D dominoes falling in sequence.
@@ -45,7 +45,7 @@ interface Domino3D {
 }
 
 interface GS {
-  running:boolean; timeLeft:number; sig:Signals;
+  running:boolean; timeLeft:number; sig:Signals; streak: number;
   dominoes:Domino3D[];
   chainFalling:boolean; fallIndex:number;
   tapReady:boolean; tapWindowOpen:boolean; tapWindowTime:number;
@@ -240,12 +240,17 @@ function DominoChainGameInner() {
     const now=Date.now();
     const windowAge=now-s.tapWindowTime;
     if(s.tapWindowOpen&&windowAge>=0&&windowAge<=TAP_WINDOW){
-      s.sig.perfectTaps++;s.sig.score+=CHAIN_SIZE*5;setScore(s.sig.score);
+      s.streak=(s.streak||0)+1; setStreak(s.streak);
+      const _dcp=Math.max(1,Math.floor(s.streak/3)+1);
+      s.sig.perfectTaps++;s.sig.score+=CHAIN_SIZE*5*_dcp;setScore(s.sig.score);
       sfx.success();setFeedback('✨ PERFECT!');
     } else if(!s.tapWindowOpen){
-      s.sig.earlyTaps++;s.sig.score+=CHAIN_SIZE*2;setScore(s.sig.score);
+      s.streak=(s.streak||0)+1; setStreak(s.streak);
+      const _dce=Math.max(1,Math.floor(s.streak/3)+1);
+      s.sig.earlyTaps++;s.sig.score+=CHAIN_SIZE*2*_dce;setScore(s.sig.score);
       sfx.collect();setFeedback('⚡ EARLY');
     } else {
+      s.streak=0; setStreak(0);
       s.sig.lateTaps++;s.sig.score+=CHAIN_SIZE;setScore(s.sig.score);
       sfx.collect();setFeedback('⏱️ LATE');
     }
@@ -299,6 +304,11 @@ function DominoChainGameInner() {
           {phase==='playing'&&(
             <>
               <GameHUD accentColor={accent} items={[{label:'TIME',value:timeLeft,danger:timeLeft<=10},{label:'SCORE',value:scoreDisplay}]}/>
+              {phase === 'playing' && streak >= 3 && (
+                <div style={{ position: 'fixed', top: 128, left: '50%', transform: 'translateX(-50%)', zIndex: 25, pointerEvents: 'none', fontSize: 20, fontWeight: 900, color: '#fbbf24', textShadow: '0 0 16px #fbbf2488', letterSpacing: 1, whiteSpace: 'nowrap' }} aria-live="polite" aria-atomic="true">
+                  ⚡ x{Math.max(1,Math.floor(streak/3)+1)} Streak!
+                </div>
+              )}
               {feedback&&<div style={{position:'absolute',top:'30%',left:'50%',transform:'translateX(-50%)',fontSize:26,fontWeight:900,color:accent,textShadow:`0 0 20px ${accent}`,pointerEvents:'none',letterSpacing:'0.05em'}}>{feedback}</div>}
               <div style={{position:'absolute',bottom:50,left:'50%',transform:'translateX(-50%)',fontSize:13,color:'rgba(255,255,255,0.5)',fontWeight:600,letterSpacing:'0.1em',textAlign:'center'}}>
                 TAP WHEN DOMINO GLOWS BRIGHT

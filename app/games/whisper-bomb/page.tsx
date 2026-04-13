@@ -1,4 +1,4 @@
-﻿'use client';
+﻿﻿﻿﻿'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
 import * as THREE from 'three';
 import GameShell from '@/components/GameShell';
@@ -109,7 +109,7 @@ function WhisperBombInner() {
 
     s.running = true; s.timeLeft = 45; s.fuse = 100;
     s.volumeSamples = []; s.noiseSpikes = 0; s.dangerFrames = 0;
-    s.quietStreak = 0; s.musicSped = false; s.lastSpikeTime = 0;
+    s.quietStreak = 0; setStreak(0); s.musicSped = false; s.lastSpikeTime = 0;
     s.fuseParticles = []; s.frame = 0;
     setFuseDisplay(100); setDisplayTime(45); setGameState('playing');
     stopMusicRef.current = startMusic('tense');
@@ -235,11 +235,11 @@ function WhisperBombInner() {
 
       if (isNoise) {
         s.fuse -= FUSE_DRAIN_RATE;
-        s.quietStreak = 0;
+        s.quietStreak = 0; setStreak(0);
         s.dangerFrames++;
       } else {
         s.fuse = Math.min(100, s.fuse + FUSE_RECOVER_RATE);
-        s.quietStreak++;
+        s.quietStreak++; setStreak(Math.floor(s.quietStreak/60));
       }
       s.fuse = Math.max(0, Math.min(100, s.fuse));
       setFuseDisplay(Math.round(s.fuse));
@@ -338,11 +338,16 @@ function WhisperBombInner() {
         <div ref={mountRef} role="application" aria-label="Game area - tap to play" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none' }} />
       )}
       {gameState === 'playing' && <>
-        <GameHUD accentColor={accent} items={[{ label: 'TIME', value: displayTime, danger: displayTime <= 10 }, { label: 'FUSE', value: `${fuseDisplay}%`, danger: fuseDisplay <= 20 }]} />
+        <GameHUD accentColor={accent} items={[{ label: 'TIME', value: displayTime, danger: displayTime <= 10 }, { label: 'FUSE', value: `${fuseDisplay}%`, danger: fuseDisplay <= 20 }, { label: 'SCORE', value: fuseDisplay }]} />
         <div style={{ position: 'fixed', bottom: '8%', left: '50%', transform: 'translateX(-50%)', color: fuseDisplay < 40 ? '#ef4444' : 'rgba(255,255,255,0.5)', fontSize: 15, fontWeight: 700, zIndex: 50 }}>
           {micFallback ? '🤫 Hold to make noise' : fuseDisplay < 40 ? '⚠️ STAY QUIET!' : '🤫 Shh...'}
         </div>
       </>}
+            {gameState === 'playing' && streak >= 3 && (
+        <div style={{ position: 'fixed', top: 128, left: '50%', transform: 'translateX(-50%)', zIndex: 25, pointerEvents: 'none', fontSize: 20, fontWeight: 900, color: '#fbbf24', textShadow: '0 0 16px #fbbf2488', letterSpacing: 1, whiteSpace: 'nowrap' }} aria-live="polite" aria-atomic="true">
+          ⚡ x{Math.max(1,Math.floor(streak/3)+1)} Streak!
+        </div>
+      )}
       {gameState === 'done' && behavior && (
         <EndScreen gameId={GAME_ID} title={getProfile(behavior)} emoji={behavior.defused ? '✅' : '💥'} score={behavior.defused ? '100' : String(Math.round(behavior.fuseRemaining))}
           personality={getProfile(behavior)}

@@ -1,4 +1,4 @@
-﻿'use client';
+﻿﻿﻿'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
 import * as THREE from 'three';
 import GameShell from '@/components/GameShell';
@@ -69,6 +69,7 @@ function PenaltyKickInner() {
   const [phase, setPhase] = useState<Phase>('start');
   const [shotsDisplay, setShotsDisplay] = useState(0);
   const [goalsDisplay, setGoalsDisplay] = useState(0);
+  const [scoreDisplay, setScoreDisplay] = useState(0);
   const [streak, setStreak] = useState(0);
   const [finalSig, setFinalSig] = useState<Signals | null>(null);
   const [isNewBest, setIsNewBest] = useState(false);
@@ -107,7 +108,7 @@ function PenaltyKickInner() {
     s.running = true;
     s.sig = { shots: 0, goals: 0, cornerShots: 0, powerSum: 0, curveShots: 0, score: 0 };
     s.phase = 'aim'; s.resultTimer = 0;
-    setShotsDisplay(0); setGoalsDisplay(0); setPhase('playing');
+    setShotsDisplay(0); setGoalsDisplay(0); setPhase('playing'); setScoreDisplay(0); setStreak(0);
     stopMusicRef.current = startMusic('sports');
 
     const W = window.innerWidth, H = window.innerHeight;
@@ -320,7 +321,7 @@ function PenaltyKickInner() {
       try { mountRef.current.removeChild(rendererRef.current.domElement); } catch { /**/ }
       rendererRef.current.dispose(); rendererRef.current = null;
     }
-    setShotsDisplay(0); setGoalsDisplay(0); setFinalSig(null); setShotMsg(''); setIsNewBest(false);
+    setShotsDisplay(0); setGoalsDisplay(0); setFinalSig(null); setScoreDisplay(0); setStreak(0); setShotMsg(''); setIsNewBest(false);
     setPhase('countdown');
   }, []);
 
@@ -341,7 +342,7 @@ function PenaltyKickInner() {
             <>
               <GameHUD accentColor={accent} items={[
                 { label: 'SHOTS', value: `${shotsDisplay}/${MAX_SHOTS}`, testId: 'timer' },
-                { label: 'GOALS', value: goalsDisplay, testId: 'score' },
+                { label: 'GOALS', value: goalsDisplay, testId: 'score' }, { label: 'SCORE', value: scoreDisplay },
               ]} />
               {shotMsg && (
                 <div style={{ position: 'absolute', top: '35%', left: '50%', transform: 'translateX(-50%)',
@@ -369,6 +370,11 @@ function PenaltyKickInner() {
           </motion.div>
         )}
       </AnimatePresence>
+            {phase === 'playing' && streak >= 3 && (
+        <div style={{ position: 'fixed', top: 128, left: '50%', transform: 'translateX(-50%)', zIndex: 25, pointerEvents: 'none', fontSize: 20, fontWeight: 900, color: '#fbbf24', textShadow: '0 0 16px #fbbf2488', letterSpacing: 1, whiteSpace: 'nowrap' }} aria-live="polite" aria-atomic="true">
+          ⚡ x{Math.max(1,Math.floor(streak/3)+1)} Streak!
+        </div>
+      )}
       {phase === 'done' && finalSig && (
         <>
           <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji="⚽"

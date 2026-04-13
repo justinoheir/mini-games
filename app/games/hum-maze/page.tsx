@@ -1,4 +1,4 @@
-﻿'use client';
+﻿﻿﻿'use client';
 /**
  * HUM MAZE — 3D tunnel with pitch-steered ball flying through gate rings.
  * Low pitch drifts LEFT, High pitch drifts RIGHT.
@@ -304,9 +304,11 @@ function HumMazeGameInner() {
           const ballXAtPass = s.ball ? s.ball.position.x : s.ballX;
           const inGap = Math.abs(ballXAtPass - gapCenterX) < 3.5;
           if (inGap) {
+            s.streak=(s.streak||0)+1; setStreak(s.streak);
+            const _hm=Math.max(1,Math.floor(s.streak/3)+1);
             s.gatesPassed++;
             hapticScore(); sfx.collect();
-            setScoreDisp(s.gatesPassed * 30 + (s.collisions === 0 ? 50 : 0));
+            setScoreDisp((s.gatesPassed * 30 + (s.collisions === 0 ? 50 : 0)) * _hm);
             // Spawn burst
             for (let p = 0; p < 8; p++) {
               const pGeo = new THREE.SphereGeometry(0.08, 8, 8);
@@ -317,7 +319,7 @@ function HumMazeGameInner() {
               s.ballParticles.push(pm);
             }
           } else {
-            s.collisions++; s.hitFlash = 12;
+            s.collisions++; s.hitFlash = 12; s.streak=0; setStreak(0);
             hapticFail(); sfx.collision();
           }
         }
@@ -416,6 +418,11 @@ function HumMazeGameInner() {
           { label: 'TIME', value: timeLeft, danger: timeLeft <= 10, testId: 'timer' },
           { label: 'GATES', value: scoreDisp, testId: 'score' },
         ]} />
+      )}
+      {phase === 'playing' && streak >= 3 && (
+        <div style={{ position: 'fixed', top: 128, left: '50%', transform: 'translateX(-50%)', zIndex: 25, pointerEvents: 'none', fontSize: 20, fontWeight: 900, color: '#fbbf24', textShadow: '0 0 16px #fbbf2488', letterSpacing: 1, whiteSpace: 'nowrap' }} aria-live="polite" aria-atomic="true">
+          ⚡ x{Math.max(1,Math.floor(streak/3)+1)} Streak!
+        </div>
       )}
       {phase === 'done' && finalSig && (
         <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI}

@@ -1,4 +1,4 @@
-﻿'use client';
+﻿﻿'use client';
 /**
  * DIYA LIGHT — 3D: tilt/drag to pour oil into a 3D diya, tap to ignite the flame.
  * Warm festival night environment with star field and glowing lanterns.
@@ -41,7 +41,7 @@ function getPersonality(sig:Signals):string {
 type Phase='start'|'countdown'|'playing'|'done';
 
 interface GS {
-  running:boolean; timeLeft:number; sig:Signals;
+  running:boolean; timeLeft:number; sig:Signals; streak: number;
   fillLevel:number; pourRate:number; lit:boolean; litTimer:number; flamePower:number;
   tiltX:number; dragActive:boolean; dragStartX:number; dragBaseX:number;
   lightFlash:number; overflowFlash:number; accentColor:string;
@@ -359,6 +359,11 @@ function DiyaLightGameInner() {
           {phase==='playing'&&(
             <>
               <GameHUD accentColor={accent} items={[{label:'TIME',value:timeLeft,danger:timeLeft<=5,testId:'timer'},{label:'SCORE',value:scoreDisplay,testId:'score'}]}/>
+              {phase === 'playing' && streak >= 3 && (
+                <div style={{ position: 'fixed', top: 128, left: '50%', transform: 'translateX(-50%)', zIndex: 25, pointerEvents: 'none', fontSize: 20, fontWeight: 900, color: '#fbbf24', textShadow: '0 0 16px #fbbf2488', letterSpacing: 1, whiteSpace: 'nowrap' }} aria-live="polite" aria-atomic="true">
+                  ⚡ x{Math.max(1,Math.floor(streak/3)+1)} Streak!
+                </div>
+              )}
               {!litDisplay&&(
                 <div style={{position:'absolute',bottom:60,left:'50%',transform:'translateX(-50%)',
                   fontSize:14,fontWeight:700,textAlign:'center',color:inZone?'#4ade80':accent,letterSpacing:'0.05em',pointerEvents:'none'}}>

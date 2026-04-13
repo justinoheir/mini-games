@@ -1,4 +1,4 @@
-﻿'use client';
+﻿﻿﻿'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
 import * as THREE from 'three';
 import GameShell from '@/components/GameShell';
@@ -113,7 +113,9 @@ function PinataSmashGameInner() {
       scene.add(mesh);
       candiesRef.current.push({ mesh, vx: (Math.random()-0.5)*0.15, vy: 0.1+Math.random()*0.12, vz: (Math.random()-0.5)*0.12, life: 1 });
     }
-    s.sig.bursts++; s.sig.score += 5 + s.sig.bursts * 2;
+    s.streak=(s.streak||0)+1; setStreak(s.streak);
+    const _ps=Math.max(1,Math.floor(s.streak/3)+1);
+    s.sig.bursts++; s.sig.score += (5 + s.sig.bursts * 2) * _ps;
     setScoreDisplay(s.sig.score);
     s.colorIdx = (s.colorIdx + 1) % PINATA_COLS.length;
     s.damage = 0;
@@ -302,6 +304,11 @@ function PinataSmashGameInner() {
             </>
           )}
         </>
+      )}
+            {phase === 'playing' && streak >= 3 && (
+        <div style={{ position: 'fixed', top: 128, left: '50%', transform: 'translateX(-50%)', zIndex: 25, pointerEvents: 'none', fontSize: 20, fontWeight: 900, color: '#fbbf24', textShadow: '0 0 16px #fbbf2488', letterSpacing: 1, whiteSpace: 'nowrap' }} aria-live="polite" aria-atomic="true">
+          ⚡ x{Math.max(1,Math.floor(streak/3)+1)} Streak!
+        </div>
       )}
       {phase === 'done' && finalSig && (
         <>

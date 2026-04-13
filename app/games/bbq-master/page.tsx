@@ -1,4 +1,4 @@
-﻿'use client';
+﻿﻿﻿﻿'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
 import * as THREE from 'three';
 import GameShell from '@/components/GameShell';
@@ -46,7 +46,7 @@ function getPersonality(sig: Signals): string {
 type Phase = 'start' | 'countdown' | 'playing' | 'done';
 
 interface GS {
-  running: boolean; timeLeft: number; sig: Signals;
+  running: boolean; timeLeft: number; sig: Signals; streak: number;
   renderer: THREE.WebGLRenderer | null; scene: THREE.Scene | null;
   camera: THREE.PerspectiveCamera | null; animId: number;
   foods: FoodItem3D[]; nextId: number;
@@ -378,6 +378,11 @@ function BBQMasterGameInner() {
           { label: 'TIME', value: timeLeft, danger: timeLeft <= 10 },
           { label: 'SCORE', value: scoreDisplay },
         ]} />
+      )}
+      {phase === 'playing' && streak >= 3 && (
+        <div style={{ position: 'fixed', top: 128, left: '50%', transform: 'translateX(-50%)', zIndex: 25, pointerEvents: 'none', fontSize: 20, fontWeight: 900, color: '#fbbf24', textShadow: '0 0 16px #fbbf2488', letterSpacing: 1, whiteSpace: 'nowrap' }} aria-live="polite" aria-atomic="true">
+          ⚡ x{Math.max(1,Math.floor(streak/3)+1)} Streak!
+        </div>
       )}
       {phase === 'done' && finalSig && (
         <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI}

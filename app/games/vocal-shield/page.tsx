@@ -1,4 +1,4 @@
-﻿'use client';
+﻿﻿﻿'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
 import * as THREE from 'three';
 import GameShell from '@/components/GameShell';
@@ -332,6 +332,11 @@ function VocalShieldInner() {
         {micError && <div style={{ position: 'fixed', bottom: '15%', left: '50%', transform: 'translateX(-50%)', color: '#fbbf24', background: 'rgba(0,0,0,0.7)', padding: '8px 16px', borderRadius: 12, fontSize: 14, zIndex: 50 }}>🎤 No mic — tap to block!</div>}
         <div style={{ position: 'fixed', bottom: '8%', left: '50%', transform: 'translateX(-50%)', zIndex: 50, color: 'rgba(255,255,255,0.6)', fontSize: 13 }}>Speak to power the shield 🗣️</div>
       </>}
+            {phase === 'playing' && streak >= 3 && (
+        <div style={{ position: 'fixed', top: 128, left: '50%', transform: 'translateX(-50%)', zIndex: 25, pointerEvents: 'none', fontSize: 20, fontWeight: 900, color: '#fbbf24', textShadow: '0 0 16px #fbbf2488', letterSpacing: 1, whiteSpace: 'nowrap' }} aria-live="polite" aria-atomic="true">
+          ⚡ x{Math.max(1,Math.floor(streak/3)+1)} Streak!
+        </div>
+      )}
       {phase === 'done' && finalSig && <>
         <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI} score={String(finalSig.score)} personality={getPersonality(finalSig)}
           insights={[{ label: 'Blocked', value: String(finalSig.blocked), color: accent }, { label: 'Passed', value: String(finalSig.passed), color: finalSig.passed === 0 ? '#4ade80' : '#ef4444' }, { label: 'Sustained', value: `${finalSig.sustainSeconds}s`, color: '#fbbf24' }, { label: 'Peak Volume', value: `${Math.round(finalSig.peakVolume * 100)}%`, color: '#34d399' }]}

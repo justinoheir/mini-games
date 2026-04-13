@@ -1,4 +1,4 @@
-﻿'use client';
+﻿﻿﻿﻿﻿﻿'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
 import GameShell from '@/components/GameShell';
 import GameHUD from '@/components/GameHUD';
@@ -67,7 +67,7 @@ function getPersonality(sig: Signals): string {
 type Phase = 'start' | 'countdown' | 'playing' | 'done';
 
 interface GState {
-  running: boolean; timeLeft: number; sig: Signals;
+  running: boolean; timeLeft: number; sig: Signals; streak: number;
   sliderValue: number; isDragging: boolean; dragStartX: number; dragStartVal: number;
   colorA: string; colorB: string; targetBlend: number; targetColor: string;
   roundResult: null | { accuracy: number; score: number; flash: number };
@@ -344,6 +344,12 @@ function ColorBlendInner() {
           <canvas ref={canvasRef} role="application" aria-label="Game canvas - tap to interact" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none' }} />
           {phase === 'playing' && <GameHUD accentColor={theme.colors.accent ?? ACCENT} items={[{ label: 'TIME', value: timeLeft, danger: timeLeft <= 10 }, { label: 'SCORE', value: scoreDisplay }]} />}
         </>
+      )}
+            
+            {phase === 'playing' && streak >= 3 && (
+        <div style={{ position: 'fixed', top: 128, left: '50%', transform: 'translateX(-50%)', zIndex: 25, pointerEvents: 'none', fontSize: 20, fontWeight: 900, color: '#fbbf24', textShadow: '0 0 16px #fbbf2488', letterSpacing: 1, whiteSpace: 'nowrap' }} aria-live="polite" aria-atomic="true">
+          ⚡ x{Math.max(1,Math.floor(streak/3)+1)} Streak!
+        </div>
       )}
       {phase === 'done' && finalSig && (
         <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI}
