@@ -281,17 +281,26 @@ function BoxingComboGameInner() {
       const charge = s.chargeLevel;
       s.chargeLevel = 0;
       s.sig.totalAttempts++;
-      const isPerfect = charge >= 0.7 && charge <= 0.9;
+      // Difficulty: perfect window narrows over time (starts wide, gets tighter)
+      const timeElapsed = DURATION - s.timeLeft;
+      const windowShrink = Math.min(timeElapsed / DURATION, 0.18);
+      const isPerfect = charge >= (0.70 + windowShrink) && charge <= (0.90 - windowShrink);
       const isGood = charge >= 0.4 && charge <= 0.95;
       const pts = isPerfect ? 10 : isGood ? 5 : Math.round(charge * 3);
       if (isPerfect) { s.sig.perfectAttempts++; s.sig.bestResult = Math.max(s.sig.bestResult, 100); }
       if (isGood) { s.sig.goodAttempts++; }
-      s.sig.streakCurrent++;
-      if (s.sig.streakCurrent > s.sig.maxStreak) s.sig.maxStreak = s.sig.streakCurrent;
+      // Fix: streak only increments on good/perfect; resets on whiff
+      if (isGood) {
+        s.sig.streakCurrent++;
+        if (s.sig.streakCurrent > s.sig.maxStreak) s.sig.maxStreak = s.sig.streakCurrent;
+      } else {
+        s.sig.streakCurrent = 0;
+        sfx.nearMiss?.(); hapticFail?.();
+      }
       const mult = s.sig.streakCurrent >= 3 ? 2 : 1;
       s.sig.score += pts * mult;
       setScoreDisplay(s.sig.score);
-      sfx.collect(); hapticImpact?.();
+      if (isGood) { sfx.collect(); hapticImpact?.(); }
       s.bagSwingVel = (isPerfect ? 0.5 : isGood ? 0.3 : 0.15) * (Math.random() > 0.5 ? 1 : -1);
       s.punchAnim = 20;
       s.punchSide = Math.random() > 0.5 ? 'left' : 'right';

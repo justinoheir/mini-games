@@ -253,8 +253,10 @@ function ArcheryDrawInner() {
 
       // Aim oscillation
       if (s.drawing && !s.aimLocked) {
-        s.aimOscillation += 0.06;
-        const wobble = (1 - s.drawLevel) * 0.8;
+        // Difficulty: wobble speed and amplitude increase with shots taken
+        const diffMult = 1 + Math.min(s.sig.shots * 0.12, 1.5);
+        s.aimOscillation += 0.06 * diffMult;
+        const wobble = (1 - s.drawLevel) * (0.8 + Math.min(s.sig.shots * 0.04, 0.6));
         s.aimOffset.x = Math.sin(s.aimOscillation * 1.7) * wobble;
         s.aimOffset.y = Math.cos(s.aimOscillation) * wobble;
       } else if (s.aimLocked) {

@@ -92,10 +92,12 @@ function BalloonPopInner() {
     const wx = (Math.random() - 0.5) * 8;
     mesh.position.set(wx, -5, (Math.random() - 0.5) * 2);
     scene.add(mesh);
+    // Difficulty: balloons rise faster over time
+    const speedBoost = Math.min(s.frame / 1800, 0.5);
     s.balloons.push({
       id: s.nextId++, mesh, r: 0.1, maxR,
       growing: true, popping: false, popTimer: 0,
-      vy: 0.5 + Math.random() * 0.8, worldX: wx, worldY: -5,
+      vy: 0.5 + Math.random() * 0.8 + speedBoost, worldX: wx, worldY: -5,
     });
     s.sig.totalBalloons++;
   }, []);

@@ -183,14 +183,16 @@ function BasketWeaveGameInner() {
       if (!s.running) return;
       s.frame++;
 
+      // Difficulty: strands move faster as game progresses
+      const strandSpeed = 0.10 + Math.min(s.frame / 4000, 0.14);
       // Animate strands in from sides
       for (const strand of s.strands) {
         if (!strand.mesh) continue;
         const targetX = 0;
         if (strand.side === 'left' && strand.mesh.position.x < targetX) {
-          strand.mesh.position.x += 0.12;
+          strand.mesh.position.x += strandSpeed;
         } else if (strand.side === 'right' && strand.mesh.position.x > targetX) {
-          strand.mesh.position.x -= 0.12;
+          strand.mesh.position.x -= strandSpeed;
         }
         if (strand.wrong) {
           const mat = strand.mesh.material as THREE.MeshStandardMaterial;
@@ -206,8 +208,9 @@ function BasketWeaveGameInner() {
       }
       s.strands = s.strands.filter(st => st.mesh !== null);
 
-      // Spawn new strand periodically
-      if (s.frame % 45 === 0 && s.strands.length < 6) {
+      // Spawn new strand periodically — interval shrinks over time
+      const spawnInterval = Math.max(22, 45 - Math.floor(s.frame / 150));
+      if (s.frame % spawnInterval === 0 && s.strands.length < 6) {
         spawnStrand(scene, s);
       }
 

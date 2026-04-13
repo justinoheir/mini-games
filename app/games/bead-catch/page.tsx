@@ -94,9 +94,11 @@ function BeadCatchInner() {
     const startX = (Math.random() - 0.5) * 8;
     mesh.position.set(startX, 5, 0);
     scene.add(mesh);
+    // Difficulty: fall speed increases with frame count
+    const speedBoost = Math.min(s.frame / 1500, 0.08);
     s.beads.push({
       mesh, vx: (Math.random() - 0.5) * 0.05,
-      vy: -(0.06 + Math.random() * 0.06),
+      vy: -(0.06 + Math.random() * 0.06 + speedBoost),
       isBad, caught: false, missed: false,
     });
   }, []);

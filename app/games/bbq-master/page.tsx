@@ -228,6 +228,8 @@ function BBQMasterGameInner() {
       if (!s.running) return;
       const dt = 1 / 60;
 
+      // Difficulty: food cooks faster as time runs out
+      const cookRate = 1 + ((DURATION - s.timeLeft) / DURATION) * 0.9;
       // Update food items
       for (const food of s.foods) {
         if (food.burnt) {
@@ -239,7 +241,7 @@ function BBQMasterGameInner() {
           mat.emissiveIntensity = 0.2;
           continue;
         }
-        food.progress += dt / COOK_TOTAL;
+        food.progress += (dt / COOK_TOTAL) * cookRate;
         if (food.flipFlash > 0) food.flipFlash--;
 
         // Color feedback based on cook progress

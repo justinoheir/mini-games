@@ -37,6 +37,7 @@ interface GS {
   ballVX: number; ballVZ: number; ballSpin: number;
   swipeStartX: number; swipeStartY: number; swiping: boolean;
   settleTimer: number; frame: number;
+  shakeTimer: number; shakeIntensity: number;
   particles: Array<{ mesh: THREE.Mesh; vx: number; vy: number; vz: number; life: number }>;
   intervalId: ReturnType<typeof setInterval> | null;
   resizeCleanup: (() => void) | null;
@@ -111,7 +112,7 @@ function BowlingCurveGameInner() {
 
     s.running = true; s.timeLeft = DURATION; s.frame = 0;
     s.sig = { frames: 0, strikes: 0, spares: 0, totalPins: 0, maxStreak: 0, streakCurrent: 0, score: 0 };
-    s.particles = [];
+    s.particles = []; s.shakeTimer = 0; s.shakeIntensity = 0;
     setScoreDisplay(0); setTimeLeft(DURATION); setPhase('playing');
 
     const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -268,9 +269,13 @@ function BowlingCurveGameInner() {
             if (s.sig.streakCurrent > s.sig.maxStreak) s.sig.maxStreak = s.sig.streakCurrent;
             s.sig.score += 30;
             sfx.success(); hapticCelebration?.();
+            // Screen shake on strike!
+            s.shakeTimer = 18; s.shakeIntensity = 0.18;
           } else {
             s.sig.streakCurrent = 0;
             s.sig.score += knockedCount;
+            // Smaller shake on any pin knock
+            if (knockedCount > 0) { s.shakeTimer = 8; s.shakeIntensity = 0.06; }
           }
           s.sig.frames++;
           setScoreDisplay(s.sig.score);
@@ -303,6 +308,16 @@ function BowlingCurveGameInner() {
       // Ball idle pulse
       if (!s.ballActive && s.ball) {
         (s.ball.material as THREE.MeshStandardMaterial).emissiveIntensity = 0.2 + Math.sin(Date.now() * 0.004) * 0.1;
+      }
+
+      // Screen shake
+      if (s.shakeTimer > 0) {
+        s.shakeTimer--;
+        const shk = s.shakeIntensity * (s.shakeTimer / 18);
+        camera.position.x = Math.sin(s.shakeTimer * 3.7) * shk;
+        camera.position.y = 3 + Math.cos(s.shakeTimer * 2.9) * shk;
+      } else {
+        camera.position.x = 0; camera.position.y = 3;
       }
 
       renderer.render(scene, camera);
