@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
 import * as THREE from 'three';
 import GameShell from '@/components/GameShell';
@@ -14,9 +14,9 @@ import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
 const GAME_ID      = 'volcano-tap';
 const ACCENT       = '#ef4444';
 const DURATION     = 45;
-const GAME_EMOJI   = '🌋';
+const GAME_EMOJI   = 'ðŸŒ‹';
 const GAME_TITLE   = 'Volcano Tap';
-const GAME_TAGLINE = 'Tap rising lava bubbles before they overflow. Miss three — eruption!';
+const GAME_TAGLINE = 'Tap rising lava bubbles before they overflow. Miss three â€” eruption!';
 const MAX_MISSES   = 3;
 
 interface Signals {
@@ -29,11 +29,11 @@ interface Signals {
 }
 
 function getPersonality(sig: Signals): string {
-  if (sig.missed === 0 && sig.bubblesPopped >= 15)    return 'Volcano Tamer 🌋';
-  if (sig.maxStreak >= 10)                             return 'Lava Legend ⚡';
-  if (sig.bubblesPopped >= 20)                         return 'Bubble Blaster 💥';
-  if (sig.missed >= 3)                                 return 'Eruption Survivor 😤';
-  return 'Magma Rookie 🔴';
+  if (sig.missed === 0 && sig.bubblesPopped >= 15)    return 'Volcano Tamer ðŸŒ‹';
+  if (sig.maxStreak >= 10)                             return 'Lava Legend âš¡';
+  if (sig.bubblesPopped >= 20)                         return 'Bubble Blaster ðŸ’¥';
+  if (sig.missed >= 3)                                 return 'Eruption Survivor ðŸ˜¤';
+  return 'Magma Rookie ðŸ”´';
 }
 
 interface BubbleObj {
@@ -87,6 +87,7 @@ function VolcanoTapGameInner() {
   const [timeLeft, setTimeLeft]         = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
   const [finalSig, setFinalSig]         = useState<Signals | null>(null);
+  const [pbBeaten, setPbBeaten] = useState(false);
   const [missDisplay, setMissDisplay]   = useState(0);
   const playerSessionRef                = useRef<PlayerSession | null>(null);
 
@@ -97,8 +98,11 @@ function VolcanoTapGameInner() {
     if (s.intervalId) { clearInterval(s.intervalId); s.intervalId = null; }
     if (s.renderer) { s.renderer.dispose(); s.renderer = null; }
     if (mountRef.current) mountRef.current.innerHTML = '';
-    setFinalSig({ ...s.sig });
-    setPhase('done');
+        const _pbKey = 'pb_volcano-tap';
+    const _finalScore = stateRef.current.sig.score;
+    const _prevPb = parseInt(typeof window !== 'undefined' ? localStorage.getItem(_pbKey) ?? '0' : '0', 10);
+    if (_finalScore > _prevPb) { if (typeof window !== 'undefined') localStorage.setItem(_pbKey, String(_finalScore)); setPbBeaten(true); }
+    setFinalSig({ ...s.sig }); setPhase('done');
   }, []);
 
   const spawnBubble = useCallback(() => {
@@ -385,7 +389,7 @@ function VolcanoTapGameInner() {
 
   const buildInsights = (sig: Signals) => [
     { label: 'Popped',      value: `${sig.bubblesPopped}`,   color: ACCENT },
-    { label: 'Best Streak', value: `×${sig.maxStreak}`,      color: ACCENT },
+    { label: 'Best Streak', value: `Ã—${sig.maxStreak}`,      color: ACCENT },
     { label: 'Missed',      value: `${sig.missed}`,          color: sig.missed === 0 ? '#4ade80' : '#ef4444' },
     { label: 'Fastest',     value: sig.fastestPop < 9000 ? `${sig.fastestPop}ms` : '-', color: 'var(--color-text)' },
   ];
@@ -401,14 +405,15 @@ function VolcanoTapGameInner() {
       )}
       {(phase === 'playing' || phase === 'countdown') && (
         <>
-          <div ref={mountRef} style={{ position: 'absolute', inset: 0, touchAction: 'none' }} />
-          {phase === 'playing' && (
-            <GameHUD accentColor={theme.colors.accent ?? ACCENT} items={[
+          <div ref={mountRef} aria-label="Game area. Use touch or pointer to interact." role="application" style={{ position: 'absolute', inset: 0, touchAction: 'none' }} />
+          {phase === 'playing' && (<>
+            <div aria-live="polite" style={{position:'absolute',left:'-9999px',width:'1px',height:'1px',overflow:'hidden'}}>Score: {scoreDisplay}</div>
+          <GameHUD accentColor={theme.colors.accent ?? ACCENT} items={[
               { label: 'TIME',  value: timeLeft,    danger: timeLeft <= 10 },
               { label: 'SCORE', value: scoreDisplay },
               { label: 'MISS',  value: missDisplay, danger: missDisplay >= 2 },
             ]} />
-          )}
+          </>)}
         </>
       )}
       {phase === 'done' && finalSig && (
@@ -420,6 +425,9 @@ function VolcanoTapGameInner() {
       {phase === 'done' && finalSig && (
         <WebhookEmitter theme={theme} gameId={GAME_ID} sig={finalSig}
           personality={getPersonality(finalSig)} player={playerSessionRef.current} />
+      )}
+      {phase === 'done' && pbBeaten && (
+        <div style={{position:'fixed',top:'16px',left:'50%',transform:'translateX(-50%)',background:'#fbbf24',color:'#000',padding:'8px 20px',borderRadius:'999px',fontWeight:700,fontSize:'1rem',zIndex:9999,boxShadow:'0 4px 12px rgba(0,0,0,0.3)',animation:'none'}}>ðŸ† New Personal Best!</div>
       )}
     </GameShell>
   );
@@ -443,3 +451,5 @@ function WebhookEmitter({ theme, gameId, sig, personality, player }: {
 import dynamic from 'next/dynamic';
 const VolcanoTapGame = dynamic(() => Promise.resolve({ default: VolcanoTapGameInner }), { ssr: false });
 export default VolcanoTapGame;
+
+

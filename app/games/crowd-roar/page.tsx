@@ -27,7 +27,6 @@ const GAME_TAGLINE = "Roar loud. Hold it. Don't fade.";
 const ROAR_THRESHOLD = 0.6;
 const SILENCE_THRESHOLD = 0.2;
 const SILENCE_MS = 500;
-const CHALLENGE_MS = 3000;
 
 interface Signals {
   avgVolume: number; peakVolume: number; sustainedRoarTime: number;
@@ -83,12 +82,16 @@ function CrowdRoarGameInner() {
   const inSilenceRef = useRef(false);
   const wasAboveRef = useRef(false);
   const runningRef = useRef(false);
+  // Streak tracking
+  const streakRef = useRef(0);
 
   const [phase, setPhase]               = useState<Phase>('start');
   const [timeLeft, setTimeLeft]         = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
   const [finalSig, setFinalSig]         = useState<Signals|null>(null);
   const [permError, setPermError]       = useState('');
+  const [streak, setStreak]             = useState(0);
+  const [isNewPB, setIsNewPB]           = useState(false);
 
   // ── Three.js setup ──────────────────────────────────────────────────────
   useEffect(()=>{
@@ -197,7 +200,7 @@ function CrowdRoarGameInner() {
 
         // Color shift from dark to amber
         cm.mesh.children.forEach((child,ci)=>{
-          if(ci===0){// body
+          if(ci===0){
             const mat=((child as THREE.Mesh).material as THREE.MeshStandardMaterial);
             const lit=exc>0.3?exc:0;
             mat.color.setHSL(0.09,0.9,0.15+lit*0.35);
@@ -252,21 +255,25 @@ function CrowdRoarGameInner() {
     if(sig.peakVolume>0.9)sig.score+=50;
     sig.score=Math.max(0,sig.score-sig.silenceEvents*20);
     sig.score=Math.round(sig.score);
+    // Personal Best check
+    try {
+      const pbKey=`pb_${GAME_ID}`;
+      const prevPB=parseInt(localStorage.getItem(pbKey)||'0',10);
+      if(sig.score>prevPB){localStorage.setItem(pbKey,String(sig.score));setIsNewPB(true);}
+    } catch {}
     sfx.success();hapticVictory();playVictoryFanfare();
     setFinalSig({...sig});setPhase('done');
   },[]);
 
   const startGameLoop=useCallback(()=>{
     runningRef.current=true;
+    streakRef.current=0;
     sigRef.current={avgVolume:0,peakVolume:0,sustainedRoarTime:0,silenceEvents:0,roarBursts:0,volumeSum:0,volumeCount:0,roarStartTime:null,score:0};
     smoothVolRef.current=0;silenceStartRef.current=null;inSilenceRef.current=false;wasAboveRef.current=false;
-    setScoreDisplay(0);setTimeLeft(DURATION);setPhase('playing');
+    setScoreDisplay(0);setTimeLeft(DURATION);setPhase('playing');setStreak(0);setIsNewPB(false);
     stopMusicRef.current=startMusic('pulse');
 
     timerRef.current=setInterval(()=>{
-      const sig=sigRef.current;
-      sig.avgVolume=sig.volumeCount>0?sig.volumeSum/sig.volumeCount:0;
-      const timeVal=--sigRef.current.score;// we use sig tracking separately
       setTimeLeft(prev=>{
         const next=prev-1;
         if(next<=10&&next>0)sfx.tick();
@@ -288,10 +295,17 @@ function CrowdRoarGameInner() {
       sig.volumeSum+=vol;sig.volumeCount++;
       if(vol>sig.peakVolume)sig.peakVolume=vol;
 
+      // Streak multiplier: every 3 bursts = +0.5x, cap at x4
+      const multiplier=1+Math.min(3,Math.floor(streakRef.current/3))*0.5;
+
       if(vol>=ROAR_THRESHOLD){
         if(sig.roarStartTime===null)sig.roarStartTime=now;
-        sig.score+=vol*(10/60);
-        if(!wasAboveRef.current){sig.roarBursts++;wasAboveRef.current=true;}
+        sig.score+=vol*(10/60)*multiplier;
+        if(!wasAboveRef.current){
+          sig.roarBursts++;wasAboveRef.current=true;
+          streakRef.current++;
+          setStreak(streakRef.current);
+        }
       } else {
         if(sig.roarStartTime!==null){sig.sustainedRoarTime+=now-sig.roarStartTime;sig.roarStartTime=null;}
         if(vol<ROAR_THRESHOLD-0.08)wasAboveRef.current=false;
@@ -301,6 +315,8 @@ function CrowdRoarGameInner() {
         if(silenceStartRef.current===null)silenceStartRef.current=now;
         else if(!inSilenceRef.current&&now-silenceStartRef.current>=SILENCE_MS){
           inSilenceRef.current=true;sig.silenceEvents++;sfx.collision();
+          // Reset streak on silence
+          streakRef.current=0;setStreak(0);
         }
       } else {
         silenceStartRef.current=null;inSilenceRef.current=false;
@@ -332,7 +348,7 @@ function CrowdRoarGameInner() {
   const handlePlayAgain=useCallback(()=>{
     if(audioCtxRef.current){audioCtxRef.current.close().catch(()=>{});audioCtxRef.current=null;}
     if(micStreamRef.current){micStreamRef.current.getTracks().forEach(t=>t.stop());micStreamRef.current=null;}
-    setPhase('start');setScoreDisplay(0);setTimeLeft(DURATION);setFinalSig(null);setPermError('');
+    setPhase('start');setScoreDisplay(0);setTimeLeft(DURATION);setFinalSig(null);setPermError('');setStreak(0);setIsNewPB(false);
   },[]);
 
   useEffect(()=>()=>{
@@ -352,6 +368,9 @@ function CrowdRoarGameInner() {
     ];
   };
 
+  // Streak multiplier display
+  const streakMultiplier=streak>=2?`x${Math.min(4,1+Math.floor(streak/3)).toFixed(1).replace('.0','')}`:null;
+
   return(
     <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accent}>
       {phase==='start'&&<GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description={GAME_TAGLINE} ctaLabel="Allow Mic & Start" accentColor={accent} onStart={handleStart} sensorNote="🎤 Microphone"/>}
@@ -363,22 +382,45 @@ function CrowdRoarGameInner() {
             <div style={{fontSize:16,color:'rgba(255,255,255,0.6)',lineHeight:1.6}}>Roar into your mic to energize the 3D crowd!</div>
           </div>
           {permError&&<div style={{color:'#ef4444',fontSize:14,textAlign:'center',maxWidth:280}}>{permError}</div>}
-          <button onClick={()=>{void handlePermission();}} style={{background:accent,color:'#000',border:'none',borderRadius:14,padding:'0 48px',height:56,fontSize:18,fontWeight:800,cursor:'pointer',minWidth:240}}>Allow &amp; Start</button>
-          <button onClick={()=>setPhase('start')} style={{background:'transparent',color:'rgba(255,255,255,0.45)',border:'1px solid rgba(255,255,255,0.12)',borderRadius:10,padding:'10px 24px',fontSize:15,cursor:'pointer'}}>Back</button>
+          <button aria-label="Allow microphone and start game" onClick={()=>{void handlePermission();}} style={{background:accent,color:'#000',border:'none',borderRadius:14,padding:'0 48px',height:56,fontSize:18,fontWeight:800,cursor:'pointer',minWidth:240}}>Allow &amp; Start</button>
+          <button aria-label="Go back to start screen" onClick={()=>setPhase('start')} style={{background:'transparent',color:'rgba(255,255,255,0.45)',border:'1px solid rgba(255,255,255,0.12)',borderRadius:10,padding:'10px 24px',fontSize:15,cursor:'pointer'}}>Back</button>
         </div>
       )}
       {phase==='countdown'&&<Countdown onComplete={handleCountdownDone} accentColor={accent}/>}
       {(phase==='playing'||phase==='countdown')&&(
         <>
-          <div ref={mountRef} style={{position:'absolute',inset:0,width:'100%',height:'100%'}}/>
-          {phase==='playing'&&<GameHUD accentColor={accent} items={[{label:'TIME',value:timeLeft,danger:timeLeft<=10,testId:'timer'},{label:'POWER',value:scoreDisplay,testId:'score'}]}/>}
+          <div
+            ref={mountRef}
+            role="img"
+            aria-label="3D crowd stadium — roar into mic to energize the crowd"
+            style={{position:'absolute',inset:0,width:'100%',height:'100%'}}
+          />
+          {phase==='playing'&&(
+            <>
+              <div aria-live="polite" aria-atomic="true" style={{position:'absolute',top:0,left:0,width:'100%',pointerEvents:'none'}}>
+                <GameHUD accentColor={accent} items={[{label:'TIME',value:timeLeft,danger:timeLeft<=10,testId:'timer'},{label:'POWER',value:scoreDisplay,testId:'score'}]}/>
+              </div>
+              {streakMultiplier&&(
+                <div aria-live="polite" style={{position:'absolute',top:88,left:'50%',transform:'translateX(-50%)',background:'rgba(0,0,0,0.75)',border:`1px solid ${accent}`,borderRadius:20,padding:'4px 18px',fontSize:20,fontWeight:800,color:accent,letterSpacing:'0.05em',pointerEvents:'none',zIndex:10}}>
+                  🔥 {streakMultiplier} Streak
+                </div>
+              )}
+            </>
+          )}
         </>
       )}
       {phase==='done'&&finalSig&&(
-        <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI}
-          score={String(finalSig.score)} personality={getPersonality(finalSig)}
-          insights={buildInsights(finalSig)} accentColor={accent} onPlayAgain={handlePlayAgain}
-          didWin={finalSig.peakVolume>=ROAR_THRESHOLD}/>
+        <div style={{position:'relative',width:'100%',height:'100%'}}>
+          {isNewPB&&(
+            <div role="status" style={{position:'absolute',top:12,left:'50%',transform:'translateX(-50%)',background:'linear-gradient(135deg,#f59e0b,#ef4444)',borderRadius:20,padding:'6px 22px',fontSize:16,fontWeight:800,color:'#fff',zIndex:100,whiteSpace:'nowrap',letterSpacing:'0.03em',boxShadow:'0 2px 12px rgba(245,158,11,0.5)'}}>
+              🏆 New Personal Best!
+            </div>
+          )}
+          <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI}
+            score={String(finalSig.score)} personality={getPersonality(finalSig)}
+            insights={buildInsights(finalSig)} accentColor={accent} onPlayAgain={handlePlayAgain}
+            didWin={finalSig.peakVolume>=ROAR_THRESHOLD}/>
+        </div>
       )}
       {phase==='done'&&finalSig&&<WebhookEmitter theme={theme} sig={finalSig} personality={getPersonality(finalSig)} player={playerSessionRef.current}/>}
     </GameShell>

@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
 import * as THREE from 'three';
 import GameShell from '@/components/GameShell';
@@ -59,7 +59,7 @@ function PencilPackGameInner() {
   const playerSessionRef = useRef<PlayerSession | null>(null);
 
   const stateRef = useRef({
-    running: false, timeLeft: DURATION,
+    running: false, streak: 0, timeLeft: DURATION,
     sig: { score: 0, roundsCompleted: 0, pencilsPlaced: 0, overflowAttempts: 0 } as Signals,
     rows: [0, 0, 0, 0] as number[], // used units per row
     puzzleIdx: 0,
@@ -71,6 +71,7 @@ function PencilPackGameInner() {
   const [phase, setPhase] = useState<Phase>('start');
   const [timeLeft, setTimeLeft] = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
+  const [streak, setStreak] = useState(0);
   const [finalSig, setFinalSig] = useState<Signals | null>(null);
   const [feedbackMsg, setFeedbackMsg] = useState('');
 
@@ -125,7 +126,7 @@ function PencilPackGameInner() {
     const s = stateRef.current;
     s.running = true; s.timeLeft = DURATION; s.puzzleIdx = 0;
     s.sig = { score: 0, roundsCompleted: 0, pencilsPlaced: 0, overflowAttempts: 0 };
-    setScoreDisplay(0); setTimeLeft(DURATION); setPhase('playing');
+    setScoreDisplay(0); setStreak(0); setTimeLeft(DURATION); setPhase('playing');
     stopMusicRef.current = startMusic('minimal');
 
     const W = window.innerWidth, H = window.innerHeight;
@@ -330,7 +331,7 @@ function PencilPackGameInner() {
       try { mountRef.current.removeChild(rendererRef.current.domElement); } catch { /**/ }
       rendererRef.current.dispose(); rendererRef.current = null;
     }
-    setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null); setFeedbackMsg('');
+    setScoreDisplay(0); setStreak(0); setTimeLeft(DURATION); setFinalSig(null); setFeedbackMsg('');
     setPhase('countdown');
   }, []);
 
@@ -345,7 +346,7 @@ function PencilPackGameInner() {
       {phase === 'countdown' && <Countdown onComplete={handleCountdownDone} accentColor={accent} />}
       {(phase === 'playing' || phase === 'countdown') && (
         <>
-          <div ref={mountRef} style={{ position: 'absolute', inset: 0, touchAction: 'none' }} />
+          <div ref={mountRef} role="application" aria-label="Game area - tap to play" style={{ position: 'absolute', inset: 0, touchAction: 'none' }} />
           {phase === 'playing' && (
             <>
               <GameHUD accentColor={accent} items={[

@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
 import * as THREE from 'three';
 import GameShell from '@/components/GameShell';
@@ -47,7 +47,7 @@ function SoundWavesGameInner() {
     playerLight: null as THREE.PointLight | null,
     waveRings: [] as { mesh: THREE.Mesh; r: number; maxR: number; power: number; life: number }[],
     targets: [] as { mesh: THREE.Mesh; light: THREE.PointLight; x: number; y: number; z: number; r: number; color: number; hp: number }[],
-    running: false, timeLeft: DURATION,
+    running: false, streak: 0, timeLeft: DURATION,
     sig: { score: 0, targetsDestroyed: 0, peakVolume: 0, wavesFired: 0 } as Signals,
     micLevel: 0, smoothLevel: 0,
     lastWaveTime: 0, waveThreshold: 0.12,
@@ -57,6 +57,7 @@ function SoundWavesGameInner() {
   const [phase, setPhase] = useState<Phase>('start');
   const [timeLeft, setTimeLeft] = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
+  const [streak, setStreak] = useState(0);
   const [finalSig, setFinalSig] = useState<Signals | null>(null);
   const playerSessionRef = useRef<PlayerSession | null>(null);
 
@@ -104,7 +105,7 @@ function SoundWavesGameInner() {
     s.running = true; s.timeLeft = DURATION;
     s.sig = { score: 0, targetsDestroyed: 0, peakVolume: 0, wavesFired: 0 };
     s.waveRings = []; s.targets = []; s.spawnTimer = 0;
-    setScoreDisplay(0); setTimeLeft(DURATION); setPhase('playing');
+    setScoreDisplay(0); setStreak(0); setTimeLeft(DURATION); setPhase('playing');
 
     const W = window.innerWidth, H = window.innerHeight;
     const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -231,7 +232,7 @@ function SoundWavesGameInner() {
               s.targets.splice(ti, 1);
               s.sig.targetsDestroyed++;
               const pts = Math.round(2 + w.power * 4);
-              s.sig.score += pts; setScoreDisplay(s.sig.score);
+              s.sig.score += pts; setScoreDisplay(s.sig.score); s.streak=(s.streak||0)+1; setStreak(s.streak); const _sw=Math.max(1,Math.floor(s.streak/3)+1); if(_sw>1){s.sig.score+=pts*(_sw-1); setScoreDisplay(s.sig.score);}
               sfx.success(); hapticScore();
             }
           }
@@ -278,7 +279,7 @@ function SoundWavesGameInner() {
     playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar);
     await initAudio(); setPhase('countdown');
   }, []);
-  const handlePlayAgain = useCallback(() => { setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null); }, []);
+  const handlePlayAgain = useCallback(() => { setPhase('start'); setScoreDisplay(0); setStreak(0); setTimeLeft(DURATION); setFinalSig(null); }, []);
 
   const accent = theme.colors.accent ?? ACCENT;
 
@@ -291,7 +292,7 @@ function SoundWavesGameInner() {
       )}
       {phase === 'countdown' && <Countdown onComplete={startLoop} accentColor={accent} />}
       {(phase === 'playing' || phase === 'countdown') && (
-        <div ref={mountRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none' }} />
+        <div ref={mountRef} role="application" aria-label="Game area - tap to play" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none' }} />
       )}
       {phase === 'playing' && (
         <GameHUD accentColor={accent} items={[

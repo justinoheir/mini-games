@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 /**
  * ECHO MATCH 3D — Simon Says with 3D glowing tiles and tones.
  * Watch the sequence light up, then repeat it.
@@ -62,6 +62,7 @@ function EchoMatchGameInner() {
   const [phase, setPhase] = useState<Phase>('start');
   const [timeLeft, setTimeLeft] = useState(DURATION);
   const [scoreDisp, setScoreDisp] = useState(0);
+  const [streak, setStreak] = useState(0);
   const [subPhase, setSubPhase] = useState<SubPhase>('watching');
   const [litTile, setLitTile] = useState(-1);
   const [finalSig, setFinalSig] = useState<Signals | null>(null);
@@ -164,7 +165,7 @@ function EchoMatchGameInner() {
     cancelledRef.current = false;
     sigRef.current = { score: 0, rounds: 0, longestSeq: 0, correctTaps: 0, wrongTaps: 0 };
     seqRef.current = []; progRef.current = 0; timeRef.current = DURATION;
-    setScoreDisp(0); setTimeLeft(DURATION); setSubPhase('watching'); setPhase('playing');
+    setScoreDisp(0); setStreak(0); setTimeLeft(DURATION); setSubPhase('watching'); setPhase('playing');
     stopMusicRef.current = startMusic('ambient');
 
     const W = mount.clientWidth, H = mount.clientHeight;
@@ -289,7 +290,7 @@ function EchoMatchGameInner() {
   }, []);
   const handleCountdownDone = useCallback(() => { startLoop(); }, [startLoop]);
   const handlePlayAgain = useCallback(() => {
-    setPhase('start'); setScoreDisp(0); setTimeLeft(DURATION); setFinalSig(null); setIsNewBest(false);
+    setPhase('start'); setScoreDisp(0); setStreak(0); setTimeLeft(DURATION); setFinalSig(null); setIsNewBest(false);
   }, []);
 
   // Subphase status overlay
@@ -302,7 +303,7 @@ function EchoMatchGameInner() {
       {phase === 'countdown' && <Countdown onComplete={handleCountdownDone} accentColor={theme.colors.accent ?? ACCENT} />}
       {(phase === 'playing' || phase === 'countdown') && (
         <>
-          <div ref={mountRef} style={{ position: 'absolute', inset: 0, touchAction: 'none' }} />
+          <div ref={mountRef} role="application" aria-label="Game area - tap to play" style={{ position: 'absolute', inset: 0, touchAction: 'none' }} />
           {phase === 'playing' && (
             <>
               <GameHUD accentColor={theme.colors.accent ?? ACCENT} items={[{ label: 'TIME', value: timeLeft, danger: timeLeft <= 10 }, { label: 'SCORE', value: scoreDisp }]} />

@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
 import * as THREE from 'three';
 import GameShell from '@/components/GameShell';
@@ -15,7 +15,7 @@ import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
 const GAME_ID  = 'cupid-shot';
 const ACCENT   = '#f43f5e';
 const DURATION = 45;
-const GAME_EMOJI   = '💘';
+const GAME_EMOJI   = 'ðŸ’˜';
 const GAME_TITLE   = 'Cupid Shot';
 const GAME_TAGLINE = 'Tap the heart when it aligns with the bullseye!';
 
@@ -26,11 +26,11 @@ interface Signals {
 
 function getPersonality(sig: Signals): string {
   const acc = sig.totalShots > 0 ? (sig.cupidHits + sig.loveHits) / sig.totalShots : 0;
-  if (sig.cupidHits >= 6) return "💘 Cupid's Ace";
-  if (acc >= 0.7 && sig.maxStreak >= 5) return '💕 Romantic Precision';
-  if (acc >= 0.6) return '❤️ Sure Shot';
-  if (sig.maxStreak >= 4) return '🔥 On a Roll';
-  return '💝 Hopeful';
+  if (sig.cupidHits >= 6) return "ðŸ’˜ Cupid's Ace";
+  if (acc >= 0.7 && sig.maxStreak >= 5) return 'ðŸ’• Romantic Precision';
+  if (acc >= 0.6) return 'â¤ï¸ Sure Shot';
+  if (sig.maxStreak >= 4) return 'ðŸ”¥ On a Roll';
+  return 'ðŸ’ Hopeful';
 }
 
 type Phase = 'start' | 'countdown' | 'playing' | 'done';
@@ -47,10 +47,10 @@ interface HeartTarget {
 }
 
 const TIERS = [
-  { maxDist: 0.5,       pts: 5, label: "CUPID'S ARROW 💘", color: '#fbbf24' },
-  { maxDist: 1.0,       pts: 3, label: 'LOVE SHOT 💕',     color: '#f43f5e' },
-  { maxDist: 1.8,       pts: 1, label: 'CLOSE ❤️',         color: '#fb7185' },
-  { maxDist: Infinity,  pts: 0, label: 'MISSED 💔',        color: '#6b7280' },
+  { maxDist: 0.5,       pts: 5, label: "CUPID'S ARROW ðŸ’˜", color: '#fbbf24' },
+  { maxDist: 1.0,       pts: 3, label: 'LOVE SHOT ðŸ’•',     color: '#f43f5e' },
+  { maxDist: 1.8,       pts: 1, label: 'CLOSE â¤ï¸',         color: '#fb7185' },
+  { maxDist: Infinity,  pts: 0, label: 'MISSED ðŸ’”',        color: '#6b7280' },
 ];
 
 interface GS {
@@ -103,6 +103,7 @@ function CupidShotGameInner() {
   const [timeLeft, setTimeLeft] = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
   const [finalSig, setFinalSig] = useState<Signals | null>(null);
+  const [pbBeaten, setPbBeaten] = useState(false);
   const playerSessionRef = useRef<PlayerSession | null>(null);
 
   const endGame = useCallback(() => {
@@ -113,8 +114,11 @@ function CupidShotGameInner() {
     if (s.stopMusic) { s.stopMusic(); s.stopMusic = null; }
     if (s.renderer) { s.renderer.dispose(); s.renderer = null; }
     if (mountRef.current) mountRef.current.innerHTML = '';
-    setFinalSig({ ...s.sig });
-    setPhase('done');
+        const _pbKey = 'pb_cupid-shot';
+    const _finalScore = stateRef.current.sig.score;
+    const _prevPb = parseInt(typeof window !== 'undefined' ? localStorage.getItem(_pbKey) ?? '0' : '0', 10);
+    if (_finalScore > _prevPb) { if (typeof window !== 'undefined') localStorage.setItem(_pbKey, String(_finalScore)); setPbBeaten(true); }
+    setFinalSig({ ...s.sig }); setPhase('done');
     hapticVictory();
   }, []);
 
@@ -339,7 +343,7 @@ function CupidShotGameInner() {
       { label: 'Accuracy', value: `${acc}%`, color: acc >= 60 ? '#4ade80' : '#facc15' },
       { label: "Cupid's Arrows", value: String(sig.cupidHits), color: '#fbbf24' },
       { label: 'Love Shots', value: String(sig.loveHits), color: ACCENT },
-      { label: 'Best Streak', value: `×${sig.maxStreak}`, color: ACCENT },
+      { label: 'Best Streak', value: `Ã—${sig.maxStreak}`, color: ACCENT },
     ];
   };
 
@@ -352,13 +356,14 @@ function CupidShotGameInner() {
       {phase === 'countdown' && <Countdown onComplete={handleCountdownDone} accentColor={theme.colors.accent ?? ACCENT} />}
       {(phase === 'playing' || phase === 'countdown') && (
         <>
-          <div ref={mountRef} style={{ position: 'absolute', inset: 0, touchAction: 'none' }} />
-          {phase === 'playing' && (
-            <GameHUD accentColor={theme.colors.accent ?? ACCENT} items={[
+          <div ref={mountRef} aria-label="Game area. Use touch or pointer to interact." role="application" style={{ position: 'absolute', inset: 0, touchAction: 'none' }} />
+          {phase === 'playing' && (<>
+            <div aria-live="polite" style={{position:'absolute',left:'-9999px',width:'1px',height:'1px',overflow:'hidden'}}>Score: {scoreDisplay}</div>
+          <GameHUD accentColor={theme.colors.accent ?? ACCENT} items={[
               { label: 'TIME', value: timeLeft, danger: timeLeft <= 10 },
               { label: 'SCORE', value: scoreDisplay },
             ]} />
-          )}
+          </>)}
         </>
       )}
       {phase === 'done' && finalSig && (
@@ -369,6 +374,9 @@ function CupidShotGameInner() {
             onPlayAgain={handlePlayAgain} didWin={finalSig.cupidHits >= 3} />
           <WebhookEmitter theme={theme} sig={finalSig} personality={getPersonality(finalSig)} player={playerSessionRef.current} />
         </>
+      )}
+      {phase === 'done' && pbBeaten && (
+        <div style={{position:'fixed',top:'16px',left:'50%',transform:'translateX(-50%)',background:'#fbbf24',color:'#000',padding:'8px 20px',borderRadius:'999px',fontWeight:700,fontSize:'1rem',zIndex:9999,boxShadow:'0 4px 12px rgba(0,0,0,0.3)',animation:'none'}}>ðŸ† New Personal Best!</div>
       )}
     </GameShell>
   );
@@ -388,3 +396,5 @@ function WebhookEmitter({ theme, sig, personality, player }: {
 import dynamic from 'next/dynamic';
 const CupidShotGame = dynamic(() => Promise.resolve({ default: CupidShotGameInner }), { ssr: false });
 export default CupidShotGame;
+
+

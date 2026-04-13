@@ -76,6 +76,7 @@ function HoopShotInner() {
   const [timeLeft, setTimeLeft] = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
   const [finalSig, setFinalSig] = useState<Signals | null>(null);
+  const [pbBeaten, setPbBeaten] = useState(false);
   const [powerDisplay, setPowerDisplay] = useState(0);
   const playerSessionRef = useRef<PlayerSession | null>(null);
 
@@ -87,8 +88,11 @@ function HoopShotInner() {
     if (s.stopMusic) { s.stopMusic(); s.stopMusic = null; }
     if (s.renderer) { s.renderer.dispose(); s.renderer = null; }
     if (mountRef.current) mountRef.current.innerHTML = '';
-    setFinalSig({ ...s.sig });
-    setPhase('done');
+        const _pbKey = 'pb_hoop-shot';
+    const _finalScore = stateRef.current.sig.score;
+    const _prevPb = parseInt(typeof window !== 'undefined' ? localStorage.getItem(_pbKey) ?? '0' : '0', 10);
+    if (_finalScore > _prevPb) { if (typeof window !== 'undefined') localStorage.setItem(_pbKey, String(_finalScore)); setPbBeaten(true); }
+    setFinalSig({ ...s.sig }); setPhase('done');
     hapticVictory();
   }, []);
 
@@ -405,10 +409,11 @@ function HoopShotInner() {
       {phase === 'countdown' && <Countdown onComplete={handleCountdownDone} accentColor={theme.colors.accent ?? ACCENT} />}
       {(phase === 'playing' || phase === 'countdown') && (
         <>
-          <div ref={mountRef} style={{ position: 'absolute', inset: 0, touchAction: 'none' }} />
+          <div ref={mountRef} aria-label="Game area. Use touch or pointer to interact." role="application" style={{ position: 'absolute', inset: 0, touchAction: 'none' }} />
           {phase === 'playing' && (
             <>
-              <GameHUD accentColor={theme.colors.accent ?? ACCENT} items={[
+              <div aria-live="polite" style={{position:'absolute',left:'-9999px',width:'1px',height:'1px',overflow:'hidden'}}>Score: {scoreDisplay}</div>
+          <GameHUD accentColor={theme.colors.accent ?? ACCENT} items={[
                 { label: 'TIME', value: timeLeft, danger: timeLeft <= 10 },
                 { label: 'SCORE', value: scoreDisplay },
               ]} />
@@ -429,6 +434,9 @@ function HoopShotInner() {
             onPlayAgain={handlePlayAgain} didWin={finalSig.makes >= 5} />
           <WebhookEmitter theme={theme} sig={finalSig} personality={getPersonality(finalSig)} player={playerSessionRef.current} />
         </>
+      )}
+      {phase === 'done' && pbBeaten && (
+        <div style={{position:'fixed',top:'16px',left:'50%',transform:'translateX(-50%)',background:'#fbbf24',color:'#000',padding:'8px 20px',borderRadius:'999px',fontWeight:700,fontSize:'1rem',zIndex:9999,boxShadow:'0 4px 12px rgba(0,0,0,0.3)',animation:'none'}}>🏆 New Personal Best!</div>
       )}
     </GameShell>
   );

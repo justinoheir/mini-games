@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
 import * as THREE from 'three';
 import GameShell from '@/components/GameShell';
@@ -47,7 +47,7 @@ function VocalShieldInner() {
   const mountRef = useRef<HTMLDivElement>(null);
   const stopMusicRef = useRef<(() => void) | null>(null);
   const stateRef = useRef({
-    running: false, timeLeft: DURATION, animId: 0,
+    running: false, streak: 0, timeLeft: DURATION, animId: 0,
     intervalId: null as ReturnType<typeof setInterval> | null,
     renderer: null as THREE.WebGLRenderer | null,
     scene: null as THREE.Scene | null,
@@ -65,6 +65,7 @@ function VocalShieldInner() {
   const [phase, setPhase] = useState<Phase>('start');
   const [timeLeft, setTimeLeft] = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
+  const [streak, setStreak] = useState(0);
   const [finalSig, setFinalSig] = useState<Signals | null>(null);
   const [micError, setMicError] = useState(false);
   const [isNewBest, setIsNewBest] = useState(false);
@@ -116,7 +117,7 @@ function VocalShieldInner() {
     s.running = true; s.timeLeft = DURATION; s.frame = 0;
     s.sig = { score: 0, blocked: 0, passed: 0, sustainSeconds: 0, sustainFrames: 0, peakVol: 0 };
     s.shieldPower = 0; s.shieldR = SHIELD_BASE_R; s.enemies = []; s.nextEnemyIn = 60; s.enemyId = 0; s.lives = 5;
-    setScoreDisplay(0); setTimeLeft(DURATION); setPhase('playing');
+    setScoreDisplay(0); setStreak(0); setTimeLeft(DURATION); setPhase('playing');
     stopMusicRef.current = startMusic('tense');
 
     const W = window.innerWidth, H = window.innerHeight;
@@ -271,7 +272,9 @@ function VocalShieldInner() {
 
         if (dist <= currentShieldR + en.r) {
           // Blocked!
-          s.sig.blocked++; s.sig.score++;
+          s.streak=(s.streak||0)+1; setStreak(s.streak);
+          const _vs=Math.max(1,Math.floor(s.streak/3)+1);
+          s.sig.blocked++; s.sig.score+=_vs;
           setScoreDisplay(s.sig.score);
           sfx.tick(); hapticScore();
           // Bounce back
@@ -281,7 +284,7 @@ function VocalShieldInner() {
           s.enemies.splice(i, 1);
         } else if (dist <= 0.5 + en.r) {
           // Hit the player!
-          s.sig.passed++; s.lives--;
+          s.sig.passed++; s.lives--; s.streak=0; setStreak(0);
           liveMeshes[Math.max(0, s.lives)].visible = false;
           sfx.fail(); hapticFail();
           scene.remove(en.mesh);
@@ -313,7 +316,7 @@ function VocalShieldInner() {
   const handlePlayAgain = useCallback(() => {
     if (stateRef.current.renderer) { stateRef.current.renderer.dispose(); stateRef.current.renderer = null; }
     if (mountRef.current) mountRef.current.innerHTML = '';
-    setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null); setIsNewBest(false); setMicError(false);
+    setPhase('start'); setScoreDisplay(0); setStreak(0); setTimeLeft(DURATION); setFinalSig(null); setIsNewBest(false); setMicError(false);
   }, []);
 
   const accent = theme.colors.accent ?? ACCENT;
@@ -322,7 +325,7 @@ function VocalShieldInner() {
       {phase === 'start' && <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description={GAME_TAGLINE} ctaLabel="Activate Shield 🛡️" accentColor={accent} onStart={handleStart} sensorNote="Uses microphone" />}
       {phase === 'countdown' && <Countdown onComplete={startLoop} accentColor={accent} />}
       {(phase === 'playing' || phase === 'countdown') && (
-        <div ref={mountRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none' }} />
+        <div ref={mountRef} role="application" aria-label="Game area - tap to play" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none' }} />
       )}
       {phase === 'playing' && <>
         <GameHUD accentColor={accent} items={[{ label: 'TIME', value: timeLeft, danger: timeLeft <= 10 }, { label: 'BLOCKED', value: scoreDisplay }]} />

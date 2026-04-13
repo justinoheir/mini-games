@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
 import * as THREE from 'three';
 import GameShell from '@/components/GameShell';
@@ -14,7 +14,7 @@ import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
 const GAME_ID = 'aurora-wave';
 const ACCENT = '#34d399';
 const DURATION = 60;
-const GAME_EMOJI = '🌌';
+const GAME_EMOJI = 'ðŸŒŒ';
 const GAME_TITLE = 'Aurora Wave';
 const GAME_TAGLINE = 'Breathe slowly to paint aurora waves. Erratic = broken!';
 const SMOOTH_THRESHOLD = 0.08;
@@ -25,11 +25,11 @@ interface Signals {
   avgBreathVariance: number; score: number; maxColor: number;
 }
 function getPersonality(sig: Signals): string {
-  if (sig.auroraSegments >= 40 && sig.brokenWaves <= 2) return 'Aurora Sage 🌟';
-  if (sig.brokenWaves === 0 && sig.auroraSegments >= 20) return 'Serene Breather 🌿';
-  if (sig.auroraSegments >= 30) return 'Wave Painter 🎨';
-  if (sig.longestCalmBreath >= 5) return 'Deep Calm 🧘';
-  return 'Turbulent Spirit 🌪️';
+  if (sig.auroraSegments >= 40 && sig.brokenWaves <= 2) return 'Aurora Sage ðŸŒŸ';
+  if (sig.brokenWaves === 0 && sig.auroraSegments >= 20) return 'Serene Breather ðŸŒ¿';
+  if (sig.auroraSegments >= 30) return 'Wave Painter ðŸŽ¨';
+  if (sig.longestCalmBreath >= 5) return 'Deep Calm ðŸ§˜';
+  return 'Turbulent Spirit ðŸŒªï¸';
 }
 type Phase = 'start' | 'countdown' | 'playing' | 'done';
 
@@ -69,8 +69,9 @@ function AuroraWaveGameInner() {
   const [timeLeft, setTimeLeft] = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
   const [finalSig, setFinalSig] = useState<Signals | null>(null);
+  const [pbBeaten, setPbBeaten] = useState(false);
   const [playerName, setPlayerName] = useState('');
-  const [playerAvatar, setPlayerAvatar] = useState('🌌');
+  const [playerAvatar, setPlayerAvatar] = useState('ðŸŒŒ');
   const playerSessionRef = useRef<PlayerSession | null>(null);
 
   const endGame = useCallback(() => {
@@ -86,8 +87,11 @@ function AuroraWaveGameInner() {
     const avgVar = s.breathVariances.length > 0
       ? s.breathVariances.reduce((a, b) => a + b, 0) / s.breathVariances.length : 0;
     s.sig.avgBreathVariance = avgVar;
-    setFinalSig({ ...s.sig });
-    setPhase('done');
+        const _pbKey = 'pb_aurora-wave';
+    const _finalScore = stateRef.current.sig.score;
+    const _prevPb = parseInt(typeof window !== 'undefined' ? localStorage.getItem(_pbKey) ?? '0' : '0', 10);
+    if (_finalScore > _prevPb) { if (typeof window !== 'undefined') localStorage.setItem(_pbKey, String(_finalScore)); setPbBeaten(true); }
+    setFinalSig({ ...s.sig }); setPhase('done');
   }, []);
 
   const startLoop = useCallback(async () => {
@@ -329,15 +333,16 @@ function AuroraWaveGameInner() {
           ctaLabel="Allow Mic & Begin" accentColor={theme.colors.accent ?? ACCENT} onStart={handleStart} />
       )}
       {phase === 'countdown' && <Countdown onComplete={startLoop} accentColor={theme.colors.accent ?? ACCENT} />}
-      <div ref={mountRef} style={{
+      <div ref={mountRef} aria-label="Game area. Use touch or pointer to interact." role="application" style={{
         position: 'absolute', inset: 0, width: '100%', height: '100%',
         display: phase === 'playing' ? 'block' : 'none', touchAction: 'none',
       }} />
-      {phase === 'playing' && (
-        <GameHUD accentColor={theme.colors.accent ?? ACCENT} items={[
+      {phase === 'playing' && (<>
+        <div aria-live="polite" style={{position:'absolute',left:'-9999px',width:'1px',height:'1px',overflow:'hidden'}}>Score: {scoreDisplay}</div>
+          <GameHUD accentColor={theme.colors.accent ?? ACCENT} items={[
           { label: 'TIME', value: timeLeft, danger: timeLeft <= 5 },
           { label: 'SCORE', value: scoreDisplay },
-        ]} />
+        ]} /></>
       )}
       {phase === 'done' && finalSig && (
         <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI}
@@ -355,6 +360,9 @@ function AuroraWaveGameInner() {
         const personality = getPersonality(finalSig);
         return <WebhookEmitter theme={theme} gameId={GAME_ID} sig={finalSig} personality={personality} player={playerSessionRef.current} />;
       })()}
+      {phase === 'done' && pbBeaten && (
+        <div style={{position:'fixed',top:'16px',left:'50%',transform:'translateX(-50%)',background:'#fbbf24',color:'#000',padding:'8px 20px',borderRadius:'999px',fontWeight:700,fontSize:'1rem',zIndex:9999,boxShadow:'0 4px 12px rgba(0,0,0,0.3)',animation:'none'}}>ðŸ† New Personal Best!</div>
+      )}
     </GameShell>
   );
 }
@@ -373,3 +381,5 @@ function WebhookEmitter({ theme, gameId, sig, personality, player }: {
 import dynamic from 'next/dynamic';
 const AuroraWaveGame = dynamic(() => Promise.resolve({ default: AuroraWaveGameInner }), { ssr: false });
 export default AuroraWaveGame;
+
+

@@ -66,6 +66,7 @@ function PulseJumpGameInner() {
   const [scoreDisplay, setScoreDisplay] = useState(0);
   const [beatPulse, setBeatPulse] = useState(false);
   const [finalSig, setFinalSig] = useState<Signals | null>(null);
+  const [pbBeaten, setPbBeaten] = useState(false);
   const playerSessionRef2 = useRef<PlayerSession | null>(null);
 
   useEffect(() => { stateRef.current.accentColor = theme.colors.accent ?? ACCENT; }, [theme]);
@@ -102,6 +103,10 @@ function PulseJumpGameInner() {
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
     if (beatRef.current) { clearInterval(beatRef.current); beatRef.current = null; }
     if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
+        const _pbKey = 'pb_pulse-jump';
+    const _finalScore = stateRef.current.sig.score;
+    const _prevPb = parseInt(typeof window !== 'undefined' ? localStorage.getItem(_pbKey) ?? '0' : '0', 10);
+    if (_finalScore > _prevPb) { if (typeof window !== 'undefined') localStorage.setItem(_pbKey, String(_finalScore)); setPbBeaten(true); }
     setFinalSig({ ...s.sig }); setPhase('done');
   }, []);
 
@@ -327,10 +332,11 @@ function PulseJumpGameInner() {
       {phase === 'countdown' && <Countdown onComplete={handleCountdownDone} accentColor={accent} />}
       {(phase === 'playing' || phase === 'countdown') && (
         <>
-          <div ref={mountRef} style={{ position: 'absolute', inset: 0, touchAction: 'none' }} />
+          <div ref={mountRef} aria-label="Game area. Use touch or pointer to interact." role="application" style={{ position: 'absolute', inset: 0, touchAction: 'none' }} />
           {phase === 'playing' && (
             <>
-              <GameHUD accentColor={accent} items={[
+              <div aria-live="polite" style={{position:'absolute',left:'-9999px',width:'1px',height:'1px',overflow:'hidden'}}>Score: {scoreDisplay}</div>
+          <GameHUD accentColor={accent} items={[
                 { label: 'TIME', value: timeLeft, danger: timeLeft <= 5 },
                 { label: 'SCORE', value: scoreDisplay },
               ]} />
@@ -351,6 +357,9 @@ function PulseJumpGameInner() {
             onPlayAgain={handlePlayAgain} didWin={finalSig.beatsHit >= 15} />
           <WebhookEmitter theme={theme} gameId={GAME_ID} sig={finalSig} personality={getPersonality(finalSig)} player={playerSessionRef.current} />
         </>
+      )}
+      {phase === 'done' && pbBeaten && (
+        <div style={{position:'fixed',top:'16px',left:'50%',transform:'translateX(-50%)',background:'#fbbf24',color:'#000',padding:'8px 20px',borderRadius:'999px',fontWeight:700,fontSize:'1rem',zIndex:9999,boxShadow:'0 4px 12px rgba(0,0,0,0.3)',animation:'none'}}>🏆 New Personal Best!</div>
       )}
     </GameShell>
   );

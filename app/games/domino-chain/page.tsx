@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 /**
  * DOMINO CHAIN — 3D: tap the first domino at the perfect moment to cascade a full chain.
  * Orange-lit dark room with glowing white 3D dominoes falling in sequence.
@@ -69,11 +69,12 @@ function DominoChainGameInner() {
   const [phase,setPhase]        = useState<Phase>('start');
   const [timeLeft,setTimeLeft]  = useState(DURATION);
   const [scoreDisplay,setScore] = useState(0);
+  const [streak, setStreak] = useState(0);
   const [finalSig,setFinalSig]  = useState<Signals|null>(null);
   const [feedback,setFeedback]  = useState('');
 
   const stateRef = useRef<GS>({
-    running:false,timeLeft:DURATION,
+    running:false, streak: 0,timeLeft:DURATION,
     sig:{totalRounds:0,perfectTaps:0,earlyTaps:0,lateTaps:0,maxChainFall:0,score:0,bestChain:0},
     dominoes:[],chainFalling:false,fallIndex:0,
     tapReady:false,tapWindowOpen:false,tapWindowTime:0,
@@ -294,7 +295,7 @@ function DominoChainGameInner() {
       {phase==='countdown'&&<Countdown onComplete={handleCountdownDone} accentColor={accent}/>}
       {(phase==='playing'||phase==='countdown')&&(
         <>
-          <div ref={mountRef} style={{position:'absolute',inset:0,width:'100%',height:'100%',touchAction:'none'}}/>
+          <div ref={mountRef} role="application" aria-label="Game area - tap to play" style={{position:'absolute',inset:0,width:'100%',height:'100%',touchAction:'none'}}/>
           {phase==='playing'&&(
             <>
               <GameHUD accentColor={accent} items={[{label:'TIME',value:timeLeft,danger:timeLeft<=10},{label:'SCORE',value:scoreDisplay}]}/>

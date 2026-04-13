@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 /**
  * HUM MAZE — 3D tunnel with pitch-steered ball flying through gate rings.
  * Low pitch drifts LEFT, High pitch drifts RIGHT.
@@ -82,7 +82,7 @@ function HumMazeGameInner() {
   const playerSessionRef = useRef<PlayerSession | null>(null);
 
   const stateRef = useRef({
-    running: false, timeLeft: DURATION,
+    running: false, streak: 0, timeLeft: DURATION,
     ballX: 0, pitch: -1, displayPitch: -1, lastDetectTs: 0,
     gateObjects: [] as Array<{ group: THREE.Group; dir: GateDir; passed: boolean; z: number }>,
     gatesPassed: 0, collisions: 0,
@@ -96,6 +96,7 @@ function HumMazeGameInner() {
   const [phase, setPhase] = useState<Phase>('start');
   const [timeLeft, setTimeLeft] = useState(DURATION);
   const [scoreDisp, setScoreDisp] = useState(0);
+  const [streak, setStreak] = useState(0);
   const [finalSig, setFinalSig] = useState<Signals | null>(null);
   const [permError, setPermError] = useState('');
   const [isNewBest, setIsNewBest] = useState(false);
@@ -136,7 +137,7 @@ function HumMazeGameInner() {
     s.pitch = -1; s.displayPitch = -1; s.lastDetectTs = 0;
     s.gateObjects = []; s.gatesPassed = 0; s.collisions = 0;
     s.pitchSum = 0; s.pitchCount = 0; s.hitFlash = 0;
-    setScoreDisp(0); setTimeLeft(DURATION); setPhase('playing');
+    setScoreDisp(0); setStreak(0); setTimeLeft(DURATION); setPhase('playing');
     stopMusicRef.current = startMusic('calm');
 
     const W = window.innerWidth, H = window.innerHeight;
@@ -385,7 +386,7 @@ function HumMazeGameInner() {
     if (audioCtxRef.current) { audioCtxRef.current.close().catch(() => {}); audioCtxRef.current = null; }
     if (micStreamRef.current) { micStreamRef.current.getTracks().forEach(t => t.stop()); micStreamRef.current = null; }
     analyserRef.current = null; stateRef.current.pitchBuf = null;
-    setPhase('start'); setScoreDisp(0); setTimeLeft(DURATION); setFinalSig(null); setIsNewBest(false);
+    setPhase('start'); setScoreDisp(0); setStreak(0); setTimeLeft(DURATION); setFinalSig(null); setIsNewBest(false);
     prevScore.current = 0;
   }, []);
 
@@ -409,7 +410,7 @@ function HumMazeGameInner() {
         </GameStartScreen>
       )}
       {phase === 'countdown' && <Countdown onComplete={startLoop} accentColor={accent} />}
-      <div ref={mountRef} style={{ position: 'absolute', inset: 0, display: phase === 'playing' ? 'block' : 'none' }} />
+      <div ref={mountRef} role="application" aria-label="Game area - tap to play" style={{ position: 'absolute', inset: 0, display: phase === 'playing' ? 'block' : 'none' }} />
       {phase === 'playing' && (
         <GameHUD accentColor={accent} items={[
           { label: 'TIME', value: timeLeft, danger: timeLeft <= 10, testId: 'timer' },

@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
 import * as THREE from 'three';
 import GameShell from '@/components/GameShell';
@@ -48,7 +48,7 @@ function PenaltyKickInner() {
   const { pops, triggerPop } = useScorePop();
 
   const stateRef = useRef({
-    running: false,
+    running: false, streak: 0,
     sig: { shots: 0, goals: 0, cornerShots: 0, powerSum: 0, curveShots: 0, score: 0 } as Signals,
     // Shot state
     phase: 'aim' as 'aim' | 'shooting' | 'result',
@@ -69,6 +69,7 @@ function PenaltyKickInner() {
   const [phase, setPhase] = useState<Phase>('start');
   const [shotsDisplay, setShotsDisplay] = useState(0);
   const [goalsDisplay, setGoalsDisplay] = useState(0);
+  const [streak, setStreak] = useState(0);
   const [finalSig, setFinalSig] = useState<Signals | null>(null);
   const [isNewBest, setIsNewBest] = useState(false);
   const [shotMsg, setShotMsg] = useState('');
@@ -335,7 +336,7 @@ function PenaltyKickInner() {
       {phase === 'countdown' && <Countdown onComplete={handleCountdownDone} accentColor={accent} />}
       {(phase === 'playing' || phase === 'countdown') && (
         <>
-          <div ref={mountRef} style={{ position: 'absolute', inset: 0, touchAction: 'none' }} />
+          <div ref={mountRef} role="application" aria-label="Game area - tap to play" style={{ position: 'absolute', inset: 0, touchAction: 'none' }} />
           {phase === 'playing' && (
             <>
               <GameHUD accentColor={accent} items={[

@@ -69,6 +69,7 @@ function EchoClapGameInner() {
   const [roundDisplay, setRoundDisplay] = useState(1);
   const [isListening, setIsListening] = useState(false);
   const [finalSig, setFinalSig] = useState<Signals | null>(null);
+  const [pbBeaten, setPbBeaten] = useState(false);
   const playerSessionRef = useRef<PlayerSession | null>(null);
 
   const schedulePattern = useCallback(() => {
@@ -175,6 +176,10 @@ function EchoClapGameInner() {
     if (micRef.current) { micRef.current.stream.getTracks().forEach(t => t.stop()); micRef.current = null; }
     const t = threeRef.current;
     if (t) { cancelAnimationFrame(t.animId); t.renderer.dispose(); }
+        const _pbKey = 'pb_echo-clap';
+    const _finalScore = stateRef.current.sig.score;
+    const _prevPb = parseInt(typeof window !== 'undefined' ? localStorage.getItem(_pbKey) ?? '0' : '0', 10);
+    if (_finalScore > _prevPb) { if (typeof window !== 'undefined') localStorage.setItem(_pbKey, String(_finalScore)); setPbBeaten(true); }
     setFinalSig({ ...s.sig }); setPhase('done');
   }, []);
 
@@ -345,10 +350,11 @@ function EchoClapGameInner() {
       {phase === 'countdown' && <Countdown onComplete={handleCountdownDone} accentColor={theme.colors.accent ?? ACCENT} />}
       {(phase === 'playing' || phase === 'countdown') && (
         <>
-          <div ref={mountRef} style={{ position: 'absolute', inset: 0, touchAction: 'none' }} />
+          <div ref={mountRef} aria-label="Game area. Use touch or pointer to interact." role="application" style={{ position: 'absolute', inset: 0, touchAction: 'none' }} />
           {phase === 'playing' && (
             <>
-              <GameHUD accentColor={theme.colors.accent ?? ACCENT} items={[{ label: 'TIME', value: timeLeft, danger: timeLeft <= 10 }, { label: 'SCORE', value: scoreDisplay }, { label: 'ROUND', value: roundDisplay }]} />
+              <div aria-live="polite" style={{position:'absolute',left:'-9999px',width:'1px',height:'1px',overflow:'hidden'}}>Score: {scoreDisplay}</div>
+          <GameHUD accentColor={theme.colors.accent ?? ACCENT} items={[{ label: 'TIME', value: timeLeft, danger: timeLeft <= 10 }, { label: 'SCORE', value: scoreDisplay }, { label: 'ROUND', value: roundDisplay }]} />
               {isListening && <div style={{ position: 'absolute', bottom: '15%', left: '50%', transform: 'translateX(-50%)', fontSize: 20, fontWeight: 800, color: '#ef4444', textShadow: '0 0 20px #ef4444', pointerEvents: 'none', whiteSpace: 'nowrap' }}>👏 Now clap!</div>}
             </>
           )}
@@ -359,6 +365,9 @@ function EchoClapGameInner() {
       )}
       {phase === 'done' && finalSig && (
         <WebhookEmitter theme={theme} sig={finalSig} personality={getPersonality(finalSig)} player={playerSessionRef.current} />
+      )}
+      {phase === 'done' && pbBeaten && (
+        <div style={{position:'fixed',top:'16px',left:'50%',transform:'translateX(-50%)',background:'#fbbf24',color:'#000',padding:'8px 20px',borderRadius:'999px',fontWeight:700,fontSize:'1rem',zIndex:9999,boxShadow:'0 4px 12px rgba(0,0,0,0.3)',animation:'none'}}>🏆 New Personal Best!</div>
       )}
     </GameShell>
   );

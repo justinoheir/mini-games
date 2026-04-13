@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
 import GameShell from '@/components/GameShell';
 import GameHUD from '@/components/GameHUD';
@@ -149,7 +149,7 @@ function HeatMapInner() {
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const animRef = useRef<number>(0);
   const stateRef = useRef<GState>({
-    running: false, timeLeft: DURATION,
+    running: false, streak: 0, timeLeft: DURATION,
     sig: { rounds: 0, totalDist: 0, avgDist: 0, score: 0, hotHits: 0, tapRecords: [] },
     sceneIdx: 0, subPhase: 'reveal',
     tapX: null, tapY: null, resultUntil: 0, revealAt: 0, tapAt: 0,
@@ -157,6 +157,7 @@ function HeatMapInner() {
   const [phase, setPhase] = useState<Phase>('start');
   const [timeLeft, setTimeLeft] = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
+  const [streak, setStreak] = useState(0);
   const [finalSig, setFinalSig] = useState<Signals | null>(null);
   const playerSessionRef = useRef<PlayerSession | null>(null);
 
@@ -185,7 +186,7 @@ function HeatMapInner() {
     s.sig = { rounds: 0, totalDist: 0, avgDist: 0, score: 0, hotHits: 0, tapRecords: [] };
     s.sceneIdx = 0; s.subPhase = 'reveal'; s.revealAt = Date.now() + 500;
     s.tapX = null; s.tapY = null;
-    setScoreDisplay(0); setTimeLeft(DURATION); setPhase('playing');
+    setScoreDisplay(0); setStreak(0); setTimeLeft(DURATION); setPhase('playing');
 
     timerRef.current = setInterval(() => {
       s.timeLeft--; setTimeLeft(s.timeLeft);
@@ -297,7 +298,10 @@ function HeatMapInner() {
     const pts = Math.round(Math.max(0, 100 - dist * 300));
     s.sig.rounds++;
     s.sig.totalDist += dist;
-    s.sig.score += pts;
+    if (pts >= 60) { s.streak=(s.streak||0)+1; } else { s.streak=0; }
+    setStreak(s.streak);
+    const _hm = Math.max(1,Math.floor(s.streak/3)+1);
+    s.sig.score += pts * _hm;
     if (pts >= 60) s.sig.hotHits++;
     s.sig.tapRecords.push({ x: nx / W, y: ny / H, dist });
     setScoreDisplay(s.sig.score);
@@ -332,7 +336,7 @@ function HeatMapInner() {
     await initAudio(); setPhase('countdown');
   }, []);
   const handlePlayAgain = useCallback(() => {
-    setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null);
+    setPhase('start'); setScoreDisplay(0); setStreak(0); setTimeLeft(DURATION); setFinalSig(null);
   }, []);
 
   const avgDist = finalSig ? Math.round((1 - Math.min(1, finalSig.avgDist * 3)) * 100) : 0;
@@ -346,7 +350,7 @@ function HeatMapInner() {
       {phase === 'countdown' && <Countdown onComplete={startLoop} accentColor={theme.colors.accent ?? ACCENT} />}
       {(phase === 'playing' || phase === 'countdown') && (
         <>
-          <canvas ref={canvasRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none' }} />
+          <canvas ref={canvasRef} role="application" aria-label="Game canvas - tap to interact" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none' }} />
           {phase === 'playing' && <GameHUD accentColor={theme.colors.accent ?? ACCENT} items={[{ label: 'TIME', value: timeLeft, danger: timeLeft <= 10 }, { label: 'SCORE', value: scoreDisplay }]} />}
         </>
       )}

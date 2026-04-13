@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
 import * as THREE from 'three';
 import GameShell from '@/components/GameShell';
@@ -15,7 +15,7 @@ import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
 const GAME_ID  = 'pitch-match';
 const ACCENT   = '#a855f7';
 const DURATION = 45;
-const GAME_EMOJI   = '🎵';
+const GAME_EMOJI   = 'ðŸŽµ';
 const GAME_TITLE   = 'Pitch Match';
 const GAME_TAGLINE = 'Hum or sing to match the target frequency!';
 
@@ -58,11 +58,11 @@ interface Signals {
 }
 
 function getPersonality(sig: Signals): string {
-  if (sig.precisionHits >= 5 && sig.avgPitchDeviation < 15) return '🎤 Perfect Pitch';
-  if (sig.notesHit >= 6) return '🎵 Melody Master';
-  if (sig.longestHold > 2000) return '🎶 Sustained Singer';
-  if (sig.notesHit >= 3) return '🎼 On Key';
-  return '🎤 Finding the Tune';
+  if (sig.precisionHits >= 5 && sig.avgPitchDeviation < 15) return 'ðŸŽ¤ Perfect Pitch';
+  if (sig.notesHit >= 6) return 'ðŸŽµ Melody Master';
+  if (sig.longestHold > 2000) return 'ðŸŽ¶ Sustained Singer';
+  if (sig.notesHit >= 3) return 'ðŸŽ¼ On Key';
+  return 'ðŸŽ¤ Finding the Tune';
 }
 
 type Phase = 'start' | 'countdown' | 'playing' | 'done';
@@ -121,6 +121,7 @@ function PitchMatchGameInner() {
   const [timeLeft, setTimeLeft] = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
   const [finalSig, setFinalSig] = useState<Signals | null>(null);
+  const [pbBeaten, setPbBeaten] = useState(false);
   const [micError, setMicError] = useState('');
   const playerSessionRef = useRef<PlayerSession | null>(null);
 
@@ -134,8 +135,11 @@ function PitchMatchGameInner() {
     if (s.audioCtx) { s.audioCtx.close().catch(() => {}); s.audioCtx = null; }
     if (s.renderer) { s.renderer.dispose(); s.renderer = null; }
     if (mountRef.current) mountRef.current.innerHTML = '';
-    setFinalSig({ ...s.sig });
-    setPhase('done');
+        const _pbKey = 'pb_pitch-match';
+    const _finalScore = stateRef.current.sig.score;
+    const _prevPb = parseInt(typeof window !== 'undefined' ? localStorage.getItem(_pbKey) ?? '0' : '0', 10);
+    if (_finalScore > _prevPb) { if (typeof window !== 'undefined') localStorage.setItem(_pbKey, String(_finalScore)); setPbBeaten(true); }
+    setFinalSig({ ...s.sig }); setPhase('done');
     hapticVictory();
   }, []);
 
@@ -400,7 +404,7 @@ function PitchMatchGameInner() {
     { label: 'Notes Hit', value: String(sig.notesHit), color: ACCENT },
     { label: 'Precision', value: String(sig.precisionHits), color: '#4ade80' },
     { label: 'Longest Hold', value: `${(sig.longestHold / 1000).toFixed(1)}s`, color: '#fbbf24' },
-    { label: 'Best Streak', value: `×${sig.maxStreak}`, color: ACCENT },
+    { label: 'Best Streak', value: `Ã—${sig.maxStreak}`, color: ACCENT },
   ];
 
   return (
@@ -408,18 +412,19 @@ function PitchMatchGameInner() {
       {phase === 'start' && (
         <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE}
           description={micError || GAME_TAGLINE}
-          ctaLabel="Allow Mic 🎤" accentColor={theme.colors.accent ?? ACCENT} onStart={handleStart} />
+          ctaLabel="Allow Mic ðŸŽ¤" accentColor={theme.colors.accent ?? ACCENT} onStart={handleStart} />
       )}
       {phase === 'countdown' && <Countdown onComplete={handleCountdownDone} accentColor={theme.colors.accent ?? ACCENT} />}
       {(phase === 'playing' || phase === 'countdown') && (
         <>
-          <div ref={mountRef} style={{ position: 'absolute', inset: 0, touchAction: 'none' }} />
-          {phase === 'playing' && (
-            <GameHUD accentColor={theme.colors.accent ?? ACCENT} items={[
+          <div ref={mountRef} aria-label="Game area. Use touch or pointer to interact." role="application" style={{ position: 'absolute', inset: 0, touchAction: 'none' }} />
+          {phase === 'playing' && (<>
+            <div aria-live="polite" style={{position:'absolute',left:'-9999px',width:'1px',height:'1px',overflow:'hidden'}}>Score: {scoreDisplay}</div>
+          <GameHUD accentColor={theme.colors.accent ?? ACCENT} items={[
               { label: 'TIME', value: timeLeft, danger: timeLeft <= 10 },
               { label: 'SCORE', value: scoreDisplay },
             ]} />
-          )}
+          </>)}
         </>
       )}
       {phase === 'done' && finalSig && (
@@ -430,6 +435,9 @@ function PitchMatchGameInner() {
             onPlayAgain={handlePlayAgain} didWin={finalSig.notesHit >= 5} />
           <WebhookEmitter theme={theme} sig={finalSig} personality={getPersonality(finalSig)} player={playerSessionRef.current} />
         </>
+      )}
+      {phase === 'done' && pbBeaten && (
+        <div style={{position:'fixed',top:'16px',left:'50%',transform:'translateX(-50%)',background:'#fbbf24',color:'#000',padding:'8px 20px',borderRadius:'999px',fontWeight:700,fontSize:'1rem',zIndex:9999,boxShadow:'0 4px 12px rgba(0,0,0,0.3)',animation:'none'}}>ðŸ† New Personal Best!</div>
       )}
     </GameShell>
   );
@@ -451,3 +459,5 @@ function WebhookEmitter({ theme, sig, personality, player }: {
 import dynamic from 'next/dynamic';
 const PitchMatchGame = dynamic(() => Promise.resolve({ default: PitchMatchGameInner }), { ssr: false });
 export default PitchMatchGame;
+
+

@@ -68,6 +68,7 @@ function GymnastBeamGameInner() {
   const [timeLeft, setTimeLeft]         = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
   const [finalSig, setFinalSig]         = useState<Signals | null>(null);
+  const [pbBeaten, setPbBeaten] = useState(false);
   const [moveMsg, setMoveMsg]           = useState<{ text: string; color: string } | null>(null);
   const playerSessionRef                = useRef<PlayerSession | null>(null);
   const moveMsgTimer                    = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -81,6 +82,10 @@ function GymnastBeamGameInner() {
     tiltRef.current?.stop();
     const t = threeRef.current;
     if (t) { cancelAnimationFrame(t.animId); t.renderer.dispose(); }
+        const _pbKey = 'pb_gymnast-beam';
+    const _finalScore = stateRef.current.sig.score;
+    const _prevPb = parseInt(typeof window !== 'undefined' ? localStorage.getItem(_pbKey) ?? '0' : '0', 10);
+    if (_finalScore > _prevPb) { if (typeof window !== 'undefined') localStorage.setItem(_pbKey, String(_finalScore)); setPbBeaten(true); }
     setFinalSig({ ...s.sig }); setPhase('done'); hapticVictory();
   }, []);
 
@@ -340,10 +345,11 @@ function GymnastBeamGameInner() {
       {phase === 'countdown' && <Countdown onComplete={handleCountdownDone} accentColor={theme.colors.accent ?? ACCENT} />}
       {(phase === 'playing' || phase === 'countdown') && (
         <>
-          <div ref={mountRef} style={{ position: 'absolute', inset: 0, touchAction: 'none' }} />
+          <div ref={mountRef} aria-label="Game area. Use touch or pointer to interact." role="application" style={{ position: 'absolute', inset: 0, touchAction: 'none' }} />
           {phase === 'playing' && (
             <>
-              <GameHUD accentColor={theme.colors.accent ?? ACCENT} items={[{ label: 'TIME', value: timeLeft, danger: timeLeft <= 5 }, { label: 'SCORE', value: scoreDisplay }]} />
+              <div aria-live="polite" style={{position:'absolute',left:'-9999px',width:'1px',height:'1px',overflow:'hidden'}}>Score: {scoreDisplay}</div>
+          <GameHUD accentColor={theme.colors.accent ?? ACCENT} items={[{ label: 'TIME', value: timeLeft, danger: timeLeft <= 5 }, { label: 'SCORE', value: scoreDisplay }]} />
               {moveMsg && <div style={{ position: 'absolute', top: '22%', left: '50%', transform: 'translateX(-50%)', fontSize: 26, fontWeight: 900, color: moveMsg.color, textShadow: `0 0 14px ${moveMsg.color}88`, pointerEvents: 'none', whiteSpace: 'nowrap' }}>{moveMsg.text}</div>}
               <div style={{ position: 'absolute', bottom: '14%', left: '50%', transform: 'translateX(-50%)', fontSize: 14, color: 'rgba(255,255,255,0.45)', letterSpacing: 2, textTransform: 'uppercase', pointerEvents: 'none' }}>Tap when green ↑</div>
             </>
@@ -355,6 +361,9 @@ function GymnastBeamGameInner() {
       )}
       {phase === 'done' && finalSig && (
         <WebhookEmitter theme={theme} sig={finalSig} personality={getPersonality(finalSig)} player={playerSessionRef.current} />
+      )}
+      {phase === 'done' && pbBeaten && (
+        <div style={{position:'fixed',top:'16px',left:'50%',transform:'translateX(-50%)',background:'#fbbf24',color:'#000',padding:'8px 20px',borderRadius:'999px',fontWeight:700,fontSize:'1rem',zIndex:9999,boxShadow:'0 4px 12px rgba(0,0,0,0.3)',animation:'none'}}>🏆 New Personal Best!</div>
       )}
     </GameShell>
   );

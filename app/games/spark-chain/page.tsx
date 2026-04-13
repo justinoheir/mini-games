@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
 import GameShell from '@/components/GameShell';
 import GameHUD from '@/components/GameHUD';
@@ -63,7 +63,7 @@ function SparkChainInner() {
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const animRef = useRef<number>(0);
   const stateRef = useRef<GState>({
-    running: false, timeLeft: DURATION,
+    running: false, streak: 0, timeLeft: DURATION,
     sig: { rounds: 0, bestCoverage: 0, avgCoverage: 0, totalCoverage: 0, score: 0, perfect: 0 },
     nodes: [], roundPhase: 'place',
     litCount: 0, totalCount: NODE_COUNT,
@@ -73,6 +73,7 @@ function SparkChainInner() {
   const [phase, setPhase] = useState<Phase>('start');
   const [timeLeft, setTimeLeft] = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
+  const [streak, setStreak] = useState(0);
   const [finalSig, setFinalSig] = useState<Signals | null>(null);
   const playerSessionRef = useRef<PlayerSession | null>(null);
 
@@ -118,7 +119,7 @@ function SparkChainInner() {
     const s = stateRef.current;
     s.running = true; s.timeLeft = DURATION;
     s.sig = { rounds: 0, bestCoverage: 0, avgCoverage: 0, totalCoverage: 0, score: 0, perfect: 0 };
-    setScoreDisplay(0); setTimeLeft(DURATION); setPhase('playing');
+    setScoreDisplay(0); setStreak(0); setTimeLeft(DURATION); setPhase('playing');
     startNewRound(canvas.width, canvas.height);
 
     timerRef.current = setInterval(() => {
@@ -168,7 +169,10 @@ function SparkChainInner() {
           s.sig.rounds++;
           s.sig.totalCoverage += s.coverage;
           if (s.coverage > s.sig.bestCoverage) s.sig.bestCoverage = s.coverage;
-          s.sig.score += pts;
+          if (s.coverage >= 0.7) { s.streak=(s.streak||0)+1; } else { s.streak=0; }
+          setStreak(s.streak);
+          const _sc = Math.max(1,Math.floor(s.streak/3)+1);
+          s.sig.score += pts * _sc;
           if (s.coverage >= 0.9) s.sig.perfect++;
           setScoreDisplay(s.sig.score);
           s.roundFlash = s.coverage >= 0.7 ? '#22c55e' : s.coverage >= 0.4 ? '#f59e0b' : '#ef4444';
@@ -283,7 +287,7 @@ function SparkChainInner() {
     await initAudio(); setPhase('countdown');
   }, []);
   const handlePlayAgain = useCallback(() => {
-    setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null);
+    setPhase('start'); setScoreDisplay(0); setStreak(0); setTimeLeft(DURATION); setFinalSig(null);
   }, []);
 
   const bestPct = finalSig ? Math.round(finalSig.bestCoverage * 100) : 0;
@@ -298,7 +302,7 @@ function SparkChainInner() {
       {phase === 'countdown' && <Countdown onComplete={startLoop} accentColor={theme.colors.accent ?? ACCENT} />}
       {(phase === 'playing' || phase === 'countdown') && (
         <>
-          <canvas ref={canvasRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none' }} />
+          <canvas ref={canvasRef} role="application" aria-label="Game canvas - tap to interact" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none' }} />
           {phase === 'playing' && <GameHUD accentColor={theme.colors.accent ?? ACCENT} items={[{ label: 'TIME', value: timeLeft, danger: timeLeft <= 10 }, { label: 'SCORE', value: scoreDisplay }]} />}
         </>
       )}

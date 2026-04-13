@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 /**
  * LUNG CAPACITY — 3D expanding lung visualization. Hold breath in zone.
  */
@@ -51,7 +51,7 @@ function LungCapacityGameInner() {
   const micStreamRef = useRef<MediaStream | null>(null);
 
   const stateRef = useRef({
-    running: false, timeLeft: DURATION,
+    running: false, streak: 0, timeLeft: DURATION,
     sig: { score: 0, maxFill: 0, steadySeconds: 0, overBreaths: 0, underBreaths: 0 } as Signals,
     volume: 0, inZone: false, steadyCounter: 0,
     fill: 0, fillTarget: 0,
@@ -68,6 +68,7 @@ function LungCapacityGameInner() {
   const [phase, setPhase] = useState<Phase>('start');
   const [timeLeft, setTimeLeft] = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
+  const [streak, setStreak] = useState(0);
   const [finalSig, setFinalSig] = useState<Signals | null>(null);
   const [fillDisplay, setFillDisplay] = useState(0);
   const [inZoneDisplay, setInZoneDisplay] = useState(false);
@@ -91,7 +92,7 @@ function LungCapacityGameInner() {
     s.running = true; s.timeLeft = DURATION;
     s.sig = { score: 0, maxFill: 0, steadySeconds: 0, overBreaths: 0, underBreaths: 0 };
     s.volume = 0; s.fill = 0; s.fillTarget = 0; s.inZone = false; s.steadyCounter = 0;
-    setScoreDisplay(0); setTimeLeft(DURATION); setFillDisplay(0); setPhase('playing');
+    setScoreDisplay(0); setStreak(0); setTimeLeft(DURATION); setFillDisplay(0); setPhase('playing');
     stopMusicRef.current = startMusic('calm');
 
     const W = window.innerWidth, H = window.innerHeight;
@@ -311,7 +312,7 @@ function LungCapacityGameInner() {
     } catch { /* fall back to touch */ }
     setPhase('countdown');
   }, []);
-  const handlePlayAgain = useCallback(() => { setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null); }, []);
+  const handlePlayAgain = useCallback(() => { setPhase('start'); setScoreDisplay(0); setStreak(0); setTimeLeft(DURATION); setFinalSig(null); }, []);
 
   const fillColor = fillDisplay / 100 >= ZONE_LOW && fillDisplay / 100 <= ZONE_HIGH ? '#4ade80' : fillDisplay / 100 > ZONE_HIGH ? '#ef4444' : '#fbbf24';
   const fillLabel = fillDisplay / 100 >= ZONE_LOW && fillDisplay / 100 <= ZONE_HIGH ? '✅ Zone! Keep steady!' : fillDisplay / 100 > ZONE_HIGH ? '🔥 Too much! Let go!' : '⬇️ Hum or hold to fill!';
@@ -321,7 +322,7 @@ function LungCapacityGameInner() {
       background="linear-gradient(180deg,#020f08 0%,#041508 100%)">
       {phase === 'start' && <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description={GAME_TAGLINE} ctaLabel="Take a Breath 🫁" accentColor={theme.colors.accent ?? ACCENT} onStart={handleStart} sensorNote="Hum (mic) or press & hold to fill" />}
       {phase === 'countdown' && <Countdown onComplete={startLoop} accentColor={theme.colors.accent ?? ACCENT} />}
-      <div ref={mountRef} style={{ position: 'absolute', inset: 0, display: phase === 'playing' ? 'block' : 'none', touchAction: 'none' }} />
+      <div ref={mountRef} role="application" aria-label="Game area - tap to play" style={{ position: 'absolute', inset: 0, display: phase === 'playing' ? 'block' : 'none', touchAction: 'none' }} />
       {phase === 'playing' && (
         <>
           <GameHUD accentColor={theme.colors.accent ?? ACCENT} items={[{ label: 'TIME', value: timeLeft, danger: timeLeft <= 10 }, { label: 'SCORE', value: scoreDisplay }]} />

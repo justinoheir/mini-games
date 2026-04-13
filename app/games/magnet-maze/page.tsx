@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 /**
  * MAGNET MAZE — 3D maze with magnetic particle effects.
  * Tilt or drag to steer a metal ball through a maze with attracting magnets.
@@ -73,7 +73,7 @@ function MagnetMazeGameInner() {
   const playerSessionRef = useRef<PlayerSession | null>(null);
 
   const stateRef = useRef({
-    running: false, timeLeft: DURATION,
+    running: false, streak: 0, timeLeft: DURATION,
     sig: { score: 0, completionTime: null, collisions: 0, timedOut: false } as Signals,
     ballPos: new THREE.Vector3(0, 0.4, 0),
     ballVel: new THREE.Vector3(0, 0, 0),
@@ -95,6 +95,7 @@ function MagnetMazeGameInner() {
   const [phase, setPhase] = useState<Phase>('start');
   const [timeLeft, setTimeLeft] = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
+  const [streak, setStreak] = useState(0);
   const [finalSig, setFinalSig] = useState<Signals | null>(null);
   const [wonDisplay, setWonDisplay] = useState(false);
 
@@ -117,7 +118,7 @@ function MagnetMazeGameInner() {
     s.ballPos.set(0, 0.4, 0); s.ballVel.set(0, 0, 0);
     s.tiltX = 0; s.tiltZ = 0; s.startTime = Date.now();
     s.magnets = []; s.fieldParticles = [];
-    setScoreDisplay(0); setTimeLeft(DURATION); setWonDisplay(false); setPhase('playing');
+    setScoreDisplay(0); setStreak(0); setTimeLeft(DURATION); setWonDisplay(false); setPhase('playing');
     stopMusicRef.current = startMusic('ambient');
 
     const W = window.innerWidth, H = window.innerHeight;
@@ -395,14 +396,14 @@ function MagnetMazeGameInner() {
     playerSessionRef.current = savePlayerSession(GAME_ID, n, a);
     await initAudio(); setPhase('countdown');
   }, []);
-  const handlePlayAgain = useCallback(() => { setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null); setWonDisplay(false); }, []);
+  const handlePlayAgain = useCallback(() => { setPhase('start'); setScoreDisplay(0); setStreak(0); setTimeLeft(DURATION); setFinalSig(null); setWonDisplay(false); }, []);
 
   return (
     <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}
       background="linear-gradient(180deg,#030110 0%,#060225 100%)">
       {phase === 'start' && <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description={GAME_TAGLINE} ctaLabel="Enter the Maze 🧲" accentColor={theme.colors.accent ?? ACCENT} onStart={handleStart} />}
       {phase === 'countdown' && <Countdown onComplete={startLoop} accentColor={theme.colors.accent ?? ACCENT} />}
-      <div ref={mountRef} style={{ position: 'absolute', inset: 0, display: phase === 'playing' ? 'block' : 'none', touchAction: 'none' }} />
+      <div ref={mountRef} role="application" aria-label="Game area - tap to play" style={{ position: 'absolute', inset: 0, display: phase === 'playing' ? 'block' : 'none', touchAction: 'none' }} />
       {phase === 'playing' && (
         <>
           <GameHUD accentColor={theme.colors.accent ?? ACCENT} items={[{ label: 'TIME', value: timeLeft, danger: timeLeft <= 10 }, { label: 'SCORE', value: scoreDisplay }]} />

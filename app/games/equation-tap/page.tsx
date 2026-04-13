@@ -74,6 +74,7 @@ function EquationTapGameInner() {
   const [timeLeft, setTimeLeft] = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
   const [finalSig, setFinalSig] = useState<Signals | null>(null);
+  const [pbBeaten, setPbBeaten] = useState(false);
 
   const updateQuestionTexture = useCallback((q: string, opts: number[]) => {
     const t = threeRef.current; if (!t) return;
@@ -138,6 +139,10 @@ function EquationTapGameInner() {
     if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
     const t = threeRef.current;
     if (t) { cancelAnimationFrame(t.animId); t.renderer.dispose(); }
+        const _pbKey = 'pb_equation-tap';
+    const _finalScore = stateRef.current.sig.score;
+    const _prevPb = parseInt(typeof window !== 'undefined' ? localStorage.getItem(_pbKey) ?? '0' : '0', 10);
+    if (_finalScore > _prevPb) { if (typeof window !== 'undefined') localStorage.setItem(_pbKey, String(_finalScore)); setPbBeaten(true); }
     setFinalSig({ ...s.sig }); setPhase('done'); hapticVictory();
   }, []);
 
@@ -330,10 +335,11 @@ function EquationTapGameInner() {
       {phase === 'countdown' && <Countdown onComplete={handleCountdownDone} accentColor={theme.colors.accent ?? ACCENT} />}
       {(phase === 'playing' || phase === 'countdown') && (
         <>
-          <div ref={mountRef} style={{ position: 'absolute', inset: 0, touchAction: 'none' }} />
+          <div ref={mountRef} aria-label="Game area. Use touch or pointer to interact." role="application" style={{ position: 'absolute', inset: 0, touchAction: 'none' }} />
           {phase === 'playing' && (
             <>
-              <GameHUD accentColor={theme.colors.accent ?? ACCENT} items={[{ label: 'TIME', value: timeLeft, danger: timeLeft <= 10 }, { label: 'SCORE', value: scoreDisplay }]} />
+              <div aria-live="polite" style={{position:'absolute',left:'-9999px',width:'1px',height:'1px',overflow:'hidden'}}>Score: {scoreDisplay}</div>
+          <GameHUD accentColor={theme.colors.accent ?? ACCENT} items={[{ label: 'TIME', value: timeLeft, danger: timeLeft <= 10 }, { label: 'SCORE', value: scoreDisplay }]} />
               {/* Answer labels overlaid */}
               {threeRef.current && stateRef.current.opts.length === 4 && stateRef.current.opts.map((opt, i) => (
                 <div key={i} style={{ position: 'absolute', pointerEvents: 'none', fontWeight: 900, fontSize: 28, color: '#fff', textShadow: '0 0 10px rgba(0,0,0,0.8)', ...([
@@ -352,6 +358,9 @@ function EquationTapGameInner() {
       )}
       {phase === 'done' && finalSig && (
         <WebhookEmitter theme={theme} sig={finalSig} personality={getPersonality(finalSig)} player={playerSessionRef.current} />
+      )}
+      {phase === 'done' && pbBeaten && (
+        <div style={{position:'fixed',top:'16px',left:'50%',transform:'translateX(-50%)',background:'#fbbf24',color:'#000',padding:'8px 20px',borderRadius:'999px',fontWeight:700,fontSize:'1rem',zIndex:9999,boxShadow:'0 4px 12px rgba(0,0,0,0.3)',animation:'none'}}>🏆 New Personal Best!</div>
       )}
     </GameShell>
   );

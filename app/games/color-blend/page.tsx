@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
 import GameShell from '@/components/GameShell';
 import GameHUD from '@/components/GameHUD';
@@ -80,7 +80,7 @@ function ColorBlendInner() {
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const animRef = useRef<number>(0);
   const stateRef = useRef<GState>({
-    running: false, timeLeft: DURATION,
+    running: false, streak: 0, timeLeft: DURATION,
     sig: { rounds: 0, totalAccuracy: 0, bestAccuracy: 0, score: 0, perfectHits: 0 },
     sliderValue: 0.5, isDragging: false, dragStartX: 0, dragStartVal: 0.5,
     colorA: '#ef4444', colorB: '#3b82f6', targetBlend: 0.5, targetColor: '#7b3c7b',
@@ -89,6 +89,7 @@ function ColorBlendInner() {
   const [phase, setPhase] = useState<Phase>('start');
   const [timeLeft, setTimeLeft] = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
+  const [streak, setStreak] = useState(0);
   const [finalSig, setFinalSig] = useState<Signals | null>(null);
   const playerSessionRef = useRef<PlayerSession | null>(null);
 
@@ -123,7 +124,10 @@ function ColorBlendInner() {
     s.sig.rounds++;
     s.sig.totalAccuracy += accuracy;
     if (accuracy > s.sig.bestAccuracy) s.sig.bestAccuracy = accuracy;
-    s.sig.score += pts;
+    if (accuracy >= 80) { s.streak=(s.streak||0)+1; } else { s.streak=0; }
+    setStreak(s.streak);
+    const _cb=Math.max(1,Math.floor(s.streak/3)+1);
+    s.sig.score += pts * _cb;
     if (accuracy >= 85) s.sig.perfectHits++;
     setScoreDisplay(s.sig.score);
     s.roundResult = { accuracy, score: pts, flash: Date.now() + 800 };
@@ -148,7 +152,7 @@ function ColorBlendInner() {
     const s = stateRef.current;
     s.running = true; s.timeLeft = DURATION;
     s.sig = { rounds: 0, totalAccuracy: 0, bestAccuracy: 0, score: 0, perfectHits: 0 };
-    setScoreDisplay(0); setTimeLeft(DURATION); setPhase('playing');
+    setScoreDisplay(0); setStreak(0); setTimeLeft(DURATION); setPhase('playing');
     nextRound();
 
     timerRef.current = setInterval(() => {
@@ -323,7 +327,7 @@ function ColorBlendInner() {
     await initAudio(); setPhase('countdown');
   }, []);
   const handlePlayAgain = useCallback(() => {
-    setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null);
+    setPhase('start'); setScoreDisplay(0); setStreak(0); setTimeLeft(DURATION); setFinalSig(null);
   }, []);
 
   const avgAcc = finalSig && finalSig.rounds > 0 ? Math.round(finalSig.totalAccuracy / finalSig.rounds) : 0;
@@ -337,7 +341,7 @@ function ColorBlendInner() {
       {phase === 'countdown' && <Countdown onComplete={startLoop} accentColor={theme.colors.accent ?? ACCENT} />}
       {(phase === 'playing' || phase === 'countdown') && (
         <>
-          <canvas ref={canvasRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none' }} />
+          <canvas ref={canvasRef} role="application" aria-label="Game canvas - tap to interact" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none' }} />
           {phase === 'playing' && <GameHUD accentColor={theme.colors.accent ?? ACCENT} items={[{ label: 'TIME', value: timeLeft, danger: timeLeft <= 10 }, { label: 'SCORE', value: scoreDisplay }]} />}
         </>
       )}

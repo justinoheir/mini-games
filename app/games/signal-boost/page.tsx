@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
 import * as THREE from 'three';
 import GameShell from '@/components/GameShell';
@@ -14,20 +14,20 @@ import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
 const GAME_ID = 'signal-boost';
 const ACCENT = '#f59e0b';
 const DURATION = 45;
-const GAME_EMOJI = '📡';
+const GAME_EMOJI = 'ðŸ“¡';
 const GAME_TITLE = 'Signal Boost';
-const GAME_TAGLINE = 'Hum steadily to keep the signal alive — too quiet or too loud drops the tower.';
+const GAME_TAGLINE = 'Hum steadily to keep the signal alive â€” too quiet or too loud drops the tower.';
 const MIN_VOL = 0.15, MAX_VOL = 0.70;
 
 interface Signals { timeInZone: number; maxConsecutive: number; totalDrops: number; avgVolume: number; score: number; }
 
 function getPersonality(sig: Signals): string {
   const ratio = sig.timeInZone / DURATION;
-  if (ratio >= 0.85 && sig.totalDrops <= 1) return 'Signal Master 📡';
-  if (sig.maxConsecutive >= 20) return 'Steady Carrier 📶';
-  if (ratio >= 0.6) return 'Reliable Relay 🔄';
-  if (sig.totalDrops >= 8) return 'Noisy Channel 📻';
-  return 'Weak Signal 📵';
+  if (ratio >= 0.85 && sig.totalDrops <= 1) return 'Signal Master ðŸ“¡';
+  if (sig.maxConsecutive >= 20) return 'Steady Carrier ðŸ“¶';
+  if (ratio >= 0.6) return 'Reliable Relay ðŸ”„';
+  if (sig.totalDrops >= 8) return 'Noisy Channel ðŸ“»';
+  return 'Weak Signal ðŸ“µ';
 }
 
 type Phase = 'start' | 'countdown' | 'playing' | 'done';
@@ -61,6 +61,7 @@ function SignalBoostGameInner() {
   const [timeLeft, setTimeLeft] = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
   const [finalSig, setFinalSig] = useState<Signals | null>(null);
+  const [pbBeaten, setPbBeaten] = useState(false);
   const playerSessionRef = useRef<PlayerSession | null>(null);
 
   const stopMic = useCallback(() => {
@@ -77,8 +78,11 @@ function SignalBoostGameInner() {
     if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
     if (s.renderer) { s.renderer.dispose(); s.renderer = null; }
     stopMic();
-    setFinalSig({ ...s.sig });
-    setPhase('done');
+        const _pbKey = 'pb_signal-boost';
+    const _finalScore = stateRef.current.sig.score;
+    const _prevPb = parseInt(typeof window !== 'undefined' ? localStorage.getItem(_pbKey) ?? '0' : '0', 10);
+    if (_finalScore > _prevPb) { if (typeof window !== 'undefined') localStorage.setItem(_pbKey, String(_finalScore)); setPbBeaten(true); }
+    setFinalSig({ ...s.sig }); setPhase('done');
   }, [stopMic]);
 
   const startLoop = useCallback(async () => {
@@ -217,7 +221,7 @@ function SignalBoostGameInner() {
       analyser.fftSize = 256; source.connect(analyser);
       s.analyser = analyser;
       s.dataArray = new Uint8Array(analyser.frequencyBinCount);
-    } catch { /* Mic denied — no signal */ }
+    } catch { /* Mic denied â€” no signal */ }
 
     const handleResize = () => {
       const w = window.innerWidth, h = window.innerHeight;
@@ -346,13 +350,14 @@ function SignalBoostGameInner() {
       )}
       {phase === 'countdown' && <Countdown onComplete={() => startLoop()} accentColor={accent} />}
       {(phase === 'playing' || phase === 'countdown') && (
-        <div ref={mountRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none' }} />
+        <div ref={mountRef} aria-label="Game area. Use touch or pointer to interact." role="application" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none' }} />
       )}
-      {phase === 'playing' && (
-        <GameHUD accentColor={accent} items={[
+      {phase === 'playing' && (<>
+        <div aria-live="polite" style={{position:'absolute',left:'-9999px',width:'1px',height:'1px',overflow:'hidden'}}>Score: {scoreDisplay}</div>
+          <GameHUD accentColor={accent} items={[
           { label: 'TIME', value: timeLeft, danger: timeLeft <= 10 },
           { label: 'SCORE', value: scoreDisplay },
-        ]} />
+        ]} /></>
       )}
       {phase === 'done' && finalSig && (
         <>
@@ -368,6 +373,9 @@ function SignalBoostGameInner() {
           <WebhookHelper theme={theme} sig={finalSig} personality={getPersonality(finalSig)} player={playerSessionRef.current} />
         </>
       )}
+      {phase === 'done' && pbBeaten && (
+        <div style={{position:'fixed',top:'16px',left:'50%',transform:'translateX(-50%)',background:'#fbbf24',color:'#000',padding:'8px 20px',borderRadius:'999px',fontWeight:700,fontSize:'1rem',zIndex:9999,boxShadow:'0 4px 12px rgba(0,0,0,0.3)',animation:'none'}}>ðŸ† New Personal Best!</div>
+      )}
     </GameShell>
   );
 }
@@ -381,3 +389,5 @@ function WebhookHelper({ theme, sig, personality, player }: { theme: ReturnType<
 import dynamic from 'next/dynamic';
 const SignalBoostGame = dynamic(() => Promise.resolve({ default: SignalBoostGameInner }), { ssr: false });
 export default SignalBoostGame;
+
+

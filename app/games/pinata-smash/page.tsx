@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
 import * as THREE from 'three';
 import GameShell from '@/components/GameShell';
@@ -49,7 +49,7 @@ function PinataSmashGameInner() {
   const playerSessionRef = useRef<PlayerSession | null>(null);
 
   const stateRef = useRef({
-    running: false, timeLeft: DURATION,
+    running: false, streak: 0, timeLeft: DURATION,
     sig: { score: 0, totalHits: 0, bursts: 0, maxSwipeSpeed: 0, totalSwipes: 0 } as Signals,
     damage: 0, colorIdx: 0, swayPhase: 0,
     pDown: false, lastPX: 0, lastPY: 0, lastPTime: 0, lastHitTime: 0,
@@ -59,6 +59,7 @@ function PinataSmashGameInner() {
   const [phase, setPhase] = useState<Phase>('start');
   const [timeLeft, setTimeLeft] = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
+  const [streak, setStreak] = useState(0);
   const [finalSig, setFinalSig] = useState<Signals | null>(null);
 
   const endGame = useCallback(() => {
@@ -126,7 +127,7 @@ function PinataSmashGameInner() {
     s.running = true; s.timeLeft = DURATION;
     s.sig = { score: 0, totalHits: 0, bursts: 0, maxSwipeSpeed: 0, totalSwipes: 0 };
     s.damage = 0; s.colorIdx = 0; s.swayPhase = 0; s.shakeAmt = 0;
-    setScoreDisplay(0); setTimeLeft(DURATION); setPhase('playing');
+    setScoreDisplay(0); setStreak(0); setTimeLeft(DURATION); setPhase('playing');
     stopMusicRef.current = startMusic('holiday');
 
     const W = window.innerWidth, H = window.innerHeight;
@@ -273,7 +274,7 @@ function PinataSmashGameInner() {
       rendererRef.current.dispose(); rendererRef.current = null;
     }
     candiesRef.current = [];
-    setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null);
+    setScoreDisplay(0); setStreak(0); setTimeLeft(DURATION); setFinalSig(null);
     setPhase('countdown');
   }, []);
 
@@ -287,7 +288,7 @@ function PinataSmashGameInner() {
       {phase === 'countdown' && <Countdown onComplete={handleCountdownDone} accentColor={accent ?? ACCENT} />}
       {(phase === 'playing' || phase === 'countdown') && (
         <>
-          <div ref={mountRef} style={{ position: 'absolute', inset: 0, touchAction: 'none' }} />
+          <div ref={mountRef} role="application" aria-label="Game area - tap to play" style={{ position: 'absolute', inset: 0, touchAction: 'none' }} />
           {phase === 'playing' && (
             <>
               <GameHUD accentColor={accent ?? ACCENT} items={[

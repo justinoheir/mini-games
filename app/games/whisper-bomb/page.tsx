@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
 import * as THREE from 'three';
 import GameShell from '@/components/GameShell';
@@ -51,6 +51,7 @@ function WhisperBombInner() {
   const [gameState, setGameState] = useState<GameState>('start');
   const [displayTime, setDisplayTime] = useState(45);
   const [fuseDisplay, setFuseDisplay] = useState(100);
+  const [streak, setStreak] = useState(0);
   const [behavior, setBehavior] = useState<BehaviorData | null>(null);
   const [micError, setMicError] = useState(false);
   const playerSessionRef = useRef<PlayerSession | null>(null);
@@ -334,7 +335,7 @@ function WhisperBombInner() {
       {gameState === 'start' && <GameStartScreen emoji="💣" title="Whisper Bomb" description="Stay SILENT to defuse the bomb. Any noise drains the fuse!" ctaLabel="Arm the Bomb 💣" accentColor={accent} onStart={handleStart} sensorNote="Uses microphone" />}
       {gameState === 'countdown' && <Countdown onComplete={startLoop} accentColor={accent} />}
       {(gameState === 'playing' || gameState === 'countdown') && (
-        <div ref={mountRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none' }} />
+        <div ref={mountRef} role="application" aria-label="Game area - tap to play" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none' }} />
       )}
       {gameState === 'playing' && <>
         <GameHUD accentColor={accent} items={[{ label: 'TIME', value: displayTime, danger: displayTime <= 10 }, { label: 'FUSE', value: `${fuseDisplay}%`, danger: fuseDisplay <= 20 }]} />

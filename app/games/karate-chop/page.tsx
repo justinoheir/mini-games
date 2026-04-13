@@ -62,6 +62,7 @@ function KarateChopGameInner() {
   const [timeLeft, setTimeLeft] = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
   const [finalSig, setFinalSig] = useState<Signals | null>(null);
+  const [pbBeaten, setPbBeaten] = useState(false);
   const [showingDisplay, setShowingDisplay] = useState(true);
   const [progressDisplay, setProgressDisplay] = useState('');
 
@@ -79,6 +80,10 @@ function KarateChopGameInner() {
     cancelAnimationFrame(animRef.current);
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
     if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
+        const _pbKey = 'pb_karate-chop';
+    const _finalScore = stateRef.current.sig.score;
+    const _prevPb = parseInt(typeof window !== 'undefined' ? localStorage.getItem(_pbKey) ?? '0' : '0', 10);
+    if (_finalScore > _prevPb) { if (typeof window !== 'undefined') localStorage.setItem(_pbKey, String(_finalScore)); setPbBeaten(true); }
     setFinalSig({ ...s.sig }); setPhase('done');
   }, []);
 
@@ -318,9 +323,10 @@ function KarateChopGameInner() {
       background="linear-gradient(180deg,#1a0000 0%,#2a0000 100%)">
       {phase === 'start' && <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description={GAME_TAGLINE} ctaLabel="Enter the Dojo 🥋" accentColor={theme.colors.accent ?? ACCENT} onStart={handleStart} />}
       {phase === 'countdown' && <Countdown onComplete={startLoop} accentColor={theme.colors.accent ?? ACCENT} />}
-      <div ref={mountRef} style={{ position: 'absolute', inset: 0, display: phase === 'playing' ? 'block' : 'none', touchAction: 'none' }} />
+      <div ref={mountRef} aria-label="Game area. Use touch or pointer to interact." role="application" style={{ position: 'absolute', inset: 0, display: phase === 'playing' ? 'block' : 'none', touchAction: 'none' }} />
       {phase === 'playing' && (
         <>
+          <div aria-live="polite" style={{position:'absolute',left:'-9999px',width:'1px',height:'1px',overflow:'hidden'}}>Score: {scoreDisplay}</div>
           <GameHUD accentColor={theme.colors.accent ?? ACCENT} items={[{ label: 'TIME', value: timeLeft, danger: timeLeft <= 5 }, { label: 'SCORE', value: scoreDisplay }]} />
           <div style={{ position: 'fixed', bottom: 30, left: '50%', transform: 'translateX(-50%)', color: 'rgba(239,68,68,0.8)', fontSize: 14, fontWeight: 700, pointerEvents: 'none', zIndex: 50 }}>
             {showingDisplay ? '👁 WATCH…' : `YOUR TURN — ${progressDisplay}`}
@@ -332,6 +338,9 @@ function KarateChopGameInner() {
           <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI} score={String(finalSig.score)} personality={getPersonality(finalSig)} insights={buildInsights(finalSig)} accentColor={theme.colors.accent ?? ACCENT} onPlayAgain={handlePlayAgain} didWin={finalSig.score >= 5} />
           <WebhookEmitter theme={theme} sig={finalSig} personality={getPersonality(finalSig)} player={playerSessionRef.current} />
         </>
+      )}
+      {phase === 'done' && pbBeaten && (
+        <div style={{position:'fixed',top:'16px',left:'50%',transform:'translateX(-50%)',background:'#fbbf24',color:'#000',padding:'8px 20px',borderRadius:'999px',fontWeight:700,fontSize:'1rem',zIndex:9999,boxShadow:'0 4px 12px rgba(0,0,0,0.3)',animation:'none'}}>🏆 New Personal Best!</div>
       )}
     </GameShell>
   );

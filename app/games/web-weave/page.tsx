@@ -58,6 +58,7 @@ function WebWeaveGameInner() {
   const [timeLeft, setTimeLeft] = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
   const [finalSig, setFinalSig] = useState<Signals | null>(null);
+  const [pbBeaten, setPbBeaten] = useState(false);
   const playerSessionRef = useRef<PlayerSession | null>(null);
 
   const endGame = useCallback(() => {
@@ -66,6 +67,10 @@ function WebWeaveGameInner() {
     if (s.intervalId) { clearInterval(s.intervalId); s.intervalId = null; }
     if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
     if (s.renderer) { s.renderer.dispose(); s.renderer = null; }
+        const _pbKey = 'pb_web-weave';
+    const _finalScore = stateRef.current.sig.score;
+    const _prevPb = parseInt(typeof window !== 'undefined' ? localStorage.getItem(_pbKey) ?? '0' : '0', 10);
+    if (_finalScore > _prevPb) { if (typeof window !== 'undefined') localStorage.setItem(_pbKey, String(_finalScore)); setPbBeaten(true); }
     setFinalSig({ ...s.sig }); setPhase('done');
   }, []);
 
@@ -324,8 +329,9 @@ function WebWeaveGameInner() {
       {phase === 'start' && <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description={GAME_TAGLINE} ctaLabel="Start Weaving 🕸️" accentColor={accent} onStart={handleStart} />}
       {phase === 'countdown' && <Countdown onComplete={startLoop} accentColor={accent} />}
       {(phase === 'playing' || phase === 'countdown') && (
-        <div ref={mountRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none' }} />
+        <div ref={mountRef} aria-label="Game area. Use touch or pointer to interact." role="application" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none' }} />
       )}
+      {phase === 'playing' && <div aria-live="polite" style={{position:'absolute',left:'-9999px',width:'1px',height:'1px',overflow:'hidden'}}>Score: {scoreDisplay}</div>}
       {phase === 'playing' && <GameHUD accentColor={accent} items={[{ label: 'TIME', value: timeLeft, danger: timeLeft <= 10 }, { label: 'SCORE', value: scoreDisplay }]} />}
       {phase === 'done' && finalSig && <>
         <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI} score={String(finalSig.score)} personality={getPersonality(finalSig)}
@@ -333,6 +339,9 @@ function WebWeaveGameInner() {
           accentColor={accent} onPlayAgain={handlePlayAgain} didWin={finalSig.fliesCaught >= 8} />
         <WebhookEmitter theme={theme} sig={finalSig} personality={getPersonality(finalSig)} player={playerSessionRef.current} />
       </>}
+      {phase === 'done' && pbBeaten && (
+        <div style={{position:'fixed',top:'16px',left:'50%',transform:'translateX(-50%)',background:'#fbbf24',color:'#000',padding:'8px 20px',borderRadius:'999px',fontWeight:700,fontSize:'1rem',zIndex:9999,boxShadow:'0 4px 12px rgba(0,0,0,0.3)',animation:'none'}}>🏆 New Personal Best!</div>
+      )}
     </GameShell>
   );
 }

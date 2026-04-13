@@ -67,7 +67,9 @@ export default function GameHUD({ items, accentColor, style }: GameHUDProps) {
                 data-testid={item.testId}
                 data-value={item.testId ? String(item.value) : undefined}
                 style={{ overflow: 'hidden', lineHeight: 1, minHeight: 40 }}
-                aria-label={item.testId ? `${item.label}: ${item.value}` : undefined}
+                aria-label={`${item.label}: ${item.value}`}
+                aria-live={item.label !== 'TIME' ? 'polite' : undefined}
+                aria-atomic="true"
               >
                 <AnimatePresence mode="popLayout">
                   <motion.div

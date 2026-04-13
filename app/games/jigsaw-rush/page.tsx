@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 /**
  * JIGSAW RUSH — 3D colorful puzzle pieces floating in space. Drag to slot.
  */
@@ -52,7 +52,7 @@ function JigsawRushGameInner() {
   const playerSessionRef = useRef<PlayerSession | null>(null);
 
   const stateRef = useRef({
-    running: false, timeLeft: DURATION,
+    running: false, streak: 0, timeLeft: DURATION,
     sig: { score: 0, piecesPlaced: 0, puzzlesCompleted: 0, totalAttempts: 0, fastestSolveMs: Infinity } as Signals,
     pieces: [] as PieceObj[],
     slots: [] as THREE.Mesh[],
@@ -69,6 +69,7 @@ function JigsawRushGameInner() {
   const [phase, setPhase] = useState<Phase>('start');
   const [timeLeft, setTimeLeft] = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
+  const [streak, setStreak] = useState(0);
   const [finalSig, setFinalSig] = useState<Signals | null>(null);
 
   const endGame = useCallback(() => {
@@ -156,7 +157,7 @@ function JigsawRushGameInner() {
     s.running = true; s.timeLeft = DURATION;
     s.sig = { score: 0, piecesPlaced: 0, puzzlesCompleted: 0, totalAttempts: 0, fastestSolveMs: Infinity };
     s.completionFlash = 0;
-    setScoreDisplay(0); setTimeLeft(DURATION); setPhase('playing');
+    setScoreDisplay(0); setStreak(0); setTimeLeft(DURATION); setPhase('playing');
     stopMusicRef.current = startMusic('chill');
 
     const W = window.innerWidth, H = window.innerHeight;
@@ -334,13 +335,13 @@ function JigsawRushGameInner() {
     playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar);
     await initAudio(); sfx.click(); setPhase('countdown');
   }, []);
-  const handlePlayAgain = useCallback(() => { setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null); }, []);
+  const handlePlayAgain = useCallback(() => { setPhase('start'); setScoreDisplay(0); setStreak(0); setTimeLeft(DURATION); setFinalSig(null); }, []);
 
   return (
     <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT} gameId={GAME_ID}>
       {phase === 'start' && <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description={GAME_TAGLINE} ctaLabel="Start Puzzle!" accentColor={theme.colors.accent ?? ACCENT} onStart={handleStart} />}
       {phase === 'countdown' && <Countdown onComplete={startLoop} accentColor={theme.colors.accent ?? ACCENT} />}
-      <div ref={mountRef} style={{ position: 'absolute', inset: 0, display: phase === 'playing' ? 'block' : 'none', touchAction: 'none' }} />
+      <div ref={mountRef} role="application" aria-label="Game area - tap to play" style={{ position: 'absolute', inset: 0, display: phase === 'playing' ? 'block' : 'none', touchAction: 'none' }} />
       {phase === 'playing' && <GameHUD accentColor={theme.colors.accent ?? ACCENT} items={[{ label: 'TIME', value: timeLeft, danger: timeLeft <= 5, testId: 'timer' }, { label: 'SCORE', value: scoreDisplay, testId: 'score' }]} />}
       {phase === 'done' && finalSig && (
         <>

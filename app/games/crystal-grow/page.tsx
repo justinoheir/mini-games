@@ -47,6 +47,8 @@ interface GS {
   glowPulse:number; accentColor:string;
   analyser:AnalyserNode|null; micStream:MediaStream|null; dataArray:Uint8Array<ArrayBuffer>|null;
   steadyTicks:number;
+  // Streak: consecutive steady-breath seconds
+  streakSeconds:number;
 }
 
 function CrystalGrowGameInner() {
@@ -62,7 +64,6 @@ function CrystalGrowGameInner() {
   const stopMusicRef = useRef<(()=>void)|null>(null);
   const playerSessionRef = useRef<PlayerSession|null>(null);
 
-  // 3D crystal branches
   const crystalGroupRef = useRef<THREE.Group|null>(null);
   const branchMeshesRef = useRef<THREE.Mesh[]>([]);
   const shardMeshesRef  = useRef<THREE.Mesh[]>([]);
@@ -75,12 +76,15 @@ function CrystalGrowGameInner() {
     crystalSize:0.05,crystalTarget:0.05,isGrowing:false,
     glowPulse:0,accentColor:ACCENT,
     analyser:null,micStream:null,dataArray:null,steadyTicks:0,
+    streakSeconds:0,
   });
 
   const [phase,setPhase]               = useState<Phase>('start');
   const [timeLeft,setTimeLeft]         = useState(DURATION);
   const [scoreDisplay,setScoreDisplay] = useState(0);
   const [finalSig,setFinalSig]         = useState<Signals|null>(null);
+  const [streak,setStreak]             = useState(0);
+  const [isNewPB,setIsNewPB]           = useState(false);
   const playerNameRef = useRef('');
   const playerAvatarRef = useRef('💎');
 
@@ -111,29 +115,25 @@ function CrystalGrowGameInner() {
     plRef.current=pl;
     scene.add(new THREE.DirectionalLight(0xd8b4fe,0.4));
 
-    // Base platform
     const basGeo=new THREE.CylinderGeometry(0.8,1.0,0.2,16);
     const basMat=new THREE.MeshStandardMaterial({color:0x2d0040,metalness:0.5,roughness:0.5});
     scene.add(new THREE.Mesh(basGeo,basMat));
 
-    // Crystal group (grows/shrinks)
     const crystalGroup=new THREE.Group();
     scene.add(crystalGroup);
     crystalGroupRef.current=crystalGroup;
 
-    // Build crystal arms (6 main + smaller branches)
     const armAngles=[0,60,120,180,240,300].map(d=>d*Math.PI/180);
-    armAngles.forEach((angle,i)=>{
+    armAngles.forEach((angle)=>{
       const armLen=1.8;
       const geo=new THREE.ConeGeometry(0.1,armLen,6);
       const mat=new THREE.MeshStandardMaterial({color:0xe879f9,emissive:0xe879f9,emissiveIntensity:0.5,metalness:0.4,roughness:0.3,transparent:true,opacity:0.85});
       const mesh=new THREE.Mesh(geo,mat);
-      mesh.rotation.z=Math.PI/2-angle; // point outward
+      mesh.rotation.z=Math.PI/2-angle;
       mesh.position.set(Math.cos(angle)*armLen*0.5,Math.sin(angle)*armLen*0.5*0.3,0);
       crystalGroup.add(mesh);
       branchMeshesRef.current.push(mesh);
     });
-    // Vertical spike
     const topGeo=new THREE.ConeGeometry(0.08,2.5,6);
     const topMat=new THREE.MeshStandardMaterial({color:0xf0abfc,emissive:0xe879f9,emissiveIntensity:1,metalness:0.3,roughness:0.2,transparent:true,opacity:0.9});
     const topMesh=new THREE.Mesh(topGeo,topMat);
@@ -141,7 +141,6 @@ function CrystalGrowGameInner() {
     crystalGroup.add(topMesh);
     branchMeshesRef.current.push(topMesh);
 
-    // Background floaters
     const fgeo=new THREE.BufferGeometry();
     const fp=new Float32Array(200*3);
     for(let i=0;i<200;i++){fp[i*3]=(Math.random()-0.5)*16;fp[i*3+1]=(Math.random()-0.5)*16;fp[i*3+2]=(Math.random()-0.5)*6-4;}
@@ -162,14 +161,12 @@ function CrystalGrowGameInner() {
       const s=stateRef.current;
       const vol=s.smoothVolume;
 
-      // Grow/shrink crystal
       const targetScale=0.1+s.crystalSize*3.5;
       if(crystalGroupRef.current){
         crystalGroupRef.current.scale.lerp(new THREE.Vector3(targetScale,targetScale,targetScale),0.06);
         crystalGroupRef.current.rotation.y+=0.008+vol*0.02;
       }
 
-      // Color/emission based on state
       branchMeshesRef.current.forEach(m=>{
         const mat=m.material as THREE.MeshStandardMaterial;
         if(s.isGrowing){
@@ -182,13 +179,11 @@ function CrystalGrowGameInner() {
         }
       });
 
-      // Point light
       if(plRef.current){
         plRef.current.intensity=2+vol*6+s.crystalSize*3;
         plRef.current.color.setHSL(0.84-s.crystalSize*0.05,1,0.5+s.crystalSize*0.1);
       }
 
-      // Shards animation
       for(let i=shardMeshesRef.current.length-1;i>=0;i--){
         const sh=shardMeshesRef.current[i];
         sh.position.x+=sh.userData.vx;sh.position.y+=sh.userData.vy;sh.position.z+=sh.userData.vz;
@@ -218,7 +213,8 @@ function CrystalGrowGameInner() {
   const shatterCrystal=useCallback(()=>{
     const s=stateRef.current;
     s.sig.shatters++;
-    // Spawn shards
+    // Reset streak on shatter
+    s.streakSeconds=0;setStreak(0);
     const scene=sceneRef.current;
     if(scene){
       for(let i=0;i<16;i++){
@@ -240,6 +236,12 @@ function CrystalGrowGameInner() {
     if(timerRef.current){clearInterval(timerRef.current);timerRef.current=null;}
     if(stopMusicRef.current){stopMusicRef.current();stopMusicRef.current=null;}
     stopMic();
+    // Personal Best check
+    try {
+      const pbKey=`pb_${GAME_ID}`;
+      const prevPB=parseInt(localStorage.getItem(pbKey)||'0',10);
+      if(s.sig.score>prevPB){localStorage.setItem(pbKey,String(s.sig.score));setIsNewPB(true);}
+    } catch {}
     setFinalSig({...s.sig});setPhase('done');
   },[stopMic]);
 
@@ -248,7 +250,8 @@ function CrystalGrowGameInner() {
     s.running=true;s.timeLeft=DURATION;
     s.sig={maxCrystalSize:0,shatters:0,steadyBreathSeconds:0,avgBreathRate:0,score:0};
     s.crystalSize=0.05;s.crystalTarget=0.05;s.smoothVolume=0;s.breathRate=0;s.prevVolume=0;
-    setScoreDisplay(0);setTimeLeft(DURATION);setPhase('playing');
+    s.streakSeconds=0;
+    setScoreDisplay(0);setTimeLeft(DURATION);setPhase('playing');setStreak(0);setIsNewPB(false);
     stopMusicRef.current=startMusic('ambient');
 
     try{
@@ -263,12 +266,20 @@ function CrystalGrowGameInner() {
 
     timerRef.current=setInterval(()=>{
       const s2=stateRef.current;s2.timeLeft--;setTimeLeft(s2.timeLeft);
-      if(s2.isGrowing){s2.sig.steadyBreathSeconds++;s2.sig.score+=Math.ceil(s2.crystalSize*3);setScoreDisplay(s2.sig.score);}
+      if(s2.isGrowing){
+        s2.sig.steadyBreathSeconds++;
+        s2.streakSeconds++;setStreak(s2.streakSeconds);
+        // Streak multiplier: every 5 steady seconds = +0.5x, cap x3
+        const multiplier=1+Math.min(2,Math.floor(s2.streakSeconds/5))*0.5;
+        s2.sig.score+=Math.ceil(s2.crystalSize*3*multiplier);
+        setScoreDisplay(s2.sig.score);
+      } else {
+        s2.streakSeconds=0;setStreak(0);
+      }
       if(s2.crystalSize>s2.sig.maxCrystalSize)s2.sig.maxCrystalSize=s2.crystalSize;
       if(s2.timeLeft<=0){sfx.fail();endGame();}
     },1000);
 
-    // Audio loop (separate from render)
     const audioLoop=()=>{
       if(!stateRef.current.running)return;
       const s2=stateRef.current;
@@ -306,7 +317,7 @@ function CrystalGrowGameInner() {
     initAudio();setPhase('countdown');
   },[]);
   const handleCountdownDone=useCallback(()=>{startLoop();},[startLoop]);
-  const handlePlayAgain=useCallback(()=>{setPhase('start');setScoreDisplay(0);setTimeLeft(DURATION);setFinalSig(null);},[]);
+  const handlePlayAgain=useCallback(()=>{setPhase('start');setScoreDisplay(0);setTimeLeft(DURATION);setFinalSig(null);setStreak(0);setIsNewPB(false);},[]);
 
   const buildInsights=(sig:Signals)=>[
     {label:'Max Size',    value:`${Math.round(sig.maxCrystalSize*100)}%`, color:sig.maxCrystalSize>=0.7?'#4ade80':'#facc15'},
@@ -315,30 +326,52 @@ function CrystalGrowGameInner() {
     {label:'Score',       value:`${sig.score}`,                            color:'var(--color-text)'},
   ];
 
+  // Streak multiplier display
+  const streakMultiplier=streak>=5?`x${Math.min(3,1+Math.floor(streak/5)*0.5).toFixed(1).replace('.0','')}`:null;
+
   return(
     <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accent}>
       {phase==='start'&&<GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description={GAME_TAGLINE} ctaLabel="Allow Mic & Breathe" accentColor={accent} onStart={handleStart}/>}
       {phase==='countdown'&&<Countdown onComplete={handleCountdownDone} accentColor={accent}/>}
       {(phase==='playing'||phase==='countdown')&&(
         <>
-          <div ref={mountRef} style={{position:'absolute',inset:0,width:'100%',height:'100%'}}/>
+          <div
+            ref={mountRef}
+            role="img"
+            aria-label="3D crystal growing — breathe steadily into mic to grow it"
+            style={{position:'absolute',inset:0,width:'100%',height:'100%'}}
+          />
           {phase==='playing'&&(
             <>
-              <GameHUD accentColor={accent} items={[{label:'TIME',value:timeLeft,danger:timeLeft<=10},{label:'SCORE',value:scoreDisplay}]}/>
-              <div style={{position:'absolute',bottom:60,left:'50%',transform:'translateX(-50%)',
+              <div aria-live="polite" aria-atomic="true" style={{position:'absolute',top:0,left:0,width:'100%',pointerEvents:'none'}}>
+                <GameHUD accentColor={accent} items={[{label:'TIME',value:timeLeft,danger:timeLeft<=10},{label:'SCORE',value:scoreDisplay}]}/>
+              </div>
+              <div aria-live="polite" style={{position:'absolute',bottom:60,left:'50%',transform:'translateX(-50%)',
                 fontSize:14,fontWeight:700,textAlign:'center',color:stateRef.current.isGrowing?'#4ade80':'rgba(255,255,255,0.5)',
-                letterSpacing:'0.05em',transition:'color 300ms'}}>
+                letterSpacing:'0.05em',transition:'color 300ms',pointerEvents:'none'}}>
                 {stateRef.current.isGrowing?'CRYSTAL GROWING ✨':'BREATHE STEADILY INTO MIC 🎤'}
               </div>
+              {streakMultiplier&&(
+                <div aria-live="polite" style={{position:'absolute',top:88,left:'50%',transform:'translateX(-50%)',background:'rgba(0,0,0,0.75)',border:`1px solid ${accent}`,borderRadius:20,padding:'4px 18px',fontSize:20,fontWeight:800,color:accent,letterSpacing:'0.05em',pointerEvents:'none',zIndex:10}}>
+                  💎 {streakMultiplier} Steady
+                </div>
+              )}
             </>
           )}
         </>
       )}
       {phase==='done'&&finalSig&&(
-        <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI}
-          score={String(finalSig.score)} personality={getPersonality(finalSig)}
-          insights={buildInsights(finalSig)} accentColor={accent}
-          onPlayAgain={handlePlayAgain} didWin={finalSig.maxCrystalSize>=0.6}/>
+        <div style={{position:'relative',width:'100%',height:'100%'}}>
+          {isNewPB&&(
+            <div role="status" style={{position:'absolute',top:12,left:'50%',transform:'translateX(-50%)',background:'linear-gradient(135deg,#e879f9,#8b5cf6)',borderRadius:20,padding:'6px 22px',fontSize:16,fontWeight:800,color:'#fff',zIndex:100,whiteSpace:'nowrap',letterSpacing:'0.03em',boxShadow:'0 2px 12px rgba(232,121,249,0.5)'}}>
+              🏆 New Personal Best!
+            </div>
+          )}
+          <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI}
+            score={String(finalSig.score)} personality={getPersonality(finalSig)}
+            insights={buildInsights(finalSig)} accentColor={accent}
+            onPlayAgain={handlePlayAgain} didWin={finalSig.maxCrystalSize>=0.6}/>
+        </div>
       )}
       {phase==='done'&&finalSig&&<WebhookEmitter theme={theme} sig={finalSig} personality={getPersonality(finalSig)} player={playerSessionRef.current}/>}
     </GameShell>

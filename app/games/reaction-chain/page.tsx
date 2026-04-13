@@ -71,6 +71,7 @@ function ReactionChainInner() {
   const triggerPopRef = useRef(triggerPop);
   triggerPopRef.current = triggerPop;
   const [finalSig, setFinalSig] = useState<Signals | null>(null);
+  const [pbBeaten, setPbBeaten] = useState(false);
 
   useEffect(() => { stateRef.current.accentColor = accentColor ?? ACCENT; }, [theme]);
 
@@ -100,6 +101,10 @@ function ReactionChainInner() {
     stopMusicFile();
     if (respawnRef.current) { clearTimeout(respawnRef.current); respawnRef.current = null; }
     if (s.sig.currentChain > s.sig.longestChain) s.sig.longestChain = s.sig.currentChain;
+        const _pbKey = 'pb_reaction-chain';
+    const _finalScore = stateRef.current.sig.longestChain;
+    const _prevPb = parseInt(typeof window !== 'undefined' ? localStorage.getItem(_pbKey) ?? '0' : '0', 10);
+    if (_finalScore > _prevPb) { if (typeof window !== 'undefined') localStorage.setItem(_pbKey, String(_finalScore)); setPbBeaten(true); }
     setFinalSig({ ...s.sig }); setPhase('done');
   }, []);
 
@@ -328,10 +333,11 @@ function ReactionChainInner() {
       {phase === 'countdown' && <Countdown onComplete={handleCountdownDone} accentColor={ac} />}
       {(phase === 'playing' || phase === 'countdown') && (
         <>
-          <div ref={mountRef} style={{ position: 'absolute', inset: 0, touchAction: 'none' }} />
+          <div ref={mountRef} aria-label="Game area. Use touch or pointer to interact." role="application" style={{ position: 'absolute', inset: 0, touchAction: 'none' }} />
           {phase === 'playing' && (
             <>
-              <GameHUD accentColor={ac} items={[
+              <div aria-live="polite" style={{position:'absolute',left:'-9999px',width:'1px',height:'1px',overflow:'hidden'}}>Score: {scoreDisplay}</div>
+          <GameHUD accentColor={ac} items={[
                 { label: 'TIME', value: timeLeft, danger: timeLeft <= 10, testId: 'timer' },
                 { label: 'CHAIN', value: scoreDisplay, testId: 'score' },
               ]} />
@@ -349,6 +355,9 @@ function ReactionChainInner() {
             onPlayAgain={handlePlayAgain} didWin={finalSig.longestChain >= 10} />
           <WebhookEmitter theme={theme} gameId={GAME_ID} sig={finalSig} personality={getPersonality(finalSig)} player={playerSessionRef.current} />
         </>
+      )}
+      {phase === 'done' && pbBeaten && (
+        <div style={{position:'fixed',top:'16px',left:'50%',transform:'translateX(-50%)',background:'#fbbf24',color:'#000',padding:'8px 20px',borderRadius:'999px',fontWeight:700,fontSize:'1rem',zIndex:9999,boxShadow:'0 4px 12px rgba(0,0,0,0.3)',animation:'none'}}>🏆 New Personal Best!</div>
       )}
     </GameShell>
   );

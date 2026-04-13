@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
 import * as THREE from 'three';
 import GameShell from '@/components/GameShell';
@@ -55,7 +55,7 @@ function BreathSculptGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const stateRef = useRef<GS>({
-    running: false, timeLeft: DURATION,
+    running: false, streak: 0, timeLeft: DURATION,
     sig: { score: 0, gapsCleared: 0, collisions: 0, breathVariance: 0 },
     renderer: null, scene: null, camera: null, animId: 0,
     swarmMeshes: [], swarmPositions: [], swarmCenterY: 0, targetY: 0,
@@ -66,6 +66,7 @@ function BreathSculptGameInner() {
   const [phase, setPhase] = useState<Phase>('start');
   const [timeLeft, setTimeLeft] = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
+  const [streak, setStreak] = useState(0);
   const [finalSig, setFinalSig] = useState<Signals | null>(null);
   const playerSessionRef = useRef<PlayerSession | null>(null);
 
@@ -129,7 +130,7 @@ function BreathSculptGameInner() {
     s.swarmCenterY = 0; s.targetY = 0; s.walls = []; s.scrollZ = 0;
     s.micLevel = 0; s.prevMicLevel = 0; s.breathVariances = [];
     s.scrollSpeed = SCROLL_SPEED_BASE;
-    setScoreDisplay(0); setTimeLeft(DURATION); setPhase('playing');
+    setScoreDisplay(0); setStreak(0); setTimeLeft(DURATION); setPhase('playing');
 
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setSize(W, H);
@@ -262,10 +263,13 @@ function BreathSculptGameInner() {
           // Check if swarm center passed through gap
           const inGap = Math.abs(s.swarmCenterY - w.gapY) < GAP_HEIGHT / 2;
           if (inGap) {
-            s.sig.gapsCleared++; s.sig.score += 5;
+            s.streak=(s.streak||0)+1; setStreak(s.streak);
+            const _bs=Math.max(1,Math.floor(s.streak/3)+1);
+            s.sig.gapsCleared++; s.sig.score += 5 * _bs;
             setScoreDisplay(s.sig.score);
             sfx.collect?.(); hapticScore?.();
           } else {
+            s.streak=0; setStreak(0);
             s.sig.collisions++;
             sfx.collision?.(); haptic([40]);
           }
@@ -298,7 +302,7 @@ function BreathSculptGameInner() {
     await initAudio(); setPhase('countdown');
   }, []);
   const handlePlayAgain = useCallback(() => {
-    setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null);
+    setPhase('start'); setScoreDisplay(0); setStreak(0); setTimeLeft(DURATION); setFinalSig(null);
   }, []);
 
   return (
@@ -308,7 +312,7 @@ function BreathSculptGameInner() {
           ctaLabel="Allow Mic & Sculpt" accentColor={theme.colors.accent ?? ACCENT} onStart={handleStart} />
       )}
       {phase === 'countdown' && <Countdown onComplete={startLoop} accentColor={theme.colors.accent ?? ACCENT} />}
-      <div ref={mountRef} style={{
+      <div ref={mountRef} role="application" aria-label="Game area - tap to play" style={{
         position: 'absolute', inset: 0, width: '100%', height: '100%',
         display: phase === 'playing' ? 'block' : 'none', touchAction: 'none',
       }} />

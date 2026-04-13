@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 /**
  * DIYA LIGHT — 3D: tilt/drag to pour oil into a 3D diya, tap to ignite the flame.
  * Warm festival night environment with star field and glowing lanterns.
@@ -70,7 +70,7 @@ function DiyaLightGameInner() {
   const oilDropsRef  = useRef<Array<{mesh:THREE.Mesh;vy:number;alpha:number}>>([]);
 
   const stateRef = useRef<GS>({
-    running:false,timeLeft:DURATION,
+    running:false, streak: 0,timeLeft:DURATION,
     sig:{score:0,diyas:0,perfectLights:0,overfills:0,underfills:0},
     fillLevel:0,pourRate:0,lit:false,litTimer:0,flamePower:0,
     tiltX:0,dragActive:false,dragStartX:0,dragBaseX:0,
@@ -80,6 +80,7 @@ function DiyaLightGameInner() {
   const [phase,setPhase]        = useState<Phase>('start');
   const [timeLeft,setTimeLeft]  = useState(DURATION);
   const [scoreDisplay,setScore] = useState(0);
+  const [streak, setStreak] = useState(0);
   const [finalSig,setFinalSig]  = useState<Signals|null>(null);
   const [fillDisplay,setFill]   = useState(0);
   const [litDisplay,setLit]     = useState(false);
@@ -282,7 +283,7 @@ function DiyaLightGameInner() {
     s.sig={score:0,diyas:0,perfectLights:0,overfills:0,underfills:0};
     s.fillLevel=0;s.pourRate=0;s.lit=false;s.litTimer=0;s.flamePower=0;
     s.tiltX=0;s.dragActive=false;s.lightFlash=0;s.overflowFlash=0;
-    setScore(0);setTimeLeft(DURATION);setFill(0);setLit(false);setPhase('playing');
+    setScore(0); setStreak(0);setTimeLeft(DURATION);setFill(0);setLit(false);setPhase('playing');
     stopMusicRef.current=startMusic('chill');
 
     timerRef.current=setInterval(()=>{
@@ -315,11 +316,14 @@ function DiyaLightGameInner() {
       const centerX=rect.width/2;const centerY=rect.height*0.5;
       if(!s.lit&&Math.hypot(cx-centerX,cy-centerY)<80){
         if(s.fillLevel>=FILL_LO&&s.fillLevel<=FILL_HI){
+          s.streak=(s.streak||0)+1; setStreak(s.streak);
+          const _dl=Math.max(1,Math.floor(s.streak/3)+1);
           s.lit=true;s.litTimer=1.8;s.lightFlash=1;
-          s.sig.diyas++;s.sig.perfectLights++;s.sig.score+=10;
+          s.sig.diyas++;s.sig.perfectLights++;s.sig.score+=10*_dl;
           sfx.collect();haptic([30,20,30,20,60]);
           setScore(s.sig.score);setLit(true);
         } else if(s.fillLevel<FILL_LO){
+          s.streak=0; setStreak(0);
           s.sig.underfills++;s.sig.score=Math.max(0,s.sig.score-1);
           sfx.nearMiss();haptic([20,30,20]);setScore(s.sig.score);
         }
@@ -341,7 +345,7 @@ function DiyaLightGameInner() {
     playerSessionRef.current=savePlayerSession(GAME_ID,name,avatar);await initAudio();sfx.click();setPhase('countdown');
   },[]);
   const handleCountdownDone=useCallback(()=>{startLoop();},[startLoop]);
-  const handlePlayAgain=useCallback(()=>{setPhase('start');setScore(0);setTimeLeft(DURATION);setFinalSig(null);},[]);
+  const handlePlayAgain=useCallback(()=>{setPhase('start');setScore(0); setStreak(0);setTimeLeft(DURATION);setFinalSig(null);},[]);
 
   const inZone=fillDisplay>=Math.round(FILL_LO*100)&&fillDisplay<=Math.round(FILL_HI*100);
 
@@ -351,7 +355,7 @@ function DiyaLightGameInner() {
       {phase==='countdown'&&<Countdown onComplete={handleCountdownDone} accentColor={accent}/>}
       {(phase==='playing'||phase==='countdown')&&(
         <>
-          <div ref={mountRef} style={{position:'absolute',inset:0,width:'100%',height:'100%',touchAction:'none'}}/>
+          <div ref={mountRef} role="application" aria-label="Game area - tap to play" style={{position:'absolute',inset:0,width:'100%',height:'100%',touchAction:'none'}}/>
           {phase==='playing'&&(
             <>
               <GameHUD accentColor={accent} items={[{label:'TIME',value:timeLeft,danger:timeLeft<=5,testId:'timer'},{label:'SCORE',value:scoreDisplay,testId:'score'}]}/>

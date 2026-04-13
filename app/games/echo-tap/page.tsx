@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
 import GameShell from '@/components/GameShell';
 import GameHUD from '@/components/GameHUD';
@@ -45,7 +45,7 @@ function EchoTapInner() {
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const animRef = useRef<number>(0);
   const stateRef = useRef<GState>({
-    running: false, timeLeft: DURATION,
+    running: false, streak: 0, timeLeft: DURATION,
     sig: { maxLevel: 0, totalRounds: 0, mistakes: 0, score: 0, perfectRounds: 0 },
     sequence: [], playerInput: [], subPhase: 'showing',
     showIndex: 0, showAt: 0, level: 1, lit: null, mistakeIndex: null,
@@ -54,6 +54,7 @@ function EchoTapInner() {
   const [phase, setPhase] = useState<Phase>('start');
   const [timeLeft, setTimeLeft] = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
+  const [streak, setStreak] = useState(0);
   const [finalSig, setFinalSig] = useState<Signals | null>(null);
   const [displaySubPhase, setDisplaySubPhase] = useState<SubPhase>('showing');
   const playerSessionRef = useRef<PlayerSession | null>(null);
@@ -89,7 +90,7 @@ function EchoTapInner() {
     s.running = true; s.timeLeft = DURATION;
     s.sig = { maxLevel: 0, totalRounds: 0, mistakes: 0, score: 0, perfectRounds: 0 };
     s.level = 1; s.sequence = [Math.floor(Math.random() * 6)];
-    setScoreDisplay(0); setTimeLeft(DURATION); setPhase('playing');
+    setScoreDisplay(0); setStreak(0); setTimeLeft(DURATION); setPhase('playing');
     startSequence();
 
     timerRef.current = setInterval(() => {
@@ -311,7 +312,7 @@ function EchoTapInner() {
     await initAudio(); setPhase('countdown');
   }, []);
   const handlePlayAgain = useCallback(() => {
-    setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null);
+    setPhase('start'); setScoreDisplay(0); setStreak(0); setTimeLeft(DURATION); setFinalSig(null);
   }, []);
 
   return (
@@ -324,7 +325,7 @@ function EchoTapInner() {
       {phase === 'countdown' && <Countdown onComplete={startLoop} accentColor={theme.colors.accent ?? ACCENT} />}
       {(phase === 'playing' || phase === 'countdown') && (
         <>
-          <canvas ref={canvasRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none' }} />
+          <canvas ref={canvasRef} role="application" aria-label="Game canvas - tap to interact" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none' }} />
           {phase === 'playing' && <GameHUD accentColor={theme.colors.accent ?? ACCENT} items={[{ label: 'TIME', value: timeLeft, danger: timeLeft <= 10 }, { label: 'SCORE', value: scoreDisplay }]} />}
         </>
       )}

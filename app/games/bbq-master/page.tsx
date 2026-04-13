@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
 import * as THREE from 'three';
 import GameShell from '@/components/GameShell';
@@ -103,7 +103,7 @@ function BBQMasterGameInner() {
   const theme = useBrandTheme();
   const mountRef = useRef<HTMLDivElement>(null);
   const stateRef = useRef<GS>({
-    running: false, timeLeft: DURATION,
+    running: false, streak: 0, timeLeft: DURATION,
     sig: { score: 0, perfectFlips: 0, goodFlips: 0, lateFlips: 0, burntItems: 0 },
     renderer: null, scene: null, camera: null, animId: 0,
     foods: [], nextId: 0, grillGlow: null, smokeParticles: [],
@@ -112,6 +112,7 @@ function BBQMasterGameInner() {
   const [phase, setPhase] = useState<Phase>('start');
   const [timeLeft, setTimeLeft] = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
+  const [streak, setStreak] = useState(0);
   const [finalSig, setFinalSig] = useState<Signals | null>(null);
   const playerSessionRef = useRef<PlayerSession | null>(null);
 
@@ -151,7 +152,7 @@ function BBQMasterGameInner() {
     s.running = true; s.timeLeft = DURATION;
     s.sig = { score: 0, perfectFlips: 0, goodFlips: 0, lateFlips: 0, burntItems: 0 };
     s.foods = []; s.nextId = 0; s.smokeParticles = [];
-    setScoreDisplay(0); setTimeLeft(DURATION); setPhase('playing');
+    setScoreDisplay(0); setStreak(0); setTimeLeft(DURATION); setPhase('playing');
 
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setSize(W, H);
@@ -323,7 +324,7 @@ function BBQMasterGameInner() {
           else if (isLate) { pts = 2; s.sig.lateFlips++; sfx.click(); }
           else { pts = 0; sfx.collision(); haptic([30]); }
           if (pts > 0) {
-            s.sig.score += pts; setScoreDisplay(s.sig.score);
+            if(pts>0){s.streak=(s.streak||0)+1;setStreak(s.streak);}else{s.streak=0;setStreak(0);} const _bm=Math.max(1,Math.floor((s.streak||0)/3)+1); if(pts>0&&_bm>1){s.sig.score+=pts*(_bm-1);} s.sig.score += pts; setScoreDisplay(s.sig.score);
             food.side++; food.progress = food.side;
             food.flipFlash = 12;
             food.mesh.rotation.z = food.side * Math.PI;
@@ -358,7 +359,7 @@ function BBQMasterGameInner() {
     await initAudio(); setPhase('countdown');
   }, []);
   const handlePlayAgain = useCallback(() => {
-    setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null);
+    setPhase('start'); setScoreDisplay(0); setStreak(0); setTimeLeft(DURATION); setFinalSig(null);
   }, []);
 
   return (
@@ -368,7 +369,7 @@ function BBQMasterGameInner() {
           ctaLabel="Fire up the grill! 🔥" accentColor={theme.colors.accent ?? ACCENT} onStart={handleStart} />
       )}
       {phase === 'countdown' && <Countdown onComplete={startLoop} accentColor={theme.colors.accent ?? ACCENT} />}
-      <div ref={mountRef} style={{
+      <div ref={mountRef} role="application" aria-label="Game area - tap to play" style={{
         position: 'absolute', inset: 0, width: '100%', height: '100%',
         display: phase === 'playing' ? 'block' : 'none', touchAction: 'none',
       }} />

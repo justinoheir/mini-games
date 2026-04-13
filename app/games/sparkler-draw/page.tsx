@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 /**
  * SPARKLER DRAW — 3D Version
  * Trace a glowing 3D star shape with particle trail sparkles.
@@ -65,7 +65,7 @@ function SparklerDrawGameInner() {
     templatePoints: [] as THREE.Vector3[],
     trackedCount: 0,
     hitThreshold: 0.4,
-    running: false, timeLeft: DURATION,
+    running: false, streak: 0, timeLeft: DURATION,
     sig: { score: 0, accuracy: 0, completionTime: null as number | null, tracedPct: 0 } as Signals,
     drawing: false, gameStartMs: 0, completionMs: null as number | null,
     totalHits: 0, totalSamples: 0,
@@ -75,6 +75,7 @@ function SparklerDrawGameInner() {
   const [phase, setPhase] = useState<Phase>('start');
   const [timeLeft, setTimeLeft] = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
+  const [streak, setStreak] = useState(0);
   const [finalSig, setFinalSig] = useState<Signals | null>(null);
   const [isNewBest, setIsNewBest] = useState(false);
   const playerSessionRef = useRef<PlayerSession | null>(null);
@@ -105,7 +106,7 @@ function SparklerDrawGameInner() {
     s.sparkParticles = []; s.trailPoints = []; s.drawing = false;
     s.totalHits = 0; s.totalSamples = 0; s.trackedCount = 0; s.completionMs = null;
     s.gameStartMs = Date.now();
-    setScoreDisplay(0); setTimeLeft(DURATION); setPhase('playing');
+    setScoreDisplay(0); setStreak(0); setTimeLeft(DURATION); setPhase('playing');
     stopMusicRef.current = startMusic('ambient');
 
     const W = window.innerWidth, H = window.innerHeight;
@@ -297,7 +298,7 @@ function SparklerDrawGameInner() {
     playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar);
     await initAudio(); setPhase('countdown');
   }, []);
-  const handlePlayAgain = useCallback(() => { setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null); setIsNewBest(false); }, []);
+  const handlePlayAgain = useCallback(() => { setPhase('start'); setScoreDisplay(0); setStreak(0); setTimeLeft(DURATION); setFinalSig(null); setIsNewBest(false); }, []);
 
   const accent = theme.colors.accent ?? ACCENT;
 
@@ -310,7 +311,7 @@ function SparklerDrawGameInner() {
       )}
       {phase === 'countdown' && <Countdown onComplete={startLoop} accentColor={accent} />}
       {(phase === 'playing' || phase === 'countdown') && (
-        <div ref={mountRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none' }} />
+        <div ref={mountRef} role="application" aria-label="Game area - tap to play" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none' }} />
       )}
       {phase === 'playing' && (
         <GameHUD accentColor={accent} items={[

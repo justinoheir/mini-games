@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
 import * as THREE from 'three';
 import GameShell from '@/components/GameShell';
@@ -14,7 +14,7 @@ import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
 const GAME_ID = 'odd-one-out';
 const ACCENT = '#f97316';
 const DURATION = 45;
-const GAME_EMOJI = '🔍';
+const GAME_EMOJI = 'ðŸ”';
 const GAME_TITLE = 'Odd One Out';
 const GAME_TAGLINE = "Spot what doesn't belong. Quick!";
 
@@ -28,11 +28,11 @@ type Phase = 'start' | 'countdown' | 'playing' | 'done';
 function getPersonality(sig: Signals): string {
   const acc = sig.total > 0 ? sig.correct / sig.total : 0;
   const avg = sig.total > 0 ? sig.totalMs / sig.total : 9999;
-  if (acc >= 0.9 && avg < 800) return 'Pattern Master 🔍';
-  if (sig.hardestLevel >= 5) return 'Detail Detective 🕵️';
-  if (acc >= 0.8) return 'Sharp Observer 👁️';
-  if (avg < 1000) return 'Fast Finder ⚡';
-  return 'Training Vision 🔮';
+  if (acc >= 0.9 && avg < 800) return 'Pattern Master ðŸ”';
+  if (sig.hardestLevel >= 5) return 'Detail Detective ðŸ•µï¸';
+  if (acc >= 0.8) return 'Sharp Observer ðŸ‘ï¸';
+  if (avg < 1000) return 'Fast Finder âš¡';
+  return 'Training Vision ðŸ”®';
 }
 
 const COLORS_HEX = [0x3b82f6, 0xef4444, 0x22c55e, 0xeab308, 0xa855f7, 0xf97316];
@@ -99,6 +99,7 @@ function OddOneOutGameInner() {
   const [timeLeft, setTimeLeft] = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
   const [finalSig, setFinalSig] = useState<Signals | null>(null);
+  const [pbBeaten, setPbBeaten] = useState(false);
 
   useEffect(() => { /* accent sync */ }, [theme]);
 
@@ -108,6 +109,10 @@ function OddOneOutGameInner() {
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
     hapticVictory();
     if (s.sig.total > 0) s.sig.avgReactionMs = s.sig.totalMs / s.sig.total;
+        const _pbKey = 'pb_odd-one-out';
+    const _finalScore = stateRef.current.sig.score;
+    const _prevPb = parseInt(typeof window !== 'undefined' ? localStorage.getItem(_pbKey) ?? '0' : '0', 10);
+    if (_finalScore > _prevPb) { if (typeof window !== 'undefined') localStorage.setItem(_pbKey, String(_finalScore)); setPbBeaten(true); }
     setFinalSig({ ...s.sig }); setPhase('done');
   }, []);
 
@@ -282,13 +287,14 @@ function OddOneOutGameInner() {
       {phase === 'countdown' && <Countdown onComplete={handleCountdownDone} accentColor={accent} />}
       {(phase === 'playing' || phase === 'countdown') && (
         <>
-          <div ref={mountRef} style={{ position: 'absolute', inset: 0, touchAction: 'none' }} />
-          {phase === 'playing' && (
-            <GameHUD accentColor={accent} items={[
+          <div ref={mountRef} aria-label="Game area. Use touch or pointer to interact." role="application" style={{ position: 'absolute', inset: 0, touchAction: 'none' }} />
+          {phase === 'playing' && (<>
+            <div aria-live="polite" style={{position:'absolute',left:'-9999px',width:'1px',height:'1px',overflow:'hidden'}}>Score: {scoreDisplay}</div>
+          <GameHUD accentColor={accent} items={[
               { label: 'TIME', value: timeLeft, danger: timeLeft <= 10, testId: 'timer' },
               { label: 'SCORE', value: scoreDisplay, testId: 'score' },
             ]} />
-          )}
+          </>)}
         </>
       )}
       {phase === 'done' && finalSig && (
@@ -296,11 +302,14 @@ function OddOneOutGameInner() {
           score={String(finalSig.score)} personality={getPersonality(finalSig)}
           insights={[
             { label: 'Correct', value: `${finalSig.correct}/${finalSig.total}`, color: '#4ade80' },
-            { label: 'Avg Speed', value: finalSig.total > 0 ? `${Math.round(finalSig.totalMs/finalSig.total)}ms` : '—', color: accent },
-            { label: 'Best Streak', value: `×${finalSig.maxStreak}`, color: '#fbbf24' },
+            { label: 'Avg Speed', value: finalSig.total > 0 ? `${Math.round(finalSig.totalMs/finalSig.total)}ms` : 'â€”', color: accent },
+            { label: 'Best Streak', value: `Ã—${finalSig.maxStreak}`, color: '#fbbf24' },
             { label: 'Hardest Level', value: `Lv ${finalSig.hardestLevel}`, color: accent },
           ]}
           accentColor={accent} onPlayAgain={handlePlayAgain} didWin={finalSig.correct >= 8} />
+      )}
+      {phase === 'done' && pbBeaten && (
+        <div style={{position:'fixed',top:'16px',left:'50%',transform:'translateX(-50%)',background:'#fbbf24',color:'#000',padding:'8px 20px',borderRadius:'999px',fontWeight:700,fontSize:'1rem',zIndex:9999,boxShadow:'0 4px 12px rgba(0,0,0,0.3)',animation:'none'}}>ðŸ† New Personal Best!</div>
       )}
     </GameShell>
   );
@@ -309,3 +318,5 @@ function OddOneOutGameInner() {
 import dynamic from 'next/dynamic';
 const OddOneOutGame = dynamic(() => Promise.resolve({ default: OddOneOutGameInner }), { ssr: false });
 export default OddOneOutGame;
+
+

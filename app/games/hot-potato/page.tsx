@@ -40,6 +40,8 @@ interface PotatoState {
 interface GS {
   running: boolean; timeLeft: number; sig: Signals;
   potato: PotatoState | null; speedLevel: number;
+  // Streak: consecutive taps without burn
+  tapStreak: number;
 }
 
 function makePotato(speedLevel: number): PotatoState {
@@ -61,7 +63,7 @@ function HotPotatoGameInner() {
   const stateRef = useRef<GS>({
     running: false, timeLeft: DURATION,
     sig: { totalTaps: 0, burnCount: 0, maxSpeedLevel: 1, avgReactionMs: 0, reactionTimes: [], score: 0 },
-    potato: null, speedLevel: 1,
+    potato: null, speedLevel: 1, tapStreak: 0,
   });
   const threeRef = useRef<{
     renderer: THREE.WebGLRenderer; scene: THREE.Scene; camera: THREE.PerspectiveCamera;
@@ -73,6 +75,8 @@ function HotPotatoGameInner() {
   const [timeLeft, setTimeLeft]         = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
   const [finalSig, setFinalSig]         = useState<Signals | null>(null);
+  const [streak, setStreak]             = useState(0);
+  const [isNewPB, setIsNewPB]           = useState(false);
   const playerSessionRef                = useRef<PlayerSession | null>(null);
 
   const endGame = useCallback(() => {
@@ -85,6 +89,12 @@ function HotPotatoGameInner() {
     if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
     const t = threeRef.current;
     if (t) { cancelAnimationFrame(t.animId); t.renderer.dispose(); }
+    // Personal Best check
+    try {
+      const pbKey = `pb_${GAME_ID}`;
+      const prevPB = parseInt(localStorage.getItem(pbKey) || '0', 10);
+      if (s.sig.score > prevPB) { localStorage.setItem(pbKey, String(s.sig.score)); setIsNewPB(true); }
+    } catch {}
     setFinalSig({ ...s.sig }); setPhase('done');
   }, []);
 
@@ -94,8 +104,9 @@ function HotPotatoGameInner() {
     s.running = true; s.timeLeft = DURATION;
     s.sig = { totalTaps: 0, burnCount: 0, maxSpeedLevel: 1, avgReactionMs: 0, reactionTimes: [], score: 0 };
     s.speedLevel = 1;
+    s.tapStreak = 0;
     s.potato = makePotato(1);
-    setScoreDisplay(0); setTimeLeft(DURATION); setPhase('playing');
+    setScoreDisplay(0); setTimeLeft(DURATION); setPhase('playing'); setStreak(0); setIsNewPB(false);
     stopMusicRef.current = startMusic('drive');
 
     const W = mount.clientWidth, H = mount.clientHeight;
@@ -114,7 +125,6 @@ function HotPotatoGameInner() {
     const heatLight = new THREE.PointLight(0xff3300, 0, 15);
     scene.add(heatLight);
 
-    // Background embers grid
     const gridCount = 200;
     const gPos = new Float32Array(gridCount * 3);
     for (let i = 0; i < gridCount; i++) {
@@ -124,14 +134,12 @@ function HotPotatoGameInner() {
     starGeo.setAttribute('position', new THREE.BufferAttribute(gPos, 3));
     scene.add(new THREE.Points(starGeo, new THREE.PointsMaterial({ color: 0xf97316, size: 0.04, transparent: true, opacity: 0.3 })));
 
-    // Potato mesh (ellipsoid approximated with scaled sphere)
     const potatoGeo = new THREE.SphereGeometry(0.7, 20, 16);
     const potatoMat = new THREE.MeshStandardMaterial({ color: 0xc87941, roughness: 0.6, metalness: 0.1 });
     const potato = new THREE.Mesh(potatoGeo, potatoMat);
     potato.scale.set(1.2, 0.9, 0.85);
     scene.add(potato);
 
-    // Heat ring
     const ringGeo = new THREE.TorusGeometry(0.9, 0.06, 8, 32);
     const ringMat = new THREE.MeshStandardMaterial({ color: 0xff3300, emissive: 0xff1100, emissiveIntensity: 0.5, transparent: true, opacity: 0.0 });
     const ring = new THREE.Mesh(ringGeo, ringMat);
@@ -161,6 +169,8 @@ function HotPotatoGameInner() {
       if (p.burnTimer >= p.maxBurnTimer) {
         s.sig.burnCount++;
         sfx.fail(); haptic([100, 50, 100]);
+        // Reset streak on burn
+        s.tapStreak = 0; setStreak(0);
         s.potato = makePotato(s.speedLevel);
       }
 
@@ -169,10 +179,10 @@ function HotPotatoGameInner() {
       const heatR = 0.58 + p.heat * 0.35;
       const heatG = 0.42 - p.heat * 0.35;
       const heatB = 0.16 - p.heat * 0.15;
-      const potatoMat = potato.material as THREE.MeshStandardMaterial;
-      potatoMat.color.setRGB(heatR, heatG, heatB);
-      potatoMat.emissive.setRGB(heatR * 0.4 * p.heat, 0, 0);
-      potatoMat.emissiveIntensity = p.heat * 0.8;
+      const potatoMat2 = potato.material as THREE.MeshStandardMaterial;
+      potatoMat2.color.setRGB(heatR, heatG, heatB);
+      potatoMat2.emissive.setRGB(heatR * 0.4 * p.heat, 0, 0);
+      potatoMat2.emissiveIntensity = p.heat * 0.8;
 
       const ringMat2 = ring.material as THREE.MeshStandardMaterial;
       ringMat2.opacity = p.heat * 0.85;
@@ -211,6 +221,8 @@ function HotPotatoGameInner() {
       const hits = raycaster.intersectObject(t.potato);
       if (hits.length > 0) {
         const p = s.potato!;
+        const reactionMs = Date.now() - p.spawnTime;
+        s.sig.reactionTimes.push(reactionMs);
         const rx = p.x - (ndcX * 5); const ry = p.y - (ndcY * 8);
         const len = Math.sqrt(rx*rx+ry*ry)||1;
         const spd = 0.05 + s.speedLevel * 0.01;
@@ -218,9 +230,13 @@ function HotPotatoGameInner() {
         p.burnTimer = Math.max(0, p.burnTimer - p.maxBurnTimer * 0.4);
         p.heat = p.burnTimer / p.maxBurnTimer;
         p.spawnTime = Date.now();
-        s.sig.reactionTimes.push(Date.now() - p.spawnTime);
         s.sig.totalTaps++;
-        s.sig.score++;
+        // Streak on successful tap
+        s.tapStreak++;
+        setStreak(s.tapStreak);
+        // Streak multiplier: every 3 taps = +1 point bonus (capped x4)
+        const bonus = Math.min(3, Math.floor(s.tapStreak / 3));
+        s.sig.score += 1 + bonus;
         setScoreDisplay(s.sig.score);
         sfx.collect(); haptic([30]);
       }
@@ -242,7 +258,7 @@ function HotPotatoGameInner() {
   }, []);
   const handleCountdownDone = useCallback(() => { startLoop(); }, [startLoop]);
   const handlePlayAgain = useCallback(() => {
-    setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null);
+    setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null); setStreak(0); setIsNewPB(false);
   }, []);
 
   const buildInsights = (sig: Signals) => [
@@ -252,18 +268,44 @@ function HotPotatoGameInner() {
     { label: 'Avg React', value: sig.avgReactionMs > 0 ? `${sig.avgReactionMs}ms` : '-', color: 'var(--color-text)' },
   ];
 
+  // Streak multiplier display
+  const streakMultiplier = streak >= 3 ? `+${Math.min(3, Math.floor(streak / 3))} bonus` : null;
+
   return (
     <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
       {phase === 'start' && <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description={GAME_TAGLINE} ctaLabel="Touch the Potato" accentColor={theme.colors.accent ?? ACCENT} onStart={handleStart} />}
       {phase === 'countdown' && <Countdown onComplete={handleCountdownDone} accentColor={theme.colors.accent ?? ACCENT} />}
       {(phase === 'playing' || phase === 'countdown') && (
         <>
-          <div ref={mountRef} style={{ position: 'absolute', inset: 0, touchAction: 'none' }} />
-          {phase === 'playing' && <GameHUD accentColor={theme.colors.accent ?? ACCENT} items={[{ label: 'TIME', value: timeLeft, danger: timeLeft <= 10 }, { label: 'SCORE', value: scoreDisplay }]} />}
+          <div
+            ref={mountRef}
+            role="img"
+            aria-label="Hot Potato game — tap the potato before it burns"
+            style={{ position: 'absolute', inset: 0, touchAction: 'none' }}
+          />
+          {phase === 'playing' && (
+            <>
+              <div aria-live="polite" aria-atomic="true" style={{position:'absolute',top:0,left:0,width:'100%',pointerEvents:'none'}}>
+                <GameHUD accentColor={theme.colors.accent ?? ACCENT} items={[{ label: 'TIME', value: timeLeft, danger: timeLeft <= 10 }, { label: 'SCORE', value: scoreDisplay }]} />
+              </div>
+              {streakMultiplier && (
+                <div aria-live="polite" style={{position:'absolute',top:88,left:'50%',transform:'translateX(-50%)',background:'rgba(0,0,0,0.75)',border:`1px solid ${ACCENT}`,borderRadius:20,padding:'4px 18px',fontSize:20,fontWeight:800,color:ACCENT,letterSpacing:'0.05em',pointerEvents:'none',zIndex:10}}>
+                  🔥 x{Math.min(4,1+Math.floor(streak/3))} Streak
+                </div>
+              )}
+            </>
+          )}
         </>
       )}
       {phase === 'done' && finalSig && (
-        <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI} score={String(finalSig.score)} personality={getPersonality(finalSig)} insights={buildInsights(finalSig)} accentColor={theme.colors.accent ?? ACCENT} onPlayAgain={handlePlayAgain} didWin={finalSig.burnCount === 0} />
+        <div style={{position:'relative',width:'100%',height:'100%'}}>
+          {isNewPB && (
+            <div role="status" style={{position:'absolute',top:12,left:'50%',transform:'translateX(-50%)',background:'linear-gradient(135deg,#f97316,#ef4444)',borderRadius:20,padding:'6px 22px',fontSize:16,fontWeight:800,color:'#fff',zIndex:100,whiteSpace:'nowrap',letterSpacing:'0.03em',boxShadow:'0 2px 12px rgba(249,115,22,0.5)'}}>
+              🏆 New Personal Best!
+            </div>
+          )}
+          <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI} score={String(finalSig.score)} personality={getPersonality(finalSig)} insights={buildInsights(finalSig)} accentColor={theme.colors.accent ?? ACCENT} onPlayAgain={handlePlayAgain} didWin={finalSig.burnCount === 0} />
+        </div>
       )}
       {phase === 'done' && finalSig && (
         <WebhookEmitter theme={theme} gameId={GAME_ID} sig={finalSig} personality={getPersonality(finalSig)} player={playerSessionRef.current} />

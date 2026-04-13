@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
 import * as THREE from 'three';
 import GameShell from '@/components/GameShell';
@@ -45,7 +45,7 @@ function VoiceSculptGameInner() {
   const mountRef = useRef<HTMLDivElement>(null);
   const stopMusicRef = useRef<(() => void) | null>(null);
   const stateRef = useRef({
-    running: false, timeLeft: DURATION, animId: 0,
+    running: false, streak: 0, timeLeft: DURATION, animId: 0,
     intervalId: null as ReturnType<typeof setInterval> | null,
     renderer: null as THREE.WebGLRenderer | null,
     scene: null as THREE.Scene | null,
@@ -62,6 +62,7 @@ function VoiceSculptGameInner() {
   const [phase, setPhase] = useState<Phase>('start');
   const [timeLeft, setTimeLeft] = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
+  const [streak, setStreak] = useState(0);
   const [finalSig, setFinalSig] = useState<Signals | null>(null);
   const [micError, setMicError] = useState(false);
   const playerSessionRef = useRef<PlayerSession | null>(null);
@@ -106,7 +107,7 @@ function VoiceSculptGameInner() {
     s.sig = { score: 0, wallsPassed: 0, collisions: 0, avgVolume: 0 };
     s.ballY = 0; s.ballVY = 0; s.walls = []; s.invuln = 0;
     s.volSum = 0; s.volSamples = 0; s.lastWallZ = -WALL_SPACING;
-    setScoreDisplay(0); setTimeLeft(DURATION); setPhase('playing');
+    setScoreDisplay(0); setStreak(0); setTimeLeft(DURATION); setPhase('playing');
     stopMusicRef.current = startMusic('minimal');
 
     const W = window.innerWidth, H = window.innerHeight;
@@ -275,7 +276,7 @@ function VoiceSculptGameInner() {
           const ballZ = w.z;
           const distToGap = Math.abs(s.ballY - w.gapCY);
           if (distToGap > WALL_GAP / 2 - 0.3 && s.invuln === 0) {
-            s.sig.collisions++; s.invuln = 80;
+            s.sig.collisions++; s.invuln = 80; s.streak=0; setStreak(0);
             sfx.collision(); hapticFail();
             (ballMat as THREE.MeshStandardMaterial).color.setHex(0xef4444);
             setTimeout(() => { if (ball) (ball.material as THREE.MeshStandardMaterial).color.setHex(0xec4899); }, 300);
@@ -284,7 +285,9 @@ function VoiceSculptGameInner() {
 
         if (!w.passed && w.z > 1) {
           w.passed = true;
-          s.sig.wallsPassed++; s.sig.score++;
+          s.streak=(s.streak||0)+1; setStreak(s.streak);
+          const _vc=Math.max(1,Math.floor(s.streak/3)+1);
+          s.sig.wallsPassed++; s.sig.score+=_vc;
           setScoreDisplay(s.sig.score);
           sfx.collect(); hapticScore();
         }
@@ -322,7 +325,7 @@ function VoiceSculptGameInner() {
   const handlePlayAgain = useCallback(() => {
     if (stateRef.current.renderer) { stateRef.current.renderer.dispose(); stateRef.current.renderer = null; }
     if (mountRef.current) mountRef.current.innerHTML = '';
-    setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null); setMicError(false);
+    setPhase('start'); setScoreDisplay(0); setStreak(0); setTimeLeft(DURATION); setFinalSig(null); setMicError(false);
   }, []);
 
   const accent = theme.colors.accent ?? ACCENT;
@@ -331,7 +334,7 @@ function VoiceSculptGameInner() {
       {phase === 'start' && <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE} description={GAME_TAGLINE} ctaLabel="Start Sculpting 🎨" accentColor={accent} onStart={handleStart} sensorNote="Uses microphone" />}
       {phase === 'countdown' && <Countdown onComplete={startLoop} accentColor={accent} />}
       {(phase === 'playing' || phase === 'countdown') && (
-        <div ref={mountRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none' }} />
+        <div ref={mountRef} role="application" aria-label="Game area - tap to play" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none' }} />
       )}
       {phase === 'playing' && <>
         <GameHUD accentColor={accent} items={[{ label: 'TIME', value: timeLeft, danger: timeLeft <= 10 }, { label: 'WALLS', value: scoreDisplay }]} />

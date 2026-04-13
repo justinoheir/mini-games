@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 /**
  * SPATIAL MAP — 3D Version
  * 4x4 grid of glowing 3D cubes. Memorize path, then trace it.
@@ -49,7 +49,7 @@ function SpatialMapGameInner() {
     cellMeshes: [] as THREE.Mesh[],
     cellLights: [] as THREE.PointLight[],
     pathLines: [] as THREE.Line[],
-    running: false, timeLeft: DURATION,
+    running: false, streak: 0, timeLeft: DURATION,
     sig: { score: 0, roundsCompleted: 0, maxPathLength: 0, wrongTaps: 0, avgRecallMs: 0, totalRecallMs: 0, totalRounds: 0 } as Signals,
     path: [] as number[],
     playerInput: [] as number[],
@@ -62,6 +62,7 @@ function SpatialMapGameInner() {
   const [phase, setPhase] = useState<Phase>('start');
   const [timeLeft, setTimeLeft] = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
+  const [streak, setStreak] = useState(0);
   const [finalSig, setFinalSig] = useState<Signals | null>(null);
   const playerSessionRef = useRef<PlayerSession | null>(null);
 
@@ -146,7 +147,7 @@ function SpatialMapGameInner() {
     s.running = true; s.timeLeft = DURATION;
     s.sig = { score: 0, roundsCompleted: 0, maxPathLength: 0, wrongTaps: 0, avgRecallMs: 0, totalRecallMs: 0, totalRounds: 0 };
     s.pathLength = 3;
-    setScoreDisplay(0); setTimeLeft(DURATION); setPhase('playing');
+    setScoreDisplay(0); setStreak(0); setTimeLeft(DURATION); setPhase('playing');
 
     const W = window.innerWidth, H = window.innerHeight;
     const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -291,13 +292,13 @@ function SpatialMapGameInner() {
             s2.sig.roundsCompleted++;
             if (s2.pathLength > s2.sig.maxPathLength) s2.sig.maxPathLength = s2.pathLength;
             const pts = s2.path.length * 2;
-            s2.sig.score += pts; setScoreDisplay(s2.sig.score);
+            s2.sig.score += pts; setScoreDisplay(s2.sig.score); s2.streak = (s2.streak||0)+1; setStreak(s2.streak); const streakMult = Math.max(1,Math.floor(s2.streak/3)+1); if(s2.streak>=3){s2.sig.score+=(streakMult-1)*pts;setScoreDisplay(s2.sig.score);}
             sfx.success(); haptic([50, 30, 50]);
             s2.subPhase = 'result'; s2.success = true; s2.resultTimer = 45;
           }
         } else {
           clearSubTimers();
-          s2.sig.wrongTaps++;
+          s2.sig.wrongTaps++; s2.streak=0; setStreak(0);
           sfx.collision(); haptic([30, 20, 30]);
           s2.subPhase = 'result'; s2.success = false; s2.resultTimer = 45;
         }
@@ -320,7 +321,7 @@ function SpatialMapGameInner() {
     playerSessionRef.current = savePlayerSession(GAME_ID, name, avatar);
     await initAudio(); setPhase('countdown');
   }, []);
-  const handlePlayAgain = useCallback(() => { setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null); }, []);
+  const handlePlayAgain = useCallback(() => { setPhase('start'); setScoreDisplay(0); setStreak(0); setTimeLeft(DURATION); setFinalSig(null); }, []);
 
   const accent = theme.colors.accent ?? ACCENT;
 
@@ -332,7 +333,7 @@ function SpatialMapGameInner() {
       )}
       {phase === 'countdown' && <Countdown onComplete={startLoop} accentColor={accent} />}
       {(phase === 'playing' || phase === 'countdown') && (
-        <div ref={mountRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none' }} />
+        <div ref={mountRef} role="application" aria-label="Game area - tap to play" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none' }} />
       )}
       {phase === 'playing' && (
         <GameHUD accentColor={accent} items={[

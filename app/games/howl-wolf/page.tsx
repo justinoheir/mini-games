@@ -38,6 +38,8 @@ interface GS {
   inZone: boolean; howlTime: number; packCalled: number;
   volSum: number; volCount: number; peakVol: number;
   wolfScale: number; mouthOpen: number;
+  // Streak: consecutive seconds in the howl zone
+  zoneStreak: number;
 }
 
 function HowlWolfGameInner() {
@@ -56,7 +58,7 @@ function HowlWolfGameInner() {
     smoothVol: 0, bandCenter: 0.5, bandNextChange: 0,
     inZone: false, howlTime: 0, packCalled: 0,
     volSum: 0, volCount: 0, peakVol: 0,
-    wolfScale: 1, mouthOpen: 0,
+    wolfScale: 1, mouthOpen: 0, zoneStreak: 0,
   });
   const threeRef = useRef<{
     renderer: THREE.WebGLRenderer; scene: THREE.Scene; camera: THREE.PerspectiveCamera;
@@ -71,6 +73,8 @@ function HowlWolfGameInner() {
   const [packDisp, setPackDisp] = useState(0);
   const [finalSig, setFinalSig] = useState<Signals | null>(null);
   const [permError, setPermError] = useState('');
+  const [streak, setStreak] = useState(0);
+  const [isNewPB, setIsNewPB] = useState(false);
 
   const getMicVol = useCallback((): number => {
     const a = analyserRef.current, d = dataArrRef.current;
@@ -94,6 +98,12 @@ function HowlWolfGameInner() {
       howlTime: Math.round(s.howlTime), packCalled: s.packCalled,
       avgVolume: s.volCount > 0 ? s.volSum / s.volCount : 0, peakVolume: s.peakVol,
     };
+    // Personal Best check
+    try {
+      const pbKey = `pb_${GAME_ID}`;
+      const prevPB = parseInt(localStorage.getItem(pbKey) || '0', 10);
+      if (sig.score > prevPB) { localStorage.setItem(pbKey, String(sig.score)); setIsNewPB(true); }
+    } catch {}
     sfx.success?.(); hapticVictory();
     setFinalSig(sig); setPhase('done');
   }, []);
@@ -105,8 +115,8 @@ function HowlWolfGameInner() {
     s.bandCenter = 0.5; s.bandNextChange = Date.now() + BAND_CHANGE_MS;
     s.inZone = false; s.howlTime = 0; s.packCalled = 0;
     s.volSum = 0; s.volCount = 0; s.peakVol = 0;
-    s.wolfScale = 1; s.mouthOpen = 0;
-    setScoreDisp(0); setTimeLeft(DURATION); setPackDisp(0); setPhase('playing');
+    s.wolfScale = 1; s.mouthOpen = 0; s.zoneStreak = 0;
+    setScoreDisp(0); setTimeLeft(DURATION); setPackDisp(0); setPhase('playing'); setStreak(0); setIsNewPB(false);
     stopMusicRef.current = startMusic('pulse');
 
     const W = mount.clientWidth, H = mount.clientHeight;
@@ -128,13 +138,11 @@ function HowlWolfGameInner() {
     moonLight.position.set(4, 6, 5);
     scene.add(moonLight);
 
-    // Stars
     const starPos = new Float32Array(500 * 3);
     for (let i = 0; i < 500; i++) { starPos[i*3] = (Math.random()-0.5)*30; starPos[i*3+1] = (Math.random()-0.5)*20; starPos[i*3+2] = -5 - Math.random()*15; }
     const starGeo = new THREE.BufferGeometry(); starGeo.setAttribute('position', new THREE.BufferAttribute(starPos, 3));
     scene.add(new THREE.Points(starGeo, new THREE.PointsMaterial({ color: 0xffffff, size: 0.06, transparent: true, opacity: 0.7 })));
 
-    // Moon
     const moonGeo = new THREE.SphereGeometry(1.0, 20, 20);
     const moonMat = new THREE.MeshStandardMaterial({ color: 0xffe8a0, emissive: 0xffe580, emissiveIntensity: 0.5, roughness: 0.7 });
     const moon = new THREE.Mesh(moonGeo, moonMat);
@@ -146,43 +154,35 @@ function HowlWolfGameInner() {
     moonGlow.position.set(4.5, 4, -2);
     scene.add(moonGlow);
 
-    // Ground/hills silhouette
     const hillGeo = new THREE.PlaneGeometry(20, 3);
     const hillMat = new THREE.MeshBasicMaterial({ color: 0x060a14 });
     const hill = new THREE.Mesh(hillGeo, hillMat);
     hill.position.set(0, -4, -1); hill.rotation.x = -0.2;
     scene.add(hill);
 
-    // Wolves (silhouettes)
     const wolves: THREE.Group[] = [];
     for (let i = 0; i < PACK_SIZE; i++) {
       const wolfGroup = new THREE.Group();
       const wxPos = -4.5 + i * 3;
-      // Body
       const body = new THREE.Mesh(new THREE.SphereGeometry(0.55, 12, 10), new THREE.MeshBasicMaterial({ color: 0x1a1a2e }));
       body.scale.set(1.4, 0.85, 0.6); wolfGroup.add(body);
-      // Head
       const head = new THREE.Mesh(new THREE.SphereGeometry(0.38, 12, 10), new THREE.MeshBasicMaterial({ color: 0x1a1a2e }));
       head.position.set(-0.6, 0.15, 0); wolfGroup.add(head);
-      // Ears
       [{ x: -0.82, y: 0.52 }, { x: -0.55, y: 0.52 }].forEach(ear => {
         const eMesh = new THREE.Mesh(new THREE.ConeGeometry(0.1, 0.26, 5), new THREE.MeshBasicMaterial({ color: 0x1a1a2e }));
         eMesh.position.set(ear.x, ear.y, 0); wolfGroup.add(eMesh);
       });
-      // Tail
       const tailGeo = new THREE.TubeGeometry(
         new THREE.CatmullRomCurve3([new THREE.Vector3(0.6, -0.1, 0), new THREE.Vector3(0.9, 0.3, 0), new THREE.Vector3(0.7, 0.7, 0)]), 8, 0.07, 6, false
       );
       const tail = new THREE.Mesh(tailGeo, new THREE.MeshBasicMaterial({ color: 0x1a1a2e }));
       wolfGroup.add(tail);
-
       wolfGroup.position.set(wxPos, -3.2, 0);
       wolfGroup.scale.setScalar(0.6);
       scene.add(wolfGroup);
       wolves.push(wolfGroup);
     }
 
-    // Volume meter bar (right side)
     const meterBgGeo = new THREE.BoxGeometry(0.5, 5, 0.1);
     const meterBg = new THREE.Mesh(meterBgGeo, new THREE.MeshBasicMaterial({ color: 0x111122 }));
     meterBg.position.set(4.5, 0, 0);
@@ -190,7 +190,6 @@ function HowlWolfGameInner() {
     const meterBarGeo = new THREE.BoxGeometry(0.4, 0.1, 0.15);
     const meterBar = new THREE.Mesh(meterBarGeo, new THREE.MeshStandardMaterial({ color: ACCENT, emissive: ACCENT, emissiveIntensity: 0.5 }));
     scene.add(meterBar);
-    // Band indicator
     const bandMesh = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.5, 0.12), new THREE.MeshBasicMaterial({ color: ACCENT, transparent: true, opacity: 0.25 }));
     scene.add(bandMesh);
 
@@ -201,6 +200,14 @@ function HowlWolfGameInner() {
       s.timeLeft--; setTimeLeft(s.timeLeft);
       sfx.tick?.();
       if (s.timeLeft === 10) sfx.warning?.();
+      // Track zone streak per second
+      if (s.inZone) {
+        s.zoneStreak++;
+        setStreak(s.zoneStreak);
+      } else {
+        s.zoneStreak = 0;
+        setStreak(0);
+      }
       if (s.timeLeft <= 0) endGame();
     }, 1000);
 
@@ -234,42 +241,38 @@ function HowlWolfGameInner() {
           s.packCalled = pack;
           setPackDisp(s.packCalled); hapticScore(); sfx.collect?.();
         }
-        const score = Math.round(s.howlTime * 10) + s.packCalled * 50;
+        // Streak multiplier: every 3 zone-seconds = +50% score, capped x2.5
+        const multiplier = 1 + Math.min(3, Math.floor(s.zoneStreak / 3)) * 0.5;
+        const score = Math.round(s.howlTime * 10 * multiplier) + s.packCalled * 50;
         setScoreDisp(score);
       } else {
         s.mouthOpen = Math.max(0, s.mouthOpen - 0.04);
         s.wolfScale = Math.max(1, s.wolfScale * 0.97);
       }
 
-      // Update meter bar
       const meterY = METER_BOT + sv * METER_H;
       meterBar.position.set(4.5, METER_BOT + sv * METER_H / 2, 0.05);
       meterBar.scale.set(1, Math.max(0.01, sv * METER_H / 0.1), 1);
       (meterBar.material as THREE.MeshStandardMaterial).emissiveIntensity = s.inZone ? 1.2 : 0.5;
 
-      // Band indicator
       const bandCenterY = METER_BOT + s.bandCenter * METER_H;
       const bandH = BAND_WIDTH * METER_H;
       bandMesh.position.set(4.5, bandCenterY, 0.05);
       bandMesh.scale.y = bandH / 0.5;
       (bandMesh.material as THREE.MeshBasicMaterial).opacity = s.inZone ? 0.6 : 0.25;
 
-      // Wolves activation
       wolves.forEach((wolf, i) => {
         const active = i < s.packCalled || (i === s.packCalled && s.inZone);
         const targetScale = active ? s.wolfScale : 0.6;
         wolf.scale.setScalar(wolf.scale.x + (targetScale - wolf.scale.x) * 0.08);
         const wolfMat = wolf.children[0] as THREE.Mesh;
         (wolfMat.material as THREE.MeshBasicMaterial).color.setHex(active ? (s.inZone ? parseInt(ACCENT.replace('#',''), 16) : 0x222244) : 0x1a1a2e);
-        // Howl pose - raise head
         wolf.children[1].rotation.z = active && s.inZone ? -0.8 : 0;
       });
 
-      // Moon pulse
       (moon.material as THREE.MeshStandardMaterial).emissiveIntensity = 0.3 + (s.inZone ? 0.4 : 0) + Math.sin(obj.frame * 0.05) * 0.1;
       (moonGlow.material as THREE.MeshBasicMaterial).opacity = 0.08 + (s.inZone ? 0.15 * sv : 0);
 
-      // Howl light
       howlLight.intensity = s.inZone ? 2 + sv * 3 : 0;
 
       renderer.render(scene, camera);
@@ -306,7 +309,7 @@ function HowlWolfGameInner() {
     if (audioCtxRef.current) { audioCtxRef.current.close().catch(() => {}); audioCtxRef.current = null; }
     if (micStreamRef.current) { micStreamRef.current.getTracks().forEach(t => t.stop()); micStreamRef.current = null; }
     analyserRef.current = null; dataArrRef.current = null;
-    setPhase('start'); setScoreDisp(0); setTimeLeft(DURATION); setFinalSig(null); setPackDisp(0);
+    setPhase('start'); setScoreDisp(0); setTimeLeft(DURATION); setFinalSig(null); setPackDisp(0); setStreak(0); setIsNewPB(false);
   }, []);
 
   useEffect(() => () => {
@@ -317,6 +320,9 @@ function HowlWolfGameInner() {
     const t = threeRef.current;
     if (t) { cancelAnimationFrame(t.animId); t.renderer.dispose(); }
   }, []);
+
+  // Streak multiplier
+  const streakMultiplier = streak >= 3 ? `x${(1 + Math.min(3, Math.floor(streak / 3)) * 0.5).toFixed(1).replace('.0', '')}` : null;
 
   return (
     <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={accent} background="radial-gradient(ellipse at 50% 20%,rgba(245,158,11,0.1) 0%,transparent 55%),linear-gradient(180deg,#040810 0%,#06080f 100%)">
@@ -329,21 +335,44 @@ function HowlWolfGameInner() {
             <div style={{ fontSize: 16, color: 'rgba(255,255,255,0.6)', lineHeight: 1.6 }}>Howl Wolf measures your voice volume to find the zone. Your mic data stays on your device.</div>
           </div>
           {permError && <div style={{ color: '#ef4444', fontSize: 14, textAlign: 'center', maxWidth: 280, background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)', padding: '12px 16px', borderRadius: 10 }}>{permError}</div>}
-          <button onClick={() => void handlePermission()} style={{ background: accent, color: '#000', border: 'none', borderRadius: 14, padding: '0 48px', height: 56, fontSize: 18, fontWeight: 800, cursor: 'pointer', minWidth: 240 }}>Allow &amp; Start</button>
-          <button onClick={() => setPhase('start')} style={{ background: 'transparent', color: 'rgba(255,255,255,0.45)', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 10, padding: '10px 24px', fontSize: 15, cursor: 'pointer' }}>Back</button>
+          <button aria-label="Allow microphone access and start howling" onClick={() => void handlePermission()} style={{ background: accent, color: '#000', border: 'none', borderRadius: 14, padding: '0 48px', height: 56, fontSize: 18, fontWeight: 800, cursor: 'pointer', minWidth: 240 }}>Allow &amp; Start</button>
+          <button aria-label="Go back to start screen" onClick={() => setPhase('start')} style={{ background: 'transparent', color: 'rgba(255,255,255,0.45)', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 10, padding: '10px 24px', fontSize: 15, cursor: 'pointer' }}>Back</button>
         </div>
       )}
       {phase === 'countdown' && <Countdown onComplete={startLoop} accentColor={accent} />}
       {(phase === 'playing' || phase === 'countdown') && (
         <>
-          <div ref={mountRef} style={{ position: 'absolute', inset: 0, touchAction: 'none' }} />
-          {phase === 'playing' && <GameHUD accentColor={accent} items={[{ label: 'TIME', value: timeLeft, danger: timeLeft <= 10 }, { label: 'PACK', value: packDisp }]} />}
+          <div
+            ref={mountRef}
+            role="img"
+            aria-label="Howl Wolf game — howl into the mic and hit the glowing zone to call your wolf pack"
+            style={{ position: 'absolute', inset: 0, touchAction: 'none' }}
+          />
+          {phase === 'playing' && (
+            <>
+              <div aria-live="polite" aria-atomic="true" style={{position:'absolute',top:0,left:0,width:'100%',pointerEvents:'none'}}>
+                <GameHUD accentColor={accent} items={[{ label: 'TIME', value: timeLeft, danger: timeLeft <= 10 }, { label: 'PACK', value: packDisp }]} />
+              </div>
+              {streakMultiplier && (
+                <div aria-live="polite" style={{position:'absolute',top:88,left:'50%',transform:'translateX(-50%)',background:'rgba(0,0,0,0.75)',border:`1px solid ${accent}`,borderRadius:20,padding:'4px 18px',fontSize:20,fontWeight:800,color:accent,letterSpacing:'0.05em',pointerEvents:'none',zIndex:10}}>
+                  🐺 {streakMultiplier} Zone
+                </div>
+              )}
+            </>
+          )}
         </>
       )}
       {phase === 'done' && finalSig && (
-        <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI} score={String(finalSig.score)} personality={getPersonality(finalSig)}
-          insights={[{ label: 'Pack Called', value: `${finalSig.packCalled}/${PACK_SIZE}`, color: accent }, { label: 'Howl Time', value: `${finalSig.howlTime}s`, color: '#22c55e' }, { label: 'Peak Volume', value: `${Math.round(finalSig.peakVolume*100)}%`, color: '#fbbf24' }, { label: 'Avg Volume', value: `${Math.round(finalSig.avgVolume*100)}%`, color: '#06b6d4' }]}
-          accentColor={accent} onPlayAgain={handlePlayAgain} didWin={finalSig.packCalled >= 1} />
+        <div style={{position:'relative',width:'100%',height:'100%'}}>
+          {isNewPB && (
+            <div role="status" style={{position:'absolute',top:12,left:'50%',transform:'translateX(-50%)',background:'linear-gradient(135deg,#f59e0b,#ef4444)',borderRadius:20,padding:'6px 22px',fontSize:16,fontWeight:800,color:'#fff',zIndex:100,whiteSpace:'nowrap',letterSpacing:'0.03em',boxShadow:'0 2px 12px rgba(245,158,11,0.5)'}}>
+              🏆 New Personal Best!
+            </div>
+          )}
+          <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI} score={String(finalSig.score)} personality={getPersonality(finalSig)}
+            insights={[{ label: 'Pack Called', value: `${finalSig.packCalled}/${PACK_SIZE}`, color: accent }, { label: 'Howl Time', value: `${finalSig.howlTime}s`, color: '#22c55e' }, { label: 'Peak Volume', value: `${Math.round(finalSig.peakVolume*100)}%`, color: '#fbbf24' }, { label: 'Avg Volume', value: `${Math.round(finalSig.avgVolume*100)}%`, color: '#06b6d4' }]}
+            accentColor={accent} onPlayAgain={handlePlayAgain} didWin={finalSig.packCalled >= 1} />
+        </div>
       )}
       {phase === 'done' && finalSig && (
         <WebhookEmitter theme={theme} sig={finalSig} personality={getPersonality(finalSig)} player={playerSessionRef.current} />
