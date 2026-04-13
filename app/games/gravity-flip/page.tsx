@@ -33,6 +33,8 @@ interface GS {
   ballY: number; ballVY: number; gravityDir: 1 | -1;
   scrollZ: number; scrollSpeed: number;
   obstacleZs: Array<{ z: number; topY: number; botY: number; passed: boolean }>;
+  // Streak: consecutive obstacles dodged without wall hits
+  dodgeStreak: number;
 }
 
 function GravityFlipGameInner() {
@@ -45,7 +47,7 @@ function GravityFlipGameInner() {
     sig: { flips: 0, wallHits: 0, obstaclesDodged: 0, maxRunDistance: 0, score: 0 },
     ballY: 0, ballVY: 0, gravityDir: 1,
     scrollZ: 0, scrollSpeed: 0.05,
-    obstacleZs: [],
+    obstacleZs: [], dodgeStreak: 0,
   });
   const threeRef = useRef<{
     renderer: THREE.WebGLRenderer; scene: THREE.Scene; camera: THREE.PerspectiveCamera;
@@ -60,6 +62,8 @@ function GravityFlipGameInner() {
   const [timeLeft, setTimeLeft]         = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
   const [finalSig, setFinalSig]         = useState<Signals | null>(null);
+  const [streak, setStreak]             = useState(0);
+  const [isNewPB, setIsNewPB]           = useState(false);
   const playerSessionRef                = useRef<PlayerSession | null>(null);
 
   const endGame = useCallback(() => {
@@ -68,6 +72,12 @@ function GravityFlipGameInner() {
     if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
     const t = threeRef.current;
     if (t) { cancelAnimationFrame(t.animId); t.renderer.dispose(); }
+    // Personal Best check
+    try {
+      const pbKey = `pb_${GAME_ID}`;
+      const prevPB = parseInt(localStorage.getItem(pbKey) || '0', 10);
+      if (s.sig.score > prevPB) { localStorage.setItem(pbKey, String(s.sig.score)); setIsNewPB(true); }
+    } catch {}
     setFinalSig({ ...s.sig }); setPhase('done');
   }, []);
 
@@ -77,8 +87,8 @@ function GravityFlipGameInner() {
     s.running = true; s.timeLeft = DURATION;
     s.sig = { flips: 0, wallHits: 0, obstaclesDodged: 0, maxRunDistance: 0, score: 0 };
     s.ballY = 0; s.ballVY = 0; s.gravityDir = 1;
-    s.scrollZ = 0; s.scrollSpeed = 0.05; s.obstacleZs = [];
-    setScoreDisplay(0); setTimeLeft(DURATION); setPhase('playing');
+    s.scrollZ = 0; s.scrollSpeed = 0.05; s.obstacleZs = []; s.dodgeStreak = 0;
+    setScoreDisplay(0); setTimeLeft(DURATION); setPhase('playing'); setStreak(0); setIsNewPB(false);
     stopMusicRef.current = startMusic('drive');
 
     const W = mount.clientWidth, H = mount.clientHeight;
@@ -91,20 +101,17 @@ function GravityFlipGameInner() {
     scene.fog = new THREE.Fog(0x0a0014, 10, 35);
     const camera = new THREE.PerspectiveCamera(70, W / H, 0.1, 100);
     camera.position.set(0, 0, 8);
-    // === POLISH: Enhanced rim + fill lighting ===
     const rimLightA = new THREE.PointLight(0x4466ff, 1.2, 20);
     rimLightA.position.set(-6, 5, 3);
     scene.add(rimLightA);
     const fillLightB = new THREE.PointLight(0xff6644, 0.8, 15);
     fillLightB.position.set(6, -3, 5);
     scene.add(fillLightB);
-    // === END POLISH ===
 
     scene.add(new THREE.AmbientLight(0x221133, 1.5));
     const ballLight = new THREE.PointLight(ACCENT, 3, 8);
     scene.add(ballLight);
 
-    // Wall top + bottom (long corridor)
     const wallMat = new THREE.MeshStandardMaterial({ color: 0x2d1b69, emissive: 0x8b5cf6, emissiveIntensity: 0.15, metalness: 0.3, roughness: 0.5 });
     const wallTop = new THREE.Mesh(new THREE.BoxGeometry(2, 1.5, 60), wallMat);
     wallTop.position.set(0, 3.5, -20);
@@ -113,14 +120,12 @@ function GravityFlipGameInner() {
     wallBot.position.set(0, -3.5, -20);
     scene.add(wallBot);
 
-    // Edge glow lines
     const edgeMat = new THREE.LineBasicMaterial({ color: ACCENT, linewidth: 2 });
     const topEdge = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(-1, 2.5, -40), new THREE.Vector3(-1, 2.5, 20)]), edgeMat);
     scene.add(topEdge);
     const botEdge = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(-1, -2.5, -40), new THREE.Vector3(-1, -2.5, 20)]), edgeMat);
     scene.add(botEdge);
 
-    // Ball
     const ballGeo = new THREE.SphereGeometry(0.25, 16, 16);
     const ballMat = new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0x8b5cf6, emissiveIntensity: 0.8, metalness: 0.2, roughness: 0.3 });
     const ball = new THREE.Mesh(ballGeo, ballMat);
@@ -148,24 +153,25 @@ function GravityFlipGameInner() {
       if (!s.running) return;
       s.scrollZ += s.scrollSpeed;
 
-      // Ball physics
       s.ballVY += GRAV * s.gravityDir;
       s.ballY += s.ballVY;
 
-      // Wall collision
       if (s.ballY > TOP_WALL) {
         s.ballVY *= -0.3; s.ballY = TOP_WALL;
         s.sig.wallHits++; sfx.collision?.(); haptic([20]);
+        // Reset streak on wall hit
+        s.dodgeStreak = 0; setStreak(0);
       }
       if (s.ballY < BOT_WALL) {
         s.ballVY *= -0.3; s.ballY = BOT_WALL;
         s.sig.wallHits++; sfx.collision?.(); haptic([20]);
+        // Reset streak on wall hit
+        s.dodgeStreak = 0; setStreak(0);
       }
 
       ball.position.set(-0.6, s.ballY, 0);
       ballLight.position.set(-0.6, s.ballY, 1);
 
-      // Trail
       const trailMesh = new THREE.Mesh(
         new THREE.SphereGeometry(0.12, 8, 8),
         new THREE.MeshBasicMaterial({ color: 0x8b5cf6, transparent: true, opacity: 0.6 })
@@ -184,7 +190,6 @@ function GravityFlipGameInner() {
         (tr.mesh.material as THREE.MeshBasicMaterial).opacity = Math.max(0, tr.alpha);
       }
 
-      // Spawn obstacles
       if (s.scrollZ - nextObstacleZ > 12) {
         nextObstacleZ = s.scrollZ + 20;
         const gap = 1.8;
@@ -203,7 +208,6 @@ function GravityFlipGameInner() {
         obstacles.push({ top: topObs, bot: botObs, z: s.scrollZ + 20, topY, botY: topY - gap, passed: false });
       }
 
-      // Move obstacles toward camera & check collision/scoring
       for (let i = obstacles.length - 1; i >= 0; i--) {
         const obs = obstacles[i];
         const screenZ = obs.z - s.scrollZ;
@@ -217,18 +221,23 @@ function GravityFlipGameInner() {
 
         if (!obs.passed && screenZ > 2) {
           obs.passed = true;
-          s.sig.obstaclesDodged++; s.sig.score++;
+          s.sig.obstaclesDodged++;
+          // Streak multiplier: every 5 consecutive dodges = +1 bonus
+          s.dodgeStreak++;
+          setStreak(s.dodgeStreak);
+          const bonus = Math.min(3, Math.floor(s.dodgeStreak / 5));
+          s.sig.score += 1 + bonus;
           setScoreDisplay(s.sig.score);
           sfx.collect(); haptic([30]);
         }
 
-        // Collision check (rough)
         if (Math.abs(screenZ) < 1.5) {
           if (s.ballY > obs.topY || s.ballY < obs.botY) {
-            // hit
             (obs.top.material as THREE.MeshStandardMaterial).emissiveIntensity = 1.5;
             (obs.bot.material as THREE.MeshStandardMaterial).emissiveIntensity = 1.5;
             s.sig.wallHits++; sfx.collision?.(); haptic([30]);
+            // Reset streak on obstacle hit
+            s.dodgeStreak = 0; setStreak(0);
           }
         }
       }
@@ -272,8 +281,11 @@ function GravityFlipGameInner() {
   }, []);
   const handleCountdownDone = useCallback(() => { startLoop(); }, [startLoop]);
   const handlePlayAgain = useCallback(() => {
-    setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null);
+    setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null); setStreak(0); setIsNewPB(false);
   }, []);
+
+  // Streak multiplier display
+  const streakMultiplier = streak >= 5 ? `x${(1 + Math.min(3, Math.floor(streak / 5))).toString()}` : null;
 
   return (
     <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
@@ -281,14 +293,37 @@ function GravityFlipGameInner() {
       {phase === 'countdown' && <Countdown onComplete={handleCountdownDone} accentColor={theme.colors.accent ?? ACCENT} />}
       {(phase === 'playing' || phase === 'countdown') && (
         <>
-          <div ref={mountRef} style={{ position: 'absolute', inset: 0, touchAction: 'none' }} />
-          {phase === 'playing' && <GameHUD accentColor={theme.colors.accent ?? ACCENT} items={[{ label: 'TIME', value: timeLeft, danger: timeLeft <= 10 }, { label: 'SCORE', value: scoreDisplay }]} />}
+          <div
+            ref={mountRef}
+            role="img"
+            aria-label="Gravity Flip game — tap screen to flip gravity and dodge the purple obstacles"
+            style={{ position: 'absolute', inset: 0, touchAction: 'none' }}
+          />
+          {phase === 'playing' && (
+            <>
+              <div aria-live="polite" aria-atomic="true" style={{position:'absolute',top:0,left:0,width:'100%',pointerEvents:'none'}}>
+                <GameHUD accentColor={theme.colors.accent ?? ACCENT} items={[{ label: 'TIME', value: timeLeft, danger: timeLeft <= 10 }, { label: 'SCORE', value: scoreDisplay }]} />
+              </div>
+              {streakMultiplier && (
+                <div aria-live="polite" style={{position:'absolute',top:88,left:'50%',transform:'translateX(-50%)',background:'rgba(0,0,0,0.75)',border:`1px solid ${ACCENT}`,borderRadius:20,padding:'4px 18px',fontSize:20,fontWeight:800,color:ACCENT,letterSpacing:'0.05em',pointerEvents:'none',zIndex:10}}>
+                  ⬆️ {streakMultiplier} Dodge Streak
+                </div>
+              )}
+            </>
+          )}
         </>
       )}
       {phase === 'done' && finalSig && (
-        <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI} score={String(finalSig.score)} personality={getPersonality(finalSig)}
-          insights={[{ label: 'Dodged', value: `${finalSig.obstaclesDodged}`, color: '#4ade80' }, { label: 'Flips', value: `${finalSig.flips}`, color: ACCENT }, { label: 'Wall Hits', value: `${finalSig.wallHits}`, color: finalSig.wallHits <= 3 ? '#4ade80' : '#ef4444' }, { label: 'Score', value: `${finalSig.score}`, color: 'var(--color-text)' }]}
-          accentColor={theme.colors.accent ?? ACCENT} onPlayAgain={handlePlayAgain} didWin={finalSig.obstaclesDodged >= 15} />
+        <div style={{position:'relative',width:'100%',height:'100%'}}>
+          {isNewPB && (
+            <div role="status" style={{position:'absolute',top:12,left:'50%',transform:'translateX(-50%)',background:'linear-gradient(135deg,#8b5cf6,#6d28d9)',borderRadius:20,padding:'6px 22px',fontSize:16,fontWeight:800,color:'#fff',zIndex:100,whiteSpace:'nowrap',letterSpacing:'0.03em',boxShadow:'0 2px 12px rgba(139,92,246,0.5)'}}>
+              🏆 New Personal Best!
+            </div>
+          )}
+          <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI} score={String(finalSig.score)} personality={getPersonality(finalSig)}
+            insights={[{ label: 'Dodged', value: `${finalSig.obstaclesDodged}`, color: '#4ade80' }, { label: 'Flips', value: `${finalSig.flips}`, color: ACCENT }, { label: 'Wall Hits', value: `${finalSig.wallHits}`, color: finalSig.wallHits <= 3 ? '#4ade80' : '#ef4444' }, { label: 'Score', value: `${finalSig.score}`, color: 'var(--color-text)' }]}
+            accentColor={theme.colors.accent ?? ACCENT} onPlayAgain={handlePlayAgain} didWin={finalSig.obstaclesDodged >= 15} />
+        </div>
       )}
       {phase === 'done' && finalSig && (
         <WebhookEmitter theme={theme} gameId={GAME_ID} sig={finalSig} personality={getPersonality(finalSig)} player={playerSessionRef.current} />

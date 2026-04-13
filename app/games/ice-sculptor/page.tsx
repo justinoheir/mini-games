@@ -64,26 +64,26 @@ function IceSculptorGameInner() {
     raycaster: new THREE.Raycaster(),
     clickPos: new THREE.Vector2(),
     pendingClick: null as THREE.Vector2 | null,
+    // Streak: consecutive taps that hit an ice cell (reveal or crack)
+    tapStreak: 0,
   });
 
   const [phase, setPhase] = useState<Phase>('start');
   const [timeLeft, setTimeLeft] = useState(DURATION);
   const [scoreDisplay, setScoreDisplay] = useState(0);
   const [finalSig, setFinalSig] = useState<Signals | null>(null);
+  const [streak, setStreak] = useState(0);
+  const [isNewPB, setIsNewPB] = useState(false);
 
-  // Shape patterns (which cells are the hidden shape)
   const SHAPE_PATTERNS = [
-    // Diamond
     (r: number, c: number) => {
       const cx = (COLS - 1) / 2, cy = (ROWS - 1) / 2;
       return Math.abs(c - cx) / (COLS * 0.35) + Math.abs(r - cy) / (ROWS * 0.35) <= 1;
     },
-    // Plus
     (r: number, c: number) => {
       const cx = Math.floor(COLS / 2), cy = Math.floor(ROWS / 2);
       return (Math.abs(c - cx) <= 1 && Math.abs(r - cy) <= 2) || (Math.abs(r - cy) <= 1 && Math.abs(c - cx) <= 2);
     },
-    // Heart
     (r: number, c: number) => {
       const x = (c - COLS / 2) / (COLS * 0.3);
       const y = -(r - ROWS * 0.55) / (ROWS * 0.3);
@@ -99,6 +99,12 @@ function IceSculptorGameInner() {
     if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
     const revealed = s.cells.filter(c => c.revealed).length;
     s.sig.percentRevealed = Math.round((revealed / s.cells.length) * 100);
+    // Personal Best check
+    try {
+      const pbKey = `pb_${GAME_ID}`;
+      const prevPB = parseInt(localStorage.getItem(pbKey) || '0', 10);
+      if (s.sig.score > prevPB) { localStorage.setItem(pbKey, String(s.sig.score)); setIsNewPB(true); }
+    } catch {}
     setFinalSig({ ...s.sig });
     setPhase('done');
   }, []);
@@ -108,8 +114,8 @@ function IceSculptorGameInner() {
     const s = stateRef.current;
     s.running = true; s.timeLeft = DURATION;
     s.sig = { totalTaps: 0, tapsPerSecond: 0, maxTapBurst: 0, percentRevealed: 0, score: 0 };
-    s.burstWindow = []; s.cells = []; s.particles = [];
-    setScoreDisplay(0); setTimeLeft(DURATION); setPhase('playing');
+    s.burstWindow = []; s.cells = []; s.particles = []; s.tapStreak = 0;
+    setScoreDisplay(0); setTimeLeft(DURATION); setPhase('playing'); setStreak(0); setIsNewPB(false);
     stopMusicRef.current = startMusic('pulse');
 
     const W = window.innerWidth, H = window.innerHeight;
@@ -127,7 +133,6 @@ function IceSculptorGameInner() {
     camera.position.set(0, 0, 12);
     s.camera = camera;
 
-    // Lights
     scene.add(new THREE.AmbientLight(0x1e40af, 3));
     const topLight = new THREE.DirectionalLight(0x93c5fd, 3);
     topLight.position.set(0, 10, 10);
@@ -136,7 +141,6 @@ function IceSculptorGameInner() {
     pointLight.position.set(0, 5, 8);
     scene.add(pointLight);
 
-    // Background particles (snow/dust)
     const bgGeo = new THREE.BufferGeometry();
     const bgPos = new Float32Array(500 * 3);
     for (let i = 0; i < 500; i++) {
@@ -147,7 +151,6 @@ function IceSculptorGameInner() {
     bgGeo.setAttribute('position', new THREE.BufferAttribute(bgPos, 3));
     scene.add(new THREE.Points(bgGeo, new THREE.PointsMaterial({ color: 0x93c5fd, size: 0.05, transparent: true, opacity: 0.4 })));
 
-    // Build ice grid
     const patternFn = SHAPE_PATTERNS[Math.floor(Math.random() * SHAPE_PATTERNS.length)];
     const cellW = 1.4, cellH = 1.4, cellD = 0.8;
     const offsetX = -(COLS * cellW) / 2 + cellW / 2;
@@ -160,9 +163,7 @@ function IceSculptorGameInner() {
         const mat = new THREE.MeshPhongMaterial({
           color: isShape ? 0x7dd3fc : 0xbae6fd,
           emissive: isShape ? 0x1e3a5f : 0x0c1f3f,
-          transparent: true,
-          opacity: 0.85,
-          shininess: 120,
+          transparent: true, opacity: 0.85, shininess: 120,
         });
         const mesh = new THREE.Mesh(geo, mat);
         mesh.position.set(offsetX + c * cellW, offsetY + (ROWS - 1 - r) * cellH, 0);
@@ -171,7 +172,6 @@ function IceSculptorGameInner() {
       }
     }
 
-    // Shape outline glow (shown after revealing)
     const shapeGroup = new THREE.Group();
     scene.add(shapeGroup);
 
@@ -193,7 +193,6 @@ function IceSculptorGameInner() {
       if (!s.running) { renderer.dispose(); return; }
       t += 0.016;
 
-      // Process pending click via raycasting
       if (s.pendingClick) {
         s.raycaster.setFromCamera(s.pendingClick, camera);
         const meshes = s.cells.filter(c => !c.revealed).map(c => c.mesh);
@@ -208,18 +207,18 @@ function IceSculptorGameInner() {
             s.burstWindow = s.burstWindow.filter(tm => now - tm < 2000);
             s.burstWindow.push(now);
             if (s.burstWindow.length > s.sig.maxTapBurst) s.sig.maxTapBurst = s.burstWindow.length;
+            // Increment streak on hit
+            s.tapStreak++;
+            setStreak(s.tapStreak);
 
-            // Crack visual effect
             const mat = cell.mesh.material as THREE.MeshPhongMaterial;
             mat.opacity = Math.max(0.2, 0.85 - cell.cracks * 0.2);
             mat.color.setHex(cell.cracks >= 2 ? 0xdbeafe : 0xbae6fd);
 
-            // Shake mesh
             cell.mesh.position.x += (Math.random() - 0.5) * 0.1;
             cell.mesh.position.y += (Math.random() - 0.5) * 0.1;
 
             if (cell.cracks >= 3) {
-              // Shatter: spawn particles
               for (let p = 0; p < 8; p++) {
                 const pGeo = new THREE.BoxGeometry(0.15, 0.15, 0.15);
                 const pMat = new THREE.MeshPhongMaterial({ color: cell.isShape ? 0x60a5fa : 0xbae6fd, transparent: true, opacity: 1 });
@@ -235,12 +234,10 @@ function IceSculptorGameInner() {
                 });
               }
 
-              // Reveal
               scene.remove(cell.mesh);
               cell.revealed = true;
 
               if (cell.isShape) {
-                // Show glowing shape cell
                 const revGeo = new THREE.BoxGeometry(cellW - 0.08, cellH - 0.08, 0.2);
                 const revMat = new THREE.MeshPhongMaterial({ color: 0x93c5fd, emissive: 0x1d4ed8, transparent: true, opacity: 0.6 });
                 const revMesh = new THREE.Mesh(revGeo, revMat);
@@ -249,7 +246,9 @@ function IceSculptorGameInner() {
                 shapeGroup.add(revMesh);
               }
 
-              const pts = cell.isShape ? 2 : 1;
+              // Streak multiplier: every 3 consecutive reveals = +1 bonus point
+              const streakBonus = Math.min(3, Math.floor(s.tapStreak / 3));
+              const pts = (cell.isShape ? 2 : 1) + streakBonus;
               s.sig.score += pts;
               setScoreDisplay(s.sig.score);
               sfx.collect(); haptic([30]);
@@ -257,11 +256,14 @@ function IceSculptorGameInner() {
               sfx.collision(); haptic([20]);
             }
           }
+        } else {
+          // Miss: reset streak
+          s.tapStreak = 0;
+          setStreak(0);
         }
         s.pendingClick = null;
       }
 
-      // Update particles
       for (let i = s.particles.length - 1; i >= 0; i--) {
         const p = s.particles[i];
         p.mesh.position.x += p.vx;
@@ -276,7 +278,6 @@ function IceSculptorGameInner() {
         }
       }
 
-      // Pulse shape cells
       shapeGroup.children.forEach((child, i) => {
         (child as THREE.Mesh).material && ((child as THREE.Mesh).material as THREE.MeshPhongMaterial).color
           .setHSL(0.6, 0.8, 0.5 + Math.sin(t * 3 + i) * 0.2);
@@ -324,8 +325,11 @@ function IceSculptorGameInner() {
   }, []);
 
   const handlePlayAgain = useCallback(() => {
-    setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null);
+    setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null); setStreak(0); setIsNewPB(false);
   }, []);
+
+  // Streak multiplier display
+  const streakMultiplier = streak >= 3 ? `x${(1 + Math.min(3, Math.floor(streak / 3))).toString()}` : null;
 
   return (
     <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}
@@ -335,23 +339,44 @@ function IceSculptorGameInner() {
           ctaLabel="Grab Chisel" accentColor={theme.colors.accent ?? ACCENT} onStart={handleStart} />
       )}
       {phase === 'countdown' && <Countdown onComplete={startLoop} accentColor={theme.colors.accent ?? ACCENT} />}
-      <div ref={mountRef} style={{ position: 'absolute', inset: 0, display: phase === 'playing' ? 'block' : 'none', touchAction: 'none' }} />
+      <div
+        ref={mountRef}
+        role="img"
+        aria-label="Ice Sculptor game — tap ice blocks to chip away and reveal the hidden shape"
+        style={{ position: 'absolute', inset: 0, display: phase === 'playing' ? 'block' : 'none', touchAction: 'none' }}
+      />
       {phase === 'playing' && (
-        <GameHUD accentColor={theme.colors.accent ?? ACCENT} items={[
-          { label: 'TIME', value: timeLeft, danger: timeLeft <= 10 },
-          { label: 'SCORE', value: scoreDisplay },
-        ]} />
+        <>
+          <div aria-live="polite" aria-atomic="true" style={{position:'absolute',top:0,left:0,width:'100%',pointerEvents:'none'}}>
+            <GameHUD accentColor={theme.colors.accent ?? ACCENT} items={[
+              { label: 'TIME', value: timeLeft, danger: timeLeft <= 10 },
+              { label: 'SCORE', value: scoreDisplay },
+            ]} />
+          </div>
+          {streakMultiplier && (
+            <div aria-live="polite" style={{position:'absolute',top:88,left:'50%',transform:'translateX(-50%)',background:'rgba(0,0,0,0.75)',border:`1px solid ${ACCENT}`,borderRadius:20,padding:'4px 18px',fontSize:20,fontWeight:800,color:ACCENT,letterSpacing:'0.05em',pointerEvents:'none',zIndex:10}}>
+              🧊 {streakMultiplier} Combo
+            </div>
+          )}
+        </>
       )}
       {phase === 'done' && finalSig && (
-        <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI}
-          score={String(finalSig.score)} personality={getPersonality(finalSig)}
-          insights={[
-            { label: 'Revealed', value: `${finalSig.percentRevealed}%`, color: finalSig.percentRevealed >= 75 ? '#4ade80' : '#facc15' },
-            { label: 'Taps/sec', value: `${finalSig.tapsPerSecond}`, color: ACCENT },
-            { label: 'Max Burst', value: `${finalSig.maxTapBurst} taps`, color: ACCENT },
-            { label: 'Total Taps', value: `${finalSig.totalTaps}`, color: 'var(--color-text)' },
-          ]}
-          accentColor={theme.colors.accent ?? ACCENT} onPlayAgain={handlePlayAgain} didWin={finalSig.percentRevealed >= 70} />
+        <div style={{position:'relative',width:'100%',height:'100%'}}>
+          {isNewPB && (
+            <div role="status" style={{position:'absolute',top:12,left:'50%',transform:'translateX(-50%)',background:'linear-gradient(135deg,#93c5fd,#3b82f6)',borderRadius:20,padding:'6px 22px',fontSize:16,fontWeight:800,color:'#fff',zIndex:100,whiteSpace:'nowrap',letterSpacing:'0.03em',boxShadow:'0 2px 12px rgba(147,197,253,0.5)'}}>
+              🏆 New Personal Best!
+            </div>
+          )}
+          <EndScreen gameId={GAME_ID} title={getPersonality(finalSig)} emoji={GAME_EMOJI}
+            score={String(finalSig.score)} personality={getPersonality(finalSig)}
+            insights={[
+              { label: 'Revealed', value: `${finalSig.percentRevealed}%`, color: finalSig.percentRevealed >= 75 ? '#4ade80' : '#facc15' },
+              { label: 'Taps/sec', value: `${finalSig.tapsPerSecond}`, color: ACCENT },
+              { label: 'Max Burst', value: `${finalSig.maxTapBurst} taps`, color: ACCENT },
+              { label: 'Total Taps', value: `${finalSig.totalTaps}`, color: 'var(--color-text)' },
+            ]}
+            accentColor={theme.colors.accent ?? ACCENT} onPlayAgain={handlePlayAgain} didWin={finalSig.percentRevealed >= 70} />
+        </div>
       )}
       {phase === 'done' && finalSig && <WebhookEmitter theme={theme} sig={finalSig} personality={getPersonality(finalSig)} player={playerSessionRef.current} />}
     </GameShell>
