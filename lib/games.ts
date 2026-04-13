@@ -192,9 +192,20 @@ export const EXTRA_SPORTS_GAMES: Game[] = [
   { id: 'ski-slalom',      title: 'Ski Slalom',       tagline: 'Weave through the gates. Go fast.',                 href: '/games/ski-slalom',      accentColor: '#818cf8', duration: '45s', icon: 'downhill_skiing',     category: 'sports', industries: ['sports','cpg','automotive']            },
 ];
 
+export const NEW_GAMES: Game[] = [
+  { id: 'mirror-dance', title: 'Mirror Dance',  tagline: 'Match the mirror. Move with the beat.',       href: '/games/mirror-dance', accentColor: '#ec4899', duration: '60s', icon: 'person',          category: 'cognitive', industries: ['cpg', 'retail', 'technology']         },
+  { id: 'sand-pour',    title: 'Sand Pour',     tagline: "Fill the glass. Don't spill.",                href: '/games/sand-pour',    accentColor: '#f59e0b', duration: '60s', icon: 'hourglass_empty', category: 'skill',     industries: ['food_bev', 'cpg', 'retail']           },
+  { id: 'color-blend',  title: 'Color Blend',   tagline: 'Swipe to blend. Hit the target hue.',         href: '/games/color-blend',  accentColor: '#a855f7', duration: '60s', icon: 'palette',         category: 'cognitive', industries: ['cpg', 'retail', 'technology']         },
+  { id: 'echo-tap',     title: 'Echo Tap',      tagline: 'Listen. Repeat the pattern.',                 href: '/games/echo-tap',     accentColor: '#06b6d4', duration: '60s', icon: 'volume_up',       category: 'cognitive', industries: ['technology', 'retail', 'cpg']         },
+  { id: 'heat-map',     title: 'Heat Map',      tagline: 'Where do you look first?',                    href: '/games/heat-map',     accentColor: '#f97316', duration: '60s', icon: 'visibility',      category: 'cognitive', industries: ['retail', 'cpg', 'technology']         },
+  { id: 'trust-fall',   title: 'Trust Fall',    tagline: 'Let go at the right moment.',                 href: '/games/trust-fall',   accentColor: '#8b5cf6', duration: '60s', icon: 'arrow_downward',  category: 'cognitive', industries: ['healthcare', 'technology', 'retail']  },
+  { id: 'spark-chain',  title: 'Spark Chain',   tagline: 'One spark. Maximum spread.',                  href: '/games/spark-chain',  accentColor: '#f97316', duration: '60s', icon: 'bolt',            category: 'skill',     industries: ['technology', 'cpg', 'retail']         },
+  { id: 'crowd-pulse',  title: 'Crowd Pulse',   tagline: 'Feel the room.',                              href: '/games/crowd-pulse',  accentColor: '#a855f7', duration: '60s', icon: 'graphic_eq',      category: 'skill',     industries: ['cpg', 'retail', 'food_bev']           },
+];
+
 import { GAME_MEASURES } from './measures';
 
-const _ALL: Game[] = [...SKILL_GAMES, ...SPORTS_GAMES, ...HOLIDAY_GAMES, ...BREATH_GAMES, ...EXTRA_COGNITIVE_GAMES, ...EXTRA_SKILL_GAMES, ...EXTRA_SPORTS_GAMES];
+const _ALL: Game[] = [...SKILL_GAMES, ...SPORTS_GAMES, ...HOLIDAY_GAMES, ...BREATH_GAMES, ...EXTRA_COGNITIVE_GAMES, ...EXTRA_SKILL_GAMES, ...EXTRA_SPORTS_GAMES, ...NEW_GAMES];
 export const ALL_GAMES: Game[] = _ALL.map(g => ({ ...g, measures: GAME_MEASURES[g.id] ?? [] }));
 
 export const FEATURED_GAMES: Game[] = [
