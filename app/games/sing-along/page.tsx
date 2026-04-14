@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 /**
  * SING ALONG — 3D Version
  * A 3D pitch ball follows a melody path. Hum to track it.
@@ -133,6 +133,7 @@ function SingAlongGameInner() {
     if (s.micStream) s.micStream.getTracks().forEach(t => t.stop());
     if (s.audioCtx) s.audioCtx.close().catch(() => {});
     if (s.renderer) { s.renderer.dispose(); s.renderer = null; }
+    (s as any)._micFallbackCleanup?.();
     hapticVictory(); playVictoryFanfare();
     try {
       const pb = parseInt(localStorage.getItem(PB_KEY) || '0', 10);
@@ -223,7 +224,24 @@ function SingAlongGameInner() {
       source.connect(analyser);
       s.analyser = analyser;
       s.pitchBuf = new Float32Array(analyser.fftSize);
-    } catch { /* no mic */ }
+    } catch {
+      // Mic denied - tap fallback: tap canvas at correct vertical position to match note
+      const onCanvasTap = (e: PointerEvent) => {
+        if (!stateRef.current.running) return;
+        const rect = (e.target as HTMLElement).getBoundingClientRect();
+        const normY = (e.clientY - rect.top) / rect.height; // 0=top, 1=bottom
+        // Map tap Y to a frequency (top=high, bottom=low)
+        const freq = FREQ_MAX - normY * (FREQ_MAX - FREQ_MIN);
+        stateRef.current.currentPitch = freq;
+        // Auto-reset after 200ms to simulate a short sung note
+        setTimeout(() => { if (stateRef.current.running) stateRef.current.currentPitch = -1; }, 200);
+      };
+      const _m = mountRef.current;
+      if (_m) {
+        _m.addEventListener('pointerdown', onCanvasTap);
+        (stateRef.current as any)._micFallbackCleanup = () => _m.removeEventListener('pointerdown', onCanvasTap);
+      }
+    }
 
     const handleResize = () => {
       const w = window.innerWidth, h = window.innerHeight;

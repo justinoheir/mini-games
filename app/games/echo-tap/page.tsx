@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
 import GameShell from '@/components/GameShell';
 import GameHUD from '@/components/GameHUD';
@@ -281,7 +281,7 @@ function EchoTapInner() {
       const rect = canvas.getBoundingClientRect();
       const x = e.clientX - rect.left;
       const y = e.clientY - rect.top;
-      const dpr = window.devicePixelRatio || 1; const W = canvas.offsetWidth, H = canvas.offsetHeight; ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      const W = canvas.offsetWidth, H = canvas.offsetHeight;
       const cols = 3, rows = 2;
       const pad = W * 0.06;
       const cellW = (W - pad * 2) / cols;

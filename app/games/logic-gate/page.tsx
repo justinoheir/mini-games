@@ -272,7 +272,7 @@ function LogicGateGameInner() {
   const handlePlayAgain = useCallback(() => { setPhase('start'); setScoreDisplay(0); setTimeLeft(DURATION); setFinalSig(null); }, []);
 
   const { gate, feedback } = gateDisplay;
-  const gateColor = feedback === true ? '#22c55e' : feedback === false ? '#ef4444' : '#64748b';
+  const gateColor = feedback === true ? '#22c55e' : feedback === false ? '#ef4444' : ACCENT;
 
   return (
     <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}

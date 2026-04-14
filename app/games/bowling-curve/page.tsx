@@ -74,6 +74,7 @@ function BowlingCurveGameInner() {
     ballX: 0, ballZ: 3, ballVX: 0, ballVZ: 0, ballSpin: 0,
     swipeStartX: 0, swipeStartY: 0, swiping: false,
     settleTimer: 0, frame: 0, particles: [],
+    shakeTimer: 0, shakeIntensity: 0,
     intervalId: null, resizeCleanup: null,
   });
   const [phase, setPhase] = useState<Phase>('start');

@@ -236,6 +236,7 @@ function CrystalGrowGameInner() {
     if(timerRef.current){clearInterval(timerRef.current);timerRef.current=null;}
     if(stopMusicRef.current){stopMusicRef.current();stopMusicRef.current=null;}
     stopMic();
+    (stateRef.current as any)._micFallbackCleanup?.();
     // Personal Best check
     try {
       const pbKey=`pb_${GAME_ID}`;
@@ -263,17 +264,20 @@ function CrystalGrowGameInner() {
       s.analyser=analyser;
       s.dataArray=new Uint8Array(analyser.frequencyBinCount) as Uint8Array<ArrayBuffer>;
     }catch{
-      (s as any)._touchActive = false;
-      const _onDown = function() { (s as any)._touchActive = true; };
-      const _onUp = function() { (s as any)._touchActive = false; };
-      mount.addEventListener('pointerdown', _onDown);
-      mount.addEventListener('pointerup', _onUp);
-      mount.addEventListener('pointercancel', _onUp);
-      (s as any)._micFallbackCleanup = function() {
-        mount.removeEventListener('pointerdown', _onDown);
-        mount.removeEventListener('pointerup', _onUp);
-        mount.removeEventListener('pointercancel', _onUp);
-      };
+      const _m = mountRef.current;
+      if (_m) {
+        (s as any)._touchActive = false;
+        const _onDown = function() { (s as any)._touchActive = true; };
+        const _onUp = function() { (s as any)._touchActive = false; };
+        _m.addEventListener('pointerdown', _onDown);
+        _m.addEventListener('pointerup', _onUp);
+        _m.addEventListener('pointercancel', _onUp);
+        (s as any)._micFallbackCleanup = function() {
+          _m.removeEventListener('pointerdown', _onDown);
+          _m.removeEventListener('pointerup', _onUp);
+          _m.removeEventListener('pointercancel', _onUp);
+        };
+      }
     }
 
     timerRef.current=setInterval(()=>{

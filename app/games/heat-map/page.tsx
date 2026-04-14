@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
 import GameShell from '@/components/GameShell';
 import GameHUD from '@/components/GameHUD';
@@ -291,7 +291,7 @@ function HeatMapInner() {
     if (!s.running || s.subPhase !== 'wait_tap') return;
     const canvas = canvasRef.current; if (!canvas) return;
     s.tapX = nx; s.tapY = ny;
-    const dpr = window.devicePixelRatio || 1; const W = canvas.offsetWidth, H = canvas.offsetHeight; ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const W = canvas.offsetWidth, H = canvas.offsetHeight;
     const scene = SCENES[s.sceneIdx];
     const hx = scene.hotZone.x * W, hy = scene.hotZone.y * H;
     const dist = Math.hypot((nx - hx) / W, (ny - hy) / H);
@@ -344,7 +344,7 @@ function HeatMapInner() {
     <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
       {phase === 'start' && (
         <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE}
-          description="A scene appears. Tap where your eye goes first � instinctively! See how close you get to the attention hotspot."
+          description="A scene appears. Tap where your eye goes first ? instinctively! See how close you get to the attention hotspot."
           ctaLabel="Show Me ???" accentColor={theme.colors.accent ?? ACCENT} onStart={handleStart} />
       )}
       {phase === 'countdown' && <Countdown onComplete={startLoop} accentColor={theme.colors.accent ?? ACCENT} />}

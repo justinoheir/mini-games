@@ -224,17 +224,20 @@ function SignalBoostGameInner() {
       s.dataArray = new Uint8Array(analyser.frequencyBinCount);
     } catch {
       // Mic denied - add touch/hold fallback: hold screen to simulate voice signal
-      (s as any)._touchActive = false;
-      const onTouchDown = () => { (s as any)._touchActive = true; };
-      const onTouchUp = () => { (s as any)._touchActive = false; };
-      mount.addEventListener('pointerdown', onTouchDown);
-      mount.addEventListener('pointerup', onTouchUp);
-      mount.addEventListener('pointercancel', onTouchUp);
-      (s as any)._micFallbackCleanup = () => {
-        mount.removeEventListener('pointerdown', onTouchDown);
-        mount.removeEventListener('pointerup', onTouchUp);
-        mount.removeEventListener('pointercancel', onTouchUp);
-      };
+      const _m = mountRef.current;
+      if (_m) {
+        (s as any)._touchActive = false;
+        const onTouchDown = () => { (s as any)._touchActive = true; };
+        const onTouchUp = () => { (s as any)._touchActive = false; };
+        _m.addEventListener('pointerdown', onTouchDown);
+        _m.addEventListener('pointerup', onTouchUp);
+        _m.addEventListener('pointercancel', onTouchUp);
+        (s as any)._micFallbackCleanup = () => {
+          _m.removeEventListener('pointerdown', onTouchDown);
+          _m.removeEventListener('pointerup', onTouchUp);
+          _m.removeEventListener('pointercancel', onTouchUp);
+        };
+      }
     }
 
     const handleResize = () => {
