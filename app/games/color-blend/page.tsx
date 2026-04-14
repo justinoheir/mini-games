@@ -1,4 +1,4 @@
-﻿﻿﻿﻿﻿﻿'use client';
+﻿'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
 import GameShell from '@/components/GameShell';
 import GameHUD from '@/components/GameHUD';
@@ -13,7 +13,7 @@ import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
 const GAME_ID = 'color-blend';
 const ACCENT = '#a855f7';
 const DURATION = 60;
-const GAME_EMOJI = '🎨';
+const GAME_EMOJI = '??';
 const GAME_TITLE = 'Color Blend';
 const GAME_TAGLINE = 'Swipe to blend. Hit the target hue.';
 
@@ -48,21 +48,21 @@ function hueDiff(h1: number, h2: number): number {
 }
 
 const COLOR_PAIRS = [
-  { a: '#ef4444', b: '#3b82f6' }, // red-blue → purple
-  { a: '#eab308', b: '#ef4444' }, // yellow-red → orange
-  { a: '#22c55e', b: '#3b82f6' }, // green-blue → teal
-  { a: '#f97316', b: '#a855f7' }, // orange-purple → magenta
-  { a: '#eab308', b: '#22c55e' }, // yellow-green → lime
+  { a: '#ef4444', b: '#3b82f6' }, // red-blue ? purple
+  { a: '#eab308', b: '#ef4444' }, // yellow-red ? orange
+  { a: '#22c55e', b: '#3b82f6' }, // green-blue ? teal
+  { a: '#f97316', b: '#a855f7' }, // orange-purple ? magenta
+  { a: '#eab308', b: '#22c55e' }, // yellow-green ? lime
 ];
 
 interface Signals { rounds: number; totalAccuracy: number; bestAccuracy: number; score: number; perfectHits: number; }
 function getPersonality(sig: Signals): string {
   const avg = sig.rounds > 0 ? sig.totalAccuracy / sig.rounds : 0;
-  if (avg >= 90 && sig.perfectHits >= 2) return 'Color Alchemist 🧙';
-  if (avg >= 80) return 'Hue Master 🎨';
-  if (sig.rounds >= 4) return 'Palette Explorer 🖌️';
-  if (avg >= 60) return 'Color Curious 🌈';
-  return 'Still Mixing 🎭';
+  if (avg >= 90 && sig.perfectHits >= 2) return 'Color Alchemist ??';
+  if (avg >= 80) return 'Hue Master ??';
+  if (sig.rounds >= 4) return 'Palette Explorer ???';
+  if (avg >= 60) return 'Color Curious ??';
+  return 'Still Mixing ??';
 }
 type Phase = 'start' | 'countdown' | 'playing' | 'done';
 
@@ -164,7 +164,7 @@ function ColorBlendInner() {
       animRef.current = requestAnimationFrame(draw);
       if (!s.running) return;
       const ctx = canvas.getContext('2d'); if (!ctx) return;
-      const W = canvas.width, H = canvas.height;
+      const dpr = window.devicePixelRatio || 1; const W = canvas.offsetWidth, H = canvas.offsetHeight; ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       const now = Date.now();
 
       ctx.fillStyle = '#08080f';
@@ -179,7 +179,7 @@ function ColorBlendInner() {
 
       // Label
       ctx.fillStyle = 'rgba(255,255,255,0.5)';
-      ctx.font = `bold ${Math.round(H * 0.022)}px Arial`;
+      ctx.font = `bold ${Math.round(H * 0.022)}px 'Space Grotesk', Arial, sans-serif`;
       ctx.textAlign = 'center';
       ctx.fillText('TARGET HUE', W / 2, swatchY - 8);
 
@@ -203,7 +203,7 @@ function ColorBlendInner() {
       ctx.restore();
 
       ctx.fillStyle = 'rgba(255,255,255,0.4)';
-      ctx.font = `${Math.round(H * 0.018)}px Arial`;
+      ctx.font = `${Math.round(H * 0.018)}px 'Space Grotesk', Arial, sans-serif`;
       ctx.textAlign = 'left';
       ctx.fillText('A', W * 0.08 + srcW / 2 - 5, srcY - 8);
       ctx.textAlign = 'right';
@@ -239,7 +239,7 @@ function ColorBlendInner() {
       ctx.beginPath(); ctx.roundRect((W - swatchW) / 2, bSwatchY, swatchW, H * 0.14, 12); ctx.fill();
       ctx.restore();
       ctx.fillStyle = 'rgba(255,255,255,0.5)';
-      ctx.font = `bold ${Math.round(H * 0.022)}px Arial`;
+      ctx.font = `bold ${Math.round(H * 0.022)}px 'Space Grotesk', Arial, sans-serif`;
       ctx.textAlign = 'center';
       ctx.fillText('YOUR MIX', W / 2, bSwatchY - 8);
 
@@ -249,11 +249,11 @@ function ColorBlendInner() {
         ctx.save();
         ctx.globalAlpha = Math.min(1, (s.resultDisplayUntil - now) / 300);
         ctx.fillStyle = acc >= 80 ? '#22c55e' : acc >= 50 ? '#f59e0b' : '#ef4444';
-        ctx.font = `bold ${Math.round(H * 0.06)}px Arial`;
+        ctx.font = `bold ${Math.round(H * 0.06)}px 'Space Grotesk', Arial, sans-serif`;
         ctx.textAlign = 'center';
         ctx.shadowColor = ctx.fillStyle; ctx.shadowBlur = 30;
         ctx.fillText(`${acc}%`, W / 2, H * 0.48);
-        ctx.font = `${Math.round(H * 0.03)}px Arial`;
+        ctx.font = `${Math.round(H * 0.03)}px 'Space Grotesk', Arial, sans-serif`;
         ctx.fillText(`+${s.roundResult.score} pts`, W / 2, H * 0.52);
         ctx.restore();
       }
@@ -265,7 +265,7 @@ function ColorBlendInner() {
       ctx.beginPath(); ctx.roundRect(W * 0.25, H * 0.82, W * 0.5, 48, 24); ctx.fill();
       ctx.shadowBlur = 0;
       ctx.fillStyle = '#ffffff';
-      ctx.font = `bold ${Math.round(H * 0.028)}px Arial`;
+      ctx.font = `bold ${Math.round(H * 0.028)}px 'Space Grotesk', Arial, sans-serif`;
       ctx.textAlign = 'center';
       ctx.fillText('SUBMIT BLEND', W / 2, H * 0.82 + 30);
       ctx.restore();
@@ -275,7 +275,7 @@ function ColorBlendInner() {
 
   useEffect(() => {
     const canvas = canvasRef.current; if (!canvas || phase !== 'playing') return;
-    const resize = () => { canvas.width = canvas.offsetWidth; canvas.height = canvas.offsetHeight; };
+    const resize = () => { const dpr = window.devicePixelRatio || 1; canvas.width = canvas.offsetWidth * dpr; canvas.height = canvas.offsetHeight * dpr; };
     resize();
     window.addEventListener('resize', resize);
 
@@ -284,7 +284,7 @@ function ColorBlendInner() {
       const rect = canvas.getBoundingClientRect();
       const x = e.clientX - rect.left;
       const y = e.clientY - rect.top;
-      const H = canvas.height, W = canvas.width;
+      const H = canvas.offsetHeight, W = canvas.offsetWidth;
       // Check submit button
       if (y > H * 0.82 && y < H * 0.82 + 48 && x > W * 0.25 && x < W * 0.75) {
         submitBlend(); return;
@@ -300,7 +300,7 @@ function ColorBlendInner() {
     const onMove = (e: PointerEvent) => {
       const s = stateRef.current;
       if (!s.isDragging) return;
-      const W = canvas.width;
+      const W = canvas.offsetWidth;
       const sliderW = W * 0.8;
       const dx = e.clientX - s.dragStartX;
       s.sliderValue = Math.max(0, Math.min(1, s.dragStartVal + dx / sliderW));
@@ -336,7 +336,7 @@ function ColorBlendInner() {
       {phase === 'start' && (
         <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE}
           description="Drag the slider to blend two colors together. Match the target hue as closely as possible!"
-          ctaLabel="Blend It 🎨" accentColor={theme.colors.accent ?? ACCENT} onStart={handleStart} />
+          ctaLabel="Blend It ??" accentColor={theme.colors.accent ?? ACCENT} onStart={handleStart} />
       )}
       {phase === 'countdown' && <Countdown onComplete={startLoop} accentColor={theme.colors.accent ?? ACCENT} />}
       {(phase === 'playing' || phase === 'countdown') && (
@@ -348,7 +348,7 @@ function ColorBlendInner() {
             
             {phase === 'playing' && streak >= 3 && (
         <div style={{ position: 'fixed', top: 128, left: '50%', transform: 'translateX(-50%)', zIndex: 25, pointerEvents: 'none', fontSize: 20, fontWeight: 900, color: '#fbbf24', textShadow: '0 0 16px #fbbf2488', letterSpacing: 1, whiteSpace: 'nowrap' }} aria-live="polite" aria-atomic="true">
-          ⚡ x{Math.max(1,Math.floor(streak/3)+1)} Streak!
+          ? x{Math.max(1,Math.floor(streak/3)+1)} Streak!
         </div>
       )}
       {phase === 'done' && finalSig && (

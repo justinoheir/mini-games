@@ -1,552 +1,214 @@
 [
   {
     "game_id": "paint-splash",
-    "verdict": "POOR",
-    "errors": [],
-    "warnings": [],
+    "verdict": "OK",
+    "errors": [
+      "Cannot assign to read only property 'position' of object '#<PointLight>'"
+    ],
     "canvas_visible": false,
-    "game_changed": false,
+    "game_changed": true,
     "start_clicked": true,
-    "is_error_page": false,
-    "notes": "No canvas and no game elements found"
+    "overlay_handled": true,
+    "notes": ""
   },
   {
     "game_id": "web-weave",
-    "verdict": "POOR",
+    "verdict": "OK",
     "errors": [],
-    "warnings": [],
-    "canvas_visible": false,
+    "canvas_visible": true,
     "game_changed": false,
     "start_clicked": true,
-    "is_error_page": false,
-    "notes": "No canvas and no game elements found"
+    "overlay_handled": true,
+    "notes": ""
   },
   {
     "game_id": "treasure-dive",
-    "verdict": "POOR",
+    "verdict": "OK",
     "errors": [],
-    "warnings": [],
-    "canvas_visible": false,
+    "canvas_visible": true,
     "game_changed": false,
     "start_clicked": true,
-    "is_error_page": false,
-    "notes": "No canvas and no game elements found"
+    "overlay_handled": true,
+    "notes": ""
   },
   {
     "game_id": "frog-leap",
-    "verdict": "POOR",
+    "verdict": "OK",
     "errors": [],
-    "warnings": [],
-    "canvas_visible": false,
+    "canvas_visible": true,
     "game_changed": false,
     "start_clicked": true,
-    "is_error_page": false,
-    "notes": "No canvas and no game elements found"
+    "overlay_handled": true,
+    "notes": ""
   },
   {
     "game_id": "wire-cross",
-    "verdict": "POOR",
+    "verdict": "OK",
     "errors": [],
-    "warnings": [],
-    "canvas_visible": false,
-    "game_changed": false,
-    "start_clicked": true,
-    "is_error_page": false,
-    "notes": "No canvas and no game elements found"
+    "canvas_visible": true,
+    "notes": ""
   },
   {
     "game_id": "balloon-pop",
-    "verdict": "POOR",
+    "verdict": "OK",
     "errors": [],
-    "warnings": [],
-    "canvas_visible": false,
-    "game_changed": false,
-    "start_clicked": true,
-    "is_error_page": false,
-    "notes": "No canvas and no game elements found"
+    "canvas_visible": true,
+    "notes": ""
   },
   {
     "game_id": "slingshot-smash",
-    "verdict": "POOR",
+    "verdict": "OK",
     "errors": [],
-    "warnings": [],
-    "canvas_visible": false,
-    "game_changed": false,
-    "start_clicked": true,
-    "is_error_page": false,
-    "notes": "No canvas and no game elements found"
+    "canvas_visible": true,
+    "notes": ""
   },
   {
     "game_id": "ripple-tap",
-    "verdict": "POOR",
+    "verdict": "OK",
     "errors": [],
-    "warnings": [],
-    "canvas_visible": false,
-    "game_changed": false,
-    "start_clicked": true,
-    "is_error_page": false,
-    "notes": "No canvas and no game elements found"
+    "canvas_visible": true,
+    "notes": ""
   },
   {
     "game_id": "pendulum-swing",
-    "verdict": "POOR",
+    "verdict": "OK",
     "errors": [],
-    "warnings": [],
-    "canvas_visible": false,
-    "game_changed": false,
-    "start_clicked": true,
-    "is_error_page": false,
-    "notes": "No canvas and no game elements found"
+    "canvas_visible": true,
+    "notes": ""
   },
   {
     "game_id": "node-connect",
-    "verdict": "POOR",
+    "verdict": "OK",
     "errors": [],
-    "warnings": [],
-    "canvas_visible": false,
-    "game_changed": false,
-    "start_clicked": true,
-    "is_error_page": false,
-    "notes": "No canvas and no game elements found"
+    "canvas_visible": true,
+    "notes": ""
   },
   {
     "game_id": "orbit-launch",
-    "verdict": "POOR",
+    "verdict": "OK",
     "errors": [],
-    "warnings": [],
-    "canvas_visible": false,
-    "game_changed": false,
-    "start_clicked": true,
-    "is_error_page": false,
-    "notes": "No canvas and no game elements found"
+    "canvas_visible": true,
+    "notes": ""
   },
   {
     "game_id": "speed-sort",
-    "verdict": "POOR",
+    "verdict": "OK",
     "errors": [],
-    "warnings": [],
-    "canvas_visible": false,
-    "game_changed": false,
-    "start_clicked": true,
-    "is_error_page": false,
-    "notes": "No canvas and no game elements found"
+    "canvas_visible": true,
+    "notes": ""
   },
   {
     "game_id": "spring-leap",
-    "verdict": "POOR",
+    "verdict": "OK",
     "errors": [],
-    "warnings": [],
-    "canvas_visible": false,
-    "game_changed": false,
-    "start_clicked": true,
-    "is_error_page": false,
-    "notes": "No canvas and no game elements found"
+    "canvas_visible": true,
+    "notes": ""
   },
   {
     "game_id": "crystal-catch",
     "verdict": "POOR",
     "errors": [],
-    "warnings": [],
     "canvas_visible": false,
-    "game_changed": false,
-    "start_clicked": true,
-    "is_error_page": false,
-    "notes": "No canvas and no game elements found"
+    "notes": "No canvas and minimal content after start"
   },
   {
     "game_id": "wobble-stack",
-    "verdict": "POOR",
+    "verdict": "OK",
     "errors": [],
-    "warnings": [],
-    "canvas_visible": false,
-    "game_changed": false,
-    "start_clicked": true,
-    "is_error_page": false,
-    "notes": "No canvas and no game elements found"
+    "canvas_visible": true,
+    "notes": ""
   },
   {
     "game_id": "chain-reaction",
-    "verdict": "POOR",
+    "verdict": "OK",
     "errors": [],
-    "warnings": [],
-    "canvas_visible": false,
-    "game_changed": false,
-    "start_clicked": true,
-    "is_error_page": false,
-    "notes": "No canvas and no game elements found"
+    "canvas_visible": true,
+    "notes": ""
   },
   {
     "game_id": "pixel-paint",
-    "verdict": "POOR",
-    "errors": [],
-    "warnings": [],
+    "verdict": "BROKEN",
+    "errors": [
+      "Cannot assign to read only property 'position' of object '#<PointLight>'"
+    ],
     "canvas_visible": false,
-    "game_changed": false,
-    "start_clicked": true,
-    "is_error_page": false,
-    "notes": "No canvas and no game elements found"
+    "notes": "Cannot assign to read only property 'position' of object '#<PointLight>'"
   },
   {
     "game_id": "drop-zone",
-    "verdict": "POOR",
+    "verdict": "OK",
     "errors": [],
-    "warnings": [],
-    "canvas_visible": false,
-    "game_changed": false,
-    "start_clicked": true,
-    "is_error_page": false,
-    "notes": "No canvas and no game elements found"
+    "canvas_visible": true,
+    "notes": ""
   },
   {
     "game_id": "laser-guide",
-    "verdict": "POOR",
+    "verdict": "OK",
     "errors": [],
-    "warnings": [],
-    "canvas_visible": false,
-    "game_changed": false,
-    "start_clicked": true,
-    "is_error_page": false,
-    "notes": "No canvas and no game elements found"
+    "canvas_visible": true,
+    "notes": ""
   },
   {
     "game_id": "friction-slide",
-    "verdict": "POOR",
+    "verdict": "OK",
     "errors": [],
-    "warnings": [],
-    "canvas_visible": false,
-    "game_changed": false,
-    "start_clicked": true,
-    "is_error_page": false,
-    "notes": "No canvas and no game elements found"
+    "canvas_visible": true,
+    "notes": ""
   },
   {
     "game_id": "gravity-well",
-    "verdict": "POOR",
+    "verdict": "OK",
     "errors": [],
-    "warnings": [],
-    "canvas_visible": false,
-    "game_changed": false,
-    "start_clicked": true,
-    "is_error_page": false,
-    "notes": "No canvas and no game elements found"
+    "canvas_visible": true,
+    "notes": ""
   },
   {
     "game_id": "tilt-maze",
-    "verdict": "POOR",
+    "verdict": "OK",
     "errors": [],
-    "warnings": [],
-    "canvas_visible": false,
-    "game_changed": false,
-    "start_clicked": true,
-    "is_error_page": false,
-    "notes": "No canvas and no game elements found"
+    "canvas_visible": true,
+    "notes": ""
   },
   {
     "game_id": "whisper-bomb",
-    "verdict": "POOR",
+    "verdict": "OK",
     "errors": [],
-    "warnings": [],
-    "canvas_visible": false,
-    "game_changed": false,
-    "start_clicked": true,
-    "is_error_page": false,
-    "notes": "No canvas and no game elements found"
+    "canvas_visible": true,
+    "notes": ""
   },
   {
     "game_id": "breath-rider",
-    "verdict": "POOR",
+    "verdict": "OK",
     "errors": [],
-    "warnings": [],
-    "canvas_visible": false,
-    "game_changed": false,
-    "start_clicked": true,
-    "is_error_page": false,
-    "notes": "No canvas and no game elements found"
+    "canvas_visible": true,
+    "notes": ""
   },
   {
     "game_id": "steady-hand",
-    "verdict": "POOR",
+    "verdict": "OK",
     "errors": [],
-    "warnings": [],
-    "canvas_visible": false,
-    "game_changed": false,
-    "start_clicked": true,
-    "is_error_page": false,
-    "notes": "No canvas and no game elements found"
+    "canvas_visible": true,
+    "notes": ""
   },
   {
     "game_id": "tunnel",
-    "verdict": "POOR",
+    "verdict": "OK",
     "errors": [],
-    "warnings": [],
-    "canvas_visible": false,
-    "game_changed": true,
-    "start_clicked": true,
-    "is_error_page": false,
-    "notes": "No canvas and no game elements found"
+    "canvas_visible": true,
+    "notes": ""
   },
   {
     "game_id": "pulse-sphere",
-    "verdict": "POOR",
+    "verdict": "OK",
     "errors": [],
-    "warnings": [],
-    "canvas_visible": false,
-    "game_changed": true,
-    "start_clicked": true,
-    "is_error_page": false,
-    "notes": "No canvas and no game elements found"
+    "canvas_visible": true,
+    "notes": ""
   },
   {
     "game_id": "shadow-tap",
-    "verdict": "POOR",
+    "verdict": "OK",
     "errors": [],
-    "warnings": [],
-    "canvas_visible": false,
-    "game_changed": false,
-    "start_clicked": true,
-    "is_error_page": false,
-    "notes": "No canvas and no game elements found"
-  },
-  {
-    "game_id": "color-cascade",
-    "verdict": "POOR",
-    "errors": [],
-    "warnings": [],
-    "canvas_visible": false,
-    "game_changed": false,
-    "start_clicked": true,
-    "is_error_page": false,
-    "notes": "No canvas and no game elements found"
-  },
-  {
-    "game_id": "equation-tap",
-    "verdict": "POOR",
-    "errors": [],
-    "warnings": [],
-    "canvas_visible": false,
-    "game_changed": false,
-    "start_clicked": true,
-    "is_error_page": false,
-    "notes": "No canvas and no game elements found"
-  },
-  {
-    "game_id": "color-word",
-    "verdict": "POOR",
-    "errors": [],
-    "warnings": [],
-    "canvas_visible": false,
-    "game_changed": false,
-    "start_clicked": true,
-    "is_error_page": false,
-    "notes": "No canvas and no game elements found"
-  },
-  {
-    "game_id": "visual-search",
-    "verdict": "POOR",
-    "errors": [],
-    "warnings": [],
-    "canvas_visible": false,
-    "game_changed": false,
-    "start_clicked": true,
-    "is_error_page": false,
-    "notes": "No canvas and no game elements found"
-  },
-  {
-    "game_id": "odd-one-out",
-    "verdict": "POOR",
-    "errors": [],
-    "warnings": [],
-    "canvas_visible": false,
-    "game_changed": false,
-    "start_clicked": true,
-    "is_error_page": false,
-    "notes": "No canvas and no game elements found"
-  },
-  {
-    "game_id": "pattern-predict",
-    "verdict": "POOR",
-    "errors": [],
-    "warnings": [],
-    "canvas_visible": false,
-    "game_changed": false,
-    "start_clicked": true,
-    "is_error_page": false,
-    "notes": "No canvas and no game elements found"
-  },
-  {
-    "game_id": "reflex-grid",
-    "verdict": "POOR",
-    "errors": [],
-    "warnings": [],
-    "canvas_visible": false,
-    "game_changed": false,
-    "start_clicked": true,
-    "is_error_page": false,
-    "notes": "No canvas and no game elements found"
-  },
-  {
-    "game_id": "sequence-unlock",
-    "verdict": "POOR",
-    "errors": [],
-    "warnings": [],
-    "canvas_visible": false,
-    "game_changed": false,
-    "start_clicked": true,
-    "is_error_page": false,
-    "notes": "No canvas and no game elements found"
-  },
-  {
-    "game_id": "word-flash",
-    "verdict": "POOR",
-    "errors": [],
-    "warnings": [],
-    "canvas_visible": false,
-    "game_changed": false,
-    "start_clicked": true,
-    "is_error_page": false,
-    "notes": "No canvas and no game elements found"
-  },
-  {
-    "game_id": "rhythm-repeat",
-    "verdict": "POOR",
-    "errors": [],
-    "warnings": [],
-    "canvas_visible": false,
-    "game_changed": false,
-    "start_clicked": true,
-    "is_error_page": false,
-    "notes": "No canvas and no game elements found"
-  },
-  {
-    "game_id": "category-clash",
-    "verdict": "POOR",
-    "errors": [],
-    "warnings": [],
-    "canvas_visible": false,
-    "game_changed": false,
-    "start_clicked": true,
-    "is_error_page": false,
-    "notes": "No canvas and no game elements found"
-  },
-  {
-    "game_id": "memory-grid",
-    "verdict": "POOR",
-    "errors": [],
-    "warnings": [],
-    "canvas_visible": false,
-    "game_changed": false,
-    "start_clicked": true,
-    "is_error_page": false,
-    "notes": "No canvas and no game elements found"
-  },
-  {
-    "game_id": "reaction-chain",
-    "verdict": "POOR",
-    "errors": [],
-    "warnings": [],
-    "canvas_visible": false,
-    "game_changed": false,
-    "start_clicked": true,
-    "is_error_page": false,
-    "notes": "No canvas and no game elements found"
-  },
-  {
-    "game_id": "stack-drop",
-    "verdict": "POOR",
-    "errors": [],
-    "warnings": [],
-    "canvas_visible": false,
-    "game_changed": false,
-    "start_clicked": true,
-    "is_error_page": false,
-    "notes": "No canvas and no game elements found"
-  },
-  {
-    "game_id": "dodge-blitz",
-    "verdict": "POOR",
-    "errors": [],
-    "warnings": [],
-    "canvas_visible": false,
-    "game_changed": false,
-    "start_clicked": true,
-    "is_error_page": false,
-    "notes": "No canvas and no game elements found"
-  },
-  {
-    "game_id": "crowd-roar",
-    "verdict": "POOR",
-    "errors": [],
-    "warnings": [],
-    "canvas_visible": false,
-    "game_changed": false,
-    "start_clicked": true,
-    "is_error_page": false,
-    "notes": "No canvas and no game elements found"
-  },
-  {
-    "game_id": "balance-beam",
-    "verdict": "POOR",
-    "errors": [],
-    "warnings": [],
-    "canvas_visible": false,
-    "game_changed": false,
-    "start_clicked": true,
-    "is_error_page": false,
-    "notes": "No canvas and no game elements found"
-  },
-  {
-    "game_id": "path-trace",
-    "verdict": "POOR",
-    "errors": [],
-    "warnings": [],
-    "canvas_visible": false,
-    "game_changed": false,
-    "start_clicked": true,
-    "is_error_page": false,
-    "notes": "No canvas and no game elements found"
-  },
-  {
-    "game_id": "pitch-match",
-    "verdict": "POOR",
-    "errors": [],
-    "warnings": [],
-    "canvas_visible": false,
-    "game_changed": false,
-    "start_clicked": true,
-    "is_error_page": false,
-    "notes": "No canvas and no game elements found"
-  },
-  {
-    "game_id": "symbol-scan",
-    "verdict": "POOR",
-    "errors": [],
-    "warnings": [],
-    "canvas_visible": false,
-    "game_changed": false,
-    "start_clicked": true,
-    "is_error_page": false,
-    "notes": "No canvas and no game elements found"
-  },
-  {
-    "game_id": "neon-archer",
-    "verdict": "POOR",
-    "errors": [],
-    "warnings": [],
-    "canvas_visible": false,
-    "game_changed": true,
-    "start_clicked": true,
-    "is_error_page": false,
-    "notes": "No canvas and no game elements found"
-  },
-  {
-    "game_id": "ice-sculptor",
-    "verdict": "POOR",
-    "errors": [],
-    "warnings": [],
-    "canvas_visible": false,
-    "game_changed": false,
-    "start_clicked": true,
-    "is_error_page": false,
-    "notes": "No canvas and no game elements found"
+    "canvas_visible": true,
+    "notes": ""
   }
 ]

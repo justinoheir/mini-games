@@ -1,4 +1,4 @@
-﻿﻿﻿'use client';
+﻿'use client';
 /**
  * SPARKLER DRAW — 3D Version
  * Trace a glowing 3D star shape with particle trail sparkles.

@@ -1,4 +1,4 @@
-﻿﻿﻿'use client';
+﻿'use client';
 /**
  * LUNG CAPACITY — 3D expanding lung visualization. Hold breath in zone.
  */

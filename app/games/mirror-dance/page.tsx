@@ -95,7 +95,7 @@ function MirrorDanceInner() {
       animRef.current = requestAnimationFrame(draw);
       if (!s.running) return;
       const ctx = canvas.getContext('2d'); if (!ctx) return;
-      const W = canvas.width, H = canvas.height;
+      const dpr = window.devicePixelRatio || 1; const W = canvas.offsetWidth, H = canvas.offsetHeight; ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
       // Background gradient
       const bg = ctx.createLinearGradient(0, 0, 0, H);
@@ -179,7 +179,7 @@ function MirrorDanceInner() {
       if (s.currentDir) {
         ctx.save();
         const arrowX = cxLeft + (s.currentDir === 'left' ? -60 : 60) * sc;
-        ctx.font = `bold ${Math.round(40 * sc)}px Arial`;
+        ctx.font = `bold ${Math.round(40 * sc)}px 'Space Grotesk', Arial, sans-serif`;
         ctx.fillStyle = '#ec4899';
         ctx.textAlign = 'center';
         ctx.shadowColor = '#ec4899'; ctx.shadowBlur = 20;
@@ -205,7 +205,7 @@ function MirrorDanceInner() {
 
       // Labels
       ctx.save();
-      ctx.font = `bold ${Math.round(16 * sc)}px Arial`;
+      ctx.font = `bold ${Math.round(16 * sc)}px 'Space Grotesk', Arial, sans-serif`;
       ctx.fillStyle = 'rgba(255,255,255,0.5)';
       ctx.textAlign = 'center';
       ctx.fillText('MIRROR', cxRight, cy + 90 * sc);
@@ -213,7 +213,7 @@ function MirrorDanceInner() {
 
       // Tap prompts at bottom
       ctx.save();
-      ctx.font = `bold ${Math.round(24 * sc)}px Arial`;
+      ctx.font = `bold ${Math.round(24 * sc)}px 'Space Grotesk', Arial, sans-serif`;
       ctx.textAlign = 'center';
       ctx.fillStyle = 'rgba(255,255,255,0.7)';
       ctx.fillText('TAP LEFT', W * 0.25, H * 0.9);
@@ -235,8 +235,9 @@ function MirrorDanceInner() {
   useEffect(() => {
     const canvas = canvasRef.current; if (!canvas || phase !== 'playing') return;
     const resize = () => {
-      canvas.width = canvas.offsetWidth;
-      canvas.height = canvas.offsetHeight;
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = canvas.offsetWidth * dpr;
+      canvas.height = canvas.offsetHeight * dpr;
     };
     resize();
     window.addEventListener('resize', resize);

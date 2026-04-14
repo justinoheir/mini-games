@@ -15,7 +15,7 @@ import { useBrandTheme } from '@/lib/useBrandTheme';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
 
 const GAME_ID = 'logic-gate';
-const ACCENT = '#64748b';
+const ACCENT = '#06b6d4';
 const DURATION = 60;
 const GAME_EMOJI = '⚙️';
 const GAME_TITLE = 'Logic Gate';

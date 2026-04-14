@@ -1,4 +1,4 @@
-﻿﻿﻿'use client';
+﻿'use client';
 /**
  * HUM MAZE — 3D tunnel with pitch-steered ball flying through gate rings.
  * Low pitch drifts LEFT, High pitch drifts RIGHT.

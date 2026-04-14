@@ -129,7 +129,7 @@ function TrustFallInner() {
       animRef.current = requestAnimationFrame(draw);
       if (!s.running) return;
       const ctx = canvas.getContext('2d'); if (!ctx) return;
-      const W = canvas.width, H = canvas.height;
+      const dpr = window.devicePixelRatio || 1; const W = canvas.offsetWidth, H = canvas.offsetHeight; ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       const now = Date.now();
 
       // Background
@@ -179,7 +179,7 @@ function TrustFallInner() {
 
       // Zone labels
       ctx.save();
-      ctx.font = `bold ${Math.round(W * 0.04)}px Arial`;
+      ctx.font = `bold ${Math.round(W * 0.04)}px 'Space Grotesk', Arial, sans-serif`;
       ctx.textAlign = 'right'; ctx.fillStyle = '#22c55e';
       ctx.shadowColor = '#22c55e'; ctx.shadowBlur = 10;
       ctx.fillText('PERFECT', zoneX - 8, (bullTopY + bullBotY) / 2 + 6);
@@ -229,7 +229,7 @@ function TrustFallInner() {
         const popY = s.scorePopY * H - (1 - s.scorePopAlpha) * 80;
         ctx.save();
         ctx.globalAlpha = s.scorePopAlpha;
-        ctx.font = `bold ${Math.round(H * 0.055)}px Arial`;
+        ctx.font = `bold ${Math.round(H * 0.055)}px 'Space Grotesk', Arial, sans-serif`;
         ctx.textAlign = 'center';
         ctx.fillStyle = s.sig.bullseyes > 0 ? '#22c55e' : '#f59e0b';
         ctx.shadowColor = ctx.fillStyle; ctx.shadowBlur = 25;
@@ -240,7 +240,7 @@ function TrustFallInner() {
       // Streak indicator
       if (s.streak >= 2) {
         ctx.save();
-        ctx.fillStyle = '#f59e0b'; ctx.font = `bold ${Math.round(H * 0.028)}px Arial`;
+        ctx.fillStyle = '#f59e0b'; ctx.font = `bold ${Math.round(H * 0.028)}px 'Space Grotesk', Arial, sans-serif`;
         ctx.textAlign = 'center'; ctx.shadowColor = '#f59e0b'; ctx.shadowBlur = 15;
         ctx.fillText(`🔥 ×${s.streak} STREAK`, W / 2, H * 0.12);
         ctx.restore();
@@ -249,7 +249,7 @@ function TrustFallInner() {
       // Instruction
       ctx.save();
       ctx.fillStyle = 'rgba(255,255,255,0.45)';
-      ctx.font = `${Math.round(H * 0.022)}px Arial`;
+      ctx.font = `${Math.round(H * 0.022)}px 'Space Grotesk', Arial, sans-serif`;
       ctx.textAlign = 'center';
       ctx.fillText('TAP TO DROP', W / 2, H * 0.92);
       ctx.restore();
@@ -259,7 +259,7 @@ function TrustFallInner() {
 
   useEffect(() => {
     const canvas = canvasRef.current; if (!canvas || phase !== 'playing') return;
-    const resize = () => { canvas.width = canvas.offsetWidth; canvas.height = canvas.offsetHeight; };
+    const resize = () => { const dpr = window.devicePixelRatio || 1; canvas.width = canvas.offsetWidth * dpr; canvas.height = canvas.offsetHeight * dpr; };
     resize();
     window.addEventListener('resize', resize);
     const onTap = (e: PointerEvent) => {

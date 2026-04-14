@@ -143,7 +143,7 @@ function CrowdPulseInner() {
       animRef.current = requestAnimationFrame(draw);
       if (!s.running) return;
       const ctx = canvas.getContext('2d'); if (!ctx) return;
-      const W = canvas.width, H = canvas.height;
+      const dpr = window.devicePixelRatio || 1; const W = canvas.offsetWidth, H = canvas.offsetHeight; ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       const dt = (ts - lastT) / 1000;
       lastT = ts;
 
@@ -219,7 +219,7 @@ function CrowdPulseInner() {
       // BPM indicator
       ctx.save();
       ctx.fillStyle = 'rgba(255,255,255,0.35)';
-      ctx.font = `${Math.round(H * 0.022)}px Arial`;
+      ctx.font = `${Math.round(H * 0.022)}px 'Space Grotesk', Arial, sans-serif`;
       ctx.textAlign = 'center';
       ctx.fillText(`${s.bpm} BPM`, W / 2, H * 0.2);
       ctx.restore();
@@ -229,7 +229,7 @@ function CrowdPulseInner() {
         const age = (now - s.lastTapAt) / 600;
         ctx.save();
         ctx.globalAlpha = 1 - age;
-        ctx.font = `bold ${Math.round(H * 0.05)}px Arial`;
+        ctx.font = `bold ${Math.round(H * 0.05)}px 'Space Grotesk', Arial, sans-serif`;
         ctx.textAlign = 'center';
         const colors: Record<string, string> = { 'PERFECT!': '#22c55e', 'GOOD': '#a855f7', 'EARLY': '#f59e0b', 'LATE': '#f59e0b' };
         ctx.fillStyle = colors[s.lastTapResult] ?? '#ffffff';
@@ -241,7 +241,7 @@ function CrowdPulseInner() {
       // Streak
       if (s.streak >= 3) {
         ctx.save();
-        ctx.fillStyle = '#f59e0b'; ctx.font = `bold ${Math.round(H * 0.025)}px Arial`;
+        ctx.fillStyle = '#f59e0b'; ctx.font = `bold ${Math.round(H * 0.025)}px 'Space Grotesk', Arial, sans-serif`;
         ctx.textAlign = 'center'; ctx.shadowColor = '#f59e0b'; ctx.shadowBlur = 15;
         ctx.fillText(`🔥 ×${s.streak}`, W / 2, H * 0.1);
         ctx.restore();
@@ -250,7 +250,7 @@ function CrowdPulseInner() {
       // Instruction
       ctx.save();
       ctx.fillStyle = 'rgba(255,255,255,0.4)';
-      ctx.font = `${Math.round(H * 0.025)}px Arial`;
+      ctx.font = `${Math.round(H * 0.025)}px 'Space Grotesk', Arial, sans-serif`;
       ctx.textAlign = 'center';
       ctx.fillText('TAP AT THE PEAK', W / 2, H * 0.88);
       ctx.restore();
@@ -262,7 +262,7 @@ function CrowdPulseInner() {
 
   useEffect(() => {
     const canvas = canvasRef.current; if (!canvas || phase !== 'playing') return;
-    const resize = () => { canvas.width = canvas.offsetWidth; canvas.height = canvas.offsetHeight; };
+    const resize = () => { const dpr = window.devicePixelRatio || 1; canvas.width = canvas.offsetWidth * dpr; canvas.height = canvas.offsetHeight * dpr; };
     resize();
     window.addEventListener('resize', resize);
     const onTap = (e: PointerEvent) => { e.preventDefault(); handleTap(); };

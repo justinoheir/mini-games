@@ -1,4 +1,4 @@
-﻿﻿﻿'use client';
+﻿'use client';
 /**
  * DOMINO CHAIN — 3D: tap the first domino at the perfect moment to cascade a full chain.
  * Orange-lit dark room with glowing white 3D dominoes falling in sequence.

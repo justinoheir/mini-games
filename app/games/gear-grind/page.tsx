@@ -174,11 +174,11 @@ function GearGrindGameInner() {
     const W = mount.clientWidth, H = mount.clientHeight;
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setSize(W, H); renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    renderer.setClearColor(0x0a0a0a);
+    renderer.setClearColor(0x0d0d14);
     mount.innerHTML = ''; mount.appendChild(renderer.domElement);
 
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x0a0a0a);
+    scene.background = new THREE.Color(0x0d0d14);
     const camera = new THREE.PerspectiveCamera(65, W / H, 0.1, 100);
     camera.position.set(0, 0, 9);
 

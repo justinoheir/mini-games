@@ -17,7 +17,7 @@ import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
 import { motion, AnimatePresence } from 'framer-motion';
 
 const GAME_ID = 'dreidel-spin';
-const ACCENT = '#60a5fa';
+const ACCENT = '#fbbf24';
 const DURATION = 45;
 const GAME_EMOJI = '🌀';
 const GAME_TITLE = 'Dreidel Spin';

@@ -1,4 +1,4 @@
-﻿﻿﻿﻿'use client';
+﻿'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
 import GameShell from '@/components/GameShell';
 import GameHUD from '@/components/GameHUD';
@@ -13,7 +13,7 @@ import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
 const GAME_ID = 'sand-pour';
 const ACCENT = '#f59e0b';
 const DURATION = 60;
-const GAME_EMOJI = '⏳';
+const GAME_EMOJI = '?';
 const GAME_TITLE = 'Sand Pour';
 const GAME_TAGLINE = "Fill the glass. Don't spill.";
 
@@ -21,11 +21,11 @@ interface Signals { poured: number; spilled: number; maxFill: number; score: num
 function getPersonality(sig: Signals): string {
   const total = sig.poured + sig.spilled;
   const acc = total > 0 ? sig.poured / total : 0;
-  if (sig.fills >= 3 && acc >= 0.85) return 'Master Pourer 🏆';
-  if (acc >= 0.8 && sig.poured >= 200) return 'Steady Hands ✋';
-  if (sig.fills >= 2) return 'Good Flow 🌊';
-  if (sig.spilled > sig.poured) return 'Messy But Learning 💦';
-  return 'Novice Bartender 🍺';
+  if (sig.fills >= 3 && acc >= 0.85) return 'Master Pourer ??';
+  if (acc >= 0.8 && sig.poured >= 200) return 'Steady Hands ?';
+  if (sig.fills >= 2) return 'Good Flow ??';
+  if (sig.spilled > sig.poured) return 'Messy But Learning ??';
+  return 'Novice Bartender ??';
 }
 type Phase = 'start' | 'countdown' | 'playing' | 'done';
 
@@ -89,7 +89,7 @@ function SandPourInner() {
       animRef.current = requestAnimationFrame(draw);
       if (!s.running) return;
       const ctx = canvas.getContext('2d'); if (!ctx) return;
-      const W = canvas.width, H = canvas.height;
+      const dpr = window.devicePixelRatio || 1; const W = canvas.offsetWidth, H = canvas.offsetHeight; ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       const now = Date.now();
 
       ctx.fillStyle = '#0a0a15';
@@ -251,15 +251,15 @@ function SandPourInner() {
       // Instructions overlay
       ctx.save();
       ctx.fillStyle = 'rgba(255,255,255,0.5)';
-      ctx.font = `${Math.round(H * 0.022)}px Arial`;
+      ctx.font = `${Math.round(H * 0.022)}px 'Space Grotesk', Arial, sans-serif`;
       ctx.textAlign = 'center';
-      ctx.fillText('DRAG ← → to tilt and pour', W / 2, H * 0.92);
+      ctx.fillText('DRAG ? ? to tilt and pour', W / 2, H * 0.92);
       ctx.restore();
 
       // Fill level %
       ctx.save();
       ctx.fillStyle = '#f59e0b';
-      ctx.font = `bold ${Math.round(H * 0.028)}px Arial`;
+      ctx.font = `bold ${Math.round(H * 0.028)}px 'Space Grotesk', Arial, sans-serif`;
       ctx.textAlign = 'center';
       ctx.fillText(`${Math.round(s.glassFill * 100)}%`, W / 2, glassTop - 12);
       ctx.restore();
@@ -269,7 +269,7 @@ function SandPourInner() {
 
   useEffect(() => {
     const canvas = canvasRef.current; if (!canvas || phase !== 'playing') return;
-    const resize = () => { canvas.width = canvas.offsetWidth; canvas.height = canvas.offsetHeight; };
+    const resize = () => { const dpr = window.devicePixelRatio || 1; canvas.width = canvas.offsetWidth * dpr; canvas.height = canvas.offsetHeight * dpr; };
     resize();
     window.addEventListener('resize', resize);
 
@@ -327,8 +327,8 @@ function SandPourInner() {
     <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
       {phase === 'start' && (
         <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE}
-          description="Drag left or right to tilt the pitcher and pour sand into the glass. Fill to the line — without spilling!"
-          ctaLabel="Pour It ⏳" accentColor={theme.colors.accent ?? ACCENT} onStart={handleStart} />
+          description="Drag left or right to tilt the pitcher and pour sand into the glass. Fill to the line � without spilling!"
+          ctaLabel="Pour It ?" accentColor={theme.colors.accent ?? ACCENT} onStart={handleStart} />
       )}
       {phase === 'countdown' && <Countdown onComplete={startLoop} accentColor={theme.colors.accent ?? ACCENT} />}
       {(phase === 'playing' || phase === 'countdown') && (
@@ -339,7 +339,7 @@ function SandPourInner() {
       )}
             {phase === 'playing' && streak >= 3 && (
         <div style={{ position: 'fixed', top: 128, left: '50%', transform: 'translateX(-50%)', zIndex: 25, pointerEvents: 'none', fontSize: 20, fontWeight: 900, color: '#fbbf24', textShadow: '0 0 16px #fbbf2488', letterSpacing: 1, whiteSpace: 'nowrap' }} aria-live="polite" aria-atomic="true">
-          ⚡ x{Math.max(1,Math.floor(streak/3)+1)} Streak!
+          ? x{Math.max(1,Math.floor(streak/3)+1)} Streak!
         </div>
       )}
       {phase === 'done' && finalSig && (

@@ -1,4 +1,4 @@
-﻿﻿﻿'use client';
+﻿'use client';
 /**
  * MAGNET MAZE — 3D maze with magnetic particle effects.
  * Tilt or drag to steer a metal ball through a maze with attracting magnets.

@@ -16,7 +16,7 @@ import { useBrandTheme } from '@/lib/useBrandTheme';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
 
 const GAME_ID = 'dart-board';
-const ACCENT = '#dc2626';
+const ACCENT = '#ff2d55';
 const DURATION = 45;
 const GAME_EMOJI = '🎯';
 const GAME_TITLE = 'Dart Board';

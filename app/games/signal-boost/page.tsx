@@ -78,6 +78,7 @@ function SignalBoostGameInner() {
     if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
     if (s.renderer) { s.renderer.dispose(); s.renderer = null; }
     stopMic();
+    (stateRef.current as any)._micFallbackCleanup?.();
         const _pbKey = 'pb_signal-boost';
     const _finalScore = stateRef.current.sig.score;
     const _prevPb = parseInt(typeof window !== 'undefined' ? localStorage.getItem(_pbKey) ?? '0' : '0', 10);
@@ -221,7 +222,20 @@ function SignalBoostGameInner() {
       analyser.fftSize = 256; source.connect(analyser);
       s.analyser = analyser;
       s.dataArray = new Uint8Array(analyser.frequencyBinCount);
-    } catch { /* Mic denied â€” no signal */ }
+    } catch {
+      // Mic denied - add touch/hold fallback: hold screen to simulate voice signal
+      (s as any)._touchActive = false;
+      const onTouchDown = () => { (s as any)._touchActive = true; };
+      const onTouchUp = () => { (s as any)._touchActive = false; };
+      mount.addEventListener('pointerdown', onTouchDown);
+      mount.addEventListener('pointerup', onTouchUp);
+      mount.addEventListener('pointercancel', onTouchUp);
+      (s as any)._micFallbackCleanup = () => {
+        mount.removeEventListener('pointerdown', onTouchDown);
+        mount.removeEventListener('pointerup', onTouchUp);
+        mount.removeEventListener('pointercancel', onTouchUp);
+      };
+    }
 
     const handleResize = () => {
       const w = window.innerWidth, h = window.innerHeight;
@@ -248,12 +262,15 @@ function SignalBoostGameInner() {
       if (!s.running) return;
       const t = Date.now() * 0.001;
 
-      // Read mic
+      // Read mic (or touch fallback)
       if (s.analyser && s.dataArray) {
         s.analyser.getByteFrequencyData(s.dataArray as Uint8Array<ArrayBuffer>);
         let sum = 0;
         for (let i = 0; i < s.dataArray.length; i++) sum += s.dataArray[i];
         s.volume = sum / (s.dataArray.length * 255);
+      } else if ((s as any)._touchActive !== undefined) {
+        // Touch fallback: holding screen = mid-range signal
+        s.volume = (s as any)._touchActive ? 0.40 : 0;
       }
       s.smoothVolume += (s.volume - s.smoothVolume) * 0.15;
       const vol = s.smoothVolume;

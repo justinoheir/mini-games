@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
 import * as THREE from 'three';
 import GameShell from '@/components/GameShell';
@@ -14,9 +14,9 @@ import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
 const GAME_ID      = 'volcano-tap';
 const ACCENT       = '#ef4444';
 const DURATION     = 45;
-const GAME_EMOJI   = 'ðŸŒ‹';
+const GAME_EMOJI   = '🌋';
 const GAME_TITLE   = 'Volcano Tap';
-const GAME_TAGLINE = 'Tap rising lava bubbles before they overflow. Miss three â€” eruption!';
+const GAME_TAGLINE = 'Tap rising lava bubbles before they overflow. Miss three — eruption!';
 const MAX_MISSES   = 3;
 
 interface Signals {
@@ -29,11 +29,11 @@ interface Signals {
 }
 
 function getPersonality(sig: Signals): string {
-  if (sig.missed === 0 && sig.bubblesPopped >= 15)    return 'Volcano Tamer ðŸŒ‹';
-  if (sig.maxStreak >= 10)                             return 'Lava Legend âš¡';
-  if (sig.bubblesPopped >= 20)                         return 'Bubble Blaster ðŸ’¥';
-  if (sig.missed >= 3)                                 return 'Eruption Survivor ðŸ˜¤';
-  return 'Magma Rookie ðŸ”´';
+  if (sig.missed === 0 && sig.bubblesPopped >= 15)    return 'Volcano Tamer 🌋';
+  if (sig.maxStreak >= 10)                             return 'Lava Legend ⚡';
+  if (sig.bubblesPopped >= 20)                         return 'Bubble Blaster 💥';
+  if (sig.missed >= 3)                                 return 'Eruption Survivor 😤';
+  return 'Magma Rookie 🔴';
 }
 
 interface BubbleObj {
@@ -389,7 +389,7 @@ function VolcanoTapGameInner() {
 
   const buildInsights = (sig: Signals) => [
     { label: 'Popped',      value: `${sig.bubblesPopped}`,   color: ACCENT },
-    { label: 'Best Streak', value: `Ã—${sig.maxStreak}`,      color: ACCENT },
+    { label: 'Best Streak', value: `×${sig.maxStreak}`,      color: ACCENT },
     { label: 'Missed',      value: `${sig.missed}`,          color: sig.missed === 0 ? '#4ade80' : '#ef4444' },
     { label: 'Fastest',     value: sig.fastestPop < 9000 ? `${sig.fastestPop}ms` : '-', color: 'var(--color-text)' },
   ];
@@ -427,7 +427,7 @@ function VolcanoTapGameInner() {
           personality={getPersonality(finalSig)} player={playerSessionRef.current} />
       )}
       {phase === 'done' && pbBeaten && (
-        <div style={{position:'fixed',top:'16px',left:'50%',transform:'translateX(-50%)',background:'#fbbf24',color:'#000',padding:'8px 20px',borderRadius:'999px',fontWeight:700,fontSize:'1rem',zIndex:9999,boxShadow:'0 4px 12px rgba(0,0,0,0.3)',animation:'none'}}>ðŸ† New Personal Best!</div>
+        <div style={{position:'fixed',top:'16px',left:'50%',transform:'translateX(-50%)',background:'#fbbf24',color:'#000',padding:'8px 20px',borderRadius:'999px',fontWeight:700,fontSize:'1rem',zIndex:9999,boxShadow:'0 4px 12px rgba(0,0,0,0.3)',animation:'none'}}>🏆 New Personal Best!</div>
       )}
     </GameShell>
   );

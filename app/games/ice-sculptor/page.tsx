@@ -16,7 +16,7 @@ import { postWebhook } from '@/lib/webhook';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
 
 const GAME_ID = 'ice-sculptor';
-const ACCENT = '#93c5fd';
+const ACCENT = '#38bdf8';
 const DURATION = 45;
 const GAME_EMOJI = '🧊';
 const GAME_TITLE = 'Ice Sculptor';

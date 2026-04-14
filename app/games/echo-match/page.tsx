@@ -1,4 +1,4 @@
-﻿﻿﻿'use client';
+﻿'use client';
 /**
  * ECHO MATCH 3D — Simon Says with 3D glowing tiles and tones.
  * Watch the sequence light up, then repeat it.

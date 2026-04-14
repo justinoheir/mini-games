@@ -12,7 +12,7 @@ import { useBrandTheme } from '@/lib/useBrandTheme';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
 
 const GAME_ID = 'boxing-combo';
-const ACCENT = '#ef4444';
+const ACCENT = '#ff2d55';
 const DURATION = 30;
 const GAME_EMOJI = '🥊';
 const GAME_TITLE = 'Boxing Combo';

@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 /**
  * CRYSTAL GROW — 3D: breathe steadily into the mic to grow a 3D crystal.
  * Erratic breathing shatters it. Dark violet environment with glowing crystal.
@@ -262,7 +262,19 @@ function CrystalGrowGameInner() {
       audioCtx.createMediaStreamSource(stream).connect(analyser);
       s.analyser=analyser;
       s.dataArray=new Uint8Array(analyser.frequencyBinCount) as Uint8Array<ArrayBuffer>;
-    }catch{/* no mic fallback */}
+    }catch{
+      (s as any)._touchActive = false;
+      const _onDown = function() { (s as any)._touchActive = true; };
+      const _onUp = function() { (s as any)._touchActive = false; };
+      mount.addEventListener('pointerdown', _onDown);
+      mount.addEventListener('pointerup', _onUp);
+      mount.addEventListener('pointercancel', _onUp);
+      (s as any)._micFallbackCleanup = function() {
+        mount.removeEventListener('pointerdown', _onDown);
+        mount.removeEventListener('pointerup', _onUp);
+        mount.removeEventListener('pointercancel', _onUp);
+      };
+    }
 
     timerRef.current=setInterval(()=>{
       const s2=stateRef.current;s2.timeLeft--;setTimeLeft(s2.timeLeft);
@@ -287,6 +299,9 @@ function CrystalGrowGameInner() {
         s2.analyser.getByteFrequencyData(s2.dataArray);
         let sum=0;for(let i=0;i<s2.dataArray.length;i++)sum+=s2.dataArray[i];
         s2.volume=sum/(s2.dataArray.length*255);
+      } else if ((s2 as any)._touchActive !== undefined) {
+        // Touch fallback: holding screen = gentle steady breath
+        s2.volume = (s2 as any)._touchActive ? 0.35 : 0;
       }
       const prev=s2.smoothVolume;
       s2.smoothVolume+=(s2.volume-s2.smoothVolume)*0.12;

@@ -1,4 +1,4 @@
-﻿﻿﻿'use client';
+﻿'use client';
 /**
  * SPATIAL MAP — 3D Version
  * 4x4 grid of glowing 3D cubes. Memorize path, then trace it.

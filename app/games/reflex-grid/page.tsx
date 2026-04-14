@@ -12,7 +12,7 @@ import { postWebhook } from '@/lib/webhook';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
 
 const GAME_ID = 'reflex-grid';
-const ACCENT = '#ef4444';
+const ACCENT = '#ff2d55';
 const DURATION = 30;
 const GAME_EMOJI = '⚡';
 const GAME_TITLE = 'Reflex Grid';

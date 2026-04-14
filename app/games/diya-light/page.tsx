@@ -1,4 +1,4 @@
-﻿﻿'use client';
+﻿'use client';
 /**
  * DIYA LIGHT — 3D: tilt/drag to pour oil into a 3D diya, tap to ignite the flame.
  * Warm festival night environment with star field and glowing lanterns.

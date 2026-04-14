@@ -18,7 +18,7 @@ import StreakBadge from '@/components/StreakBadge';
 
 const GAME_ID = 'shadow-tap';
 const PB_KEY = 'pb_shadow-tap';
-const ACCENT = '#64748b';
+const ACCENT = '#8b5cf6';
 const DURATION = 45;
 const GAME_EMOJI = '👁️';
 const GAME_TITLE = 'Shadow Tap';
@@ -171,7 +171,7 @@ function ShadowTapGameInner() {
     s.camera = camera;
 
     scene.add(new THREE.AmbientLight(0x050810, 2));
-    const shapeLight = new THREE.PointLight(0x64748b, 0, 10);
+    const shapeLight = new THREE.PointLight(0x8b5cf6, 0, 10);
     shapeLight.position.set(0, 0, 1);
     scene.add(shapeLight);
     s.shapeLight = shapeLight;

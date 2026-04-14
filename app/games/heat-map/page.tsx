@@ -1,4 +1,4 @@
-﻿﻿﻿﻿'use client';
+﻿'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
 import GameShell from '@/components/GameShell';
 import GameHUD from '@/components/GameHUD';
@@ -13,7 +13,7 @@ import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
 const GAME_ID = 'heat-map';
 const ACCENT = '#f97316';
 const DURATION = 60;
-const GAME_EMOJI = '👁️';
+const GAME_EMOJI = '???';
 const GAME_TITLE = 'Heat Map';
 const GAME_TAGLINE = 'Where do you look first?';
 
@@ -47,7 +47,7 @@ const SCENES = [
       ctx.shadowBlur = 0;
       // Label
       ctx.fillStyle = '#ffffff';
-      ctx.font = `bold ${Math.round(H * 0.04)}px Arial`;
+      ctx.font = `bold ${Math.round(H * 0.04)}px 'Space Grotesk', Arial, sans-serif`;
       ctx.textAlign = 'center';
       ctx.fillText('NEW!', W * 0.5, H * 0.28);
     },
@@ -65,8 +65,8 @@ const SCENES = [
       ctx.fillStyle = '#22c55e';
       ctx.beginPath(); ctx.roundRect(W * 0.15, H * 0.13, W * 0.7, H * 0.1, 30); ctx.fill();
       ctx.shadowBlur = 0;
-      ctx.fillStyle = '#ffffff'; ctx.font = `bold ${Math.round(H * 0.035)}px Arial`;
-      ctx.textAlign = 'center'; ctx.fillText('GET STARTED →', W * 0.5, H * 0.19);
+      ctx.fillStyle = '#ffffff'; ctx.font = `bold ${Math.round(H * 0.035)}px 'Space Grotesk', Arial, sans-serif`;
+      ctx.textAlign = 'center'; ctx.fillText('GET STARTED ?', W * 0.5, H * 0.19);
       // Content cards
       for (let i = 0; i < 3; i++) {
         ctx.fillStyle = '#1e293b';
@@ -78,7 +78,7 @@ const SCENES = [
     name: 'Billboard',
     hotZone: { x: 0.25, y: 0.4, label: 'Face / Person' },
     draw: (ctx: CanvasRenderingContext2D, W: number, H: number) => {
-      ctx.fillStyle = '#f1f5f9'; ctx.fillRect(0, 0, W, H);
+      ctx.fillStyle = '#0d1a2e'; ctx.fillRect(0, 0, W, H);
       // Billboard frame
       ctx.fillStyle = '#334155';
       ctx.beginPath(); ctx.roundRect(W * 0.05, H * 0.08, W * 0.9, H * 0.78, 16); ctx.fill();
@@ -89,10 +89,10 @@ const SCENES = [
       ctx.beginPath(); ctx.ellipse(W * 0.25, H * 0.55, H * 0.08, H * 0.15, 0, 0, Math.PI * 2); ctx.fill();
       ctx.shadowBlur = 0;
       // Text on right
-      ctx.fillStyle = '#ffffff'; ctx.font = `bold ${Math.round(H * 0.06)}px Arial`;
+      ctx.fillStyle = '#ffffff'; ctx.font = `bold ${Math.round(H * 0.06)}px 'Space Grotesk', Arial, sans-serif`;
       ctx.textAlign = 'left';
       ctx.fillText('FEEL IT.', W * 0.42, H * 0.38);
-      ctx.font = `${Math.round(H * 0.035)}px Arial`; ctx.fillStyle = 'rgba(255,255,255,0.6)';
+      ctx.font = `${Math.round(H * 0.035)}px 'Space Grotesk', Arial, sans-serif`; ctx.fillStyle = 'rgba(255,255,255,0.6)';
       ctx.fillText('New collection.', W * 0.42, H * 0.5);
     },
   },
@@ -109,14 +109,14 @@ const SCENES = [
       ctx.fillStyle = '#fbbf24';
       ctx.beginPath(); ctx.roundRect(W * 0.2, H * 0.2, W * 0.6, H * 0.18, 10); ctx.fill();
       ctx.shadowBlur = 0;
-      ctx.fillStyle = '#1c1007'; ctx.font = `bold ${Math.round(H * 0.04)}px Arial`;
-      ctx.textAlign = 'center'; ctx.fillText('★ CHEF SPECIAL $14', W * 0.5, H * 0.31);
+      ctx.fillStyle = '#1c1007'; ctx.font = `bold ${Math.round(H * 0.04)}px 'Space Grotesk', Arial, sans-serif`;
+      ctx.textAlign = 'center'; ctx.fillText('? CHEF SPECIAL $14', W * 0.5, H * 0.31);
       // Regular items
       const items = ['Burger $9', 'Salad $7', 'Pasta $11', 'Soup $6'];
       items.forEach((item, i) => {
         ctx.fillStyle = 'rgba(255,255,255,0.15)';
         ctx.beginPath(); ctx.roundRect(W * 0.08, H * (0.44 + i * 0.12), W * 0.84, H * 0.09, 6); ctx.fill();
-        ctx.fillStyle = 'rgba(255,255,255,0.8)'; ctx.font = `${Math.round(H * 0.028)}px Arial`;
+        ctx.fillStyle = 'rgba(255,255,255,0.8)'; ctx.font = `${Math.round(H * 0.028)}px 'Space Grotesk', Arial, sans-serif`;
         ctx.textAlign = 'left'; ctx.fillText(item, W * 0.12, H * (0.51 + i * 0.12));
       });
     },
@@ -127,11 +127,11 @@ interface TapRecord { x: number; y: number; dist: number; }
 interface Signals { rounds: number; totalDist: number; avgDist: number; score: number; hotHits: number; tapRecords: TapRecord[]; }
 function getPersonality(sig: Signals): string {
   const avg = sig.avgDist;
-  if (sig.hotHits >= 3 && avg < 0.12) return 'Attention Hawk 👁️';
-  if (sig.hotHits >= 2) return 'Eye Tracker 🎯';
-  if (avg < 0.2) return 'Instinct Player 🧠';
-  if (sig.rounds >= 4) return 'Pattern Tester 📊';
-  return 'First Glancer 👀';
+  if (sig.hotHits >= 3 && avg < 0.12) return 'Attention Hawk ???';
+  if (sig.hotHits >= 2) return 'Eye Tracker ??';
+  if (avg < 0.2) return 'Instinct Player ??';
+  if (sig.rounds >= 4) return 'Pattern Tester ??';
+  return 'First Glancer ??';
 }
 type Phase = 'start' | 'countdown' | 'playing' | 'done';
 type SubPhase = 'reveal' | 'wait_tap' | 'show_result';
@@ -197,7 +197,7 @@ function HeatMapInner() {
       animRef.current = requestAnimationFrame(draw);
       if (!s.running) return;
       const ctx = canvas.getContext('2d'); if (!ctx) return;
-      const W = canvas.width, H = canvas.height;
+      const dpr = window.devicePixelRatio || 1; const W = canvas.offsetWidth, H = canvas.offsetHeight; ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       const now = Date.now();
 
       ctx.clearRect(0, 0, W, H);
@@ -222,7 +222,7 @@ function HeatMapInner() {
         const blink = Math.sin(now * 0.008) > 0;
         ctx.save();
         ctx.fillStyle = blink ? 'rgba(249,115,22,0.9)' : 'rgba(249,115,22,0.4)';
-        ctx.font = `bold ${Math.round(H * 0.028)}px Arial`;
+        ctx.font = `bold ${Math.round(H * 0.028)}px 'Space Grotesk', Arial, sans-serif`;
         ctx.textAlign = 'center';
         ctx.shadowColor = '#f97316'; ctx.shadowBlur = 15;
         ctx.fillText('TAP WHERE YOU LOOKED FIRST', W / 2, H * 0.93);
@@ -264,10 +264,10 @@ function HeatMapInner() {
 
         // Label
         ctx.save();
-        ctx.fillStyle = '#22c55e'; ctx.font = `bold ${Math.round(H * 0.025)}px Arial`;
+        ctx.fillStyle = '#22c55e'; ctx.font = `bold ${Math.round(H * 0.025)}px 'Space Grotesk', Arial, sans-serif`;
         ctx.textAlign = 'center';
         ctx.shadowColor = '#22c55e'; ctx.shadowBlur = 10;
-        ctx.fillText(`↑ ${hz.label}`, hx, hy - 30);
+        ctx.fillText(`? ${hz.label}`, hx, hy - 30);
         ctx.restore();
 
         // Score result
@@ -275,7 +275,7 @@ function HeatMapInner() {
         const pts = Math.round(Math.max(0, 100 - dist * 300));
         ctx.save();
         ctx.fillStyle = pts >= 60 ? '#22c55e' : '#f97316';
-        ctx.font = `bold ${Math.round(H * 0.045)}px Arial`;
+        ctx.font = `bold ${Math.round(H * 0.045)}px 'Space Grotesk', Arial, sans-serif`;
         ctx.textAlign = 'center'; ctx.shadowColor = ctx.fillStyle; ctx.shadowBlur = 25;
         ctx.fillText(`+${pts}`, W / 2, H * 0.88);
         ctx.restore();
@@ -291,7 +291,7 @@ function HeatMapInner() {
     if (!s.running || s.subPhase !== 'wait_tap') return;
     const canvas = canvasRef.current; if (!canvas) return;
     s.tapX = nx; s.tapY = ny;
-    const W = canvas.width, H = canvas.height;
+    const dpr = window.devicePixelRatio || 1; const W = canvas.offsetWidth, H = canvas.offsetHeight; ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     const scene = SCENES[s.sceneIdx];
     const hx = scene.hotZone.x * W, hy = scene.hotZone.y * H;
     const dist = Math.hypot((nx - hx) / W, (ny - hy) / H);
@@ -312,7 +312,7 @@ function HeatMapInner() {
 
   useEffect(() => {
     const canvas = canvasRef.current; if (!canvas || phase !== 'playing') return;
-    const resize = () => { canvas.width = canvas.offsetWidth; canvas.height = canvas.offsetHeight; };
+    const resize = () => { const dpr = window.devicePixelRatio || 1; canvas.width = canvas.offsetWidth * dpr; canvas.height = canvas.offsetHeight * dpr; };
     resize();
     window.addEventListener('resize', resize);
     const onTap = (e: PointerEvent) => {
@@ -344,8 +344,8 @@ function HeatMapInner() {
     <GameShell title={GAME_TITLE} emoji={GAME_EMOJI} accentColor={theme.colors.accent ?? ACCENT}>
       {phase === 'start' && (
         <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE}
-          description="A scene appears. Tap where your eye goes first — instinctively! See how close you get to the attention hotspot."
-          ctaLabel="Show Me 👁️" accentColor={theme.colors.accent ?? ACCENT} onStart={handleStart} />
+          description="A scene appears. Tap where your eye goes first � instinctively! See how close you get to the attention hotspot."
+          ctaLabel="Show Me ???" accentColor={theme.colors.accent ?? ACCENT} onStart={handleStart} />
       )}
       {phase === 'countdown' && <Countdown onComplete={startLoop} accentColor={theme.colors.accent ?? ACCENT} />}
       {(phase === 'playing' || phase === 'countdown') && (
@@ -356,7 +356,7 @@ function HeatMapInner() {
       )}
             {phase === 'playing' && streak >= 3 && (
         <div style={{ position: 'fixed', top: 128, left: '50%', transform: 'translateX(-50%)', zIndex: 25, pointerEvents: 'none', fontSize: 20, fontWeight: 900, color: '#fbbf24', textShadow: '0 0 16px #fbbf2488', letterSpacing: 1, whiteSpace: 'nowrap' }} aria-live="polite" aria-atomic="true">
-          ⚡ x{Math.max(1,Math.floor(streak/3)+1)} Streak!
+          ? x{Math.max(1,Math.floor(streak/3)+1)} Streak!
         </div>
       )}
       {phase === 'done' && finalSig && (

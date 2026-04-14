@@ -12,7 +12,7 @@ import { postWebhook } from '@/lib/webhook';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
 
 const GAME_ID = 'web-weave';
-const ACCENT = '#64748b';
+const ACCENT = '#a78bfa';
 const DURATION = 60;
 const GAME_EMOJI = '🕸️';
 const GAME_TITLE = 'Web Weave';
@@ -107,7 +107,7 @@ function WebWeaveGameInner() {
     camera.lookAt(0, 0, 0);
 
     scene.add(new THREE.AmbientLight(0x111122, 2));
-    const pLight = new THREE.PointLight(0x64748b, 4, 25);
+    const pLight = new THREE.PointLight(0xa78bfa, 4, 25);
     pLight.position.set(0, 5, 5);
     scene.add(pLight);
     const sLight = new THREE.PointLight(0x94a3b8, 2, 20);
@@ -129,7 +129,7 @@ function WebWeaveGameInner() {
       const ax = Math.cos(angle) * anchorRadius;
       const ay = Math.sin(angle) * anchorRadius;
       const geo = new THREE.SphereGeometry(0.2, 12, 12);
-      const mat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, emissive: 0x64748b, emissiveIntensity: 0.5, roughness: 0.4 });
+      const mat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, emissive: 0xa78bfa, emissiveIntensity: 0.5, roughness: 0.4 });
       const mesh = new THREE.Mesh(geo, mat);
       mesh.position.set(ax, ay, 0);
       scene.add(mesh);

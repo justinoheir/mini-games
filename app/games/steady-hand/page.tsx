@@ -121,7 +121,7 @@ function SteadyHandGameInner() {
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setSize(W, H);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    renderer.setClearColor(0x0a0a0a);
+    renderer.setClearColor(0x08080f);
     if (mountRef.current) { mountRef.current.innerHTML = ''; mountRef.current.appendChild(renderer.domElement); }
     s.renderer = renderer;
 

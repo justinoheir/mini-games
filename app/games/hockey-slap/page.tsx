@@ -11,7 +11,7 @@ import { hapticScore, hapticFail, hapticVictory, hapticImpact } from '@/lib/hapt
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
 
-const GAME_ID = 'hockey-slap'; const ACCENT = '#3b82f6'; const DURATION = 45; const GAME_EMOJI = '🏒'; const GAME_TITLE = 'Hockey Slap'; const GAME_TAGLINE = 'Swipe to shoot the puck into the net!';
+const GAME_ID = 'hockey-slap'; const ACCENT = '#0ea5e9'; const DURATION = 45; const GAME_EMOJI = '🏒'; const GAME_TITLE = 'Hockey Slap'; const GAME_TAGLINE = 'Swipe to shoot the puck into the net!';
 interface Signals { shots: number; goals: number; saved: number; topCorner: number; maxStreak: number; streakCurrent: number; score: number; }
 function getPersonality(sig: Signals): string {
   const g = sig.shots > 0 ? sig.goals / sig.shots : 0;

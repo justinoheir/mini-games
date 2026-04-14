@@ -81,6 +81,7 @@ function EggTossGameInner() {
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
     if (stopMusicRef.current) { stopMusicRef.current(); stopMusicRef.current = null; }
     if (tiltCtrlRef.current) { tiltCtrlRef.current.stop(); tiltCtrlRef.current = null; }
+    (stateRef.current as any)._tiltCleanup?.();
     const t = threeRef.current;
     if (t) { cancelAnimationFrame(t.animId); t.renderer.dispose(); }
         const _pbKey = 'pb_egg-toss';
@@ -90,7 +91,7 @@ function EggTossGameInner() {
     setFinalSig({ ...s.sig }); setPhase('done');
   }, []);
 
-  const startLoop = useCallback(() => {
+  const startLoop = useCallback(async () => {
     const mount = mountRef.current; if (!mount) return;
     const s = stateRef.current;
     s.running = true; s.timeLeft = DURATION; s.eggState = 'idle';
@@ -171,7 +172,28 @@ function EggTossGameInner() {
     }, 1000);
 
     const tiltCtrl = createTiltController((x) => { catcherXRef.current = x * 0.3; }, { sensitivity: 0.9, clamp: 28, smoothing: 0.45 });
-    tiltCtrl.start(); tiltCtrlRef.current = tiltCtrl;
+    const tiltGranted = await tiltCtrl.start();
+    tiltCtrlRef.current = tiltCtrl;
+    // Pointer/mouse fallback when tilt not available (desktop)
+    if (!tiltGranted) {
+      const onPointerMove = (e: PointerEvent) => {
+        const rect = mount.getBoundingClientRect();
+        const nx = ((e.clientX - rect.left) / rect.width) * 2 - 1; // -1 to 1
+        catcherXRef.current = nx * 0.25; // map to ±0.25 (matches tilt range)
+      };
+      mount.addEventListener('pointermove', onPointerMove);
+      // Also support tap on left/right halves for touch without hover
+      const onPointerDown = (e: PointerEvent) => {
+        const rect = mount.getBoundingClientRect();
+        const nx = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+        catcherXRef.current = nx * 0.25;
+      };
+      mount.addEventListener('pointerdown', onPointerDown);
+      (s as any)._tiltCleanup = () => {
+        mount.removeEventListener('pointermove', onPointerMove);
+        mount.removeEventListener('pointerdown', onPointerDown);
+      };
+    }
     setTimeout(() => nextThrow(), 600);
 
     const animate = () => {

@@ -23,7 +23,7 @@ import StreakBadge from '@/components/StreakBadge';
 
 const GAME_ID = 'spiral-throw';
 const PB_KEY = 'pb_spiral-throw';
-const ACCENT = '#b45309';
+const ACCENT = '#f59e0b';
 const DURATION = 45;
 const GAME_EMOJI = '🏈';
 const GAME_TITLE = 'Spiral Throw';

@@ -15,7 +15,7 @@ import { useBrandTheme } from '@/lib/useBrandTheme';
 import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
 
 const GAME_ID = 'laser-guide';
-const ACCENT = '#dc2626';
+const ACCENT = '#ff1744';
 const DURATION = 45;
 const GAME_EMOJI = 'ðŸ”´';
 const GAME_TITLE = 'Laser Guide';

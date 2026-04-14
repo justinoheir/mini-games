@@ -1,4 +1,4 @@
-﻿﻿﻿'use client';
+﻿'use client';
 /**
  * JIGSAW RUSH — 3D colorful puzzle pieces floating in space. Drag to slot.
  */

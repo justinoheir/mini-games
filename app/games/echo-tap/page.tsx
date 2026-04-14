@@ -1,4 +1,4 @@
-﻿﻿﻿﻿'use client';
+﻿'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
 import GameShell from '@/components/GameShell';
 import GameHUD from '@/components/GameHUD';
@@ -13,7 +13,7 @@ import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
 const GAME_ID = 'echo-tap';
 const ACCENT = '#06b6d4';
 const DURATION = 60;
-const GAME_EMOJI = '🔔';
+const GAME_EMOJI = '??';
 const GAME_TITLE = 'Echo Tap';
 const GAME_TAGLINE = 'Listen. Repeat the pattern.';
 
@@ -22,11 +22,11 @@ const GLOW_COLORS = ['#fca5a5', '#86efac', '#93c5fd', '#fcd34d', '#d8b4fe', '#f9
 
 interface Signals { maxLevel: number; totalRounds: number; mistakes: number; score: number; perfectRounds: number; }
 function getPersonality(sig: Signals): string {
-  if (sig.maxLevel >= 8 && sig.mistakes <= 2) return 'Echo Master 🔔';
-  if (sig.maxLevel >= 6) return 'Pattern Pro 🧠';
-  if (sig.perfectRounds >= 3) return 'Focused Listener 👂';
-  if (sig.totalRounds >= 5) return 'Pattern Seeker 🔍';
-  return 'Learning the Echo 🌊';
+  if (sig.maxLevel >= 8 && sig.mistakes <= 2) return 'Echo Master ??';
+  if (sig.maxLevel >= 6) return 'Pattern Pro ??';
+  if (sig.perfectRounds >= 3) return 'Focused Listener ??';
+  if (sig.totalRounds >= 5) return 'Pattern Seeker ??';
+  return 'Learning the Echo ??';
 }
 type Phase = 'start' | 'countdown' | 'playing' | 'done';
 type SubPhase = 'showing' | 'player_turn' | 'success_flash' | 'fail_flash';
@@ -105,7 +105,7 @@ function EchoTapInner() {
       animRef.current = requestAnimationFrame(draw);
       if (!s.running) return;
       const ctx = canvas.getContext('2d'); if (!ctx) return;
-      const W = canvas.width, H = canvas.height;
+      const dpr = window.devicePixelRatio || 1; const W = canvas.offsetWidth, H = canvas.offsetHeight; ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       const now = Date.now();
 
       ctx.fillStyle = '#050510';
@@ -171,7 +171,7 @@ function EchoTapInner() {
           // Number label
           ctx.save();
           ctx.fillStyle = isLit ? '#ffffff' : 'rgba(255,255,255,0.4)';
-          ctx.font = `bold ${Math.round(r * 0.6)}px Arial`;
+          ctx.font = `bold ${Math.round(r * 0.6)}px 'Space Grotesk', Arial, sans-serif`;
           ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
           ctx.fillText(String(idx + 1), cx, cy);
           ctx.restore();
@@ -183,30 +183,30 @@ function EchoTapInner() {
       ctx.textAlign = 'center';
       if (s.subPhase === 'showing') {
         ctx.fillStyle = 'rgba(255,255,255,0.6)';
-        ctx.font = `bold ${Math.round(H * 0.03)}px Arial`;
+        ctx.font = `bold ${Math.round(H * 0.03)}px 'Space Grotesk', Arial, sans-serif`;
         ctx.fillText('WATCH THE PATTERN...', W / 2, H * 0.85);
       } else if (s.subPhase === 'player_turn') {
         ctx.fillStyle = '#06b6d4';
-        ctx.font = `bold ${Math.round(H * 0.03)}px Arial`;
+        ctx.font = `bold ${Math.round(H * 0.03)}px 'Space Grotesk', Arial, sans-serif`;
         ctx.shadowColor = '#06b6d4'; ctx.shadowBlur = 15;
         ctx.fillText(`REPEAT! (${s.playerInput.length}/${s.sequence.length})`, W / 2, H * 0.85);
       } else if (s.subPhase === 'success_flash') {
         ctx.fillStyle = '#22c55e';
-        ctx.font = `bold ${Math.round(H * 0.04)}px Arial`;
+        ctx.font = `bold ${Math.round(H * 0.04)}px 'Space Grotesk', Arial, sans-serif`;
         ctx.shadowColor = '#22c55e'; ctx.shadowBlur = 20;
-        ctx.fillText('✓ PERFECT!', W / 2, H * 0.85);
+        ctx.fillText('? PERFECT!', W / 2, H * 0.85);
       } else if (s.subPhase === 'fail_flash') {
         ctx.fillStyle = '#ef4444';
-        ctx.font = `bold ${Math.round(H * 0.04)}px Arial`;
+        ctx.font = `bold ${Math.round(H * 0.04)}px 'Space Grotesk', Arial, sans-serif`;
         ctx.shadowColor = '#ef4444'; ctx.shadowBlur = 20;
-        ctx.fillText('✗ WRONG!', W / 2, H * 0.85);
+        ctx.fillText('? WRONG!', W / 2, H * 0.85);
       }
       ctx.restore();
 
       // Level indicator
       ctx.save();
       ctx.fillStyle = 'rgba(255,255,255,0.4)';
-      ctx.font = `${Math.round(H * 0.022)}px Arial`;
+      ctx.font = `${Math.round(H * 0.022)}px 'Space Grotesk', Arial, sans-serif`;
       ctx.textAlign = 'center';
       ctx.fillText(`LEVEL ${s.level}`, W / 2, H * 0.93);
       ctx.restore();
@@ -271,7 +271,7 @@ function EchoTapInner() {
 
   useEffect(() => {
     const canvas = canvasRef.current; if (!canvas || phase !== 'playing') return;
-    const resize = () => { canvas.width = canvas.offsetWidth; canvas.height = canvas.offsetHeight; };
+    const resize = () => { const dpr = window.devicePixelRatio || 1; canvas.width = canvas.offsetWidth * dpr; canvas.height = canvas.offsetHeight * dpr; };
     resize();
     window.addEventListener('resize', resize);
 
@@ -281,7 +281,7 @@ function EchoTapInner() {
       const rect = canvas.getBoundingClientRect();
       const x = e.clientX - rect.left;
       const y = e.clientY - rect.top;
-      const W = canvas.width, H = canvas.height;
+      const dpr = window.devicePixelRatio || 1; const W = canvas.offsetWidth, H = canvas.offsetHeight; ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       const cols = 3, rows = 2;
       const pad = W * 0.06;
       const cellW = (W - pad * 2) / cols;
@@ -323,7 +323,7 @@ function EchoTapInner() {
       {phase === 'start' && (
         <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE}
           description="Watch the circles light up in sequence, then repeat the exact pattern. Each round adds one more step!"
-          ctaLabel="Listen Up 🔔" accentColor={theme.colors.accent ?? ACCENT} onStart={handleStart} />
+          ctaLabel="Listen Up ??" accentColor={theme.colors.accent ?? ACCENT} onStart={handleStart} />
       )}
       {phase === 'countdown' && <Countdown onComplete={startLoop} accentColor={theme.colors.accent ?? ACCENT} />}
       {(phase === 'playing' || phase === 'countdown') && (
@@ -334,7 +334,7 @@ function EchoTapInner() {
       )}
             {phase === 'playing' && streak >= 3 && (
         <div style={{ position: 'fixed', top: 128, left: '50%', transform: 'translateX(-50%)', zIndex: 25, pointerEvents: 'none', fontSize: 20, fontWeight: 900, color: '#fbbf24', textShadow: '0 0 16px #fbbf2488', letterSpacing: 1, whiteSpace: 'nowrap' }} aria-live="polite" aria-atomic="true">
-          ⚡ x{Math.max(1,Math.floor(streak/3)+1)} Streak!
+          ? x{Math.max(1,Math.floor(streak/3)+1)} Streak!
         </div>
       )}
       {phase === 'done' && finalSig && (

@@ -17,7 +17,7 @@ import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
 import { hapticScore, hapticFail, hapticVictory } from '@/lib/haptics';
 
 const GAME_ID = 'dragon-breath';
-const ACCENT = '#ef4444';
+const ACCENT = '#ff6b35';
 const DURATION = 45;
 const GAME_EMOJI = '🐉';
 const GAME_TITLE = 'Dragon Breath';

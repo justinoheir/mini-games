@@ -1,0 +1,1188 @@
+[
+  {
+    "game_id": "paint-splash",
+    "verdict": "OK",
+    "issues": [
+      {
+        "name": "THREE_NO_DISPOSE",
+        "verdict": "INFO",
+        "fix": "Add renderer.dispose() in cleanup",
+        "instances": []
+      }
+    ]
+  },
+  {
+    "game_id": "web-weave",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "treasure-dive",
+    "verdict": "POOR",
+    "issues": [
+      {
+        "name": "DEVICE_MOTION_NO_PERMISSION",
+        "verdict": "WARNING",
+        "fix": "Request DeviceMotion permission on iOS: DeviceMotionEvent.requestPermission()",
+        "instances": []
+      }
+    ]
+  },
+  {
+    "game_id": "frog-leap",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "wire-cross",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "balloon-pop",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "slingshot-smash",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "ripple-tap",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "pendulum-swing",
+    "verdict": "OK",
+    "issues": [
+      {
+        "name": "THREE_NO_DISPOSE",
+        "verdict": "INFO",
+        "fix": "Add renderer.dispose() in cleanup",
+        "instances": []
+      }
+    ]
+  },
+  {
+    "game_id": "node-connect",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "orbit-launch",
+    "verdict": "OK",
+    "issues": [
+      {
+        "name": "THREE_NO_DISPOSE",
+        "verdict": "INFO",
+        "fix": "Add renderer.dispose() in cleanup",
+        "instances": []
+      }
+    ]
+  },
+  {
+    "game_id": "speed-sort",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "spring-leap",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "crystal-catch",
+    "verdict": "POOR",
+    "issues": [
+      {
+        "name": "DEVICE_MOTION_NO_PERMISSION",
+        "verdict": "WARNING",
+        "fix": "Request DeviceMotion permission on iOS: DeviceMotionEvent.requestPermission()",
+        "instances": []
+      }
+    ]
+  },
+  {
+    "game_id": "wobble-stack",
+    "verdict": "POOR",
+    "issues": [
+      {
+        "name": "DEVICE_MOTION_NO_PERMISSION",
+        "verdict": "WARNING",
+        "fix": "Request DeviceMotion permission on iOS: DeviceMotionEvent.requestPermission()",
+        "instances": []
+      }
+    ]
+  },
+  {
+    "game_id": "chain-reaction",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "pixel-paint",
+    "verdict": "OK",
+    "issues": [
+      {
+        "name": "THREE_NO_DISPOSE",
+        "verdict": "INFO",
+        "fix": "Add renderer.dispose() in cleanup",
+        "instances": []
+      }
+    ]
+  },
+  {
+    "game_id": "drop-zone",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "laser-guide",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "friction-slide",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "gravity-well",
+    "verdict": "POOR",
+    "issues": [
+      {
+        "name": "DEVICE_MOTION_NO_PERMISSION",
+        "verdict": "WARNING",
+        "fix": "Request DeviceMotion permission on iOS: DeviceMotionEvent.requestPermission()",
+        "instances": []
+      }
+    ]
+  },
+  {
+    "game_id": "tilt-maze",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "whisper-bomb",
+    "verdict": "OK",
+    "issues": [
+      {
+        "name": "AUDIO_CONTEXT",
+        "verdict": "INFO",
+        "fix": "Use: new (window.AudioContext || window.webkitAudioContext)()",
+        "instances": []
+      }
+    ]
+  },
+  {
+    "game_id": "breath-rider",
+    "verdict": "OK",
+    "issues": [
+      {
+        "name": "AUDIO_CONTEXT",
+        "verdict": "INFO",
+        "fix": "Use: new (window.AudioContext || window.webkitAudioContext)()",
+        "instances": []
+      }
+    ]
+  },
+  {
+    "game_id": "steady-hand",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "tunnel",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "pulse-sphere",
+    "verdict": "OK",
+    "issues": [
+      {
+        "name": "AUDIO_CONTEXT",
+        "verdict": "INFO",
+        "fix": "Use: new (window.AudioContext || window.webkitAudioContext)()",
+        "instances": []
+      }
+    ]
+  },
+  {
+    "game_id": "shadow-tap",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "color-cascade",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "equation-tap",
+    "verdict": "POOR",
+    "issues": [
+      {
+        "name": "CANVAS_CTX_NO_CHECK",
+        "verdict": "WARNING",
+        "fix": "Add null check: if (!ctx) return;",
+        "instances": [
+          "  line ~82: \"const ctx = canvas.getContext('2d')!;\n  \""
+        ]
+      }
+    ]
+  },
+  {
+    "game_id": "color-word",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "visual-search",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "odd-one-out",
+    "verdict": "OK",
+    "issues": [
+      {
+        "name": "THREE_NO_DISPOSE",
+        "verdict": "INFO",
+        "fix": "Add renderer.dispose() in cleanup",
+        "instances": []
+      }
+    ]
+  },
+  {
+    "game_id": "pattern-predict",
+    "verdict": "OK",
+    "issues": [
+      {
+        "name": "THREE_NO_DISPOSE",
+        "verdict": "INFO",
+        "fix": "Add renderer.dispose() in cleanup",
+        "instances": []
+      }
+    ]
+  },
+  {
+    "game_id": "reflex-grid",
+    "verdict": "OK",
+    "issues": [
+      {
+        "name": "THREE_NO_DISPOSE",
+        "verdict": "INFO",
+        "fix": "Add renderer.dispose() in cleanup",
+        "instances": []
+      }
+    ]
+  },
+  {
+    "game_id": "sequence-unlock",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "word-flash",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "rhythm-repeat",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "category-clash",
+    "verdict": "POOR",
+    "issues": [
+      {
+        "name": "CANVAS_CTX_NO_CHECK",
+        "verdict": "WARNING",
+        "fix": "Add null check: if (!ctx) return;",
+        "instances": [
+          "  line ~67: \"const ctx = canvas.getContext('2d')!;\n  \""
+        ]
+      }
+    ]
+  },
+  {
+    "game_id": "memory-grid",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "reaction-chain",
+    "verdict": "OK",
+    "issues": [
+      {
+        "name": "THREE_NO_DISPOSE",
+        "verdict": "INFO",
+        "fix": "Add renderer.dispose() in cleanup",
+        "instances": []
+      }
+    ]
+  },
+  {
+    "game_id": "stack-drop",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "dodge-blitz",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "crowd-roar",
+    "verdict": "OK",
+    "issues": [
+      {
+        "name": "AUDIO_CONTEXT",
+        "verdict": "INFO",
+        "fix": "Use: new (window.AudioContext || window.webkitAudioContext)()",
+        "instances": []
+      }
+    ]
+  },
+  {
+    "game_id": "balance-beam",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "path-trace",
+    "verdict": "OK",
+    "issues": [
+      {
+        "name": "THREE_NO_DISPOSE",
+        "verdict": "INFO",
+        "fix": "Add renderer.dispose() in cleanup",
+        "instances": []
+      }
+    ]
+  },
+  {
+    "game_id": "pitch-match",
+    "verdict": "OK",
+    "issues": [
+      {
+        "name": "AUDIO_CONTEXT",
+        "verdict": "INFO",
+        "fix": "Use: new (window.AudioContext || window.webkitAudioContext)()",
+        "instances": []
+      }
+    ]
+  },
+  {
+    "game_id": "symbol-scan",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "neon-archer",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "ice-sculptor",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "gravity-flip",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "volcano-tap",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "marathon-pace",
+    "verdict": "POOR",
+    "issues": [
+      {
+        "name": "DEVICE_MOTION_NO_PERMISSION",
+        "verdict": "WARNING",
+        "fix": "Request DeviceMotion permission on iOS: DeviceMotionEvent.requestPermission()",
+        "instances": []
+      }
+    ]
+  },
+  {
+    "game_id": "hot-potato",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "slam-dunk",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "archery-draw",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "hockey-slap",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "javelin-throw",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "bowling-curve",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "swimming-stroke",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "dart-board",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "track-sprint",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "discus-spin",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "boxing-combo",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "hoop-shot",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "penalty-kick",
+    "verdict": "OK",
+    "issues": [
+      {
+        "name": "THREE_NO_DISPOSE",
+        "verdict": "INFO",
+        "fix": "Add renderer.dispose() in cleanup",
+        "instances": []
+      }
+    ]
+  },
+  {
+    "game_id": "spiral-throw",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "reflex-rally",
+    "verdict": "OK",
+    "issues": [
+      {
+        "name": "THREE_NO_DISPOSE",
+        "verdict": "INFO",
+        "fix": "Add renderer.dispose() in cleanup",
+        "instances": []
+      }
+    ]
+  },
+  {
+    "game_id": "precision-putt",
+    "verdict": "OK",
+    "issues": [
+      {
+        "name": "THREE_NO_DISPOSE",
+        "verdict": "INFO",
+        "fix": "Add renderer.dispose() in cleanup",
+        "instances": []
+      }
+    ]
+  },
+  {
+    "game_id": "gift-rush",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "snow-catch",
+    "verdict": "POOR",
+    "issues": [
+      {
+        "name": "DEVICE_MOTION_NO_PERMISSION",
+        "verdict": "WARNING",
+        "fix": "Request DeviceMotion permission on iOS: DeviceMotionEvent.requestPermission()",
+        "instances": []
+      }
+    ]
+  },
+  {
+    "game_id": "boo-blast",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "cauldron-bubble",
+    "verdict": "OK",
+    "issues": [
+      {
+        "name": "AUDIO_CONTEXT",
+        "verdict": "INFO",
+        "fix": "Use: new (window.AudioContext || window.webkitAudioContext)()",
+        "instances": []
+      }
+    ]
+  },
+  {
+    "game_id": "firework-launch",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "countdown-crush",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "cupid-shot",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "love-note",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "turkey-trot",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "harvest-catch",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "shamrock-shuffle",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "egg-toss",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "pinata-smash",
+    "verdict": "OK",
+    "issues": [
+      {
+        "name": "THREE_NO_DISPOSE",
+        "verdict": "INFO",
+        "fix": "Add renderer.dispose() in cleanup",
+        "instances": []
+      }
+    ]
+  },
+  {
+    "game_id": "flower-bouquet",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "bbq-master",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "sparkler-draw",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "pencil-pack",
+    "verdict": "OK",
+    "issues": [
+      {
+        "name": "THREE_NO_DISPOSE",
+        "verdict": "INFO",
+        "fix": "Add renderer.dispose() in cleanup",
+        "instances": []
+      }
+    ]
+  },
+  {
+    "game_id": "diya-light",
+    "verdict": "POOR",
+    "issues": [
+      {
+        "name": "DEVICE_MOTION_NO_PERMISSION",
+        "verdict": "WARNING",
+        "fix": "Request DeviceMotion permission on iOS: DeviceMotionEvent.requestPermission()",
+        "instances": []
+      }
+    ]
+  },
+  {
+    "game_id": "dreidel-spin",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "dragon-parade",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "bead-catch",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "lantern-float",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "taco-toss",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "basket-weave",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "clover-path",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "signal-boost",
+    "verdict": "OK",
+    "issues": [
+      {
+        "name": "AUDIO_CONTEXT",
+        "verdict": "INFO",
+        "fix": "Use: new (window.AudioContext || window.webkitAudioContext)()",
+        "instances": []
+      }
+    ]
+  },
+  {
+    "game_id": "crystal-grow",
+    "verdict": "OK",
+    "issues": [
+      {
+        "name": "AUDIO_CONTEXT",
+        "verdict": "INFO",
+        "fix": "Use: new (window.AudioContext || window.webkitAudioContext)()",
+        "instances": []
+      }
+    ]
+  },
+  {
+    "game_id": "echo-clap",
+    "verdict": "OK",
+    "issues": [
+      {
+        "name": "AUDIO_CONTEXT",
+        "verdict": "INFO",
+        "fix": "Use: new (window.AudioContext || window.webkitAudioContext)()",
+        "instances": []
+      }
+    ]
+  },
+  {
+    "game_id": "solar-charge",
+    "verdict": "OK",
+    "issues": [
+      {
+        "name": "AUDIO_CONTEXT",
+        "verdict": "INFO",
+        "fix": "Use: new (window.AudioContext || window.webkitAudioContext)()",
+        "instances": []
+      }
+    ]
+  },
+  {
+    "game_id": "aurora-wave",
+    "verdict": "OK",
+    "issues": [
+      {
+        "name": "AUDIO_CONTEXT",
+        "verdict": "INFO",
+        "fix": "Use: new (window.AudioContext || window.webkitAudioContext)()",
+        "instances": []
+      }
+    ]
+  },
+  {
+    "game_id": "dragon-breath",
+    "verdict": "OK",
+    "issues": [
+      {
+        "name": "AUDIO_CONTEXT",
+        "verdict": "INFO",
+        "fix": "Use: new (window.AudioContext || window.webkitAudioContext)()",
+        "instances": []
+      }
+    ]
+  },
+  {
+    "game_id": "voice-sculpt",
+    "verdict": "OK",
+    "issues": [
+      {
+        "name": "AUDIO_CONTEXT",
+        "verdict": "INFO",
+        "fix": "Use: new (window.AudioContext || window.webkitAudioContext)()",
+        "instances": []
+      }
+    ]
+  },
+  {
+    "game_id": "echo-match",
+    "verdict": "OK",
+    "issues": [
+      {
+        "name": "AUDIO_CONTEXT",
+        "verdict": "INFO",
+        "fix": "Use: new (window.AudioContext || window.webkitAudioContext)()",
+        "instances": []
+      }
+    ]
+  },
+  {
+    "game_id": "howl-wolf",
+    "verdict": "OK",
+    "issues": [
+      {
+        "name": "AUDIO_CONTEXT",
+        "verdict": "INFO",
+        "fix": "Use: new (window.AudioContext || window.webkitAudioContext)()",
+        "instances": []
+      }
+    ]
+  },
+  {
+    "game_id": "beat-box",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "hum-maze",
+    "verdict": "OK",
+    "issues": [
+      {
+        "name": "AUDIO_CONTEXT",
+        "verdict": "INFO",
+        "fix": "Use: new (window.AudioContext || window.webkitAudioContext)()",
+        "instances": []
+      }
+    ]
+  },
+  {
+    "game_id": "chant-power",
+    "verdict": "OK",
+    "issues": [
+      {
+        "name": "AUDIO_CONTEXT",
+        "verdict": "INFO",
+        "fix": "Use: new (window.AudioContext || window.webkitAudioContext)()",
+        "instances": []
+      }
+    ]
+  },
+  {
+    "game_id": "whistle-launch",
+    "verdict": "OK",
+    "issues": [
+      {
+        "name": "AUDIO_CONTEXT",
+        "verdict": "INFO",
+        "fix": "Use: new (window.AudioContext || window.webkitAudioContext)()",
+        "instances": []
+      }
+    ]
+  },
+  {
+    "game_id": "vocal-shield",
+    "verdict": "OK",
+    "issues": [
+      {
+        "name": "AUDIO_CONTEXT",
+        "verdict": "INFO",
+        "fix": "Use: new (window.AudioContext || window.webkitAudioContext)()",
+        "instances": []
+      }
+    ]
+  },
+  {
+    "game_id": "breath-sculpt",
+    "verdict": "OK",
+    "issues": [
+      {
+        "name": "AUDIO_CONTEXT",
+        "verdict": "INFO",
+        "fix": "Use: new (window.AudioContext || window.webkitAudioContext)()",
+        "instances": []
+      }
+    ]
+  },
+  {
+    "game_id": "frequency-tune",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "lung-capacity",
+    "verdict": "OK",
+    "issues": [
+      {
+        "name": "AUDIO_CONTEXT",
+        "verdict": "INFO",
+        "fix": "Use: new (window.AudioContext || window.webkitAudioContext)()",
+        "instances": []
+      }
+    ]
+  },
+  {
+    "game_id": "sound-waves",
+    "verdict": "OK",
+    "issues": [
+      {
+        "name": "AUDIO_CONTEXT",
+        "verdict": "INFO",
+        "fix": "Use: new (window.AudioContext || window.webkitAudioContext)()",
+        "instances": []
+      }
+    ]
+  },
+  {
+    "game_id": "sing-along",
+    "verdict": "OK",
+    "issues": [
+      {
+        "name": "AUDIO_CONTEXT",
+        "verdict": "INFO",
+        "fix": "Use: new (window.AudioContext || window.webkitAudioContext)()",
+        "instances": []
+      }
+    ]
+  },
+  {
+    "game_id": "morse-tap",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "morse-decode",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "code-breaker",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "pulse-jump",
+    "verdict": "OK",
+    "issues": [
+      {
+        "name": "THREE_NO_DISPOSE",
+        "verdict": "INFO",
+        "fix": "Add renderer.dispose() in cleanup",
+        "instances": []
+      }
+    ]
+  },
+  {
+    "game_id": "domino-chain",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "number-crunch",
+    "verdict": "OK",
+    "issues": [
+      {
+        "name": "THREE_NO_DISPOSE",
+        "verdict": "INFO",
+        "fix": "Add renderer.dispose() in cleanup",
+        "instances": []
+      }
+    ]
+  },
+  {
+    "game_id": "mirror-mind",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "number-path",
+    "verdict": "OK",
+    "issues": [
+      {
+        "name": "THREE_NO_DISPOSE",
+        "verdict": "INFO",
+        "fix": "Add renderer.dispose() in cleanup",
+        "instances": []
+      }
+    ]
+  },
+  {
+    "game_id": "logic-gate",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "binary-decode",
+    "verdict": "POOR",
+    "issues": [
+      {
+        "name": "CANVAS_CTX_NO_CHECK",
+        "verdict": "WARNING",
+        "fix": "Add null check: if (!ctx) return;",
+        "instances": [
+          "  line ~52: \"const ctx = canvas.getContext('2d')!;\n  \""
+        ]
+      }
+    ]
+  },
+  {
+    "game_id": "attention-switch",
+    "verdict": "POOR",
+    "issues": [
+      {
+        "name": "CANVAS_CTX_NO_CHECK",
+        "verdict": "WARNING",
+        "fix": "Add null check: if (!ctx) return;",
+        "instances": [
+          "  line ~76: \"const ctx = canvas.getContext('2d')!;\n  \""
+        ]
+      }
+    ]
+  },
+  {
+    "game_id": "face-memory",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "inference-trail",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "spatial-map",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "neon-chess",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "shape-rotate",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "type-speed",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "bubble-burst",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "tower-stack",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "bounce-pass",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "gear-grind",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "thread-needle",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "jigsaw-rush",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "cable-wrap",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "magnet-maze",
+    "verdict": "POOR",
+    "issues": [
+      {
+        "name": "DEVICE_MOTION_NO_PERMISSION",
+        "verdict": "WARNING",
+        "fix": "Request DeviceMotion permission on iOS: DeviceMotionEvent.requestPermission()",
+        "instances": []
+      }
+    ]
+  },
+  {
+    "game_id": "cosmic-catch",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "wormhole-dive",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "dream-catch",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "sound-garden",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "curling-sweep",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "rowing-rhythm",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "baseball-swing",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "karate-chop",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "pole-vault",
+    "verdict": "OK",
+    "issues": [
+      {
+        "name": "THREE_NO_DISPOSE",
+        "verdict": "INFO",
+        "fix": "Add renderer.dispose() in cleanup",
+        "instances": []
+      }
+    ]
+  },
+  {
+    "game_id": "table-tennis",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "gymnast-beam",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "pixel-skate",
+    "verdict": "OK",
+    "issues": [
+      {
+        "name": "THREE_NO_DISPOSE",
+        "verdict": "INFO",
+        "fix": "Add renderer.dispose() in cleanup",
+        "instances": []
+      }
+    ]
+  },
+  {
+    "game_id": "surf-ride",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "ski-slalom",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "mirror-dance",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "sand-pour",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "color-blend",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "echo-tap",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "heat-map",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "trust-fall",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "spark-chain",
+    "verdict": "OK",
+    "issues": []
+  },
+  {
+    "game_id": "crowd-pulse",
+    "verdict": "OK",
+    "issues": []
+  }
+]

@@ -1,4 +1,4 @@
-﻿﻿﻿﻿'use client';
+﻿'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
 import GameShell from '@/components/GameShell';
 import GameHUD from '@/components/GameHUD';
@@ -13,7 +13,7 @@ import { savePlayerSession, PlayerSession } from '@/lib/playerSession';
 const GAME_ID = 'spark-chain';
 const ACCENT = '#f97316';
 const DURATION = 60;
-const GAME_EMOJI = '⚡';
+const GAME_EMOJI = '?';
 const GAME_TITLE = 'Spark Chain';
 const GAME_TAGLINE = 'One spark. Maximum spread.';
 
@@ -24,11 +24,11 @@ const SPREAD_DELAY = 180; // ms per hop
 interface Node { x: number; y: number; lit: boolean; litAt: number; spreading: boolean; }
 interface Signals { rounds: number; bestCoverage: number; avgCoverage: number; totalCoverage: number; score: number; perfect: number; }
 function getPersonality(sig: Signals): string {
-  if (sig.bestCoverage >= 0.9 && sig.rounds >= 3) return 'Chain Reaction God ⚡';
-  if (sig.bestCoverage >= 0.75) return 'Spark Master 🔥';
-  if (sig.rounds >= 4 && sig.avgCoverage >= 0.5) return 'Strategic Thinker 🧠';
-  if (sig.perfect >= 2) return 'Perfect Placer 🎯';
-  return 'Learning the Web 🕸️';
+  if (sig.bestCoverage >= 0.9 && sig.rounds >= 3) return 'Chain Reaction God ?';
+  if (sig.bestCoverage >= 0.75) return 'Spark Master ??';
+  if (sig.rounds >= 4 && sig.avgCoverage >= 0.5) return 'Strategic Thinker ??';
+  if (sig.perfect >= 2) return 'Perfect Placer ??';
+  return 'Learning the Web ???';
 }
 type Phase = 'start' | 'countdown' | 'playing' | 'done';
 type RoundPhase = 'place' | 'spreading' | 'result';
@@ -120,7 +120,7 @@ function SparkChainInner() {
     s.running = true; s.timeLeft = DURATION;
     s.sig = { rounds: 0, bestCoverage: 0, avgCoverage: 0, totalCoverage: 0, score: 0, perfect: 0 };
     setScoreDisplay(0); setStreak(0); setTimeLeft(DURATION); setPhase('playing');
-    startNewRound(canvas.width, canvas.height);
+    startNewRound(canvas.offsetWidth, canvas.offsetHeight);
 
     timerRef.current = setInterval(() => {
       s.timeLeft--; setTimeLeft(s.timeLeft);
@@ -131,7 +131,7 @@ function SparkChainInner() {
       animRef.current = requestAnimationFrame(draw);
       if (!s.running) return;
       const ctx = canvas.getContext('2d'); if (!ctx) return;
-      const W = canvas.width, H = canvas.height;
+      const dpr = window.devicePixelRatio || 1; const W = canvas.offsetWidth, H = canvas.offsetHeight; ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       const now = Date.now();
 
       ctx.fillStyle = '#060010';
@@ -233,16 +233,16 @@ function SparkChainInner() {
       ctx.save();
       ctx.textAlign = 'center';
       if (s.roundPhase === 'place') {
-        ctx.fillStyle = '#f97316'; ctx.font = `bold ${Math.round(H * 0.03)}px Arial`;
+        ctx.fillStyle = '#f97316'; ctx.font = `bold ${Math.round(H * 0.03)}px 'Space Grotesk', Arial, sans-serif`;
         ctx.shadowColor = '#f97316'; ctx.shadowBlur = 15;
         ctx.fillText('TAP TO PLACE YOUR SPARK', W / 2, H * 0.92);
       } else if (s.roundPhase === 'spreading') {
-        ctx.fillStyle = 'rgba(255,255,255,0.6)'; ctx.font = `${Math.round(H * 0.028)}px Arial`;
-        ctx.fillText(`🔥 ${s.litCount} nodes lit...`, W / 2, H * 0.92);
+        ctx.fillStyle = 'rgba(255,255,255,0.6)'; ctx.font = `${Math.round(H * 0.028)}px 'Space Grotesk', Arial, sans-serif`;
+        ctx.fillText(`?? ${s.litCount} nodes lit...`, W / 2, H * 0.92);
       } else if (s.roundPhase === 'result') {
         const pct = Math.round(s.coverage * 100);
         ctx.fillStyle = s.coverage >= 0.7 ? '#22c55e' : '#f97316';
-        ctx.font = `bold ${Math.round(H * 0.05)}px Arial`;
+        ctx.font = `bold ${Math.round(H * 0.05)}px 'Space Grotesk', Arial, sans-serif`;
         ctx.shadowColor = ctx.fillStyle; ctx.shadowBlur = 25;
         ctx.fillText(`${pct}% spread!`, W / 2, H * 0.9);
       }
@@ -250,7 +250,7 @@ function SparkChainInner() {
 
       // Lit counter top
       ctx.save();
-      ctx.fillStyle = 'rgba(255,255,255,0.4)'; ctx.font = `${Math.round(H * 0.022)}px Arial`;
+      ctx.fillStyle = 'rgba(255,255,255,0.4)'; ctx.font = `${Math.round(H * 0.022)}px 'Space Grotesk', Arial, sans-serif`;
       ctx.textAlign = 'right';
       ctx.fillText(`${s.litCount}/${NODE_COUNT} nodes`, W * 0.92, H * 0.06);
       ctx.restore();
@@ -261,14 +261,14 @@ function SparkChainInner() {
   useEffect(() => {
     const canvas = canvasRef.current; if (!canvas || phase !== 'playing') return;
     const resize = () => {
-      canvas.width = canvas.offsetWidth; canvas.height = canvas.offsetHeight;
-      startNewRound(canvas.width, canvas.height);
+      const dpr = window.devicePixelRatio || 1; canvas.width = canvas.offsetWidth * dpr; canvas.height = canvas.offsetHeight * dpr;
+      startNewRound(canvas.offsetWidth, canvas.offsetHeight);
     };
     resize();
     window.addEventListener('resize', resize);
     const onTap = (e: PointerEvent) => {
       const rect = canvas.getBoundingClientRect();
-      placeSpark(e.clientX - rect.left, e.clientY - rect.top, canvas.width, canvas.height);
+      placeSpark(e.clientX - rect.left, e.clientY - rect.top, canvas.offsetWidth, canvas.offsetHeight);
     };
     canvas.addEventListener('pointerdown', onTap);
     return () => {
@@ -297,7 +297,7 @@ function SparkChainInner() {
       {phase === 'start' && (
         <GameStartScreen emoji={GAME_EMOJI} title={GAME_TITLE}
           description="Tap to place one spark on the network. Watch it chain-react through connected nodes. Score based on how many you light up!"
-          ctaLabel="Ignite ⚡" accentColor={theme.colors.accent ?? ACCENT} onStart={handleStart} />
+          ctaLabel="Ignite ?" accentColor={theme.colors.accent ?? ACCENT} onStart={handleStart} />
       )}
       {phase === 'countdown' && <Countdown onComplete={startLoop} accentColor={theme.colors.accent ?? ACCENT} />}
       {(phase === 'playing' || phase === 'countdown') && (
@@ -308,7 +308,7 @@ function SparkChainInner() {
       )}
             {phase === 'playing' && streak >= 3 && (
         <div style={{ position: 'fixed', top: 128, left: '50%', transform: 'translateX(-50%)', zIndex: 25, pointerEvents: 'none', fontSize: 20, fontWeight: 900, color: '#fbbf24', textShadow: '0 0 16px #fbbf2488', letterSpacing: 1, whiteSpace: 'nowrap' }} aria-live="polite" aria-atomic="true">
-          ⚡ x{Math.max(1,Math.floor(streak/3)+1)} Streak!
+          ? x{Math.max(1,Math.floor(streak/3)+1)} Streak!
         </div>
       )}
       {phase === 'done' && finalSig && (
