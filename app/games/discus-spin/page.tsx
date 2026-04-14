@@ -158,7 +158,9 @@ function GameDiscusSpinInner() {
             const dx=Math.abs(s.discPos.x);
             let pts=0;
             if(dx<1.5)pts=5;else if(dx<3)pts=3;else if(dx<5)pts=1;
-            const isOptimal=s.chargeLevel>=0.7&&s.chargeLevel<=0.85;
+            // Difficulty: sweet spot narrows with each attempt
+            const shrink = Math.min(s.sig.totalAttempts * 0.007, 0.06);
+            const isOptimal=s.chargeLevel>=(0.70+shrink)&&s.chargeLevel<=(0.85-shrink);
             const isGood=s.chargeLevel>=0.5;
             s.sig.totalAttempts++;
             if(isOptimal)s.sig.perfectAttempts++;else if(isGood)s.sig.goodAttempts++;

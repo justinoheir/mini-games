@@ -199,7 +199,9 @@ function GameDartboardInner() {
           const dx=Math.abs(s.dartPos.x-0);
           let pts=0;
           if(dx<0.2)pts=5;else if(dx<0.45)pts=3;else if(dx<0.75)pts=1;
-          const isOptimal=s.chargeLevel>=0.7&&s.chargeLevel<=0.85;
+          // Difficulty: perfect window narrows with each attempt
+          const narrowing = Math.min(s.sig.totalAttempts * 0.008, 0.06);
+          const isOptimal=s.chargeLevel>=(0.70+narrowing)&&s.chargeLevel<=(0.85-narrowing);
           const isGood=s.chargeLevel>=0.5;
           s.sig.totalAttempts++;
           if(isOptimal)s.sig.perfectAttempts++;else if(isGood)s.sig.goodAttempts++;

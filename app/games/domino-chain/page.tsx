@@ -207,7 +207,11 @@ function DominoChainGameInner() {
           setTimeout(()=>{
             s2.dominoes.forEach(d=>{d.fallen=false;d.fallAngle=0;d.fallProgress=0;d.mesh.rotation.z=0;d.mesh.position.y=0;});
             s2.fallIndex=0;s2.currentChainFall=0;s2.phaseTimer=0;s2.tapWindowOpen=false;s2.tapReady=true;
-            s2.sig.totalRounds++;setFeedback('');
+            s2.sig.totalRounds++;
+            // Difficulty: chain falls faster and wait window shrinks each round
+            s2.fallSpeed = Math.min(0.09, 0.04 + s2.sig.totalRounds * 0.006);
+            s2.phaseDuration = Math.max(90, 180 - s2.sig.totalRounds * 8);
+            setFeedback('');
           },1200);
         }
       }
