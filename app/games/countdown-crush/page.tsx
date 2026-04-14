@@ -216,10 +216,13 @@ function CountdownCrushGameInner() {
     mesh.position.set((Math.random()-0.5)*7,(Math.random()-0.5)*4,Math.random()*1.5);
     mesh.userData.isOrb=true;mesh.userData.number=num;
     scene.add(mesh);
+    // Difficulty: orbs move faster and fade sooner in later rounds
+    const roundBonus = s.sig.roundsCompleted;
+    const speedMult = 1 + roundBonus * 0.2;
     s.orbs.push({
       id:s.nextId++,number:num,mesh,
-      vx:(Math.random()-0.5)*0.025,vy:(Math.random()-0.5)*0.02,
-      lifespan:200+Math.floor(Math.random()*100),age:0,
+      vx:(Math.random()-0.5)*0.025*speedMult,vy:(Math.random()-0.5)*0.02*speedMult,
+      lifespan:Math.max(120, 200+Math.floor(Math.random()*100) - roundBonus * 20),age:0,
       caught:false,flashT:0,
     });
   },[]);

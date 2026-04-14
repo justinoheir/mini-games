@@ -173,8 +173,10 @@ function BubbleBurstInner() {
       if (!s.running) return;
       s.frame++;
 
-      // Spawn
-      if (s.frame % 40 === 0 && s.bubbles.length < 8) spawnBubble(scene, s);
+      // Difficulty: spawn faster and bubbles grow faster as game progresses
+      const spawnInterval = Math.max(20, 40 - Math.floor(s.frame / 200));
+      const growRate = 0.004 + Math.min(s.frame / 10000, 0.005);
+      if (s.frame % spawnInterval === 0 && s.bubbles.length < 8) spawnBubble(scene, s);
 
       // Update bubbles
       for (let i = s.bubbles.length - 1; i >= 0; i--) {
@@ -190,9 +192,9 @@ function BubbleBurstInner() {
         // Gentle drift up
         b.mesh.position.y += 0.005;
         b.mesh.rotation.y += 0.01;
-        // Grow
+        // Grow — rate increases over time (tighter timing window)
         if (b.growing) {
-          b.r = Math.min(b.r + 0.004, b.maxR);
+          b.r = Math.min(b.r + growRate, b.maxR);
           b.mesh.scale.setScalar(b.r / 0.1);
           if (b.r >= b.maxR) b.growing = false;
         }

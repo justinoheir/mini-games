@@ -214,9 +214,11 @@ function CosmicCatchGameInner() {
     mesh.position.set((Math.random()-0.5)*7,(Math.random()-0.5)*5,Math.random()*1.5);
     mesh.userData.isStar=true;
     scene.add(mesh);
+    // Difficulty: stars fade faster as game progresses (score-based)
+    const lifespanReduction = Math.min(s.sig.starsCaught * 2, 35);
     s.stars.push({
       id:s.nextId++,type,mesh,
-      lifespan:90+Math.floor(Math.random()*60),age:0,
+      lifespan:Math.max(55, 90+Math.floor(Math.random()*60) - lifespanReduction),age:0,
       caught:false,flashT:0,
       vx:(Math.random()-0.5)*0.015,vy:(Math.random()-0.5)*0.015,
     });
@@ -234,12 +236,13 @@ function CosmicCatchGameInner() {
       if(s2.timeLeft<=0){sfx.fail();endGame();}
     },1000);
 
-    // Spawn loop
+    // Spawn loop — interval shrinks over time for difficulty scaling
     let spawnF=0;
     const spawnLoop=()=>{
       if(!stateRef.current.running)return;
       spawnF++;
-      if(spawnF%50===0)spawnStar();
+      const spawnInterval = Math.max(28, 50 - Math.floor(spawnF / 240));
+      if(spawnF % spawnInterval === 0) spawnStar();
       requestAnimationFrame(spawnLoop);
     };
     spawnLoop();
